@@ -1,0 +1,378 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
+const path = require('path');
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+
+// Serve React frontend in production
+app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
+
+// ─── Zoho Config ───────────────────────────────────────────────
+const ZOHO = {
+  clientId: process.env.ZOHO_CLIENT_ID,
+  clientSecret: process.env.ZOHO_CLIENT_SECRET,
+  refreshToken: process.env.ZOHO_REFRESH_TOKEN,
+  accountOwner: process.env.ZOHO_ACCOUNT_OWNER || 'mark_sentrymetal',
+  appLinkName: process.env.ZOHO_APP_LINK_NAME || 'type-formsheet-2-18-21',
+};
+const NESTING_API_URL = process.env.NESTING_API_URL || 'https://metal-nesting-api-production.up.railway.app/nest';
+
+// ─── Token Cache ───────────────────────────────────────────────
+let cachedToken = null;
+let tokenExpiry = 0;
+
+async function getAccessToken() {
+  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
+
+  const resp = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, {
+    params: {
+      refresh_token: ZOHO.refreshToken,
+      client_id: ZOHO.clientId,
+      client_secret: ZOHO.clientSecret,
+      grant_type: 'refresh_token',
+    },
+  });
+
+  cachedToken = resp.data.access_token;
+  tokenExpiry = Date.now() + (resp.data.expires_in - 60) * 1000; // refresh 1 min early
+  return cachedToken;
+}
+
+function zohoHeaders(token) {
+  return { Authorization: `Zoho-oauthtoken ${token}` };
+}
+
+function creatorApiBase() {
+  return `https://www.zohoapis.com/creator/v2.1/data/${ZOHO.accountOwner}/${ZOHO.appLinkName}`;
+}
+
+// ─── API Routes ────────────────────────────────────────────────
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// GET /api/project/:id — fetch project info
+app.get('/api/project/:id', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const projectId = req.params.id;
+
+    const resp = await axios.get(
+      `${creatorApiBase()}/report/All_Projects?criteria=(ID==${projectId})`,
+      { headers: zohoHeaders(token) }
+    );
+
+    if (!resp.data.data || resp.data.data.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    res.json(resp.data.data[0]);
+  } catch (err) {
+    console.error('Error fetching project:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to fetch project', details: err.response?.data || err.message });
+  }
+});
+
+// GET /api/project/:id/bom — fetch BOM items for a project
+app.get('/api/project/:id/bom', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const projectId = req.params.id;
+
+    const resp = await axios.get(
+      `${creatorApiBase()}/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Project_LU==${projectId})&limit=200`,
+      { headers: zohoHeaders(token) }
+    );
+
+    const bomItems = (resp.data.data || []).map(row => ({
+      id: row.ID,
+      bom_item: row.BOM_Item,
+      nest_type: row.Nest_Type,
+      form_type_id: row.Form_Type?.ID,
+      form_type_name: row.Form_Type?.display_value,
+      material_type_id: row.Material_Type?.ID,
+      material_type_name: row.Material_Type?.display_value,
+      specification_id: row.Specification?.ID,
+      spec_name: row.Specification?.display_value,
+      material_type_origin: row.Specification?.Material_Type_Origin || '',
+      material_id: row.Material?.ID,
+      material_name: row.Material?.display_value,
+      material_dim1: row.Material?.Dim1,
+      quantity: row.Quantity,
+      length_nest: row.Length_Nest,
+      width_nest: row.Width_Nest,
+      density: row.Density,
+    }));
+
+    res.json(bomItems);
+  } catch (err) {
+    console.error('Error fetching BOM:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to fetch BOM', details: err.response?.data || err.message });
+  }
+});
+
+// GET /api/stock — fetch active stock library
+app.get('/api/stock', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+
+    const resp = await axios.get(
+      `${creatorApiBase()}/report/Nesting_Stock_Library_Report?criteria=(Is_Active=="Yes")&limit=200`,
+      { headers: zohoHeaders(token) }
+    );
+
+    const stock = (resp.data.data || []).map(row => ({
+      id: row.ID,
+      form_type: row.Form_Type,
+      material_type: row.Material_Type,
+      stock_length: row.Stock_Length,
+      stock_width: row.Stock_Width,
+      density: row.Density_LBS_per_Culin,
+      is_standard: row.Is_Standard,
+    }));
+
+    res.json(stock);
+  } catch (err) {
+    console.error('Error fetching stock:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to fetch stock', details: err.response?.data || err.message });
+  }
+});
+
+// POST /api/nest — run nesting (proxies to existing Railway nesting API)
+// Frontend sends only enabled stock (user can toggle library stock on/off and add custom sizes)
+app.post('/api/nest', async (req, res) => {
+  try {
+    const resp = await axios.post(NESTING_API_URL, req.body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 120000,
+    });
+
+    res.json(resp.data);
+  } catch (err) {
+    console.error('Error running nesting:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Nesting failed', details: err.response?.data || err.message });
+  }
+});
+
+// POST /api/project/:id/save-results — save nesting results back to Zoho
+app.post('/api/project/:id/save-results', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const projectId = req.params.id;
+    const { results_1d, results_2d, summary, kerf_1d, kerf_2d, run_by } = req.body;
+
+    // 1. Count existing runs to get next run number
+    const runsResp = await axios.get(
+      `${creatorApiBase()}/report/Nesting_Run_Header_Report?criteria=(Project_Lookup==${projectId})`,
+      { headers: zohoHeaders(token) }
+    );
+    const runNum = (runsResp.data.data || []).length + 1;
+
+    // 2. Create Nesting_Run_Header
+    const headerResp = await axios.post(
+      `${creatorApiBase()}/form/Nesting_Run_Header`,
+      {
+        data: {
+          Project_Lookup: projectId,
+          Run_Number: runNum,
+          Run_Status: 'Processing',
+          Run_By: run_by || '',
+          Added_User: 'web_app',
+        },
+      },
+      { headers: zohoHeaders(token) }
+    );
+
+    const nestRunID = headerResp.data.data.ID;
+
+    // 3. Save 1D results
+    let savedCount1D = 0;
+    for (const result of results_1d || []) {
+      if (result.error) continue;
+
+      const firstCut = result.cuts[0];
+      const srResp = await axios.post(
+        `${creatorApiBase()}/form/Nesting_Stock_Result`,
+        {
+          data: {
+            Nesting_Run_Header: nestRunID,
+            Nesting_Type: '1D - Length',
+            Form_Type: result.form_type,
+            Material_Type: result.material_origin,
+            Specification: firstCut.spec_name,
+            Material: firstCut.material_type,
+            Stock_Size_Label: firstCut.stock_label || '',
+            Stock_Length: result.stock_length_in,
+            Remnant_Length: result.remnant_length_in,
+            Waste_Percentage: result.waste_percentage,
+            Stock_Weight_LBS: result.stock_weight_lbs,
+            Stock_Sequence: result.stock_sequence,
+            Added_User: 'web_app',
+          },
+        },
+        { headers: zohoHeaders(token) }
+      );
+
+      const srID = srResp.data.data.ID;
+      let cutSeq = 1;
+      for (const cut of result.cuts) {
+        await axios.post(
+          `${creatorApiBase()}/form/Nesting_Cut_Detail`,
+          {
+            data: {
+              Nesting_Stock_Result: srID,
+              BOM_Line_Lookup: cut.bom_line_id,
+              Part_Mark: cut.part_mark,
+              Cut_Length: cut.cut_length,
+              Quantity_On_This_Stock: cut.quantity_on_this_stock,
+              Cut_Sequence: cutSeq,
+              Added_User: 'web_app',
+            },
+          },
+          { headers: zohoHeaders(token) }
+        );
+        cutSeq++;
+      }
+      savedCount1D++;
+    }
+
+    // 4. Save 2D results
+    let savedCount2D = 0;
+    for (const result of results_2d || []) {
+      if (result.error) continue;
+
+      const firstCut = result.cuts[0];
+      const srResp = await axios.post(
+        `${creatorApiBase()}/form/Nesting_Stock_Result`,
+        {
+          data: {
+            Nesting_Run_Header: nestRunID,
+            Nesting_Type: '2D - Panel',
+            Form_Type: result.form_type,
+            Material_Type: result.material_origin,
+            Specification: firstCut.spec_name,
+            Material: firstCut.material_type,
+            Stock_Size_Label: firstCut.stock_label || '',
+            Stock_Length: result.stock_length_in,
+            Stock_Width: result.stock_width_in,
+            Remnant_Length: result.remnant_area_in2,
+            Waste_Percentage: result.waste_percentage,
+            Stock_Weight_LBS: result.stock_weight_lbs,
+            Stock_Sequence: result.stock_sequence,
+            Added_User: 'web_app',
+          },
+        },
+        { headers: zohoHeaders(token) }
+      );
+
+      const srID = srResp.data.data.ID;
+      let cutSeq = 1;
+      for (const cut of result.cuts) {
+        await axios.post(
+          `${creatorApiBase()}/form/Nesting_Cut_Detail`,
+          {
+            data: {
+              Nesting_Stock_Result: srID,
+              BOM_Line_Lookup: cut.bom_line_id,
+              Part_Mark: cut.part_mark,
+              Cut_Length: cut.cut_length,
+              Cut_Width: cut.cut_width,
+              Quantity_On_This_Stock: cut.quantity_on_this_stock,
+              Cut_Sequence: cutSeq,
+              Added_User: 'web_app',
+            },
+          },
+          { headers: zohoHeaders(token) }
+        );
+        cutSeq++;
+      }
+      savedCount2D++;
+    }
+
+    // 5. Update run header with summary
+    await axios.patch(
+      `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`,
+      {
+        data: {
+          Run_Status: 'Complete',
+          Kerf_1D: kerf_1d || 0.125,
+          Kerf_2D: kerf_2d || 0.125,
+          Total_Stock_Pieces: summary?.total_stock_pieces || 0,
+          Total_Waste_Inches: summary?.total_remnant_length_in || 0,
+          Notes: `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${summary?.avg_waste_pct_1d || 0}%`,
+        },
+      },
+      { headers: zohoHeaders(token) }
+    );
+
+    res.json({
+      success: true,
+      nest_run_id: nestRunID,
+      run_number: runNum,
+      saved_1d: savedCount1D,
+      saved_2d: savedCount2D,
+    });
+  } catch (err) {
+    console.error('Error saving results:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to save results', details: err.response?.data || err.message });
+  }
+});
+
+// POST /api/project/:id/save-purchase-material — write to Purchase Material subform
+app.post('/api/project/:id/save-purchase-material', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const projectId = req.params.id;
+    const { items } = req.body; // array of purchase material line items
+
+    const subformRows = items.map((item, idx) => ({
+      Line_Item_Fitting: idx + 1,
+      Form_Type: item.form_type_id,
+      Material_Types: item.material_type_id,
+      Specification: item.specification_id,
+      Material: item.material_id,
+      Item_Description: item.description || '',
+      QTY: item.quantity,
+      Feet_Length: item.feet_length || 0,
+      Length_INCH: item.length_inch || '',
+      Width_FT: item.width_ft || '',
+      Width_INCH: item.width_inch || '',
+      Weight_Per_FT: item.weight_per_ft || 0,
+      Unit_Weight: item.unit_weight || 0,
+      CutWeight: item.total_weight || 0,
+    }));
+
+    // Update the project record's Material_Allocated subform
+    await axios.patch(
+      `${creatorApiBase()}/report/All_Projects/${projectId}`,
+      {
+        data: {
+          Material_Allocated: subformRows,
+        },
+      },
+      { headers: zohoHeaders(token) }
+    );
+
+    res.json({ success: true, items_saved: subformRows.length });
+  } catch (err) {
+    console.error('Error saving purchase material:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to save purchase material', details: err.response?.data || err.message });
+  }
+});
+
+// Catch-all: serve React app
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html'));
+});
+
+// ─── Start Server ──────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Material Compass Nesting server running on port ${PORT}`);
+});
