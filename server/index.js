@@ -43,7 +43,10 @@ async function getAccessToken() {
 }
 
 function zohoHeaders(token) {
-  return { Authorization: `Zoho-oauthtoken ${token}` };
+  return { 
+    Authorization: `Zoho-oauthtoken ${token}`,
+    Accept: 'application/json'
+  };
 }
 
 function creatorApiBase() {
