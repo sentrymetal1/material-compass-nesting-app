@@ -1,0 +1,370 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import './App.css';
+
+const API = '';
+
+function getProjectIdFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('project_id') || params.get('id') || '';
+}
+
+export default function App() {
+  const [projectId, setProjectId] = useState(getProjectIdFromURL());
+  const [step, setStep] = useState(projectId ? 1 : 0);
+  const [project, setProject] = useState(null);
+  const [bom, setBom] = useState([]);
+  const [stock, setStock] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [kerf1D, setKerf1D] = useState(0.125);
+  const [kerf2D, setKerf2D] = useState(0.125);
+  const [grainDirections, setGrainDirections] = useState({});
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('');
+  const [enabledStock, setEnabledStock] = useState(new Set());
+  const [stockFilter, setStockFilter] = useState('all');
+  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', stock_length: '', stock_width: '' });
+  const [nextCustomId, setNextCustomId] = useState(900000);
+
+  const loadProject = useCallback(async (id) => {
+    setLoading(true);
+    setError('');
+    try {
+      const [projRes, bomRes, stockRes] = await Promise.all([
+        fetch(`${API}/api/project/${id}`),
+        fetch(`${API}/api/project/${id}/bom`),
+        fetch(`${API}/api/stock`),
+      ]);
+      if (!projRes.ok) throw new Error('Project not found');
+      const projData = await projRes.json();
+      const bomData = await bomRes.json();
+      const stockData = await stockRes.json();
+      const taggedStock = stockData.map(s => ({ ...s, source: 'library' }));
+      setProject(projData);
+      setBom(bomData);
+      setStock(taggedStock);
+      const autoSelect = new Set();
+      bomData.forEach(item => { if (item.nest_type && item.nest_type !== '') autoSelect.add(item.id); });
+      setSelected(autoSelect);
+      setEnabledStock(new Set(taggedStock.map(s => s.id)));
+      setStep(1);
+    } catch (err) {
+      setError(err.message || 'Failed to load project');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { if (projectId) loadProject(projectId); }, [projectId, loadProject]);
+
+  function toggleSelect(id) { setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
+  function selectAll() { setSelected(new Set(bom.filter(b => b.nest_type).map(b => b.id))); }
+  function selectNone() { setSelected(new Set()); }
+  function toggleStock(id) { setEnabledStock(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
+  function enableAllStock() { setEnabledStock(new Set(stock.map(s => s.id))); }
+  function disableAllStock() { setEnabledStock(new Set()); }
+
+  function addCustomStock() {
+    if (!newStock.form_type || !newStock.material_type || !newStock.stock_length) return;
+    const id = nextCustomId;
+    const entry = { id, form_type: newStock.form_type, material_type: newStock.material_type, stock_length: parseFloat(newStock.stock_length), stock_width: newStock.stock_width ? parseFloat(newStock.stock_width) : null, density: 0, is_standard: 'No', source: 'custom' };
+    setStock(prev => [...prev, entry]);
+    setEnabledStock(prev => { const n = new Set(prev); n.add(id); return n; });
+    setNextCustomId(prev => prev + 1);
+    setNewStock(prev => ({ ...prev, stock_length: '', stock_width: '' }));
+  }
+
+  function removeCustomStock(id) {
+    setStock(prev => prev.filter(s => s.id !== id));
+    setEnabledStock(prev => { const n = new Set(prev); n.delete(id); return n; });
+  }
+
+  function getFilteredStock() {
+    if (stockFilter === 'library') return stock.filter(s => s.source === 'library');
+    if (stockFilter === 'custom') return stock.filter(s => s.source === 'custom');
+    return stock;
+  }
+
+  const selectedBom = bom.filter(b => selected.has(b.id) && b.nest_type);
+  const formTypes = [...new Set(selectedBom.map(b => b.form_type_name).filter(Boolean))];
+  const matTypes = [...new Set(selectedBom.map(b => b.material_type_name).filter(Boolean))];
+  const activeStockCount = stock.filter(s => enabledStock.has(s.id)).length;
+
+  async function runNesting() {
+    setLoading(true);
+    setError('');
+    setResults(null);
+    try {
+      const parts1D = [];
+      const parts2D = [];
+      const neededKeys1D = new Set();
+      const neededKeys2D = new Set();
+      for (const row of selectedBom) {
+        if (!row.nest_type || !row.quantity || !row.length_nest) continue;
+        if (row.nest_type === 'Linear') {
+          parts1D.push({ bom_line_id: String(row.id), part_mark: String(row.bom_item), form_type: String(row.form_type_id), material_type: String(row.material_id), material_origin: String(row.material_type_origin), spec_name: String(row.specification_id), density: row.density || 0, length_in: row.length_nest, quantity: row.quantity });
+          neededKeys1D.add(`${row.form_type_id}|${row.material_type_origin}`);
+        }
+        if (row.nest_type === 'Panel') {
+          parts2D.push({ bom_line_id: String(row.id), part_mark: String(row.bom_item), form_type: String(row.form_type_id), material_type: String(row.material_id), material_origin: String(row.material_type_origin), spec_name: String(row.specification_id), density: row.density || 0, length_in: row.length_nest, width_in: row.width_nest || 0, thickness_in: row.material_dim1 || 0, quantity: row.quantity, grain_direction: grainDirections[row.id] || 'none' });
+          neededKeys2D.add(`${row.form_type_id}|${row.material_type_origin}`);
+        }
+      }
+      const enabledStockItems = stock.filter(s => enabledStock.has(s.id));
+      const stock1D = enabledStockItems.filter(s => (!s.stock_width || s.stock_width === 0) && neededKeys1D.has(`${s.form_type}|${s.material_type}`)).map(s => ({ stock_id: String(s.id), stock_label: `${s.form_type} | ${s.material_type}`, form_type: String(s.form_type), material_origin: String(s.material_type), density: s.density || 0, length_in: s.stock_length, is_standard: String(s.is_standard) }));
+      const stock2D = enabledStockItems.filter(s => s.stock_width && s.stock_width > 0 && neededKeys2D.has(`${s.form_type}|${s.material_type}`)).map(s => ({ stock_id: String(s.id), stock_label: `${s.form_type} | ${s.material_type}`, form_type: String(s.form_type), material_origin: String(s.material_type), density: s.density || 0, length_in: s.stock_length, width_in: s.stock_width, is_standard: String(s.is_standard) }));
+      const payload = { project_id: String(projectId), run_number: 1, kerf_1d: kerf1D, kerf_2d: kerf2D, parts_1d: parts1D, parts_2d: parts2D, stock_1d: stock1D, stock_2d: stock2D };
+      const resp = await fetch(`${API}/api/nest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!resp.ok) throw new Error('Nesting API error');
+      const data = await resp.json();
+      setResults(data);
+      setStep(3);
+    } catch (err) {
+      setError(err.message || 'Nesting failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveToZoho() {
+    if (!results) return;
+    setSaving(true);
+    setSaveStatus('');
+    try {
+      const resp = await fetch(`${API}/api/project/${projectId}/save-results`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ results_1d: results.results_1d, results_2d: results.results_2d, summary: results.summary, kerf_1d: kerf1D, kerf_2d: kerf2D }) });
+      if (!resp.ok) throw new Error('Save failed');
+      const data = await resp.json();
+      setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d} 1D + ${data.saved_2d} 2D results`);
+    } catch (err) {
+      setSaveStatus(`Error: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="app">
+      <header className="header">
+        <div className="header-inner">
+          <div className="logo-group">
+            <div className="logo-icon">◈</div>
+            <div>
+              <h1 className="logo-title">Material Compass</h1>
+              <p className="logo-sub">Nesting</p>
+            </div>
+          </div>
+          {project && <div className="project-badge">{project.Project_Name || project.Name || `Project #${projectId}`}</div>}
+        </div>
+      </header>
+
+      <main className="main">
+        <div className="steps">
+          {['Select Items', 'Configure', 'Results'].map((label, i) => (
+            <div key={i} className={`step-dot ${step >= i + 1 ? 'active' : ''} ${step === i + 1 ? 'current' : ''}`}>
+              <span className="step-num">{i + 1}</span>
+              <span className="step-label">{label}</span>
+            </div>
+          ))}
+        </div>
+
+        {error && <div className="error-box">{error}</div>}
+        {loading && <div className="loading-box">Loading...</div>}
+
+        {step === 0 && !loading && (
+          <div className="card">
+            <h2>Enter Project ID</h2>
+            <p className="hint">Or pass ?project_id=123 in the URL</p>
+            <div className="input-row">
+              <input type="text" value={projectId} onChange={e => setProjectId(e.target.value)} placeholder="Zoho Project ID" className="input" />
+              <button onClick={() => loadProject(projectId)} className="btn btn-primary" disabled={!projectId}>Load Project</button>
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="card">
+            <div className="card-header">
+              <h2>Bill of Materials</h2>
+              <div className="btn-group">
+                <button onClick={selectAll} className="btn btn-small">Select All</button>
+                <button onClick={selectNone} className="btn btn-small">Clear</button>
+              </div>
+            </div>
+            <div className="table-wrap">
+              <table className="table">
+                <thead><tr><th></th><th>Mark</th><th>Type</th><th>Form</th><th>Material</th><th>Spec</th><th>Size</th><th>Qty</th><th>Length</th><th>Width</th></tr></thead>
+                <tbody>
+                  {bom.map(item => (
+                    <tr key={item.id} className={selected.has(item.id) ? 'row-selected' : ''}>
+                      <td><input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelect(item.id)} disabled={!item.nest_type} /></td>
+                      <td className="mono">{item.bom_item}</td>
+                      <td><span className={`badge ${item.nest_type === 'Linear' ? 'badge-1d' : item.nest_type === 'Panel' ? 'badge-2d' : ''}`}>{item.nest_type || '—'}</span></td>
+                      <td>{item.form_type_name}</td>
+                      <td>{item.material_name}</td>
+                      <td>{item.spec_name}</td>
+                      <td>{item.material_type_name}</td>
+                      <td className="num">{item.quantity}</td>
+                      <td className="num">{item.length_nest ? `${item.length_nest}"` : '—'}</td>
+                      <td className="num">{item.width_nest ? `${item.width_nest}"` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="card-footer">
+              <span className="count">{selected.size} items selected</span>
+              <button onClick={() => setStep(2)} className="btn btn-primary" disabled={selected.size === 0}>Next → Configure</button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="card">
+            <h2>Nesting Configuration</h2>
+            <div className="config-grid">
+              <div className="config-section">
+                <h3>Kerf Settings</h3>
+                <div className="field"><label>1D Kerf (inches)</label><input type="number" step="0.0625" value={kerf1D} onChange={e => setKerf1D(parseFloat(e.target.value) || 0)} className="input" /></div>
+                <div className="field"><label>2D Kerf (inches)</label><input type="number" step="0.0625" value={kerf2D} onChange={e => setKerf2D(parseFloat(e.target.value) || 0)} className="input" /></div>
+              </div>
+              <div className="config-section">
+                <h3>Grain Direction (2D Panels)</h3>
+                {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').map(item => (
+                  <div key={item.id} className="field">
+                    <label>{item.bom_item} — {item.material_name}</label>
+                    <select value={grainDirections[item.id] || 'none'} onChange={e => setGrainDirections(prev => ({ ...prev, [item.id]: e.target.value }))} className="input">
+                      <option value="none">None (allow rotation)</option>
+                      <option value="length">Length</option>
+                      <option value="width">Width</option>
+                    </select>
+                  </div>
+                ))}
+                {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').length === 0 && <p className="hint">No 2D panels selected</p>}
+              </div>
+
+              <div className="config-section config-full">
+                <div className="stock-header">
+                  <h3>Stock Sizes</h3>
+                  <div className="stock-controls">
+                    <div className="btn-group">
+                      <button onClick={enableAllStock} className="btn btn-small">Use All</button>
+                      <button onClick={disableAllStock} className="btn btn-small">Use None</button>
+                    </div>
+                    <div className="filter-tabs">
+                      {[['all', 'All', stock.length], ['library', 'Library', stock.filter(s => s.source === 'library').length], ['custom', 'Custom', stock.filter(s => s.source === 'custom').length]].map(([k, l, n]) => (
+                        <button key={k} className={`filter-btn ${stockFilter === k ? 'active' : ''}`} onClick={() => setStockFilter(k)}>{l} ({n})</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <p className="hint"><strong>{activeStockCount}</strong> of {stock.length} stock sizes enabled for nesting. Unchecked sizes will be excluded.</p>
+                <table className="stock-table">
+                  <thead><tr><th style={{width:30}}>Use</th><th>Source</th><th>Form Type</th><th>Material</th><th>Length</th><th>Width</th><th>Standard</th><th></th></tr></thead>
+                  <tbody>
+                    {getFilteredStock().map(s => (
+                      <tr key={s.id} className={`${s.source === 'custom' ? 'stock-row-custom' : ''} ${!enabledStock.has(s.id) ? 'stock-disabled' : ''}`}>
+                        <td><input type="checkbox" checked={enabledStock.has(s.id)} onChange={() => toggleStock(s.id)} /></td>
+                        <td><span className={`badge ${s.source === 'library' ? 'badge-lib' : 'badge-custom'}`}>{s.source === 'library' ? 'Library' : 'Custom'}</span></td>
+                        <td>{s.form_type}</td>
+                        <td>{s.material_type}</td>
+                        <td className="num">{s.stock_length}"</td>
+                        <td className="num">{s.stock_width ? `${s.stock_width}"` : '—'}</td>
+                        <td>{s.is_standard}</td>
+                        <td>{s.source === 'custom' && <button onClick={() => removeCustomStock(s.id)} className="btn btn-small btn-danger">Remove</button>}</td>
+                      </tr>
+                    ))}
+                    {getFilteredStock().length === 0 && <tr><td colSpan={8} style={{textAlign:'center',color:'#999',padding:16}}>No stock items</td></tr>}
+                  </tbody>
+                </table>
+                <div className="add-stock-row">
+                  <div className="mini-field">
+                    <label>Form Type</label>
+                    <select value={newStock.form_type} onChange={e => setNewStock(p => ({ ...p, form_type: e.target.value }))}><option value="">Select...</option>{formTypes.map(ft => <option key={ft} value={ft}>{ft}</option>)}</select>
+                  </div>
+                  <div className="mini-field">
+                    <label>Material</label>
+                    <select value={newStock.material_type} onChange={e => setNewStock(p => ({ ...p, material_type: e.target.value }))}><option value="">Select...</option>{matTypes.map(mt => <option key={mt} value={mt}>{mt}</option>)}</select>
+                  </div>
+                  <div className="mini-field">
+                    <label>Length (in)</label>
+                    <input type="number" step="0.25" value={newStock.stock_length} onChange={e => setNewStock(p => ({ ...p, stock_length: e.target.value }))} placeholder="240" />
+                  </div>
+                  <div className="mini-field">
+                    <label>Width (in, 2D only)</label>
+                    <input type="number" step="0.25" value={newStock.stock_width} onChange={e => setNewStock(p => ({ ...p, stock_width: e.target.value }))} placeholder="Optional" />
+                  </div>
+                  <button onClick={addCustomStock} className="btn btn-add" disabled={!newStock.form_type || !newStock.material_type || !newStock.stock_length}>+ Add Stock</button>
+                </div>
+              </div>
+            </div>
+            <div className="card-footer">
+              <button onClick={() => setStep(1)} className="btn">← Back</button>
+              <div className="btn-group" style={{alignItems:'center'}}>
+                <span className="count">{activeStockCount} stock sizes active</span>
+                <button onClick={runNesting} className="btn btn-primary" disabled={loading || activeStockCount === 0}>{loading ? 'Running...' : 'Run Nesting'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && results && (
+          <div className="card">
+            <h2>Nesting Results</h2>
+            {results.summary && (
+              <div className="summary-bar">
+                <div className="summary-item"><span className="summary-val">{results.summary.total_stock_pieces}</span><span className="summary-label">Stock Pieces</span></div>
+                <div className="summary-item"><span className="summary-val">{results.summary.avg_waste_pct_1d?.toFixed(1)}%</span><span className="summary-label">Avg Waste (1D)</span></div>
+                <div className="summary-item"><span className="summary-val">{results.summary.total_remnant_length_in?.toFixed(1)}"</span><span className="summary-label">Total Remnant</span></div>
+                {results.summary.errors?.length > 0 && <div className="summary-item summary-error"><span className="summary-val">{results.summary.errors.length}</span><span className="summary-label">Errors</span></div>}
+              </div>
+            )}
+            {results.results_1d?.length > 0 && (
+              <div className="result-section">
+                <h3>1D — Linear Results</h3>
+                {results.results_1d.map((r, i) => (
+                  <div key={i} className="stock-result">
+                    <div className="stock-result-header">
+                      <span className="stock-label">Stock #{r.stock_sequence}: {r.stock_length_in}" length</span>
+                      <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
+                    </div>
+                    <div className="bar-visual">
+                      {r.cuts?.map((cut, j) => (<div key={j} className="bar-cut" style={{ width: `${(cut.cut_length / r.stock_length_in) * 100}%` }} title={`${cut.part_mark}: ${cut.cut_length}"`}><span>{cut.part_mark} ({cut.cut_length}")</span></div>))}
+                      {r.remnant_length_in > 0 && <div className="bar-remnant" style={{ width: `${(r.remnant_length_in / r.stock_length_in) * 100}%` }}><span>{r.remnant_length_in.toFixed(1)}"</span></div>}
+                    </div>
+                    <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.quantity_on_this_stock}</td></tr>))}</tbody></table>
+                  </div>
+                ))}
+              </div>
+            )}
+            {results.results_2d?.length > 0 && (
+              <div className="result-section">
+                <h3>2D — Panel Results</h3>
+                {results.results_2d.map((r, i) => (
+                  <div key={i} className="stock-result">
+                    <div className="stock-result-header">
+                      <span className="stock-label">Stock #{r.stock_sequence}: {r.stock_length_in}" × {r.stock_width_in}"</span>
+                      <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
+                    </div>
+                    {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
+                    <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.cut_width}"</td><td className="num">{cut.quantity_on_this_stock}</td></tr>))}</tbody></table>
+                  </div>
+                ))}
+              </div>
+            )}
+            {results.summary?.errors?.length > 0 && (
+              <div className="result-section"><h3>Errors</h3>{results.summary.errors.map((e, i) => (<div key={i} className="error-box">{e}</div>))}</div>
+            )}
+            <div className="card-footer">
+              <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
+              <button onClick={saveToZoho} className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Import to Project'}</button>
+            </div>
+            {saveStatus && <div className={`save-status ${saveStatus.startsWith('Error') ? 'save-error' : 'save-success'}`}>{saveStatus}</div>}
+          </div>
+        )}
+      </main>
+      <footer className="footer"><span>Material Compass Nesting v1.0</span></footer>
+    </div>
+  );
+}
