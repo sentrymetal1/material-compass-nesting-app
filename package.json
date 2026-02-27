@@ -1,0 +1,17 @@
+{
+  "name": "material-compass-nesting",
+  "version": "1.0.0",
+  "description": "Material Compass Nesting Web App",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "build": "cd client && npm install && npm run build",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0",
+    "express": "^4.18.2"
+  }
+}
