@@ -104,18 +104,79 @@ export default function App() {
       for (const row of selectedBom) {
         if (!row.nest_type || !row.quantity || !row.length_nest) continue;
         if (row.nest_type === 'Linear') {
-          parts1D.push({ bom_line_id: String(row.id), part_mark: String(row.bom_item), form_type: String(row.form_type_id), material_type: String(row.material_id), material_origin: String(row.material_type_id), spec_name: String(row.specification_id), density: row.density || 0, length_in: row.length_nest, quantity: row.quantity });
+          parts1D.push({
+            bom_line_id: String(row.id),
+            part_mark: String(row.bom_item),
+            form_type: String(row.form_type_id),
+            material_type: String(row.material_id),
+            material_origin: String(row.material_type_id),
+            spec_name: String(row.specification_id),
+            density: parseFloat(row.density) || 0,
+            length_in: parseFloat(row.length_nest),
+            quantity: parseInt(row.quantity),
+            form_type_name: row.form_type_name || '',
+            mat_type_name: row.material_type_name || '',
+            spec_name_display: row.spec_name || '',
+            material_name_display: row.material_name || '',
+          });
           neededKeys1D.add(`${row.form_type_id}|${row.material_type_id}`);
         }
         if (row.nest_type === 'Panel') {
-          parts2D.push({ bom_line_id: String(row.id), part_mark: String(row.bom_item), form_type: String(row.form_type_id), material_type: String(row.material_id), material_origin: String(row.material_type_id), spec_name: String(row.specification_id), density: row.density || 0, length_in: row.length_nest, width_in: row.width_nest || 0, thickness_in: row.material_dim1 || 0, quantity: row.quantity, grain_direction: grainDirections[row.id] || 'none' });
+          parts2D.push({
+            bom_line_id: String(row.id),
+            part_mark: String(row.bom_item),
+            form_type: String(row.form_type_id),
+            material_type: String(row.material_id),
+            material_origin: String(row.material_type_id),
+            spec_name: String(row.specification_id),
+            density: parseFloat(row.density) || 0,
+            length_in: parseFloat(row.length_nest),
+            width_in: parseFloat(row.width_nest) || 0,
+            thickness_in: parseFloat(row.material_dim1) || 0,
+            quantity: parseInt(row.quantity),
+            grain_direction: grainDirections[row.id] || 'none',
+            form_type_name: row.form_type_name || '',
+            mat_type_name: row.material_type_name || '',
+            spec_name_display: row.spec_name || '',
+            material_name_display: row.material_name || '',
+          });
           neededKeys2D.add(`${row.form_type_id}|${row.material_type_id}`);
         }
       }
       const enabledStockItems = stock.filter(s => enabledStock.has(s.id));
-      const stock1D = enabledStockItems.filter(s => (!s.stock_width || s.stock_width === 0) && neededKeys1D.has(`${s.form_type}|${s.material_type}`)).map(s => ({ stock_id: String(s.id), stock_label: `${s.form_type_name || s.form_type} | ${s.material_type_name || s.material_type}`, form_type: String(s.form_type), material_origin: String(s.material_type), density: s.density || 0, length_in: s.stock_length, is_standard: String(s.is_standard) }));
-      const stock2D = enabledStockItems.filter(s => s.stock_width && s.stock_width > 0 && neededKeys2D.has(`${s.form_type}|${s.material_type}`)).map(s => ({ stock_id: String(s.id), stock_label: `${s.form_type_name || s.form_type} | ${s.material_type_name || s.material_type}`, form_type: String(s.form_type), material_origin: String(s.material_type), density: s.density || 0, length_in: s.stock_length, width_in: s.stock_width, is_standard: String(s.is_standard) }));
-      const payload = { project_id: String(projectId), run_number: 1, kerf_1d: kerf1D, kerf_2d: kerf2D, parts_1d: parts1D, parts_2d: parts2D, stock_1d: stock1D, stock_2d: stock2D };
+      const stock1D = enabledStockItems
+        .filter(s => (!s.stock_width || parseFloat(s.stock_width) === 0) && neededKeys1D.has(`${s.form_type}|${s.material_type}`))
+        .map(s => ({
+          stock_id: String(s.id),
+          stock_label: `${s.form_type_name || s.form_type} | ${s.material_type_name || s.material_type}`,
+          form_type: String(s.form_type),
+          material_origin: String(s.material_type),
+          density: parseFloat(s.density) || 0,
+          length_in: parseFloat(s.stock_length),
+          is_standard: String(s.is_standard),
+        }));
+      const stock2D = enabledStockItems
+        .filter(s => s.stock_width && parseFloat(s.stock_width) > 0 && neededKeys2D.has(`${s.form_type}|${s.material_type}`))
+        .map(s => ({
+          stock_id: String(s.id),
+          stock_label: `${s.form_type_name || s.form_type} | ${s.material_type_name || s.material_type}`,
+          form_type: String(s.form_type),
+          material_origin: String(s.material_type),
+          density: parseFloat(s.density) || 0,
+          length_in: parseFloat(s.stock_length),
+          width_in: parseFloat(s.stock_width),
+          is_standard: String(s.is_standard),
+        }));
+      const payload = {
+        project_id: String(projectId),
+        run_number: 1,
+        kerf_1d: kerf1D,
+        kerf_2d: kerf2D,
+        parts_1d: parts1D,
+        parts_2d: parts2D,
+        stock_1d: stock1D,
+        stock_2d: stock2D,
+      };
       const resp = await fetch(`${API}/api/nest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!resp.ok) throw new Error('Nesting API error');
       const data = await resp.json();
@@ -155,7 +216,7 @@ export default function App() {
               <p className="logo-sub">Nesting</p>
             </div>
           </div>
-          {project && <div className="project-badge">{project.Project_Name || project.Name || `Project #${projectId}`}</div>}
+          {project && <div className="project-badge">{project.Project_Quote_Number || project.Project_Description || `Project #${projectId}`}</div>}
         </div>
       </header>
 
@@ -206,8 +267,8 @@ export default function App() {
                       <td>{item.spec_name}</td>
                       <td>{item.material_type_name}</td>
                       <td className="num">{item.quantity}</td>
-                      <td className="num">{item.length_nest ? `${item.length_nest}"` : '—'}</td>
-                      <td className="num">{item.width_nest ? `${item.width_nest}"` : '—'}</td>
+                      <td className="num">{item.length_nest ? `${parseFloat(item.length_nest)}"` : '—'}</td>
+                      <td className="num">{item.width_nest && parseFloat(item.width_nest) > 0 ? `${parseFloat(item.width_nest)}"` : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -233,7 +294,7 @@ export default function App() {
                 <h3>Grain Direction (2D Panels)</h3>
                 {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').map(item => (
                   <div key={item.id} className="field">
-                    <label>{item.bom_item} — {item.material_name}</label>
+                    <label>Mark {item.bom_item} — {item.form_type_name} | {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"</label>
                     <select value={grainDirections[item.id] || 'none'} onChange={e => setGrainDirections(prev => ({ ...prev, [item.id]: e.target.value }))} className="input">
                       <option value="none">None (allow rotation)</option>
                       <option value="length">Length</option>
@@ -269,8 +330,8 @@ export default function App() {
                         <td><span className={`badge ${s.source === 'library' ? 'badge-lib' : 'badge-custom'}`}>{s.source === 'library' ? 'Library' : 'Custom'}</span></td>
                         <td>{s.form_type_name || s.form_type}</td>
                         <td>{s.material_type_name || s.material_type}</td>
-                        <td className="num">{s.stock_length}"</td>
-                        <td className="num">{s.stock_width ? `${s.stock_width}"` : '—'}</td>
+                        <td className="num">{parseFloat(s.stock_length)}"</td>
+                        <td className="num">{s.stock_width && parseFloat(s.stock_width) > 0 ? `${parseFloat(s.stock_width)}"` : '—'}</td>
                         <td>{s.is_standard}</td>
                         <td>{s.source === 'custom' && <button onClick={() => removeCustomStock(s.id)} className="btn btn-small btn-danger">Remove</button>}</td>
                       </tr>
