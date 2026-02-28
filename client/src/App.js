@@ -267,8 +267,8 @@ export default function App() {
                       <tr key={s.id} className={`${s.source === 'custom' ? 'stock-row-custom' : ''} ${!enabledStock.has(s.id) ? 'stock-disabled' : ''}`}>
                         <td><input type="checkbox" checked={enabledStock.has(s.id)} onChange={() => toggleStock(s.id)} /></td>
                         <td><span className={`badge ${s.source === 'library' ? 'badge-lib' : 'badge-custom'}`}>{s.source === 'library' ? 'Library' : 'Custom'}</span></td>
-                        <td>{s.form_type}</td>
-                        <td>{s.material_type}</td>
+                       <td>{s.form_type_name || s.form_type}</td>
+<td>{s.material_type_name || s.material_type}</td>
                         <td className="num">{s.stock_length}"</td>
                         <td className="num">{s.stock_width ? `${s.stock_width}"` : '—'}</td>
                         <td>{s.is_standard}</td>
