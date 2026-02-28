@@ -130,15 +130,17 @@ app.get('/api/stock', async (req, res) => {
       { headers: zohoHeaders(token) }
     );
 
-    const stock = (resp.data.data || []).map(row => ({
-      id: row.ID,
-      form_type: row.Form_Type,
-      material_type: row.Material_Type,
-      stock_length: row.Stock_Length,
-      stock_width: row.Stock_Width,
-      density: row.Density_LBS_per_Culin,
-      is_standard: row.Is_Standard,
-    }));
+   const stock = (resp.data.data || []).map(row => ({
+  id: row.ID,
+  form_type: row.Form_Type?.ID || row.Form_Type,
+  form_type_name: row.Form_Type?.zc_display_value || row.Form_Type,
+  material_type: row.Material_Type?.ID || row.Material_Type,
+  material_type_name: row.Material_Type?.zc_display_value || row.Material_Type,
+  stock_length: row.Stock_Length,
+  stock_width: row.Stock_Width,
+  density: row.Density_LBS_per_Culin,
+  is_standard: row.Is_Standard,
+}));
 
     res.json(stock);
   } catch (err) {
