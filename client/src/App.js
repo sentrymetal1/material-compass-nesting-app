@@ -294,7 +294,7 @@ export default function App() {
                 <h3>Grain Direction (2D Panels)</h3>
                 {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').map(item => (
                   <div key={item.id} className="field">
-                    <label>Mark {item.bom_item} — {item.form_type_name} | {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"</label>
+                   <label>Mark {item.bom_item} — {item.form_type_name} | {item.material_type_name} | {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"</label>
                     <select value={grainDirections[item.id] || 'none'} onChange={e => setGrainDirections(prev => ({ ...prev, [item.id]: e.target.value }))} className="input">
                       <option value="none">None (allow rotation)</option>
                       <option value="length">Length</option>
