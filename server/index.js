@@ -98,14 +98,14 @@ app.get('/api/project/:id/bom', async (req, res) => {
       bom_item: row.BOM_Item,
       nest_type: row.Nest_Type,
       form_type_id: row.Form_Type?.ID,
-      form_type_name: row.Form_Type?.display_value,
+      form_type_name: row.Form_Type?.zc_display_value || row.Form_Type?.display_value,
       material_type_id: row.Material_Type?.ID,
-      material_type_name: row.Material_Type?.display_value,
+      material_type_name: row.Material_Type?.zc_display_value || row.Material_Type?.display_value,
       specification_id: row.Specification?.ID,
-      spec_name: row.Specification?.display_value,
+      spec_name: row.Specification?.zc_display_value || row.Specification?.display_value,
       material_type_origin: row.Specification?.Material_Type_Origin || '',
       material_id: row.Material?.ID,
-      material_name: row.Material?.display_value,
+      material_name: row.Material?.zc_display_value || row.Material?.display_value,
       material_dim1: row.Material?.Dim1,
       quantity: row.Quantity,
       length_nest: row.Length_Nest,
@@ -130,17 +130,17 @@ app.get('/api/stock', async (req, res) => {
       { headers: zohoHeaders(token) }
     );
 
-   const stock = (resp.data.data || []).map(row => ({
-  id: row.ID,
-  form_type: row.Form_Type?.ID || row.Form_Type,
-  form_type_name: row.Form_Type?.zc_display_value || row.Form_Type,
-  material_type: row.Material_Type?.ID || row.Material_Type,
-  material_type_name: row.Material_Type?.zc_display_value || row.Material_Type,
-  stock_length: row.Stock_Length,
-  stock_width: row.Stock_Width,
-  density: row.Density_LBS_per_Culin,
-  is_standard: row.Is_Standard,
-}));
+    const stock = (resp.data.data || []).map(row => ({
+      id: row.ID,
+      form_type: row.Form_Type?.ID || row.Form_Type,
+      form_type_name: row.Form_Type?.zc_display_value || row.Form_Type,
+      material_type: row.Material_Type?.ID || row.Material_Type,
+      material_type_name: row.Material_Type?.zc_display_value || row.Material_Type,
+      stock_length: row.Stock_Length,
+      stock_width: row.Stock_Width,
+      density: row.Density_LBS_per_Culin,
+      is_standard: row.Is_Standard,
+    }));
 
     res.json(stock);
   } catch (err) {
