@@ -16,6 +16,25 @@ function inToFt(val) {
   if (rem === 0) return `${n}" (${ft}')`;
   return `${n}" (${ft}'${rem}")`;
 }
+function groupResults(results) {
+  if (!results || results.length === 0) return [];
+  const materialGroups = {};
+  for (const r of results) {
+    const key = `${r.form_type}|${r.material_origin}|${r.stock_length_in}|${r.stock_width_in || 0}`;
+    if (!materialGroups[key]) {
+      materialGroups[key] = { form_type: r.form_type, material_origin: r.material_origin, stock_length_in: r.stock_length_in, stock_width_in: r.stock_width_in, form_type_name: r.cuts?.[0]?.form_type_name || r.form_type, material_type_name: r.cuts?.[0]?.mat_type_name || r.material_origin, patterns: [] };
+    }
+    const cutSig = (r.cuts || []).map(c => `${c.part_mark}:${c.cut_length}:${c.cut_width || 0}:${c.quantity_on_this_stock}`).join('|');
+    const existing = materialGroups[key].patterns.find(p => p.signature === cutSig);
+    if (existing) {
+      existing.count++;
+      existing.stockPieces.push(r);
+    } else {
+      materialGroups[key].patterns.push({ signature: cutSig, count: 1, representative: r, stockPieces: [r] });
+    }
+  }
+  return Object.values(materialGroups);
+}
 
 export default function App() {
   const [projectId, setProjectId] = useState(getProjectIdFromURL());
@@ -392,35 +411,55 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                 {results.summary.errors?.length > 0 && <div className="summary-item summary-error"><span className="summary-val">{results.summary.errors.length}</span><span className="summary-label">Errors</span></div>}
               </div>
             )}
-            {results.results_1d?.length > 0 && (
+           {results.results_1d?.length > 0 && (
               <div className="result-section">
                 <h3>1D — Linear Results</h3>
-                {results.results_1d.map((r, i) => (
-                  <div key={i} className="stock-result">
-                    <div className="stock-result-header">
-                    <span className="stock-label">Stock #{r.stock_sequence}: {inToFt(r.stock_length_in)} length</span>
-                      <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
+                {groupResults(results.results_1d).map((group, gi) => (
+                  <div key={gi} className="material-group">
+                    <div className="material-group-header">
+                      <h4>{group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces</h4>
                     </div>
-                    <div className="bar-visual">
-                      {r.cuts?.map((cut, j) => (<div key={j} className="bar-cut" style={{ width: `${(cut.cut_length / r.stock_length_in) * 100}%` }} title={`${cut.part_mark}: ${cut.cut_length}"`}><span>{cut.part_mark} ({cut.cut_length}")</span></div>))}
-                      {r.remnant_length_in > 0 && <div className="bar-remnant" style={{ width: `${(r.remnant_length_in / r.stock_length_in) * 100}%` }}><span>{r.remnant_length_in.toFixed(1)}"</span></div>}
-                    </div>
-                    <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.quantity_on_this_stock}</td></tr>))}</tbody></table>
+                    {group.patterns.map((pattern, pi) => {
+                      const r = pattern.representative;
+                      return (
+                        <div key={pi} className="stock-result">
+                          <div className="stock-result-header">
+                            <span className="stock-label">Cut Pattern {pi + 1} × {pattern.count} piece{pattern.count > 1 ? 's' : ''}</span>
+                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
+                          </div>
+                          <div className="bar-visual">
+                            {r.cuts?.map((cut, j) => (<div key={j} className="bar-cut" style={{ width: `${(cut.cut_length / r.stock_length_in) * 100}%` }} title={`${cut.part_mark}: ${cut.cut_length}"`}><span>{cut.part_mark} ({cut.cut_length}")</span></div>))}
+                            {r.remnant_length_in > 0 && <div className="bar-remnant" style={{ width: `${(r.remnant_length_in / r.stock_length_in) * 100}%` }}><span>{r.remnant_length_in.toFixed(1)}"</span></div>}
+                          </div>
+                          <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.quantity_on_this_stock}</td></tr>))}</tbody></table>
+                        </div>
+                      );
+                    })}
                   </div>
                 ))}
               </div>
             )}
-            {results.results_2d?.length > 0 && (
+           {results.results_2d?.length > 0 && (
               <div className="result-section">
                 <h3>2D — Panel Results</h3>
-                {results.results_2d.map((r, i) => (
-                  <div key={i} className="stock-result">
-                    <div className="stock-result-header">
-                      <span className="stock-label">Stock #{r.stock_sequence}: {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}</span>
-                      <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
+                {groupResults(results.results_2d).map((group, gi) => (
+                  <div key={gi} className="material-group">
+                    <div className="material-group-header">
+                      <h4>{group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces</h4>
                     </div>
-                    {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
-                    <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.cut_width}"</td><td className="num">{cut.quantity_on_this_stock}</td></tr>))}</tbody></table>
+                    {group.patterns.map((pattern, pi) => {
+                      const r = pattern.representative;
+                      return (
+                        <div key={pi} className="stock-result">
+                          <div className="stock-result-header">
+                            <span className="stock-label">Cut Pattern {pi + 1} × {pattern.count} piece{pattern.count > 1 ? 's' : ''}</span>
+                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
+                          </div>
+                          {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
+                          <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.cut_width}"</td><td className="num">{cut.quantity_on_this_stock}</td></tr>))}</tbody></table>
+                        </div>
+                      );
+                    })}
                   </div>
                 ))}
               </div>
