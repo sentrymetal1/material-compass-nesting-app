@@ -771,3 +771,6 @@ body {
 }
 .material-group { margin-bottom: 24px; border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; }
 .material-group-header h4 { margin: 0 0 12px 0; font-size: 14px; color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 8px; }
+.cut-table th, .cut-table td { text-align: left; padding: 4px 12px; }
+.cut-table .num { text-align: right; }
+.cut-table th:nth-child(2), .cut-table th:nth-child(3), .cut-table th:nth-child(4) { text-align: right; }
