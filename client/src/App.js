@@ -613,9 +613,9 @@ function addCustomStock() {
                       return (
                         <div key={pi} className="stock-result">
                           <div className="stock-result-header">
-                            <span className="stock-label">
-                              Cut Pattern {pi + 1}
-                            </span>
+                        <span className="stock-label">
+  Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)}
+</span>
                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {inToFt(r.remnant_length_in)}</span>
                           </div>
                           <div className="bar-visual">
@@ -677,9 +677,9 @@ function addCustomStock() {
                       return (
                         <div key={pi} className="stock-result">
                           <div className="stock-result-header">
-                            <span className="stock-label">
-                              Cut Pattern {pi + 1}
-                            </span>
+                           <span className="stock-label">
+  Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}
+</span>
                             <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {r.remnant_area_in2?.toFixed(1)} sq in</span>
                           </div>
                           {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
