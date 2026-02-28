@@ -135,12 +135,18 @@ export default function App() {
     setEnabledStock(new Set());
   }
 
-  function addCustomStock() {
+function addCustomStock() {
     if (!newStock.form_type || !newStock.material_type || !newStock.stock_length) return;
     const id = nextCustomId;
     const matchingBom = selectedBom.find(
       b => b.form_type_name === newStock.form_type && b.material_type_name === newStock.material_type
     );
+    console.log('addCustomStock lookup:', {
+      form_type_name: newStock.form_type,
+      material_type_name: newStock.material_type,
+      matchingBom: matchingBom ? { form_type_id: matchingBom.form_type_id, material_type_id: matchingBom.material_type_id } : 'NOT FOUND',
+      selectedBom_names: selectedBom.map(b => ({ ft: b.form_type_name, mt: b.material_type_name })),
+    });
     const entry = {
       id,
       form_type: matchingBom?.form_type_id || newStock.form_type,
@@ -153,6 +159,7 @@ export default function App() {
       is_standard: 'No',
       source: 'custom',
     };
+    console.log('Custom stock entry:', entry);
     setStock(prev => [...prev, entry]);
     setEnabledStock(prev => {
       const n = new Set(prev);
