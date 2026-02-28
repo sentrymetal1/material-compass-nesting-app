@@ -24,15 +24,30 @@ function groupResults(results, nameLookup) {
   for (const r of results) {
     const key = `${r.form_type}|${r.material_origin}|${r.stock_length_in}|${r.stock_width_in || 0}`;
     if (!materialGroups[key]) {
-      materialGroups[key] = { form_type: r.form_type, material_origin: r.material_origin, stock_length_in: r.stock_length_in, stock_width_in: r.stock_width_in, form_type_name: (nameLookup && nameLookup[r.form_type]) || r.form_type, material_type_name: (nameLookup && nameLookup[r.material_origin]) || r.material_origin, patterns: [] };
+      materialGroups[key] = {
+        form_type: r.form_type,
+        material_origin: r.material_origin,
+        stock_length_in: r.stock_length_in,
+        stock_width_in: r.stock_width_in,
+        form_type_name: (nameLookup && nameLookup[r.form_type]) || r.form_type,
+        material_type_name: (nameLookup && nameLookup[r.material_origin]) || r.material_origin,
+        patterns: [],
+      };
     }
-    const cutSig = (r.cuts || []).map(c => `${c.part_mark}:${c.cut_length}:${c.cut_width || 0}:${c.quantity_on_this_stock}`).join('|');
+    const cutSig = (r.cuts || [])
+      .map(c => `${c.part_mark}:${c.cut_length}:${c.cut_width || 0}:${c.quantity_on_this_stock}`)
+      .join('|');
     const existing = materialGroups[key].patterns.find(p => p.signature === cutSig);
     if (existing) {
       existing.count++;
       existing.stockPieces.push(r);
     } else {
-      materialGroups[key].patterns.push({ signature: cutSig, count: 1, representative: r, stockPieces: [r] });
+      materialGroups[key].patterns.push({
+        signature: cutSig,
+        count: 1,
+        representative: r,
+        stockPieces: [r],
+      });
     }
   }
   return Object.values(materialGroups);
@@ -76,7 +91,9 @@ export default function App() {
       setBom(bomData);
       setStock(taggedStock);
       const autoSelect = new Set();
-      bomData.forEach(item => { if (item.nest_type && item.nest_type !== '') autoSelect.add(item.id); });
+      bomData.forEach(item => {
+        if (item.nest_type && item.nest_type !== '') autoSelect.add(item.id);
+      });
       setSelected(autoSelect);
       setEnabledStock(new Set(taggedStock.map(s => s.id)));
       setStep(1);
@@ -87,30 +104,72 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => { if (projectId) loadProject(projectId); }, [projectId, loadProject]);
+  useEffect(() => {
+    if (projectId) loadProject(projectId);
+  }, [projectId, loadProject]);
 
-  function toggleSelect(id) { setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
-  function selectAll() { setSelected(new Set(bom.filter(b => b.nest_type).map(b => b.id))); }
-  function selectNone() { setSelected(new Set()); }
-  function toggleStock(id) { setEnabledStock(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
-  function enableAllStock() { setEnabledStock(new Set(stock.map(s => s.id))); }
-  function disableAllStock() { setEnabledStock(new Set()); }
+  function toggleSelect(id) {
+    setSelected(prev => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  }
+  function selectAll() {
+    setSelected(new Set(bom.filter(b => b.nest_type).map(b => b.id)));
+  }
+  function selectNone() {
+    setSelected(new Set());
+  }
+  function toggleStock(id) {
+    setEnabledStock(prev => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  }
+  function enableAllStock() {
+    setEnabledStock(new Set(stock.map(s => s.id)));
+  }
+  function disableAllStock() {
+    setEnabledStock(new Set());
+  }
 
-  function addCustomStock() {
   function addCustomStock() {
     if (!newStock.form_type || !newStock.material_type || !newStock.stock_length) return;
     const id = nextCustomId;
-    const matchingBom = selectedBom.find(b => b.form_type_name === newStock.form_type && b.material_type_name === newStock.material_type);
-    const entry = { id, form_type: matchingBom?.form_type_id || newStock.form_type, form_type_name: newStock.form_type, material_type: matchingBom?.material_type_id || newStock.material_type, material_type_name: newStock.material_type, stock_length: parseFloat(newStock.stock_length), stock_width: newStock.stock_width ? parseFloat(newStock.stock_width) : null, density: 0, is_standard: 'No', source: 'custom' };
+    const matchingBom = selectedBom.find(
+      b => b.form_type_name === newStock.form_type && b.material_type_name === newStock.material_type
+    );
+    const entry = {
+      id,
+      form_type: matchingBom?.form_type_id || newStock.form_type,
+      form_type_name: newStock.form_type,
+      material_type: matchingBom?.material_type_id || newStock.material_type,
+      material_type_name: newStock.material_type,
+      stock_length: parseFloat(newStock.stock_length),
+      stock_width: newStock.stock_width ? parseFloat(newStock.stock_width) : null,
+      density: 0,
+      is_standard: 'No',
+      source: 'custom',
+    };
     setStock(prev => [...prev, entry]);
-    setEnabledStock(prev => { const n = new Set(prev); n.add(id); return n; });
+    setEnabledStock(prev => {
+      const n = new Set(prev);
+      n.add(id);
+      return n;
+    });
     setNextCustomId(prev => prev + 1);
     setNewStock(prev => ({ ...prev, stock_length: '', stock_width: '' }));
   }
 
   function removeCustomStock(id) {
     setStock(prev => prev.filter(s => s.id !== id));
-    setEnabledStock(prev => { const n = new Set(prev); n.delete(id); return n; });
+    setEnabledStock(prev => {
+      const n = new Set(prev);
+      n.delete(id);
+      return n;
+    });
   }
 
   const selectedBom = bom.filter(b => selected.has(b.id) && b.nest_type);
@@ -211,7 +270,11 @@ export default function App() {
         stock_1d: stock1D,
         stock_2d: stock2D,
       };
-      const resp = await fetch(`${API}/api/nest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const resp = await fetch(`${API}/api/nest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
       if (!resp.ok) throw new Error('Nesting API error');
       const data = await resp.json();
       const nameLookup = {};
@@ -234,7 +297,17 @@ export default function App() {
     setSaving(true);
     setSaveStatus('');
     try {
-      const resp = await fetch(`${API}/api/project/${projectId}/save-results`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ results_1d: results.results_1d, results_2d: results.results_2d, summary: results.summary, kerf_1d: kerf1D, kerf_2d: kerf2D }) });
+      const resp = await fetch(`${API}/api/project/${projectId}/save-results`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          results_1d: results.results_1d,
+          results_2d: results.results_2d,
+          summary: results.summary,
+          kerf_1d: kerf1D,
+          kerf_2d: kerf2D,
+        }),
+      });
       if (!resp.ok) throw new Error('Save failed');
       const data = await resp.json();
       setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d} 1D + ${data.saved_2d} 2D results`);
@@ -256,7 +329,11 @@ export default function App() {
               <p className="logo-sub">Nesting</p>
             </div>
           </div>
-          {project && <div className="project-badge">{project.Project_Quote_Number || project.Project_Description || `Project #${projectId}`}</div>}
+          {project && (
+            <div className="project-badge">
+              {project.Project_Quote_Number || project.Project_Description || `Project #${projectId}`}
+            </div>
+          )}
         </div>
       </header>
 
@@ -273,17 +350,27 @@ export default function App() {
         {error && <div className="error-box">{error}</div>}
         {loading && <div className="loading-box">Loading...</div>}
 
+        {/* Step 0: Enter Project ID */}
         {step === 0 && !loading && (
           <div className="card">
             <h2>Enter Project ID</h2>
             <p className="hint">Or pass ?project_id=123 in the URL</p>
             <div className="input-row">
-              <input type="text" value={projectId} onChange={e => setProjectId(e.target.value)} placeholder="Zoho Project ID" className="input" />
-              <button onClick={() => loadProject(projectId)} className="btn btn-primary" disabled={!projectId}>Load Project</button>
+              <input
+                type="text"
+                value={projectId}
+                onChange={e => setProjectId(e.target.value)}
+                placeholder="Zoho Project ID"
+                className="input"
+              />
+              <button onClick={() => loadProject(projectId)} className="btn btn-primary" disabled={!projectId}>
+                Load Project
+              </button>
             </div>
           </div>
         )}
 
+        {/* Step 1: BOM */}
         {step === 1 && (
           <div className="card">
             <div className="card-header">
@@ -295,13 +382,29 @@ export default function App() {
             </div>
             <div className="table-wrap">
               <table className="table">
-                <thead><tr><th></th><th>Mark</th><th>Type</th><th>Form</th><th>Material</th><th>Spec</th><th>Size</th><th>Qty</th><th>Length</th><th>Width</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th></th><th>Mark</th><th>Type</th><th>Form</th><th>Material</th>
+                    <th>Spec</th><th>Size</th><th>Qty</th><th>Length</th><th>Width</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {bom.map(item => (
                     <tr key={item.id} className={selected.has(item.id) ? 'row-selected' : ''}>
-                      <td><input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelect(item.id)} disabled={!item.nest_type} /></td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(item.id)}
+                          onChange={() => toggleSelect(item.id)}
+                          disabled={!item.nest_type}
+                        />
+                      </td>
                       <td className="mono">{item.bom_item}</td>
-                      <td><span className={`badge ${item.nest_type === 'Linear' ? 'badge-1d' : item.nest_type === 'Panel' ? 'badge-2d' : ''}`}>{item.nest_type || '—'}</span></td>
+                      <td>
+                        <span className={`badge ${item.nest_type === 'Linear' ? 'badge-1d' : item.nest_type === 'Panel' ? 'badge-2d' : ''}`}>
+                          {item.nest_type || '—'}
+                        </span>
+                      </td>
                       <td>{item.form_type_name}</td>
                       <td>{item.material_name}</td>
                       <td>{item.spec_name}</td>
@@ -316,33 +419,50 @@ export default function App() {
             </div>
             <div className="card-footer">
               <span className="count">{selected.size} items selected</span>
-              <button onClick={() => setStep(2)} className="btn btn-primary" disabled={selected.size === 0}>Next → Configure</button>
+              <button onClick={() => setStep(2)} className="btn btn-primary" disabled={selected.size === 0}>
+                Next → Configure
+              </button>
             </div>
           </div>
         )}
 
+        {/* Step 2: Configure */}
         {step === 2 && (
           <div className="card">
             <h2>Nesting Configuration</h2>
             <div className="config-grid">
               <div className="config-section">
                 <h3>Kerf Settings</h3>
-                <div className="field"><label>1D Kerf (inches)</label><input type="number" step="0.0625" value={kerf1D} onChange={e => setKerf1D(parseFloat(e.target.value) || 0)} className="input" /></div>
-                <div className="field"><label>2D Kerf (inches)</label><input type="number" step="0.0625" value={kerf2D} onChange={e => setKerf2D(parseFloat(e.target.value) || 0)} className="input" /></div>
+                <div className="field">
+                  <label>1D Kerf (inches)</label>
+                  <input type="number" step="0.0625" value={kerf1D} onChange={e => setKerf1D(parseFloat(e.target.value) || 0)} className="input" />
+                </div>
+                <div className="field">
+                  <label>2D Kerf (inches)</label>
+                  <input type="number" step="0.0625" value={kerf2D} onChange={e => setKerf2D(parseFloat(e.target.value) || 0)} className="input" />
+                </div>
               </div>
               <div className="config-section">
                 <h3>Grain Direction (2D Panels)</h3>
                 {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').map(item => (
                   <div key={item.id} className="field">
-                    <label>Mark {item.bom_item} — {item.form_type_name} | {item.material_type_name} | {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"</label>
-                    <select value={grainDirections[item.id] || 'none'} onChange={e => setGrainDirections(prev => ({ ...prev, [item.id]: e.target.value }))} className="input">
+                    <label>
+                      Mark {item.bom_item} — {item.form_type_name} | {item.material_type_name} | {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"
+                    </label>
+                    <select
+                      value={grainDirections[item.id] || 'none'}
+                      onChange={e => setGrainDirections(prev => ({ ...prev, [item.id]: e.target.value }))}
+                      className="input"
+                    >
                       <option value="none">None (allow rotation)</option>
                       <option value="length">Length</option>
                       <option value="width">Width</option>
                     </select>
                   </div>
                 ))}
-                {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').length === 0 && <p className="hint">No 2D panels selected</p>}
+                {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').length === 0 && (
+                  <p className="hint">No 2D panels selected</p>
+                )}
               </div>
 
               <div className="config-section config-full">
@@ -354,39 +474,68 @@ export default function App() {
                       <button onClick={disableAllStock} className="btn btn-small">Use None</button>
                     </div>
                     <div className="filter-tabs">
-                      {[['all', 'All', matchedStock.length], ['library', 'Library', matchedStock.filter(s => s.source === 'library').length], ['custom', 'Custom', matchedStock.filter(s => s.source === 'custom').length]].map(([k, l, n]) => (
-                        <button key={k} className={`filter-btn ${stockFilter === k ? 'active' : ''}`} onClick={() => setStockFilter(k)}>{l} ({n})</button>
+                      {[
+                        ['all', 'All', matchedStock.length],
+                        ['library', 'Library', matchedStock.filter(s => s.source === 'library').length],
+                        ['custom', 'Custom', matchedStock.filter(s => s.source === 'custom').length],
+                      ].map(([k, l, n]) => (
+                        <button key={k} className={`filter-btn ${stockFilter === k ? 'active' : ''}`} onClick={() => setStockFilter(k)}>
+                          {l} ({n})
+                        </button>
                       ))}
                     </div>
                   </div>
                 </div>
-                <p className="hint"><strong>{activeStockCount}</strong> of {matchedStock.length} stock sizes enabled for nesting. Unchecked sizes will be excluded.</p>
+                <p className="hint">
+                  <strong>{activeStockCount}</strong> of {matchedStock.length} stock sizes enabled for nesting. Unchecked sizes will be excluded.
+                </p>
                 <table className="stock-table">
-                  <thead><tr><th style={{width:30}}>Use</th><th>Source</th><th>Form Type</th><th>Material</th><th>Length</th><th>Width</th><th>Standard</th><th></th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 30 }}>Use</th><th>Source</th><th>Form Type</th>
+                      <th>Material</th><th>Length</th><th>Width</th><th>Standard</th><th></th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {getFilteredStock().map(s => (
                       <tr key={s.id} className={`${s.source === 'custom' ? 'stock-row-custom' : ''} ${!enabledStock.has(s.id) ? 'stock-disabled' : ''}`}>
                         <td><input type="checkbox" checked={enabledStock.has(s.id)} onChange={() => toggleStock(s.id)} /></td>
-                        <td><span className={`badge ${s.source === 'library' ? 'badge-lib' : 'badge-custom'}`}>{s.source === 'library' ? 'Library' : 'Custom'}</span></td>
+                        <td>
+                          <span className={`badge ${s.source === 'library' ? 'badge-lib' : 'badge-custom'}`}>
+                            {s.source === 'library' ? 'Library' : 'Custom'}
+                          </span>
+                        </td>
                         <td>{s.form_type_name || s.form_type}</td>
                         <td>{s.material_type_name || s.material_type}</td>
                         <td className="num">{inToFt(s.stock_length)}</td>
                         <td className="num">{s.stock_width && parseFloat(s.stock_width) > 0 ? inToFt(s.stock_width) : '—'}</td>
                         <td>{s.is_standard}</td>
-                        <td>{s.source === 'custom' && <button onClick={() => removeCustomStock(s.id)} className="btn btn-small btn-danger">Remove</button>}</td>
+                        <td>
+                          {s.source === 'custom' && (
+                            <button onClick={() => removeCustomStock(s.id)} className="btn btn-small btn-danger">Remove</button>
+                          )}
+                        </td>
                       </tr>
                     ))}
-                    {getFilteredStock().length === 0 && <tr><td colSpan={8} style={{textAlign:'center',color:'#999',padding:16}}>No stock items</td></tr>}
+                    {getFilteredStock().length === 0 && (
+                      <tr><td colSpan={8} style={{ textAlign: 'center', color: '#999', padding: 16 }}>No stock items</td></tr>
+                    )}
                   </tbody>
                 </table>
                 <div className="add-stock-row">
                   <div className="mini-field">
                     <label>Form Type</label>
-                    <select value={newStock.form_type} onChange={e => setNewStock(p => ({ ...p, form_type: e.target.value }))}><option value="">Select...</option>{formTypes.map(ft => <option key={ft} value={ft}>{ft}</option>)}</select>
+                    <select value={newStock.form_type} onChange={e => setNewStock(p => ({ ...p, form_type: e.target.value }))}>
+                      <option value="">Select...</option>
+                      {formTypes.map(ft => <option key={ft} value={ft}>{ft}</option>)}
+                    </select>
                   </div>
                   <div className="mini-field">
                     <label>Material</label>
-                    <select value={newStock.material_type} onChange={e => setNewStock(p => ({ ...p, material_type: e.target.value }))}><option value="">Select...</option>{matTypes.map(mt => <option key={mt} value={mt}>{mt}</option>)}</select>
+                    <select value={newStock.material_type} onChange={e => setNewStock(p => ({ ...p, material_type: e.target.value }))}>
+                      <option value="">Select...</option>
+                      {matTypes.map(mt => <option key={mt} value={mt}>{mt}</option>)}
+                    </select>
                   </div>
                   <div className="mini-field">
                     <label>Length (in)</label>
@@ -396,52 +545,107 @@ export default function App() {
                     <label>Width (in, 2D only)</label>
                     <input type="number" step="0.25" value={newStock.stock_width} onChange={e => setNewStock(p => ({ ...p, stock_width: e.target.value }))} placeholder="Optional" />
                   </div>
-                  <button onClick={addCustomStock} className="btn btn-add" disabled={!newStock.form_type || !newStock.material_type || !newStock.stock_length}>+ Add Stock</button>
+                  <button onClick={addCustomStock} className="btn btn-add" disabled={!newStock.form_type || !newStock.material_type || !newStock.stock_length}>
+                    + Add Stock
+                  </button>
                 </div>
               </div>
             </div>
             <div className="card-footer">
               <button onClick={() => setStep(1)} className="btn">← Back</button>
-              <div className="btn-group" style={{alignItems:'center'}}>
+              <div className="btn-group" style={{ alignItems: 'center' }}>
                 <span className="count">{activeStockCount} stock sizes active</span>
-                <button onClick={runNesting} className="btn btn-primary" disabled={loading || activeStockCount === 0}>{loading ? 'Running...' : 'Run Nesting'}</button>
+                <button onClick={runNesting} className="btn btn-primary" disabled={loading || activeStockCount === 0}>
+                  {loading ? 'Running...' : 'Run Nesting'}
+                </button>
               </div>
             </div>
           </div>
         )}
 
+        {/* Step 3: Results */}
         {step === 3 && results && (
           <div className="card">
             <h2>Nesting Results</h2>
             {results.summary && (
               <div className="summary-bar">
-                <div className="summary-item"><span className="summary-val">{results.summary.total_stock_pieces}</span><span className="summary-label">Stock Pieces</span></div>
-                <div className="summary-item"><span className="summary-val">{results.summary.avg_waste_pct_1d?.toFixed(1)}%</span><span className="summary-label">Avg Waste (1D)</span></div>
-                <div className="summary-item"><span className="summary-val">{inToFt(results.summary.total_remnant_length_in)}</span><span className="summary-label">Total Remnant</span></div>
-                {results.summary.errors?.length > 0 && <div className="summary-item summary-error"><span className="summary-val">{results.summary.errors.length}</span><span className="summary-label">Errors</span></div>}
+                <div className="summary-item">
+                  <span className="summary-val">{results.summary.total_stock_pieces}</span>
+                  <span className="summary-label">Stock Pieces</span>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-val">{results.summary.avg_waste_pct_1d?.toFixed(1)}%</span>
+                  <span className="summary-label">Avg Waste (1D)</span>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-val">{inToFt(results.summary.total_remnant_length_in)}</span>
+                  <span className="summary-label">Total Remnant</span>
+                </div>
+                {results.summary.errors?.length > 0 && (
+                  <div className="summary-item summary-error">
+                    <span className="summary-val">{results.summary.errors.length}</span>
+                    <span className="summary-label">Errors</span>
+                  </div>
+                )}
               </div>
             )}
+
+            {/* 1D Results */}
             {results.results_1d?.length > 0 && (
               <div className="result-section">
                 <h3>1D — Linear Results</h3>
                 {groupResults(results.results_1d, results._nameLookup).map((group, gi) => (
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
-                      <h4>{group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces</h4>
+                      <h4>
+                        {group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces
+                      </h4>
                     </div>
                     {group.patterns.map((pattern, pi) => {
                       const r = pattern.representative;
                       return (
                         <div key={pi} className="stock-result">
                           <div className="stock-result-header">
-                            <span className="stock-label">Cut Pattern {pi + 1} × {pattern.count} piece{pattern.count > 1 ? 's' : ''}</span>
+                            <span className="stock-label">
+                              Cut Pattern {pi + 1} × {pattern.count} piece{pattern.count > 1 ? 's' : ''}
+                            </span>
                             <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
                           </div>
                           <div className="bar-visual">
-                            {r.cuts?.map((cut, j) => (<div key={j} className="bar-cut" style={{ width: `${(cut.cut_length / r.stock_length_in) * 100}%` }} title={`${cut.part_mark}: ${cut.cut_length}"`}><span>{cut.part_mark} ({cut.cut_length}")</span></div>))}
-                            {r.remnant_length_in > 0 && <div className="bar-remnant" style={{ width: `${(r.remnant_length_in / r.stock_length_in) * 100}%` }}><span>{r.remnant_length_in.toFixed(1)}"</span></div>}
+                            {r.cuts?.map((cut, j) => (
+                              <div
+                                key={j}
+                                className="bar-cut"
+                                style={{ width: `${(cut.cut_length / r.stock_length_in) * 100}%` }}
+                                title={`${cut.part_mark}: ${cut.cut_length}"`}
+                              >
+                                <span>{cut.part_mark} ({cut.cut_length}")</span>
+                              </div>
+                            ))}
+                            {r.remnant_length_in > 0 && (
+                              <div className="bar-remnant" style={{ width: `${(r.remnant_length_in / r.stock_length_in) * 100}%` }}>
+                                <span>{r.remnant_length_in.toFixed(1)}"</span>
+                              </div>
+                            )}
                           </div>
-                          <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Qty on Stock</th><th>Total Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => { const bomItem = bom.find(b => String(b.id) === String(cut.bom_line_id)); return (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.quantity_on_this_stock}</td><td className="num">{bomItem?.quantity || '—'}</td></tr>); })}</tbody></table>
+                          <table className="cut-table">
+                            <thead>
+                              <tr><th>Mark</th><th>Length</th><th>Qty on Stock</th><th>Total Qty</th></tr>
+                            </thead>
+                            <tbody>
+                              {r.cuts?.map((cut, j) => {
+                                const bomItem = bom.find(b => String(b.id) === String(cut.bom_line_id));
+                                return (
+                                  <tr key={j}>
+                                    <td className="mono">{cut.part_mark}</td>
+                                    <td className="num">{cut.cut_length}"</td>
+                                    <td className="num">{cut.quantity_on_this_stock}</td>
+                                    <td className="num">{bomItem?.quantity || '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
                       );
                     })}
@@ -449,24 +653,48 @@ export default function App() {
                 ))}
               </div>
             )}
+
+            {/* 2D Results */}
             {results.results_2d?.length > 0 && (
               <div className="result-section">
                 <h3>2D — Panel Results</h3>
                 {groupResults(results.results_2d, results._nameLookup).map((group, gi) => (
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
-                      <h4>{group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces</h4>
+                      <h4>
+                        {group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces
+                      </h4>
                     </div>
                     {group.patterns.map((pattern, pi) => {
                       const r = pattern.representative;
                       return (
                         <div key={pi} className="stock-result">
                           <div className="stock-result-header">
-                            <span className="stock-label">Cut Pattern {pi + 1} × {pattern.count} piece{pattern.count > 1 ? 's' : ''}</span>
+                            <span className="stock-label">
+                              Cut Pattern {pi + 1} × {pattern.count} piece{pattern.count > 1 ? 's' : ''}
+                            </span>
                             <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
                           </div>
                           {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
-                          <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty on Stock</th><th>Total Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => { const bomItem = bom.find(b => String(b.id) === String(cut.bom_line_id)); return (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.cut_width}"</td><td className="num">{cut.quantity_on_this_stock}</td><td className="num">{bomItem?.quantity || '—'}</td></tr>); })}</tbody></table>
+                          <table className="cut-table">
+                            <thead>
+                              <tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty on Stock</th><th>Total Qty</th></tr>
+                            </thead>
+                            <tbody>
+                              {r.cuts?.map((cut, j) => {
+                                const bomItem = bom.find(b => String(b.id) === String(cut.bom_line_id));
+                                return (
+                                  <tr key={j}>
+                                    <td className="mono">{cut.part_mark}</td>
+                                    <td className="num">{cut.cut_length}"</td>
+                                    <td className="num">{cut.cut_width}"</td>
+                                    <td className="num">{cut.quantity_on_this_stock}</td>
+                                    <td className="num">{bomItem?.quantity || '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
                       );
                     })}
@@ -474,14 +702,28 @@ export default function App() {
                 ))}
               </div>
             )}
+
+            {/* Errors */}
             {results.summary?.errors?.length > 0 && (
-              <div className="result-section"><h3>Errors</h3>{results.summary.errors.map((e, i) => (<div key={i} className="error-box">{e}</div>))}</div>
+              <div className="result-section">
+                <h3>Errors</h3>
+                {results.summary.errors.map((e, i) => (
+                  <div key={i} className="error-box">{e}</div>
+                ))}
+              </div>
             )}
+
             <div className="card-footer">
               <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
-              <button onClick={saveToZoho} className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Import to Project'}</button>
+              <button onClick={saveToZoho} className="btn btn-primary" disabled={saving}>
+                {saving ? 'Saving...' : 'Import to Project'}
+              </button>
             </div>
-            {saveStatus && <div className={`save-status ${saveStatus.startsWith('Error') ? 'save-error' : 'save-success'}`}>{saveStatus}</div>}
+            {saveStatus && (
+              <div className={`save-status ${saveStatus.startsWith('Error') ? 'save-error' : 'save-success'}`}>
+                {saveStatus}
+              </div>
+            )}
           </div>
         )}
       </main>
