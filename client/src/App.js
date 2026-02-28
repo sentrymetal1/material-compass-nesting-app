@@ -97,9 +97,11 @@ export default function App() {
   function disableAllStock() { setEnabledStock(new Set()); }
 
   function addCustomStock() {
+  function addCustomStock() {
     if (!newStock.form_type || !newStock.material_type || !newStock.stock_length) return;
     const id = nextCustomId;
-    const entry = { id, form_type: newStock.form_type, material_type: newStock.material_type, stock_length: parseFloat(newStock.stock_length), stock_width: newStock.stock_width ? parseFloat(newStock.stock_width) : null, density: 0, is_standard: 'No', source: 'custom' };
+    const matchingBom = selectedBom.find(b => b.form_type_name === newStock.form_type && b.material_type_name === newStock.material_type);
+    const entry = { id, form_type: matchingBom?.form_type_id || newStock.form_type, form_type_name: newStock.form_type, material_type: matchingBom?.material_type_id || newStock.material_type, material_type_name: newStock.material_type, stock_length: parseFloat(newStock.stock_length), stock_width: newStock.stock_width ? parseFloat(newStock.stock_width) : null, density: 0, is_standard: 'No', source: 'custom' };
     setStock(prev => [...prev, entry]);
     setEnabledStock(prev => { const n = new Set(prev); n.add(id); return n; });
     setNextCustomId(prev => prev + 1);
