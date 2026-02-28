@@ -7,6 +7,7 @@ function getProjectIdFromURL() {
   const params = new URLSearchParams(window.location.search);
   return params.get('project_id') || params.get('id') || '';
 }
+
 function inToFt(val) {
   const n = parseFloat(val);
   if (!n || n === 0) return '—';
@@ -16,13 +17,14 @@ function inToFt(val) {
   if (rem === 0) return `${n}" (${ft}')`;
   return `${n}" (${ft}'${rem}")`;
 }
-function groupResults(results) {
+
+function groupResults(results, nameLookup) {
   if (!results || results.length === 0) return [];
   const materialGroups = {};
   for (const r of results) {
     const key = `${r.form_type}|${r.material_origin}|${r.stock_length_in}|${r.stock_width_in || 0}`;
     if (!materialGroups[key]) {
-      materialGroups[key] = { form_type: r.form_type, material_origin: r.material_origin, stock_length_in: r.stock_length_in, stock_width_in: r.stock_width_in, form_type_name: r.cuts?.[0]?.form_type_name || r.form_type, material_type_name: r.cuts?.[0]?.mat_type_name || r.material_origin, patterns: [] };
+      materialGroups[key] = { form_type: r.form_type, material_origin: r.material_origin, stock_length_in: r.stock_length_in, stock_width_in: r.stock_width_in, form_type_name: (nameLookup && nameLookup[r.form_type]) || r.form_type, material_type_name: (nameLookup && nameLookup[r.material_origin]) || r.material_origin, patterns: [] };
     }
     const cutSig = (r.cuts || []).map(c => `${c.part_mark}:${c.cut_length}:${c.cut_width || 0}:${c.quantity_on_this_stock}`).join('|');
     const existing = materialGroups[key].patterns.find(p => p.signature === cutSig);
@@ -109,18 +111,18 @@ export default function App() {
     setEnabledStock(prev => { const n = new Set(prev); n.delete(id); return n; });
   }
 
+  const selectedBom = bom.filter(b => selected.has(b.id) && b.nest_type);
+  const formTypes = [...new Set(selectedBom.map(b => b.form_type_name).filter(Boolean))];
+  const matTypes = [...new Set(selectedBom.map(b => b.material_type_name).filter(Boolean))];
+  const bomKeys = new Set(selectedBom.map(b => `${b.form_type_id}|${b.material_type_id}`));
+  const matchedStock = stock.filter(s => bomKeys.has(`${s.form_type}|${s.material_type}`));
+  const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length;
+
   function getFilteredStock() {
     if (stockFilter === 'library') return matchedStock.filter(s => s.source === 'library');
     if (stockFilter === 'custom') return matchedStock.filter(s => s.source === 'custom');
     return matchedStock;
   }
-
-  const selectedBom = bom.filter(b => selected.has(b.id) && b.nest_type);
-  const formTypes = [...new Set(selectedBom.map(b => b.form_type_name).filter(Boolean))];
-  const matTypes = [...new Set(selectedBom.map(b => b.material_type_name).filter(Boolean))];
-  const bomKeys = new Set(selectedBom.map(b => `${b.form_type_id}|${b.material_type_id}`));
-const matchedStock = stock.filter(s => bomKeys.has(`${s.form_type}|${s.material_type}`));
-const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length;
 
   async function runNesting() {
     setLoading(true);
@@ -210,6 +212,12 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
       const resp = await fetch(`${API}/api/nest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!resp.ok) throw new Error('Nesting API error');
       const data = await resp.json();
+      const nameLookup = {};
+      [...parts1D, ...parts2D].forEach(p => {
+        nameLookup[p.form_type] = p.form_type_name;
+        nameLookup[p.material_origin] = p.mat_type_name;
+      });
+      data._nameLookup = nameLookup;
       setResults(data);
       setStep(3);
     } catch (err) {
@@ -297,8 +305,8 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                       <td>{item.spec_name}</td>
                       <td>{item.material_type_name}</td>
                       <td className="num">{item.quantity}</td>
-                    <td className="num">{item.length_nest ? inToFt(item.length_nest) : '—'}</td>
-<td className="num">{item.width_nest && parseFloat(item.width_nest) > 0 ? inToFt(item.width_nest) : '—'}</td>
+                      <td className="num">{item.length_nest ? inToFt(item.length_nest) : '—'}</td>
+                      <td className="num">{item.width_nest && parseFloat(item.width_nest) > 0 ? inToFt(item.width_nest) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -324,7 +332,7 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                 <h3>Grain Direction (2D Panels)</h3>
                 {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').map(item => (
                   <div key={item.id} className="field">
-                   <label>Mark {item.bom_item} — {item.form_type_name} | {item.material_type_name} | {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"</label>
+                    <label>Mark {item.bom_item} — {item.form_type_name} | {item.material_type_name} | {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"</label>
                     <select value={grainDirections[item.id] || 'none'} onChange={e => setGrainDirections(prev => ({ ...prev, [item.id]: e.target.value }))} className="input">
                       <option value="none">None (allow rotation)</option>
                       <option value="length">Length</option>
@@ -344,13 +352,13 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                       <button onClick={disableAllStock} className="btn btn-small">Use None</button>
                     </div>
                     <div className="filter-tabs">
-                   {[['all', 'All', matchedStock.length], ['library', 'Library', matchedStock.filter(s => s.source === 'library').length], ['custom', 'Custom', matchedStock.filter(s => s.source === 'custom').length]].map(([k, l, n]) => (
+                      {[['all', 'All', matchedStock.length], ['library', 'Library', matchedStock.filter(s => s.source === 'library').length], ['custom', 'Custom', matchedStock.filter(s => s.source === 'custom').length]].map(([k, l, n]) => (
                         <button key={k} className={`filter-btn ${stockFilter === k ? 'active' : ''}`} onClick={() => setStockFilter(k)}>{l} ({n})</button>
                       ))}
                     </div>
                   </div>
                 </div>
-                <p className="hint"><strong>{activeStockCount}</strong> of {stock.length} stock sizes enabled for nesting. Unchecked sizes will be excluded.</p>
+                <p className="hint"><strong>{activeStockCount}</strong> of {matchedStock.length} stock sizes enabled for nesting. Unchecked sizes will be excluded.</p>
                 <table className="stock-table">
                   <thead><tr><th style={{width:30}}>Use</th><th>Source</th><th>Form Type</th><th>Material</th><th>Length</th><th>Width</th><th>Standard</th><th></th></tr></thead>
                   <tbody>
@@ -360,8 +368,8 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                         <td><span className={`badge ${s.source === 'library' ? 'badge-lib' : 'badge-custom'}`}>{s.source === 'library' ? 'Library' : 'Custom'}</span></td>
                         <td>{s.form_type_name || s.form_type}</td>
                         <td>{s.material_type_name || s.material_type}</td>
-                       <td className="num">{inToFt(s.stock_length)}</td>
-<td className="num">{s.stock_width && parseFloat(s.stock_width) > 0 ? inToFt(s.stock_width) : '—'}</td>
+                        <td className="num">{inToFt(s.stock_length)}</td>
+                        <td className="num">{s.stock_width && parseFloat(s.stock_width) > 0 ? inToFt(s.stock_width) : '—'}</td>
                         <td>{s.is_standard}</td>
                         <td>{s.source === 'custom' && <button onClick={() => removeCustomStock(s.id)} className="btn btn-small btn-danger">Remove</button>}</td>
                       </tr>
@@ -407,14 +415,14 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
               <div className="summary-bar">
                 <div className="summary-item"><span className="summary-val">{results.summary.total_stock_pieces}</span><span className="summary-label">Stock Pieces</span></div>
                 <div className="summary-item"><span className="summary-val">{results.summary.avg_waste_pct_1d?.toFixed(1)}%</span><span className="summary-label">Avg Waste (1D)</span></div>
-                <div className="summary-item"><span className="summary-val">{results.summary.total_remnant_length_in?.toFixed(1)}"</span><span className="summary-label">Total Remnant</span></div>
+                <div className="summary-item"><span className="summary-val">{inToFt(results.summary.total_remnant_length_in)}</span><span className="summary-label">Total Remnant</span></div>
                 {results.summary.errors?.length > 0 && <div className="summary-item summary-error"><span className="summary-val">{results.summary.errors.length}</span><span className="summary-label">Errors</span></div>}
               </div>
             )}
-           {results.results_1d?.length > 0 && (
+            {results.results_1d?.length > 0 && (
               <div className="result-section">
                 <h3>1D — Linear Results</h3>
-                {groupResults(results.results_1d).map((group, gi) => (
+                {groupResults(results.results_1d, results._nameLookup).map((group, gi) => (
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
                       <h4>{group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces</h4>
@@ -431,7 +439,7 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                             {r.cuts?.map((cut, j) => (<div key={j} className="bar-cut" style={{ width: `${(cut.cut_length / r.stock_length_in) * 100}%` }} title={`${cut.part_mark}: ${cut.cut_length}"`}><span>{cut.part_mark} ({cut.cut_length}")</span></div>))}
                             {r.remnant_length_in > 0 && <div className="bar-remnant" style={{ width: `${(r.remnant_length_in / r.stock_length_in) * 100}%` }}><span>{r.remnant_length_in.toFixed(1)}"</span></div>}
                           </div>
-                          <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.quantity_on_this_stock}</td></tr>))}</tbody></table>
+                          <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Qty on Stock</th><th>Total Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => { const bomItem = bom.find(b => String(b.id) === String(cut.bom_line_id)); return (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.quantity_on_this_stock}</td><td className="num">{bomItem?.quantity || '—'}</td></tr>); })}</tbody></table>
                         </div>
                       );
                     })}
@@ -439,10 +447,10 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                 ))}
               </div>
             )}
-           {results.results_2d?.length > 0 && (
+            {results.results_2d?.length > 0 && (
               <div className="result-section">
                 <h3>2D — Panel Results</h3>
-                {groupResults(results.results_2d).map((group, gi) => (
+                {groupResults(results.results_2d, results._nameLookup).map((group, gi) => (
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
                       <h4>{group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces</h4>
@@ -456,7 +464,7 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                             <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
                           </div>
                           {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
-                          <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.cut_width}"</td><td className="num">{cut.quantity_on_this_stock}</td></tr>))}</tbody></table>
+                          <table className="cut-table"><thead><tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty on Stock</th><th>Total Qty</th></tr></thead><tbody>{r.cuts?.map((cut, j) => { const bomItem = bom.find(b => String(b.id) === String(cut.bom_line_id)); return (<tr key={j}><td className="mono">{cut.part_mark}</td><td className="num">{cut.cut_length}"</td><td className="num">{cut.cut_width}"</td><td className="num">{cut.quantity_on_this_stock}</td><td className="num">{bomItem?.quantity || '—'}</td></tr>); })}</tbody></table>
                         </div>
                       );
                     })}
