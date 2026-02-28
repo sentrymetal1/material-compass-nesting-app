@@ -82,15 +82,17 @@ export default function App() {
   }
 
   function getFilteredStock() {
-    if (stockFilter === 'library') return stock.filter(s => s.source === 'library');
-    if (stockFilter === 'custom') return stock.filter(s => s.source === 'custom');
-    return stock;
+    if (stockFilter === 'library') return matchedStock.filter(s => s.source === 'library');
+    if (stockFilter === 'custom') return matchedStock.filter(s => s.source === 'custom');
+    return matchedStock;
   }
 
   const selectedBom = bom.filter(b => selected.has(b.id) && b.nest_type);
   const formTypes = [...new Set(selectedBom.map(b => b.form_type_name).filter(Boolean))];
   const matTypes = [...new Set(selectedBom.map(b => b.material_type_name).filter(Boolean))];
-  const activeStockCount = stock.filter(s => enabledStock.has(s.id)).length;
+  const bomKeys = new Set(selectedBom.map(b => `${b.form_type_id}|${b.material_type_id}`));
+const matchedStock = stock.filter(s => bomKeys.has(`${s.form_type}|${s.material_type}`));
+const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length;
 
   async function runNesting() {
     setLoading(true);
@@ -314,7 +316,7 @@ export default function App() {
                       <button onClick={disableAllStock} className="btn btn-small">Use None</button>
                     </div>
                     <div className="filter-tabs">
-                      {[['all', 'All', stock.length], ['library', 'Library', stock.filter(s => s.source === 'library').length], ['custom', 'Custom', stock.filter(s => s.source === 'custom').length]].map(([k, l, n]) => (
+                   {[['all', 'All', matchedStock.length], ['library', 'Library', matchedStock.filter(s => s.source === 'library').length], ['custom', 'Custom', matchedStock.filter(s => s.source === 'custom').length]].map(([k, l, n]) => (
                         <button key={k} className={`filter-btn ${stockFilter === k ? 'active' : ''}`} onClick={() => setStockFilter(k)}>{l} ({n})</button>
                       ))}
                     </div>
