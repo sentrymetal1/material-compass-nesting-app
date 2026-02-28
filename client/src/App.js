@@ -7,6 +7,15 @@ function getProjectIdFromURL() {
   const params = new URLSearchParams(window.location.search);
   return params.get('project_id') || params.get('id') || '';
 }
+function inToFt(val) {
+  const n = parseFloat(val);
+  if (!n || n === 0) return '—';
+  const ft = Math.floor(n / 12);
+  const rem = +(n % 12).toFixed(2);
+  if (ft === 0) return `${n}"`;
+  if (rem === 0) return `${n}" (${ft}')`;
+  return `${n}" (${ft}'${rem}")`;
+}
 
 export default function App() {
   const [projectId, setProjectId] = useState(getProjectIdFromURL());
@@ -269,8 +278,8 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                       <td>{item.spec_name}</td>
                       <td>{item.material_type_name}</td>
                       <td className="num">{item.quantity}</td>
-                      <td className="num">{item.length_nest ? `${parseFloat(item.length_nest)}"` : '—'}</td>
-                      <td className="num">{item.width_nest && parseFloat(item.width_nest) > 0 ? `${parseFloat(item.width_nest)}"` : '—'}</td>
+                    <td className="num">{item.length_nest ? inToFt(item.length_nest) : '—'}</td>
+<td className="num">{item.width_nest && parseFloat(item.width_nest) > 0 ? inToFt(item.width_nest) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -332,8 +341,8 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                         <td><span className={`badge ${s.source === 'library' ? 'badge-lib' : 'badge-custom'}`}>{s.source === 'library' ? 'Library' : 'Custom'}</span></td>
                         <td>{s.form_type_name || s.form_type}</td>
                         <td>{s.material_type_name || s.material_type}</td>
-                        <td className="num">{parseFloat(s.stock_length)}"</td>
-                        <td className="num">{s.stock_width && parseFloat(s.stock_width) > 0 ? `${parseFloat(s.stock_width)}"` : '—'}</td>
+                       <td className="num">{inToFt(s.stock_length)}</td>
+<td className="num">{s.stock_width && parseFloat(s.stock_width) > 0 ? inToFt(s.stock_width) : '—'}</td>
                         <td>{s.is_standard}</td>
                         <td>{s.source === 'custom' && <button onClick={() => removeCustomStock(s.id)} className="btn btn-small btn-danger">Remove</button>}</td>
                       </tr>
@@ -389,7 +398,7 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                 {results.results_1d.map((r, i) => (
                   <div key={i} className="stock-result">
                     <div className="stock-result-header">
-                      <span className="stock-label">Stock #{r.stock_sequence}: {r.stock_length_in}" length</span>
+                    <span className="stock-label">Stock #{r.stock_sequence}: {inToFt(r.stock_length_in)} length</span>
                       <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
                     </div>
                     <div className="bar-visual">
@@ -407,7 +416,7 @@ const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length
                 {results.results_2d.map((r, i) => (
                   <div key={i} className="stock-result">
                     <div className="stock-result-header">
-                      <span className="stock-label">Stock #{r.stock_sequence}: {r.stock_length_in}" × {r.stock_width_in}"</span>
+                      <span className="stock-label">Stock #{r.stock_sequence}: {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}</span>
                       <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
                     </div>
                     {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
