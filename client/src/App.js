@@ -616,7 +616,7 @@ function addCustomStock() {
                             <span className="stock-label">
                               Cut Pattern {pi + 1} × {pattern.count} piece{pattern.count > 1 ? 's' : ''}
                             </span>
-                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
+                           <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {inToFt(r.remnant_length_in)}</span>
                           </div>
                           <div className="bar-visual">
                             {r.cuts?.map((cut, j) => (
@@ -680,7 +680,7 @@ function addCustomStock() {
                             <span className="stock-label">
                               Cut Pattern {pi + 1} × {pattern.count} piece{pattern.count > 1 ? 's' : ''}
                             </span>
-                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
+                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {r.remnant_area_in2?.toFixed(1)} sq in</span>
                           </div>
                           {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
                           <table className="cut-table">
