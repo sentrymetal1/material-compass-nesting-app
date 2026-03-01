@@ -371,23 +371,36 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     const notesStr = `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${wastePct}%${supersededCount > 0 ? ` | Superseded ${supersededCount} previous run(s)` : ''}`;
 
     try {
+      // Build Run_Date in Zoho's format: "Mar 01, 2026 14:30:00"
+      const now = new Date();
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const runDateStr = `${months[now.getMonth()]} ${now.getDate().toString().padStart(2,'0')}, ${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
+
       const patchData = {
+        Run_Date: runDateStr,
         Total_Stock_Pieces: (savedCount1D + savedCount2D) || 0,
         Total_Waste_Inches: totalWaste,
         Notes: notesStr,
       };
       console.log('Header PATCH payload:', JSON.stringify(patchData));
+      console.log('Header PATCH URL:', `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`);
       
       const patchResp = await axios.patch(
         `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`,
         {
           data: patchData,
         },
-        { headers: zohoHeaders(token) }
+        { 
+          headers: {
+            ...zohoHeaders(token),
+            'Content-Type': 'application/json',
+          }
+        }
       );
       console.log('Header PATCH response:', JSON.stringify(patchResp.data));
     } catch (patchErr) {
-      console.error('ERROR updating run header summary:', patchErr.response?.data || patchErr.message);
+      console.error('ERROR updating run header summary:', JSON.stringify(patchErr.response?.data || patchErr.message));
+      console.error('ERROR status:', patchErr.response?.status);
       // Don't fail the whole save — the results are already saved
     }
 
