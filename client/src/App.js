@@ -613,7 +613,7 @@ function addCustomStock() {
                       return (
                         <div key={pi} className="stock-result">
                           <div className="stock-result-header">
-                   <span className="stock-label">
+                  <span className="stock-label">
   Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)}
   {(() => {
     const totalUsed = r.cuts?.reduce((sum, c) => sum + c.cut_length + kerf1D, 0) || 0;
@@ -622,10 +622,14 @@ function addCustomStock() {
       .map(s => parseFloat(s.stock_length))
       .sort((a, b) => b - a);
     const nextShorter = shorterStocks[0];
+    const warnings = [];
     if (nextShorter && totalUsed > nextShorter && totalUsed <= nextShorter + 1) {
-      return <span style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px'}}>⚠ Within 1" of {inToFt(nextShorter)} stock — confirm kerf, shorter stock may work</span>;
+      warnings.push(`Within 1" of ${inToFt(nextShorter)} stock — confirm kerf, shorter stock may work`);
     }
-    return null;
+    if (r.remnant_length_in >= 0 && r.remnant_length_in <= 1 && r.cuts?.length > 0) {
+      warnings.push('Tight fit on current stock — verify kerf allowance');
+    }
+    return warnings.map((w, wi) => <span key={wi} style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px', display:'inline-block'}}>⚠ {w}</span>);
   })()}
 </span>
                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {inToFt(r.remnant_length_in)}</span>
@@ -689,16 +693,28 @@ function addCustomStock() {
                       return (
                         <div key={pi} className="stock-result">
                           <div className="stock-result-header">
-                       <span className="stock-label">
+                   <span className="stock-label">
   Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}
   {(() => {
-    const totalArea = r.cuts?.reduce((sum, c) => sum + c.cut_length * c.cut_width, 0) || 0;
-    const currentArea = r.stock_length_in * r.stock_width_in;
-    const usedPct = (totalArea / currentArea) * 100;
-    if (r.waste_percentage >= 0 && r.waste_percentage <= 5) {
-      return <span style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px'}}>⚠ Tight fit — confirm kerf, smaller stock may work</span>;
+    const warnings = [];
+    const maxCutX = Math.max(...(r.cuts?.map(c => c.x_position + c.cut_length + kerf2D) || [0]));
+    const maxCutY = Math.max(...(r.cuts?.map(c => c.y_position + c.cut_width + kerf2D) || [0]));
+    const smallerPanels = matchedStock
+      .filter(s => s.form_type === r.form_type && s.material_type === r.material_origin && parseFloat(s.stock_width) > 0 && (parseFloat(s.stock_length) * parseFloat(s.stock_width)) < (r.stock_length_in * r.stock_width_in))
+      .map(s => ({ l: parseFloat(s.stock_length), w: parseFloat(s.stock_width) }))
+      .sort((a, b) => (b.l * b.w) - (a.l * a.w));
+    const nextSmaller = smallerPanels[0];
+    if (nextSmaller) {
+      const fitsNormal = maxCutX <= nextSmaller.l + 1 && maxCutY <= nextSmaller.w + 1;
+      const fitsRotated = maxCutX <= nextSmaller.w + 1 && maxCutY <= nextSmaller.l + 1;
+      if (fitsNormal || fitsRotated) {
+        warnings.push(`Within 1" of ${inToFt(nextSmaller.l)} × ${inToFt(nextSmaller.w)} stock — confirm kerf, smaller panel may work`);
+      }
     }
-    return null;
+    if (r.waste_percentage >= 0 && r.waste_percentage <= 3 && r.cuts?.length > 0) {
+      warnings.push('Tight fit on current panel — verify kerf allowance');
+    }
+    return warnings.map((w, wi) => <span key={wi} style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px', display:'inline-block'}}>⚠ {w}</span>);
   })()}
 </span>
                             <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {r.remnant_area_in2?.toFixed(1)} sq in</span>
