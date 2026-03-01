@@ -234,14 +234,14 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       try {
         const srData = {
           Nesting_Run_Header: nestRunID,
-          Nesting_Type: '1D - Length',
+          Nesting_Type: '1D - Linear',
           Form_Type: result.form_type,
           Material_Type: result.material_origin,
           Specification: firstCut.spec_name,
           Material: firstCut.material_type,
           Stock_Size_Label: firstCut.stock_label || '',
           Stock_Length: result.stock_length_in,
-          Remnant_Length: result.remnant_length_in,
+          Remnant_Length: Math.round((result.remnant_length_in || 0) * 100) / 100,
           Waste_Percentage: result.waste_percentage,
           Stock_Weight_LBS: result.stock_weight_lbs || 0,
           Stock_Sequence: result.stock_sequence || savedCount1D + 1,
