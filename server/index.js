@@ -204,16 +204,39 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       }
     }
 
+    // 2b. Fetch project record to get MANUFACTURE for Run_By
+    let manufactureName = '';
+    try {
+      const projResp = await axios.get(
+        `${creatorApiBase()}/report/All_Projects/${projectId}`,
+        { headers: zohoHeaders(token) }
+      );
+      const projData = projResp.data.data;
+      manufactureName = projData?.MANUFACTURE?.zc_display_value || projData?.MANUFACTURE?.display_value || projData?.MANUFACTURE || '';
+      console.log('Project MANUFACTURE:', manufactureName);
+    } catch (projErr) {
+      console.error('Failed to fetch project for MANUFACTURE:', projErr.response?.data || projErr.message);
+    }
+
     // 3. Create Nesting_Run_Header with "Approved" status
+    const now = new Date();
+    const runDate = `${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getDate().toString().padStart(2,'0')}/${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
     const headerData = {
       Project_Lookup: projectId,
       Run_Number: runNum,
       Run_Status: 'Approved',
+      Run_Date: runDate,
       Added_User: 'web_app',
     };
-    if (run_by) headerData.Run_By = run_by;
+    if (run_by) {
+      headerData.Run_By = run_by;
+    } else if (manufactureName) {
+      headerData.Run_By = manufactureName;
+    }
     if (kerf_1d !== undefined) headerData.Kerf_1D = kerf_1d;
     if (kerf_2d !== undefined) headerData.Kerf_2D = kerf_2d;
+
+    console.log('Header create payload:', JSON.stringify(headerData));
 
     const headerResp = await axios.post(
       `${creatorApiBase()}/form/Nesting_Run_Header`,
@@ -342,21 +365,32 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       }
     }
 
-    // 6. Update run header with summary
+    // 6. Update run header with summary (total pieces, waste, notes)
     const supersededCount = approvedRuns.length;
-    await axios.patch(
-      `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`,
-      {
-        data: {
-          Kerf_1D: kerf_1d || 0.125,
-          Kerf_2D: kerf_2d || 0.125,
-          Total_Stock_Pieces: (savedCount1D + savedCount2D) || 0,
-          Total_Waste_Inches: summary?.total_remnant_length_in || 0,
-          Notes: `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${summary?.avg_waste_pct_1d || 0}%${supersededCount > 0 ? ` | Superseded ${supersededCount} previous run(s)` : ''}`,
+    const totalWaste = summary?.total_remnant_length_in || 0;
+    const wastePct = summary?.avg_waste_pct_1d || 0;
+    const notesStr = `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${wastePct}%${supersededCount > 0 ? ` | Superseded ${supersededCount} previous run(s)` : ''}`;
+
+    try {
+      const patchData = {
+        Total_Stock_Pieces: (savedCount1D + savedCount2D) || 0,
+        Total_Waste_Inches: totalWaste,
+        Notes: notesStr,
+      };
+      console.log('Header PATCH payload:', JSON.stringify(patchData));
+      
+      const patchResp = await axios.patch(
+        `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`,
+        {
+          data: patchData,
         },
-      },
-      { headers: zohoHeaders(token) }
-    );
+        { headers: zohoHeaders(token) }
+      );
+      console.log('Header PATCH response:', JSON.stringify(patchResp.data));
+    } catch (patchErr) {
+      console.error('ERROR updating run header summary:', patchErr.response?.data || patchErr.message);
+      // Don't fail the whole save — the results are already saved
+    }
 
     res.json({
       success: true,
@@ -370,44 +404,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
   } catch (err) {
     console.error('Error saving results:', err.response?.data || err.message);
     res.status(500).json({ error: 'Failed to save results', details: err.response?.data || err.message });
-  }
-});
-
-// POST /api/project/:id/generate-purchase-list — aggregate nesting results into Material_Allocated subform
-app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
-  try {
-    const token = await getAccessToken();
-    const projectId = req.params.id;
-    const { purchase_lines } = req.body; // pre-aggregated from frontend
-
-    const subformRows = purchase_lines.map((line, idx) => ({
-      Form_Type: line.form_type_id,
-      Material_Types: line.material_type_id,
-      Specification: line.specification_id,
-      Material: line.material_id,
-      Item_Description: line.description || '',
-      QTY: line.quantity,
-      Feet_Length: line.feet_length || 0,
-      Weight_Per_Ft: line.weight_per_ft || 0,
-      Unit_Weight: line.unit_weight || 0,
-      CutWeight: line.total_weight || 0,
-    }));
-
-    // Update the project record's Material_Allocated subform
-    await axios.patch(
-      `${creatorApiBase()}/report/All_Projects/${projectId}`,
-      {
-        data: {
-          Material_Allocated: subformRows,
-        },
-      },
-      { headers: zohoHeaders(token) }
-    );
-
-    res.json({ success: true, items_saved: subformRows.length });
-  } catch (err) {
-    console.error('Error saving purchase list:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });
   }
 });
 
