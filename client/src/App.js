@@ -684,6 +684,7 @@ export default function App() {
               <div className="btn-group">
                 <button onClick={selectAllPatterns} className="btn btn-small">Select All Patterns</button>
                 <button onClick={clearAllPatterns} className="btn btn-small">Clear Selection</button>
+                <button onClick={() => window.print()} className="btn btn-small btn-print">🖨 Print</button>
               </div>
             </div>
             {results.summary && (
