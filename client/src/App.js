@@ -18,6 +18,29 @@ function inToFt(val) {
   return `${n}" (${ft}'${rem}")`;
 }
 
+function fmtLbs(val) {
+  const n = parseFloat(val);
+  if (!n || isNaN(n)) return '—';
+  return n.toFixed(1) + ' lbs';
+}
+
+/** Calculate unit weight for a stock piece
+ * 1D: weight_per_ft × (length_in / 12)
+ * 2D: weight_per_ft × (length_in × width_in / 144)
+ */
+function calcUnitWeight(weightPerFt, lengthIn, widthIn) {
+  const wpf = parseFloat(weightPerFt) || 0;
+  const l = parseFloat(lengthIn) || 0;
+  const w = parseFloat(widthIn) || 0;
+  if (wpf === 0 || l === 0) return 0;
+  if (w > 0) {
+    // 2D plate: weight per sq ft × area in sq ft
+    return wpf * (l * w / 144);
+  }
+  // 1D linear: weight per ft × length in ft
+  return wpf * (l / 12);
+}
+
 function groupResults(results, nameLookup) {
   if (!results || results.length === 0) return [];
   const materialGroups = {};
@@ -86,9 +109,13 @@ export default function App() {
   const [newStock, setNewStock] = useState({ form_type: '', material_type: '', stock_length: '', stock_width: '' });
   const [nextCustomId, setNextCustomId] = useState(900000);
 
-  // Pattern-level selection for import approval (Issue #1)
-  // Keys are "1d-{groupIdx}-{patternIdx}" or "2d-{groupIdx}-{patternIdx}"
+  // Pattern-level selection for import approval
   const [selectedPatterns, setSelectedPatterns] = useState(new Set());
+
+  // Purchase list state
+  const [showPurchasePreview, setShowPurchasePreview] = useState(false);
+  const [savingPurchase, setSavingPurchase] = useState(false);
+  const [purchaseStatus, setPurchaseStatus] = useState('');
 
   const loadProject = useCallback(async (id) => {
     setLoading(true);
@@ -152,7 +179,7 @@ export default function App() {
     setEnabledStock(new Set());
   }
 
-  // ─── Pattern Selection Helpers (Issue #1) ───
+  // ─── Pattern Selection Helpers ───
   function togglePattern(key) {
     setSelectedPatterns(prev => {
       const n = new Set(prev);
@@ -179,7 +206,6 @@ export default function App() {
     setSelectedPatterns(new Set());
   }
 
-  /** Auto-select all patterns when results come in */
   function autoSelectAllPatterns(data) {
     const allKeys = new Set();
     const groups1d = groupResults(data.results_1d, data._nameLookup);
@@ -193,7 +219,6 @@ export default function App() {
     setSelectedPatterns(allKeys);
   }
 
-  /** Collect only the stock result objects for selected patterns */
   function getSelectedResults() {
     if (!results) return { selected_1d: [], selected_2d: [] };
     const selected_1d = [];
@@ -217,18 +242,142 @@ export default function App() {
     return { selected_1d, selected_2d };
   }
 
+  // ─── Weight Lookup Helper ───
+  // Build a map from bom_line_id → weight_per_ft for quick access
+  function getWeightMap() {
+    const map = {};
+    bom.forEach(b => {
+      map[String(b.id)] = parseFloat(b.weight_per_ft) || 0;
+    });
+    return map;
+  }
+
+  // Get weight_per_ft for a stock result by looking at its first cut's bom_line_id
+  function getStockWeightPerFt(result, weightMap) {
+    const firstCut = result.cuts?.[0];
+    if (!firstCut) return 0;
+    return weightMap[String(firstCut.bom_line_id)] || 0;
+  }
+
+  // ─── Purchase List Aggregation ───
+  function buildPurchaseLines() {
+    if (!results) return [];
+    const { selected_1d, selected_2d } = getSelectedResults();
+    const weightMap = getWeightMap();
+    const agg = {};
+
+    for (const r of [...selected_1d, ...selected_2d]) {
+      if (r.error) continue;
+      const firstCut = r.cuts?.[0];
+      if (!firstCut) continue;
+      const is2D = r.stock_width_in && r.stock_width_in > 0;
+      const key = `${r.form_type}|${r.material_origin}|${firstCut.spec_name}|${firstCut.material_type}|${r.stock_length_in}|${r.stock_width_in || 0}`;
+      if (!agg[key]) {
+        const wpf = weightMap[String(firstCut.bom_line_id)] || 0;
+        const unitWt = calcUnitWeight(wpf, r.stock_length_in, is2D ? r.stock_width_in : 0);
+        // Look up display names
+        const bomItem = bom.find(b =>
+          String(b.form_type_id) === String(r.form_type) &&
+          String(b.material_type_id) === String(r.material_origin)
+        );
+        const ftn = results._nameLookup?.[r.form_type] || r.form_type;
+        const mtn = results._nameLookup?.[r.material_origin] || r.material_origin;
+        const sizeDesc = is2D
+          ? `${inToFt(r.stock_length_in)} × ${inToFt(r.stock_width_in)}`
+          : inToFt(r.stock_length_in);
+
+        agg[key] = {
+          form_type_id: r.form_type,
+          material_type_id: r.material_origin,
+          specification_id: firstCut.spec_name,
+          material_id: firstCut.material_type,
+          description: `${ftn} | ${mtn} | ${sizeDesc}`,
+          form_type_name: ftn,
+          material_type_name: mtn,
+          spec_name: bomItem?.spec_name || '',
+          material_name: bomItem?.material_name || '',
+          stock_length_in: r.stock_length_in,
+          stock_width_in: r.stock_width_in || 0,
+          quantity: 0,
+          feet_length: r.stock_length_in / 12,
+          weight_per_ft: wpf,
+          unit_weight: unitWt,
+          total_weight: 0,
+          is2D,
+        };
+      }
+      agg[key].quantity += 1;
+    }
+
+    // Calculate total weights
+    const lines = Object.values(agg);
+    lines.forEach(line => {
+      line.total_weight = line.unit_weight * line.quantity;
+    });
+    return lines;
+  }
+
+  async function savePurchaseList() {
+    const lines = buildPurchaseLines();
+    if (lines.length === 0) {
+      setPurchaseStatus('Error: No purchase lines to save');
+      return;
+    }
+    setSavingPurchase(true);
+    setPurchaseStatus('');
+    try {
+      const resp = await fetch(`${API}/api/project/${projectId}/generate-purchase-list`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purchase_lines: lines }),
+      });
+      if (!resp.ok) throw new Error('Save failed');
+      const data = await resp.json();
+      setPurchaseStatus(`Purchase list saved! ${data.items_saved} line items written to Material Allocated.`);
+    } catch (err) {
+      setPurchaseStatus(`Error: ${err.message}`);
+    } finally {
+      setSavingPurchase(false);
+    }
+  }
+
+  // ─── Weight Summary Calculations ───
+  function calcWeightSummary() {
+    if (!results) return { totalAllocated: 0, totalWaste: 0, totalStock: 0 };
+    const { selected_1d, selected_2d } = getSelectedResults();
+    const weightMap = getWeightMap();
+    let totalStock = 0;
+    let totalAllocated = 0;
+
+    for (const r of [...selected_1d, ...selected_2d]) {
+      if (r.error || !r.cuts?.length) continue;
+      const wpf = getStockWeightPerFt(r, weightMap);
+      const is2D = r.stock_width_in && r.stock_width_in > 0;
+      const stockWt = calcUnitWeight(wpf, r.stock_length_in, is2D ? r.stock_width_in : 0);
+      totalStock += stockWt;
+
+      // Sum cut weights
+      for (const cut of r.cuts) {
+        const cutWt = is2D
+          ? wpf * ((cut.cut_length * cut.cut_width) / 144)
+          : wpf * (cut.cut_length / 12);
+        totalAllocated += cutWt * (cut.quantity_on_this_stock || 1);
+      }
+    }
+
+    return {
+      totalStock: totalStock,
+      totalAllocated: totalAllocated,
+      totalWaste: totalStock - totalAllocated,
+    };
+  }
+
   function addCustomStock() {
     if (!newStock.form_type || !newStock.material_type || !newStock.stock_length) return;
     const id = nextCustomId;
     const matchingBom = selectedBom.find(
       b => b.form_type_name === newStock.form_type && b.material_type_name === newStock.material_type
     );
-    console.log('addCustomStock lookup:', {
-      form_type_name: newStock.form_type,
-      material_type_name: newStock.material_type,
-      matchingBom: matchingBom ? { form_type_id: matchingBom.form_type_id, material_type_id: matchingBom.material_type_id } : 'NOT FOUND',
-      selectedBom_names: selectedBom.map(b => ({ ft: b.form_type_name, mt: b.material_type_name })),
-    });
     const entry = {
       id,
       form_type: matchingBom?.form_type_id || newStock.form_type,
@@ -241,7 +390,6 @@ export default function App() {
       is_standard: 'No',
       source: 'custom',
     };
-    console.log('Custom stock entry:', entry);
     setStock(prev => [...prev, entry]);
     setEnabledStock(prev => {
       const n = new Set(prev);
@@ -293,6 +441,8 @@ export default function App() {
     setError('');
     setResults(null);
     setSelectedPatterns(new Set());
+    setShowPurchasePreview(false);
+    setPurchaseStatus('');
     try {
       const parts1D = [];
       const parts2D = [];
@@ -428,8 +578,11 @@ export default function App() {
     }
   }
 
-  // Compute selected pattern count for the import button
+  // Computed values for results view
   const selectedPatternCount = selectedPatterns.size;
+  const weightSummary = (step === 3 && results) ? calcWeightSummary() : null;
+  const purchaseLines = (step === 3 && results && showPurchasePreview) ? buildPurchaseLines() : [];
+  const weightMap = (step === 3 && results) ? getWeightMap() : {};
 
   return (
     <div className="app">
@@ -498,7 +651,7 @@ export default function App() {
                 <thead>
                   <tr>
                     <th></th><th>Mark</th><th>Type</th><th>Form</th><th>Material</th>
-                    <th>Spec</th><th>Size</th><th>Qty</th><th>Length</th><th>Width</th>
+                    <th>Spec</th><th>Size</th><th>Qty</th><th>Length</th><th>Width</th><th>Wt/Ft</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -525,6 +678,7 @@ export default function App() {
                       <td className="num">{item.quantity}</td>
                       <td className="num">{item.length_nest ? inToFt(item.length_nest) : '—'}</td>
                       <td className="num">{item.width_nest && parseFloat(item.width_nest) > 0 ? inToFt(item.width_nest) : '—'}</td>
+                      <td className="num">{item.weight_per_ft ? `${parseFloat(item.weight_per_ft).toFixed(2)}` : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -701,6 +855,22 @@ export default function App() {
                   <span className="summary-val">{inToFt(results.summary.total_remnant_length_in)}</span>
                   <span className="summary-label">Total Remnant</span>
                 </div>
+                {weightSummary && (
+                  <>
+                    <div className="summary-item">
+                      <span className="summary-val">{weightSummary.totalStock.toFixed(0)}</span>
+                      <span className="summary-label">Total Stock (lbs)</span>
+                    </div>
+                    <div className="summary-item">
+                      <span className="summary-val">{weightSummary.totalAllocated.toFixed(0)}</span>
+                      <span className="summary-label">Allocated (lbs)</span>
+                    </div>
+                    <div className="summary-item">
+                      <span className="summary-val">{weightSummary.totalWaste.toFixed(0)}</span>
+                      <span className="summary-label">Waste (lbs)</span>
+                    </div>
+                  </>
+                )}
                 {results.summary.errors?.length > 0 && (
                   <div className="summary-item summary-error">
                     <span className="summary-val">{results.summary.errors.length}</span>
@@ -720,17 +890,36 @@ export default function App() {
             {results.results_1d?.length > 0 && (
               <div className="result-section">
                 <h3>1D — Linear Results</h3>
-                {groupResults(results.results_1d, results._nameLookup).map((group, gi) => (
+                {groupResults(results.results_1d, results._nameLookup).map((group, gi) => {
+                  // Group-level weight
+                  const groupWeightPerFt = (() => {
+                    const firstResult = group.patterns[0]?.representative;
+                    if (!firstResult?.cuts?.[0]) return 0;
+                    return weightMap[String(firstResult.cuts[0].bom_line_id)] || 0;
+                  })();
+                  const groupTotalPieces = group.patterns.reduce((sum, p) => sum + p.count, 0);
+                  const groupUnitWeight = calcUnitWeight(groupWeightPerFt, group.stock_length_in, 0);
+                  const groupTotalWeight = groupUnitWeight * groupTotalPieces;
+
+                  return (
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
                       <h4>
-                        {group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces
+                        {group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} — {groupTotalPieces} stock pieces
+                        {groupWeightPerFt > 0 && (
+                          <span className="group-weight"> — {fmtLbs(groupUnitWeight)}/pc — {fmtLbs(groupTotalWeight)} total</span>
+                        )}
                       </h4>
                     </div>
                     {group.patterns.map((pattern, pi) => {
                       const r = pattern.representative;
                       const patternKey = `1d-${gi}-${pi}`;
                       const isPatternSelected = selectedPatterns.has(patternKey);
+                      const patternWpf = getStockWeightPerFt(r, weightMap);
+                      const patternStockWeight = calcUnitWeight(patternWpf, r.stock_length_in, 0);
+                      const patternCutWeight = r.cuts?.reduce((sum, c) => sum + (patternWpf * (c.cut_length / 12) * (c.quantity_on_this_stock || 1)), 0) || 0;
+                      const patternWasteWeight = patternStockWeight - patternCutWeight;
+
                       return (
                         <div key={pi} className={`stock-result ${isPatternSelected ? 'pattern-selected' : 'pattern-deselected'}`}>
                           <div className="stock-result-header">
@@ -762,7 +951,14 @@ export default function App() {
                                 })()}
                               </span>
                             </div>
-                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {inToFt(r.remnant_length_in)}</span>
+                            <div className="result-badges">
+                              <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {inToFt(r.remnant_length_in)}</span>
+                              {patternWpf > 0 && (
+                                <span className="weight-badge">
+                                  {fmtLbs(patternStockWeight)} stock — {fmtLbs(patternWasteWeight)} waste
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="bar-visual">
                             {r.cuts?.map((cut, j) => (
@@ -770,7 +966,7 @@ export default function App() {
                                 key={j}
                                 className="bar-cut"
                                 style={{ width: `${(cut.cut_length / r.stock_length_in) * 100}%` }}
-                                title={`${cut.part_mark}: ${cut.cut_length}"`}
+                                title={`${cut.part_mark}: ${cut.cut_length}" — ${fmtLbs(patternWpf * (cut.cut_length / 12))}`}
                               >
                                 <span>{cut.part_mark} ({cut.cut_length}")</span>
                               </div>
@@ -783,17 +979,19 @@ export default function App() {
                           </div>
                           <table className="cut-table">
                             <thead>
-                              <tr><th>Mark</th><th>Length</th><th>Qty on Stock</th><th>Total Qty</th></tr>
+                              <tr><th>Mark</th><th>Length</th><th>Qty on Stock</th><th>Total Qty</th><th>Cut Weight</th></tr>
                             </thead>
                             <tbody>
                               {r.cuts?.map((cut, j) => {
                                 const bomItem = bom.find(b => String(b.id) === String(cut.bom_line_id));
+                                const cutWt = patternWpf * (cut.cut_length / 12);
                                 return (
                                   <tr key={j}>
                                     <td className="mono">{cut.part_mark}</td>
                                     <td className="num">{cut.cut_length}"</td>
                                     <td className="num">{cut.quantity_on_this_stock}</td>
                                     <td className="num">{bomItem?.quantity || '—'}</td>
+                                    <td className="num">{patternWpf > 0 ? fmtLbs(cutWt) : '—'}</td>
                                   </tr>
                                 );
                               })}
@@ -803,7 +1001,8 @@ export default function App() {
                       );
                     })}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -811,17 +1010,35 @@ export default function App() {
             {results.results_2d?.length > 0 && (
               <div className="result-section">
                 <h3>2D — Panel Results</h3>
-                {groupResults(results.results_2d, results._nameLookup).map((group, gi) => (
+                {groupResults(results.results_2d, results._nameLookup).map((group, gi) => {
+                  const groupWeightPerFt = (() => {
+                    const firstResult = group.patterns[0]?.representative;
+                    if (!firstResult?.cuts?.[0]) return 0;
+                    return weightMap[String(firstResult.cuts[0].bom_line_id)] || 0;
+                  })();
+                  const groupTotalPieces = group.patterns.reduce((sum, p) => sum + p.count, 0);
+                  const groupUnitWeight = calcUnitWeight(groupWeightPerFt, group.stock_length_in, group.stock_width_in);
+                  const groupTotalWeight = groupUnitWeight * groupTotalPieces;
+
+                  return (
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
                       <h4>
-                        {group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {group.patterns.reduce((sum, p) => sum + p.count, 0)} stock pieces
+                        {group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {groupTotalPieces} stock pieces
+                        {groupWeightPerFt > 0 && (
+                          <span className="group-weight"> — {fmtLbs(groupUnitWeight)}/pc — {fmtLbs(groupTotalWeight)} total</span>
+                        )}
                       </h4>
                     </div>
                     {group.patterns.map((pattern, pi) => {
                       const r = pattern.representative;
                       const patternKey = `2d-${gi}-${pi}`;
                       const isPatternSelected = selectedPatterns.has(patternKey);
+                      const patternWpf = getStockWeightPerFt(r, weightMap);
+                      const patternStockWeight = calcUnitWeight(patternWpf, r.stock_length_in, r.stock_width_in);
+                      const patternCutWeight = r.cuts?.reduce((sum, c) => sum + (patternWpf * (c.cut_length * c.cut_width / 144) * (c.quantity_on_this_stock || 1)), 0) || 0;
+                      const patternWasteWeight = patternStockWeight - patternCutWeight;
+
                       return (
                         <div key={pi} className={`stock-result ${isPatternSelected ? 'pattern-selected' : 'pattern-deselected'}`}>
                           <div className="stock-result-header">
@@ -858,16 +1075,24 @@ export default function App() {
                                 })()}
                               </span>
                             </div>
-                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {r.remnant_area_in2?.toFixed(1)} sq in</span>
+                            <div className="result-badges">
+                              <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {r.remnant_area_in2?.toFixed(1)} sq in</span>
+                              {patternWpf > 0 && (
+                                <span className="weight-badge">
+                                  {fmtLbs(patternStockWeight)} stock — {fmtLbs(patternWasteWeight)} waste
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
                           <table className="cut-table">
                             <thead>
-                              <tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty on Stock</th><th>Total Qty</th></tr>
+                              <tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty on Stock</th><th>Total Qty</th><th>Cut Weight</th></tr>
                             </thead>
                             <tbody>
                               {r.cuts?.map((cut, j) => {
                                 const bomItem = bom.find(b => String(b.id) === String(cut.bom_line_id));
+                                const cutWt = patternWpf * (cut.cut_length * cut.cut_width / 144);
                                 return (
                                   <tr key={j}>
                                     <td className="mono">{cut.part_mark}</td>
@@ -875,6 +1100,7 @@ export default function App() {
                                     <td className="num">{cut.cut_width}"</td>
                                     <td className="num">{cut.quantity_on_this_stock}</td>
                                     <td className="num">{bomItem?.quantity || '—'}</td>
+                                    <td className="num">{patternWpf > 0 ? fmtLbs(cutWt) : '—'}</td>
                                   </tr>
                                 );
                               })}
@@ -884,11 +1110,12 @@ export default function App() {
                       );
                     })}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
-            {/* Errors — with display name resolution (Issue #2) */}
+            {/* Errors */}
             {results.summary?.errors?.length > 0 && (
               <div className="result-section">
                 <h3>Errors</h3>
@@ -898,12 +1125,65 @@ export default function App() {
               </div>
             )}
 
+            {/* Purchase List Preview */}
+            {showPurchasePreview && purchaseLines.length > 0 && (
+              <div className="result-section">
+                <h3>Purchase List Preview</h3>
+                <p className="hint">Review the aggregated purchase lines below before saving to Zoho Material Allocated subform.</p>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Description</th><th>Qty</th><th>Length (ft)</th><th>Wt/Ft</th><th>Unit Weight</th><th>Total Weight</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {purchaseLines.map((line, i) => (
+                      <tr key={i}>
+                        <td>{line.description}</td>
+                        <td className="num">{line.quantity}</td>
+                        <td className="num">{line.feet_length.toFixed(1)}</td>
+                        <td className="num">{line.weight_per_ft > 0 ? `${line.weight_per_ft.toFixed(2)}` : '—'}</td>
+                        <td className="num">{line.unit_weight > 0 ? fmtLbs(line.unit_weight) : '—'}</td>
+                        <td className="num">{line.total_weight > 0 ? fmtLbs(line.total_weight) : '—'}</td>
+                      </tr>
+                    ))}
+                    <tr className="purchase-total-row">
+                      <td><strong>Total</strong></td>
+                      <td className="num"><strong>{purchaseLines.reduce((s, l) => s + l.quantity, 0)}</strong></td>
+                      <td></td>
+                      <td></td>
+                      <td></td>
+                      <td className="num"><strong>{fmtLbs(purchaseLines.reduce((s, l) => s + l.total_weight, 0))}</strong></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                  <button onClick={savePurchaseList} className="btn btn-primary" disabled={savingPurchase}>
+                    {savingPurchase ? 'Saving...' : 'Save Purchase List to Zoho'}
+                  </button>
+                  <button onClick={() => setShowPurchasePreview(false)} className="btn">Cancel</button>
+                </div>
+                {purchaseStatus && (
+                  <div className={`save-status ${purchaseStatus.startsWith('Error') ? 'save-error' : 'save-success'}`} style={{ marginTop: 8 }}>
+                    {purchaseStatus}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="card-footer">
               <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
               <div className="btn-group" style={{ alignItems: 'center' }}>
                 <span className="count">{selectedPatternCount} pattern{selectedPatternCount !== 1 ? 's' : ''} selected</span>
                 <button onClick={saveToZoho} className="btn btn-primary" disabled={saving || selectedPatternCount === 0}>
                   {saving ? 'Saving...' : `Import ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''} to Project`}
+                </button>
+                <button
+                  onClick={() => { setShowPurchasePreview(true); setPurchaseStatus(''); }}
+                  className="btn btn-secondary"
+                  disabled={selectedPatternCount === 0}
+                >
+                  Generate Purchase List
                 </button>
               </div>
             </div>
