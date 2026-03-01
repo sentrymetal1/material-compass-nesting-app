@@ -269,9 +269,23 @@ export default function App() {
   const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length;
 
   function getFilteredStock() {
-    if (stockFilter === 'library') return matchedStock.filter(s => s.source === 'library');
-    if (stockFilter === 'custom') return matchedStock.filter(s => s.source === 'custom');
-    return matchedStock;
+    let list = matchedStock;
+    if (stockFilter === 'library') list = list.filter(s => s.source === 'library');
+    if (stockFilter === 'custom') list = list.filter(s => s.source === 'custom');
+    return [...list].sort((a, b) => {
+      const ftA = (a.form_type_name || a.form_type || '').toString().toLowerCase();
+      const ftB = (b.form_type_name || b.form_type || '').toString().toLowerCase();
+      if (ftA !== ftB) return ftA.localeCompare(ftB);
+      const mtA = (a.material_type_name || a.material_type || '').toString().toLowerCase();
+      const mtB = (b.material_type_name || b.material_type || '').toString().toLowerCase();
+      if (mtA !== mtB) return mtA.localeCompare(mtB);
+      const lenA = parseFloat(a.stock_length) || 0;
+      const lenB = parseFloat(b.stock_length) || 0;
+      if (lenA !== lenB) return lenA - lenB;
+      const wA = parseFloat(a.stock_width) || 0;
+      const wB = parseFloat(b.stock_width) || 0;
+      return wA - wB;
+    });
   }
 
   async function runNesting() {
