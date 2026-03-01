@@ -447,40 +447,73 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       }
     }
 
-    // 6. Update run header with summary — use FORM endpoint instead of report
+    // 6. Update run header with summary
     const supersededCount = approvedRuns.length;
     const totalWaste = summary?.total_remnant_length_in || 0;
     const wastePct = summary?.avg_waste_pct_1d || 0;
     const notesStr = `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${wastePct}%${supersededCount > 0 ? ` | Superseded ${supersededCount} previous run(s)` : ''}`;
 
     try {
+      // Zoho Date-Time format: dd-MMM-yyyy HH:mm:ss (e.g., "01-Mar-2026 14:30:00")
       const now = new Date();
       const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const runDateStr = `${months[now.getMonth()]} ${now.getDate().toString().padStart(2,'0')}, ${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
+      const runDateStr = `${now.getDate().toString().padStart(2,'0')}-${months[now.getMonth()]}-${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
 
       const patchData = {
         Run_Date: runDateStr,
         Total_Stock_Pieces: (savedCount1D + savedCount2D) || 0,
-        Total_Waste_Inches: totalWaste,
+        Total_Waste_Inches: Math.round(totalWaste * 10000) / 10000,
         Notes: notesStr,
       };
       console.log('Header PATCH payload:', JSON.stringify(patchData));
-      
-      // Try form endpoint first (more reliable for updates)
-      const patchUrl = `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`;
-      console.log('Header PATCH URL:', patchUrl);
-      
-      const patchResp = await axios.patch(
-        patchUrl,
-        { data: patchData },
-        { 
-          headers: {
-            ...zohoHeaders(token),
-            'Content-Type': 'application/json',
+
+      // Try report endpoint first
+      const reportUrl = `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`;
+      console.log('Header PATCH URL (report):', reportUrl);
+
+      let patchSuccess = false;
+      try {
+        const patchResp = await axios.patch(
+          reportUrl,
+          { data: patchData },
+          { 
+            headers: {
+              ...zohoHeaders(token),
+              'Content-Type': 'application/json',
+            }
           }
+        );
+        console.log('Header PATCH response (report):', JSON.stringify(patchResp.data));
+        // Check if Zoho returned an error code
+        if (patchResp.data?.code === 3000 || patchResp.data?.data) {
+          patchSuccess = true;
         }
-      );
-      console.log('Header PATCH response:', JSON.stringify(patchResp.data));
+      } catch (reportErr) {
+        console.error('Report PATCH failed:', JSON.stringify(reportErr.response?.data || reportErr.message));
+      }
+
+      // Fallback: try form endpoint if report failed
+      if (!patchSuccess) {
+        console.log('Trying form endpoint fallback...');
+        const formUrl = `${creatorApiBase()}/form/Nesting_Run_Header/${nestRunID}`;
+        console.log('Header PATCH URL (form):', formUrl);
+        try {
+          const formResp = await axios.patch(
+            formUrl,
+            { data: patchData },
+            { 
+              headers: {
+                ...zohoHeaders(token),
+                'Content-Type': 'application/json',
+              }
+            }
+          );
+          console.log('Header PATCH response (form):', JSON.stringify(formResp.data));
+        } catch (formErr) {
+          console.error('Form PATCH also failed:', JSON.stringify(formErr.response?.data || formErr.message));
+          console.error('Form PATCH error status:', formErr.response?.status);
+        }
+      }
     } catch (patchErr) {
       console.error('ERROR updating run header summary:', JSON.stringify(patchErr.response?.data || patchErr.message));
       console.error('ERROR status:', patchErr.response?.status);
