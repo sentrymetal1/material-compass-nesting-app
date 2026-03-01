@@ -55,6 +55,8 @@ function groupResults(results, nameLookup) {
         stock_width_in: r.stock_width_in,
         form_type_name: (nameLookup && nameLookup[r.form_type]) || r.form_type,
         material_type_name: (nameLookup && nameLookup[r.material_origin]) || r.material_origin,
+        spec_name: (nameLookup && r.cuts?.[0] && nameLookup[r.cuts[0].spec_name]) || '',
+        material_name: (nameLookup && r.cuts?.[0] && nameLookup[r.cuts[0].material_type]) || '',
         patterns: [],
       };
     }
@@ -87,6 +89,14 @@ function resolveErrorNames(errorMsg, nameLookup) {
     }
   }
   return resolved;
+}
+
+/** Build full material description: Form Type | Material Type | Spec | Material */
+function matDesc(group) {
+  const parts = [group.form_type_name, group.material_type_name];
+  if (group.spec_name) parts.push(group.spec_name);
+  if (group.material_name) parts.push(group.material_name);
+  return parts.join(' | ');
 }
 
 export default function App() {
@@ -535,6 +545,8 @@ export default function App() {
       [...parts1D, ...parts2D].forEach(p => {
         nameLookup[p.form_type] = p.form_type_name;
         nameLookup[p.material_origin] = p.mat_type_name;
+        nameLookup[p.spec_name] = p.spec_name_display;
+        nameLookup[p.material_type] = p.material_name_display;
       });
       data._nameLookup = nameLookup;
       setResults(data);
@@ -905,7 +917,7 @@ export default function App() {
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
                       <h4>
-                        {group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} — {groupTotalPieces} stock pieces
+                        {matDesc(group)} | {inToFt(group.stock_length_in)} — {groupTotalPieces} stock pieces
                         {groupWeightPerFt > 0 && (
                           <span className="group-weight"> — {fmtLbs(groupUnitWeight)}/pc — {fmtLbs(groupTotalWeight)} total</span>
                         )}
@@ -931,7 +943,7 @@ export default function App() {
                                 className="pattern-checkbox"
                               />
                               <span className="stock-label">
-                                Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)}
+                                Cut Pattern {pi + 1} — {matDesc(group)} | {inToFt(r.stock_length_in)}
                                 {pattern.count > 1 && <span className="pattern-count-badge">×{pattern.count} identical</span>}
                                 {(() => {
                                   const totalUsed = r.cuts?.reduce((sum, c) => sum + c.cut_length + kerf1D, 0) || 0;
@@ -1024,7 +1036,7 @@ export default function App() {
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
                       <h4>
-                        {group.form_type_name} | {group.material_type_name} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {groupTotalPieces} stock pieces
+                        {matDesc(group)} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {groupTotalPieces} stock pieces
                         {groupWeightPerFt > 0 && (
                           <span className="group-weight"> — {fmtLbs(groupUnitWeight)}/pc — {fmtLbs(groupTotalWeight)} total</span>
                         )}
@@ -1050,7 +1062,7 @@ export default function App() {
                                 className="pattern-checkbox"
                               />
                               <span className="stock-label">
-                                Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}
+                                Cut Pattern {pi + 1} — {matDesc(group)} | {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}
                                 {pattern.count > 1 && <span className="pattern-count-badge">×{pattern.count} identical</span>}
                                 {(() => {
                                   const warnings = [];
