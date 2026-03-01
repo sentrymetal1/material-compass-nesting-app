@@ -597,6 +597,7 @@ body {
   background: var(--gray-100);
   border-radius: var(--radius);
   margin-bottom: 24px;
+  flex-wrap: wrap;
 }
 
 .summary-item {
@@ -632,13 +633,15 @@ body {
   padding: 16px;
   margin-bottom: 12px;
   background: var(--gray-100);
+  transition: opacity 0.2s, border-color 0.2s;
 }
 
 .stock-result-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 12px;
+  gap: 12px;
 }
 
 .stock-label {
@@ -653,6 +656,48 @@ body {
   border-radius: 3px;
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ─── Pattern Selection (Issue #1) ─── */
+.pattern-select-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pattern-checkbox {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+.pattern-selected {
+  border-color: var(--primary);
+  border-left: 4px solid var(--primary);
+}
+
+.pattern-deselected {
+  opacity: 0.5;
+  border-left: 4px solid var(--gray-300);
+}
+
+.pattern-deselected:hover {
+  opacity: 0.7;
+}
+
+.pattern-count-badge {
+  display: inline-block;
+  background: var(--primary-bg);
+  color: var(--primary-dark);
+  padding: 1px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 8px;
 }
 
 /* ─── Bar Visual ─── */
@@ -699,7 +744,7 @@ body {
 
 .cut-table th {
   text-align: left;
-  padding: 4px 8px;
+  padding: 4px 12px;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -709,8 +754,18 @@ body {
 }
 
 .cut-table td {
-  padding: 4px 8px;
+  padding: 4px 12px;
   border-bottom: 1px solid var(--gray-200);
+}
+
+.cut-table .num {
+  text-align: right;
+}
+
+.cut-table th:nth-child(2),
+.cut-table th:nth-child(3),
+.cut-table th:nth-child(4) {
+  text-align: right;
 }
 
 .svg-wrap {
@@ -732,6 +787,7 @@ body {
   border-radius: var(--radius);
   font-size: 12px;
   margin-bottom: 16px;
+  word-break: break-word;
 }
 
 .loading-box {
@@ -769,8 +825,19 @@ body {
   text-transform: uppercase;
   letter-spacing: 1px;
 }
-.material-group { margin-bottom: 24px; border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; }
-.material-group-header h4 { margin: 0 0 12px 0; font-size: 14px; color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 8px; }
-.cut-table th, .cut-table td { text-align: left; padding: 4px 12px; }
-.cut-table .num { text-align: right; }
-.cut-table th:nth-child(2), .cut-table th:nth-child(3), .cut-table th:nth-child(4) { text-align: right; }
+
+/* ─── Material Group ─── */
+.material-group {
+  margin-bottom: 24px;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.material-group-header h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #1a73e8;
+  border-bottom: 2px solid #1a73e8;
+  padding-bottom: 8px;
+}
