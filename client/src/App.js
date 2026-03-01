@@ -21,7 +21,7 @@ function inToFt(val) {
 function fmtLbs(val) {
   const n = parseFloat(val);
   if (!n || isNaN(n)) return '—';
-  return n.toFixed(1) + ' lbs';
+  return n.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' lbs';
 }
 
 /** Calculate unit weight for a stock piece
@@ -858,15 +858,15 @@ export default function App() {
                 {weightSummary && (
                   <>
                     <div className="summary-item">
-                      <span className="summary-val">{weightSummary.totalStock.toFixed(0)}</span>
+                      <span className="summary-val">{weightSummary.totalStock.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
                       <span className="summary-label">Total Stock (lbs)</span>
                     </div>
                     <div className="summary-item">
-                      <span className="summary-val">{weightSummary.totalAllocated.toFixed(0)}</span>
+                      <span className="summary-val">{weightSummary.totalAllocated.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
                       <span className="summary-label">Allocated (lbs)</span>
                     </div>
                     <div className="summary-item">
-                      <span className="summary-val">{weightSummary.totalWaste.toFixed(0)}</span>
+                      <span className="summary-val">{weightSummary.totalWaste.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
                       <span className="summary-label">Waste (lbs)</span>
                     </div>
                   </>
