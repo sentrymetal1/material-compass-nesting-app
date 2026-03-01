@@ -22,6 +22,7 @@ function groupResults(results, nameLookup) {
   if (!results || results.length === 0) return [];
   const materialGroups = {};
   for (const r of results) {
+    if (r.error) continue; // skip error results from grouped display
     const key = `${r.form_type}|${r.material_origin}|${r.stock_length_in}|${r.stock_width_in || 0}`;
     if (!materialGroups[key]) {
       materialGroups[key] = {
@@ -53,6 +54,18 @@ function groupResults(results, nameLookup) {
   return Object.values(materialGroups);
 }
 
+/** Replace Zoho IDs in error messages with display names */
+function resolveErrorNames(errorMsg, nameLookup) {
+  if (!nameLookup) return errorMsg;
+  let resolved = errorMsg;
+  for (const [id, name] of Object.entries(nameLookup)) {
+    if (id && name && resolved.includes(id)) {
+      resolved = resolved.split(id).join(name);
+    }
+  }
+  return resolved;
+}
+
 export default function App() {
   const [projectId, setProjectId] = useState(getProjectIdFromURL());
   const [step, setStep] = useState(projectId ? 1 : 0);
@@ -72,6 +85,10 @@ export default function App() {
   const [stockFilter, setStockFilter] = useState('all');
   const [newStock, setNewStock] = useState({ form_type: '', material_type: '', stock_length: '', stock_width: '' });
   const [nextCustomId, setNextCustomId] = useState(900000);
+
+  // Pattern-level selection for import approval (Issue #1)
+  // Keys are "1d-{groupIdx}-{patternIdx}" or "2d-{groupIdx}-{patternIdx}"
+  const [selectedPatterns, setSelectedPatterns] = useState(new Set());
 
   const loadProject = useCallback(async (id) => {
     setLoading(true);
@@ -135,7 +152,72 @@ export default function App() {
     setEnabledStock(new Set());
   }
 
-function addCustomStock() {
+  // ─── Pattern Selection Helpers (Issue #1) ───
+  function togglePattern(key) {
+    setSelectedPatterns(prev => {
+      const n = new Set(prev);
+      n.has(key) ? n.delete(key) : n.add(key);
+      return n;
+    });
+  }
+
+  function selectAllPatterns() {
+    if (!results) return;
+    const allKeys = new Set();
+    const groups1d = groupResults(results.results_1d, results._nameLookup);
+    groups1d.forEach((group, gi) => {
+      group.patterns.forEach((_, pi) => allKeys.add(`1d-${gi}-${pi}`));
+    });
+    const groups2d = groupResults(results.results_2d, results._nameLookup);
+    groups2d.forEach((group, gi) => {
+      group.patterns.forEach((_, pi) => allKeys.add(`2d-${gi}-${pi}`));
+    });
+    setSelectedPatterns(allKeys);
+  }
+
+  function clearAllPatterns() {
+    setSelectedPatterns(new Set());
+  }
+
+  /** Auto-select all patterns when results come in */
+  function autoSelectAllPatterns(data) {
+    const allKeys = new Set();
+    const groups1d = groupResults(data.results_1d, data._nameLookup);
+    groups1d.forEach((group, gi) => {
+      group.patterns.forEach((_, pi) => allKeys.add(`1d-${gi}-${pi}`));
+    });
+    const groups2d = groupResults(data.results_2d, data._nameLookup);
+    groups2d.forEach((group, gi) => {
+      group.patterns.forEach((_, pi) => allKeys.add(`2d-${gi}-${pi}`));
+    });
+    setSelectedPatterns(allKeys);
+  }
+
+  /** Collect only the stock result objects for selected patterns */
+  function getSelectedResults() {
+    if (!results) return { selected_1d: [], selected_2d: [] };
+    const selected_1d = [];
+    const selected_2d = [];
+    const groups1d = groupResults(results.results_1d, results._nameLookup);
+    groups1d.forEach((group, gi) => {
+      group.patterns.forEach((pattern, pi) => {
+        if (selectedPatterns.has(`1d-${gi}-${pi}`)) {
+          selected_1d.push(...pattern.stockPieces);
+        }
+      });
+    });
+    const groups2d = groupResults(results.results_2d, results._nameLookup);
+    groups2d.forEach((group, gi) => {
+      group.patterns.forEach((pattern, pi) => {
+        if (selectedPatterns.has(`2d-${gi}-${pi}`)) {
+          selected_2d.push(...pattern.stockPieces);
+        }
+      });
+    });
+    return { selected_1d, selected_2d };
+  }
+
+  function addCustomStock() {
     if (!newStock.form_type || !newStock.material_type || !newStock.stock_length) return;
     const id = nextCustomId;
     const matchingBom = selectedBom.find(
@@ -196,6 +278,7 @@ function addCustomStock() {
     setLoading(true);
     setError('');
     setResults(null);
+    setSelectedPatterns(new Set());
     try {
       const parts1D = [];
       const parts2D = [];
@@ -291,6 +374,7 @@ function addCustomStock() {
       });
       data._nameLookup = nameLookup;
       setResults(data);
+      autoSelectAllPatterns(data);
       setStep(3);
     } catch (err) {
       setError(err.message || 'Nesting failed');
@@ -301,6 +385,11 @@ function addCustomStock() {
 
   async function saveToZoho() {
     if (!results) return;
+    const { selected_1d, selected_2d } = getSelectedResults();
+    if (selected_1d.length === 0 && selected_2d.length === 0) {
+      setSaveStatus('Error: No patterns selected for import');
+      return;
+    }
     setSaving(true);
     setSaveStatus('');
     try {
@@ -308,8 +397,8 @@ function addCustomStock() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          results_1d: results.results_1d,
-          results_2d: results.results_2d,
+          results_1d: selected_1d,
+          results_2d: selected_2d,
           summary: results.summary,
           kerf_1d: kerf1D,
           kerf_2d: kerf2D,
@@ -317,13 +406,16 @@ function addCustomStock() {
       });
       if (!resp.ok) throw new Error('Save failed');
       const data = await resp.json();
-      setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d} 1D + ${data.saved_2d} 2D results`);
+      setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d} 1D + ${data.saved_2d} 2D results (Status: ${data.run_status})`);
     } catch (err) {
       setSaveStatus(`Error: ${err.message}`);
     } finally {
       setSaving(false);
     }
   }
+
+  // Compute selected pattern count for the import button
+  const selectedPatternCount = selectedPatterns.size;
 
   return (
     <div className="app">
@@ -573,7 +665,13 @@ function addCustomStock() {
         {/* Step 3: Results */}
         {step === 3 && results && (
           <div className="card">
-            <h2>Nesting Results</h2>
+            <div className="card-header">
+              <h2>Nesting Results</h2>
+              <div className="btn-group">
+                <button onClick={selectAllPatterns} className="btn btn-small">Select All Patterns</button>
+                <button onClick={clearAllPatterns} className="btn btn-small">Clear Selection</button>
+              </div>
+            </div>
             {results.summary && (
               <div className="summary-bar">
                 <div className="summary-item">
@@ -594,6 +692,12 @@ function addCustomStock() {
                     <span className="summary-label">Errors</span>
                   </div>
                 )}
+                <div className="summary-item">
+                  <span className="summary-val" style={{ color: selectedPatternCount > 0 ? 'var(--green)' : 'var(--gray-400)' }}>
+                    {selectedPatternCount}
+                  </span>
+                  <span className="summary-label">Patterns Selected</span>
+                </div>
               </div>
             )}
 
@@ -610,29 +714,40 @@ function addCustomStock() {
                     </div>
                     {group.patterns.map((pattern, pi) => {
                       const r = pattern.representative;
+                      const patternKey = `1d-${gi}-${pi}`;
+                      const isPatternSelected = selectedPatterns.has(patternKey);
                       return (
-                        <div key={pi} className="stock-result">
+                        <div key={pi} className={`stock-result ${isPatternSelected ? 'pattern-selected' : 'pattern-deselected'}`}>
                           <div className="stock-result-header">
-                  <span className="stock-label">
-  Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)}
-  {(() => {
-    const totalUsed = r.cuts?.reduce((sum, c) => sum + c.cut_length + kerf1D, 0) || 0;
-    const shorterStocks = matchedStock
-      .filter(s => s.form_type === r.form_type && s.material_type === r.material_origin && parseFloat(s.stock_length) < r.stock_length_in)
-      .map(s => parseFloat(s.stock_length))
-      .sort((a, b) => b - a);
-    const nextShorter = shorterStocks[0];
-    const warnings = [];
-    if (nextShorter && totalUsed > nextShorter && totalUsed <= nextShorter + 1) {
-      warnings.push(`Within 1" of ${inToFt(nextShorter)} stock — confirm kerf, shorter stock may work`);
-    }
-    if (r.remnant_length_in >= 0 && r.remnant_length_in <= 1 && r.cuts?.length > 0) {
-      warnings.push('Tight fit on current stock — verify kerf allowance');
-    }
-    return warnings.map((w, wi) => <span key={wi} style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px', display:'inline-block'}}>⚠ {w}</span>);
-  })()}
-</span>
-                           <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {inToFt(r.remnant_length_in)}</span>
+                            <div className="pattern-select-row">
+                              <input
+                                type="checkbox"
+                                checked={isPatternSelected}
+                                onChange={() => togglePattern(patternKey)}
+                                className="pattern-checkbox"
+                              />
+                              <span className="stock-label">
+                                Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)}
+                                {pattern.count > 1 && <span className="pattern-count-badge">×{pattern.count} identical</span>}
+                                {(() => {
+                                  const totalUsed = r.cuts?.reduce((sum, c) => sum + c.cut_length + kerf1D, 0) || 0;
+                                  const shorterStocks = matchedStock
+                                    .filter(s => s.form_type === r.form_type && s.material_type === r.material_origin && parseFloat(s.stock_length) < r.stock_length_in)
+                                    .map(s => parseFloat(s.stock_length))
+                                    .sort((a, b) => b - a);
+                                  const nextShorter = shorterStocks[0];
+                                  const warnings = [];
+                                  if (nextShorter && totalUsed > nextShorter && totalUsed <= nextShorter + 1) {
+                                    warnings.push(`Within 1" of ${inToFt(nextShorter)} stock — confirm kerf, shorter stock may work`);
+                                  }
+                                  if (r.remnant_length_in >= 0 && r.remnant_length_in <= 1 && r.cuts?.length > 0) {
+                                    warnings.push('Tight fit on current stock — verify kerf allowance');
+                                  }
+                                  return warnings.map((w, wi) => <span key={wi} style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px', display:'inline-block'}}>⚠ {w}</span>);
+                                })()}
+                              </span>
+                            </div>
+                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {inToFt(r.remnant_length_in)}</span>
                           </div>
                           <div className="bar-visual">
                             {r.cuts?.map((cut, j) => (
@@ -690,33 +805,44 @@ function addCustomStock() {
                     </div>
                     {group.patterns.map((pattern, pi) => {
                       const r = pattern.representative;
+                      const patternKey = `2d-${gi}-${pi}`;
+                      const isPatternSelected = selectedPatterns.has(patternKey);
                       return (
-                        <div key={pi} className="stock-result">
+                        <div key={pi} className={`stock-result ${isPatternSelected ? 'pattern-selected' : 'pattern-deselected'}`}>
                           <div className="stock-result-header">
-                   <span className="stock-label">
-  Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}
-  {(() => {
-    const warnings = [];
-    const maxCutX = Math.max(...(r.cuts?.map(c => c.x_position + c.cut_length + kerf2D) || [0]));
-    const maxCutY = Math.max(...(r.cuts?.map(c => c.y_position + c.cut_width + kerf2D) || [0]));
-    const smallerPanels = matchedStock
-      .filter(s => s.form_type === r.form_type && s.material_type === r.material_origin && parseFloat(s.stock_width) > 0 && (parseFloat(s.stock_length) * parseFloat(s.stock_width)) < (r.stock_length_in * r.stock_width_in))
-      .map(s => ({ l: parseFloat(s.stock_length), w: parseFloat(s.stock_width) }))
-      .sort((a, b) => (b.l * b.w) - (a.l * a.w));
-    const nextSmaller = smallerPanels[0];
-    if (nextSmaller) {
-      const fitsNormal = maxCutX <= nextSmaller.l + 1 && maxCutY <= nextSmaller.w + 1;
-      const fitsRotated = maxCutX <= nextSmaller.w + 1 && maxCutY <= nextSmaller.l + 1;
-      if (fitsNormal || fitsRotated) {
-        warnings.push(`Within 1" of ${inToFt(nextSmaller.l)} × ${inToFt(nextSmaller.w)} stock — confirm kerf, smaller panel may work`);
-      }
-    }
-    if (r.waste_percentage >= 0 && r.waste_percentage <= 3 && r.cuts?.length > 0) {
-      warnings.push('Tight fit on current panel — verify kerf allowance');
-    }
-    return warnings.map((w, wi) => <span key={wi} style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px', display:'inline-block'}}>⚠ {w}</span>);
-  })()}
-</span>
+                            <div className="pattern-select-row">
+                              <input
+                                type="checkbox"
+                                checked={isPatternSelected}
+                                onChange={() => togglePattern(patternKey)}
+                                className="pattern-checkbox"
+                              />
+                              <span className="stock-label">
+                                Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}
+                                {pattern.count > 1 && <span className="pattern-count-badge">×{pattern.count} identical</span>}
+                                {(() => {
+                                  const warnings = [];
+                                  const maxCutX = Math.max(...(r.cuts?.map(c => c.x_position + c.cut_length + kerf2D) || [0]));
+                                  const maxCutY = Math.max(...(r.cuts?.map(c => c.y_position + c.cut_width + kerf2D) || [0]));
+                                  const smallerPanels = matchedStock
+                                    .filter(s => s.form_type === r.form_type && s.material_type === r.material_origin && parseFloat(s.stock_width) > 0 && (parseFloat(s.stock_length) * parseFloat(s.stock_width)) < (r.stock_length_in * r.stock_width_in))
+                                    .map(s => ({ l: parseFloat(s.stock_length), w: parseFloat(s.stock_width) }))
+                                    .sort((a, b) => (b.l * b.w) - (a.l * a.w));
+                                  const nextSmaller = smallerPanels[0];
+                                  if (nextSmaller) {
+                                    const fitsNormal = maxCutX <= nextSmaller.l + 1 && maxCutY <= nextSmaller.w + 1;
+                                    const fitsRotated = maxCutX <= nextSmaller.w + 1 && maxCutY <= nextSmaller.l + 1;
+                                    if (fitsNormal || fitsRotated) {
+                                      warnings.push(`Within 1" of ${inToFt(nextSmaller.l)} × ${inToFt(nextSmaller.w)} stock — confirm kerf, smaller panel may work`);
+                                    }
+                                  }
+                                  if (r.waste_percentage >= 0 && r.waste_percentage <= 3 && r.cuts?.length > 0) {
+                                    warnings.push('Tight fit on current panel — verify kerf allowance');
+                                  }
+                                  return warnings.map((w, wi) => <span key={wi} style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px', display:'inline-block'}}>⚠ {w}</span>);
+                                })()}
+                              </span>
+                            </div>
                             <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {r.remnant_area_in2?.toFixed(1)} sq in</span>
                           </div>
                           {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
@@ -747,21 +873,24 @@ function addCustomStock() {
               </div>
             )}
 
-            {/* Errors */}
+            {/* Errors — with display name resolution (Issue #2) */}
             {results.summary?.errors?.length > 0 && (
               <div className="result-section">
                 <h3>Errors</h3>
                 {results.summary.errors.map((e, i) => (
-                  <div key={i} className="error-box">{e}</div>
+                  <div key={i} className="error-box">{resolveErrorNames(e, results._nameLookup)}</div>
                 ))}
               </div>
             )}
 
             <div className="card-footer">
               <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
-              <button onClick={saveToZoho} className="btn btn-primary" disabled={saving}>
-                {saving ? 'Saving...' : 'Import to Project'}
-              </button>
+              <div className="btn-group" style={{ alignItems: 'center' }}>
+                <span className="count">{selectedPatternCount} pattern{selectedPatternCount !== 1 ? 's' : ''} selected</span>
+                <button onClick={saveToZoho} className="btn btn-primary" disabled={saving || selectedPatternCount === 0}>
+                  {saving ? 'Saving...' : `Import ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''} to Project`}
+                </button>
+              </div>
             </div>
             {saveStatus && (
               <div className={`save-status ${saveStatus.startsWith('Error') ? 'save-error' : 'save-success'}`}>
