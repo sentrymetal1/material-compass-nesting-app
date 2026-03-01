@@ -863,10 +863,6 @@ export default function App() {
                   <span className="summary-val">{results.summary.avg_waste_pct_1d?.toFixed(1)}%</span>
                   <span className="summary-label">Avg Waste (1D)</span>
                 </div>
-                <div className="summary-item">
-                  <span className="summary-val">{inToFt(results.summary.total_remnant_length_in)}</span>
-                  <span className="summary-label">Total Remnant</span>
-                </div>
                 {weightSummary && (
                   <>
                     <div className="summary-item">
@@ -964,7 +960,7 @@ export default function App() {
                               </span>
                             </div>
                             <div className="result-badges">
-                              <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {inToFt(r.remnant_length_in)}</span>
+                              <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
                               {patternWpf > 0 && (
                                 <span className="weight-badge">
                                   {fmtLbs(patternStockWeight)} stock — {fmtLbs(patternWasteWeight)} waste
@@ -1088,7 +1084,7 @@ export default function App() {
                               </span>
                             </div>
                             <div className="result-badges">
-                              <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {r.remnant_area_in2?.toFixed(1)} sq in</span>
+                              <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
                               {patternWpf > 0 && (
                                 <span className="weight-badge">
                                   {fmtLbs(patternStockWeight)} stock — {fmtLbs(patternWasteWeight)} waste
