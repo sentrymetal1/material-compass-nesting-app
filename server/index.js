@@ -151,10 +151,15 @@ app.get('/api/project/:id', async (req, res) => {
 
     console.log('Project response status:', resp.status);
     console.log('Project response data keys:', resp.data ? Object.keys(resp.data) : 'null');
+    console.log('Project full response:', JSON.stringify(resp.data).substring(0, 500));
     console.log('Project records found:', resp.data?.data?.length || 0);
 
     if (!resp.data.data || resp.data.data.length === 0) {
-      return res.status(404).json({ error: 'Project not found' });
+      return res.status(404).json({ 
+        error: 'Project not found', 
+        zoho_response: resp.data,
+        url_used: `${creatorApiBase()}/report/All_Projects?criteria=(ID==${projectId})`
+      });
     }
 
     res.json(resp.data.data[0]);
