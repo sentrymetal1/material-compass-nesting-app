@@ -205,124 +205,136 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     }
 
     // 3. Create Nesting_Run_Header with "Approved" status
+    const headerData = {
+      Project_Lookup: projectId,
+      Run_Number: runNum,
+      Run_Status: 'Approved',
+      Added_User: 'web_app',
+    };
+    if (run_by) headerData.Run_By = run_by;
+    if (kerf_1d !== undefined) headerData.Kerf_1D = kerf_1d;
+    if (kerf_2d !== undefined) headerData.Kerf_2D = kerf_2d;
+
     const headerResp = await axios.post(
       `${creatorApiBase()}/form/Nesting_Run_Header`,
-      {
-        data: {
-          Project_Lookup: projectId,
-          Run_Number: runNum,
-          Run_Status: 'Approved',
-          Run_By: run_by || '',
-          Added_User: 'web_app',
-        },
-      },
+      { data: headerData },
       { headers: zohoHeaders(token) }
     );
 
+    console.log('Header create response:', JSON.stringify(headerResp.data));
     const nestRunID = headerResp.data.data.ID;
 
     // 4. Save 1D results (only selected patterns sent from frontend)
     let savedCount1D = 0;
     for (const result of results_1d || []) {
       if (result.error) continue;
+      if (!result.cuts || result.cuts.length === 0) continue;
 
       const firstCut = result.cuts[0];
-      const srResp = await axios.post(
-        `${creatorApiBase()}/form/Nesting_Stock_Result`,
-        {
-          data: {
-            Nesting_Run_Header: nestRunID,
-            Nesting_Type: '1D - Length',
-            Form_Type: result.form_type,
-            Material_Type: result.material_origin,
-            Specification: firstCut.spec_name,
-            Material: firstCut.material_type,
-            Stock_Size_Label: firstCut.stock_label || '',
-            Stock_Length: result.stock_length_in,
-            Remnant_Length: result.remnant_length_in,
-            Waste_Percentage: result.waste_percentage,
-            Stock_Weight_LBS: result.stock_weight_lbs,
-            Stock_Sequence: result.stock_sequence,
-            Added_User: 'web_app',
-          },
-        },
-        { headers: zohoHeaders(token) }
-      );
-
-      const srID = srResp.data.data.ID;
-      let cutSeq = 1;
-      for (const cut of result.cuts) {
-        await axios.post(
-          `${creatorApiBase()}/form/Nesting_Cut_Detail`,
+      try {
+        const srResp = await axios.post(
+          `${creatorApiBase()}/form/Nesting_Stock_Result`,
           {
             data: {
-              Nesting_Stock_Result: srID,
-              BOM_Line_Lookup: cut.bom_line_id,
-              Part_Mark: cut.part_mark,
-              Cut_Length: cut.cut_length,
-              Quantity_On_This_Stock: cut.quantity_on_this_stock,
-              Cut_Sequence: cutSeq,
-              Added_User: 'web_app',
+              Nesting_Run_Header: nestRunID,
+              Nesting_Type: '1D - Length',
+              Form_Type: result.form_type,
+              Material_Type: result.material_origin,
+              Specification: firstCut.spec_name,
+              Material: firstCut.material_type,
+              Stock_Size_Label: firstCut.stock_label || '',
+              Stock_Length: result.stock_length_in,
+              Remnant_Length: result.remnant_length_in,
+              Waste_Percentage: result.waste_percentage,
+              Stock_Weight_LBS: result.stock_weight_lbs || 0,
+              Stock_Sequence: result.stock_sequence || savedCount1D + 1,
             },
           },
           { headers: zohoHeaders(token) }
         );
-        cutSeq++;
+
+        const srID = srResp.data.data.ID;
+        let cutSeq = 1;
+        for (const cut of result.cuts) {
+          await axios.post(
+            `${creatorApiBase()}/form/Nesting_Cut_Detail`,
+            {
+              data: {
+                Nesting_Stock_Result: srID,
+                BOM_Line_Lookup: cut.bom_line_id,
+                Part_Mark: cut.part_mark,
+                Cut_Length: cut.cut_length,
+                Quantity_On_This_Stock: cut.quantity_on_this_stock,
+                Cut_Sequence: cutSeq,
+              },
+            },
+            { headers: zohoHeaders(token) }
+          );
+          cutSeq++;
+        }
+        savedCount1D++;
+      } catch (srErr) {
+        console.error(`Error saving 1D stock result ${savedCount1D + 1}:`, srErr.response?.data || srErr.message);
       }
-      savedCount1D++;
     }
 
     // 5. Save 2D results (only selected patterns sent from frontend)
     let savedCount2D = 0;
     for (const result of results_2d || []) {
       if (result.error) continue;
+      if (!result.cuts || result.cuts.length === 0) continue;
 
       const firstCut = result.cuts[0];
-      const srResp = await axios.post(
-        `${creatorApiBase()}/form/Nesting_Stock_Result`,
-        {
-          data: {
-            Nesting_Run_Header: nestRunID,
-            Nesting_Type: '2D - Panel',
-            Form_Type: result.form_type,
-            Material_Type: result.material_origin,
-            Specification: firstCut.spec_name,
-            Material: firstCut.material_type,
-            Stock_Size_Label: firstCut.stock_label || '',
-            Stock_Length: result.stock_length_in,
-            Stock_Width: result.stock_width_in,
-            Remnant_Length: result.remnant_area_in2,
-            Waste_Percentage: result.waste_percentage,
-            Stock_Weight_LBS: result.stock_weight_lbs,
-            Stock_Sequence: result.stock_sequence,
-            Added_User: 'web_app',
-          },
-        },
-        { headers: zohoHeaders(token) }
-      );
-
-      const srID = srResp.data.data.ID;
-      let cutSeq = 1;
-      for (const cut of result.cuts) {
-        await axios.post(
-          `${creatorApiBase()}/form/Nesting_Cut_Detail`,
+      try {
+        const srResp = await axios.post(
+          `${creatorApiBase()}/form/Nesting_Stock_Result`,
           {
             data: {
-              Nesting_Stock_Result: srID,
-              BOM_Line_Lookup: cut.bom_line_id,
-              Part_Mark: cut.part_mark,
-              Cut_Length: cut.cut_length,
-              Cut_Width: cut.cut_width,
-              Quantity_On_This_Stock: cut.quantity_on_this_stock,
-              Cut_Sequence: cutSeq,
-              Added_User: 'web_app',
+              Nesting_Run_Header: nestRunID,
+              Nesting_Type: '2D - Panel',
+              Form_Type: result.form_type,
+              Material_Type: result.material_origin,
+              Specification: firstCut.spec_name,
+              Material: firstCut.material_type,
+              Stock_Size_Label: firstCut.stock_label || '',
+              Stock_Length: result.stock_length_in,
+              Stock_Width: result.stock_width_in,
+              Remnant_Area: result.remnant_area_in2 || 0,
+              Waste_Percentage: result.waste_percentage,
+              Stock_Weight_LBS: result.stock_weight_lbs || 0,
+              Stock_Sequence: result.stock_sequence || savedCount2D + 1,
             },
           },
           { headers: zohoHeaders(token) }
         );
-        cutSeq++;
+
+        const srID = srResp.data.data.ID;
+        let cutSeq = 1;
+        for (const cut of result.cuts) {
+          await axios.post(
+            `${creatorApiBase()}/form/Nesting_Cut_Detail`,
+            {
+              data: {
+                Nesting_Stock_Result: srID,
+                BOM_Line_Lookup: cut.bom_line_id,
+                Part_Mark: cut.part_mark,
+                Cut_Length: cut.cut_length,
+                Cut_Width: cut.cut_width,
+                Quantity_On_This_Stock: cut.quantity_on_this_stock,
+                X_Position: cut.x_position || 0,
+                Y_Position: cut.y_position || 0,
+                Rotation: cut.rotation === 90 ? '90°' : '0°',
+                Cut_Sequence: cutSeq,
+              },
+            },
+            { headers: zohoHeaders(token) }
+          );
+          cutSeq++;
+        }
+        savedCount2D++;
+      } catch (srErr) {
+        console.error(`Error saving 2D stock result ${savedCount2D + 1}:`, srErr.response?.data || srErr.message);
       }
-      savedCount2D++;
     }
 
     // 6. Update run header with summary
