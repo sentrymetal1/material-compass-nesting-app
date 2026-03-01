@@ -166,27 +166,51 @@ app.post('/api/nest', async (req, res) => {
 });
 
 // POST /api/project/:id/save-results — save nesting results back to Zoho
+// STATUS-BASED FLOW: Previous "Approved" runs → "Superseded", new run → "Approved"
 app.post('/api/project/:id/save-results', async (req, res) => {
   try {
     const token = await getAccessToken();
     const projectId = req.params.id;
     const { results_1d, results_2d, summary, kerf_1d, kerf_2d, run_by } = req.body;
 
-    // 1. Count existing runs to get next run number
+    // 1. Fetch existing runs for this project
     const runsResp = await axios.get(
       `${creatorApiBase()}/report/Nesting_Run_Header_Report?criteria=(Project_Lookup==${projectId})`,
       { headers: zohoHeaders(token) }
     );
-    const runNum = (runsResp.data.data || []).length + 1;
+    const existingRuns = runsResp.data.data || [];
+    const runNum = existingRuns.length + 1;
 
-    // 2. Create Nesting_Run_Header
+    // 2. Supersede previous "Approved" runs
+    const approvedRuns = existingRuns.filter(
+      r => r.Run_Status === 'Approved'
+    );
+    for (const prevRun of approvedRuns) {
+      try {
+        await axios.patch(
+          `${creatorApiBase()}/report/Nesting_Run_Header_Report/${prevRun.ID}`,
+          {
+            data: {
+              Run_Status: 'Superseded',
+            },
+          },
+          { headers: zohoHeaders(token) }
+        );
+        console.log(`Superseded run #${prevRun.Run_Number} (ID: ${prevRun.ID})`);
+      } catch (supersErr) {
+        console.error(`Failed to supersede run ${prevRun.ID}:`, supersErr.response?.data || supersErr.message);
+        // Continue — don't block the new run if superseding fails
+      }
+    }
+
+    // 3. Create Nesting_Run_Header with "Approved" status
     const headerResp = await axios.post(
       `${creatorApiBase()}/form/Nesting_Run_Header`,
       {
         data: {
           Project_Lookup: projectId,
           Run_Number: runNum,
-          Run_Status: 'Processing',
+          Run_Status: 'Approved',
           Run_By: run_by || '',
           Added_User: 'web_app',
         },
@@ -196,7 +220,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
     const nestRunID = headerResp.data.data.ID;
 
-    // 3. Save 1D results
+    // 4. Save 1D results (only selected patterns sent from frontend)
     let savedCount1D = 0;
     for (const result of results_1d || []) {
       if (result.error) continue;
@@ -247,7 +271,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       savedCount1D++;
     }
 
-    // 4. Save 2D results
+    // 5. Save 2D results (only selected patterns sent from frontend)
     let savedCount2D = 0;
     for (const result of results_2d || []) {
       if (result.error) continue;
@@ -300,17 +324,17 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       savedCount2D++;
     }
 
-    // 5. Update run header with summary
+    // 6. Update run header with summary
+    const supersededCount = approvedRuns.length;
     await axios.patch(
       `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`,
       {
         data: {
-          Run_Status: 'Complete',
           Kerf_1D: kerf_1d || 0.125,
           Kerf_2D: kerf_2d || 0.125,
-          Total_Stock_Pieces: summary?.total_stock_pieces || 0,
+          Total_Stock_Pieces: (savedCount1D + savedCount2D) || 0,
           Total_Waste_Inches: summary?.total_remnant_length_in || 0,
-          Notes: `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${summary?.avg_waste_pct_1d || 0}%`,
+          Notes: `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${summary?.avg_waste_pct_1d || 0}%${supersededCount > 0 ? ` | Superseded ${supersededCount} previous run(s)` : ''}`,
         },
       },
       { headers: zohoHeaders(token) }
@@ -320,8 +344,10 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       success: true,
       nest_run_id: nestRunID,
       run_number: runNum,
+      run_status: 'Approved',
       saved_1d: savedCount1D,
       saved_2d: savedCount2D,
+      superseded_runs: supersededCount,
     });
   } catch (err) {
     console.error('Error saving results:', err.response?.data || err.message);
