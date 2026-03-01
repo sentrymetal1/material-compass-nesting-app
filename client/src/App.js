@@ -613,8 +613,11 @@ function addCustomStock() {
                       return (
                         <div key={pi} className="stock-result">
                           <div className="stock-result-header">
-                        <span className="stock-label">
+                      <span className="stock-label">
   Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)}
+  {r.remnant_length_in >= 0 && r.remnant_length_in <= 1 && r.cuts?.length > 0 && (
+    <span style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px'}}>⚠ Within 1" of stock limit — confirm kerf, smaller stock may work</span>
+  )}
 </span>
                            <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {inToFt(r.remnant_length_in)}</span>
                           </div>
@@ -677,8 +680,11 @@ function addCustomStock() {
                       return (
                         <div key={pi} className="stock-result">
                           <div className="stock-result-header">
-                           <span className="stock-label">
+                        <span className="stock-label">
   Cut Pattern {pi + 1} — {group.form_type_name} | {group.material_type_name} | {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}
+  {r.waste_percentage >= 0 && r.waste_percentage <= 2 && r.cuts?.length > 0 && (
+    <span style={{color:'#d32f2f', fontSize:'11px', marginLeft:'8px'}}>⚠ Tight fit — confirm kerf, smaller stock may work</span>
+  )}
 </span>
                             <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste — {r.remnant_area_in2?.toFixed(1)} sq in</span>
                           </div>
