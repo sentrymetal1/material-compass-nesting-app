@@ -232,27 +232,32 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
       const firstCut = result.cuts[0];
       try {
+        const srData = {
+          Nesting_Run_Header: nestRunID,
+          Nesting_Type: '1D - Length',
+          Form_Type: result.form_type,
+          Material_Type: result.material_origin,
+          Specification: firstCut.spec_name,
+          Material: firstCut.material_type,
+          Stock_Size_Label: firstCut.stock_label || '',
+          Stock_Length: result.stock_length_in,
+          Remnant_Length: result.remnant_length_in,
+          Waste_Percentage: result.waste_percentage,
+          Stock_Weight_LBS: result.stock_weight_lbs || 0,
+          Stock_Sequence: result.stock_sequence || savedCount1D + 1,
+        };
+        console.log('1D Stock Result payload:', JSON.stringify(srData));
         const srResp = await axios.post(
           `${creatorApiBase()}/form/Nesting_Stock_Result`,
-          {
-            data: {
-              Nesting_Run_Header: nestRunID,
-              Nesting_Type: '1D - Length',
-              Form_Type: result.form_type,
-              Material_Type: result.material_origin,
-              Specification: firstCut.spec_name,
-              Material: firstCut.material_type,
-              Stock_Size_Label: firstCut.stock_label || '',
-              Stock_Length: result.stock_length_in,
-              Remnant_Length: result.remnant_length_in,
-              Waste_Percentage: result.waste_percentage,
-              Stock_Weight_LBS: result.stock_weight_lbs || 0,
-              Stock_Sequence: result.stock_sequence || savedCount1D + 1,
-            },
-          },
+          { data: srData },
           { headers: zohoHeaders(token) }
         );
+        console.log('1D Stock Result response:', JSON.stringify(srResp.data));
 
+        if (!srResp.data?.data?.ID) {
+          console.error('1D Stock Result - no ID in response:', JSON.stringify(srResp.data));
+          continue;
+        }
         const srID = srResp.data.data.ID;
         let cutSeq = 1;
         for (const cut of result.cuts) {
