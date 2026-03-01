@@ -212,20 +212,19 @@ app.post('/api/project/:id/save-results', async (req, res) => {
         { headers: zohoHeaders(token) }
       );
       const projData = projResp.data.data;
-      manufactureName = projData?.MANUFACTURE?.zc_display_value || projData?.MANUFACTURE?.display_value || projData?.MANUFACTURE || '';
-      console.log('Project MANUFACTURE:', manufactureName);
+      const mfgRaw = projData?.MANUFACTURE;
+      manufactureName = mfgRaw?.ID || mfgRaw?.zc_display_value || mfgRaw?.display_value || mfgRaw || '';
+      console.log('Project MANUFACTURE raw:', JSON.stringify(mfgRaw), '→ using:', manufactureName);
     } catch (projErr) {
       console.error('Failed to fetch project for MANUFACTURE:', projErr.response?.data || projErr.message);
     }
 
     // 3. Create Nesting_Run_Header with "Approved" status
-    const now = new Date();
-    const runDate = `${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getDate().toString().padStart(2,'0')}/${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
+    // Note: Run_Date auto-populates via Zoho's ${zoho.currenttime} initial value
     const headerData = {
       Project_Lookup: projectId,
       Run_Number: runNum,
       Run_Status: 'Approved',
-      Run_Date: runDate,
       Added_User: 'web_app',
     };
     if (run_by) {
