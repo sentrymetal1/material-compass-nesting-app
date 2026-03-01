@@ -111,6 +111,7 @@ app.get('/api/project/:id/bom', async (req, res) => {
       length_nest: row.Length_Nest,
       width_nest: row.Width_Nest,
       density: row.Density,
+      weight_per_ft: row.Weight_Per_Ft,
     }));
 
     res.json(bomItems);
@@ -352,6 +353,89 @@ app.post('/api/project/:id/save-results', async (req, res) => {
   } catch (err) {
     console.error('Error saving results:', err.response?.data || err.message);
     res.status(500).json({ error: 'Failed to save results', details: err.response?.data || err.message });
+  }
+});
+
+// POST /api/project/:id/generate-purchase-list — aggregate nesting results into Material_Allocated subform
+app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const projectId = req.params.id;
+    const { purchase_lines } = req.body; // pre-aggregated from frontend
+
+    const subformRows = purchase_lines.map((line, idx) => ({
+      Form_Type: line.form_type_id,
+      Material_Types: line.material_type_id,
+      Specification: line.specification_id,
+      Material: line.material_id,
+      Item_Description: line.description || '',
+      QTY: line.quantity,
+      Feet_Length: line.feet_length || 0,
+      Weight_Per_Ft: line.weight_per_ft || 0,
+      Unit_Weight: line.unit_weight || 0,
+      CutWeight: line.total_weight || 0,
+    }));
+
+    // Update the project record's Material_Allocated subform
+    await axios.patch(
+      `${creatorApiBase()}/report/All_Projects/${projectId}`,
+      {
+        data: {
+          Material_Allocated: subformRows,
+        },
+      },
+      { headers: zohoHeaders(token) }
+    );
+
+    res.json({ success: true, items_saved: subformRows.length });
+  } catch (err) {
+    console.error('Error saving purchase list:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });
+  }
+});
+
+// POST /api/project/:id/generate-purchase-list — aggregate nesting results into Material_Allocated subform
+app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const projectId = req.params.id;
+    const { purchase_lines } = req.body; // pre-aggregated from frontend
+
+    if (!purchase_lines || purchase_lines.length === 0) {
+      return res.status(400).json({ error: 'No purchase lines provided' });
+    }
+
+    const subformRows = purchase_lines.map((line, idx) => {
+      const row = {
+        Form_Type: line.form_type_id,
+        Material_Types: line.material_type_id,
+        Specification: line.specification_id,
+        Material: line.material_id,
+        Item_Description: line.description || '',
+        QTY: line.quantity,
+        Feet_Length: line.feet_length || 0,
+        Weight_Per_Ft: line.weight_per_ft || 0,
+        Unit_Weight: line.unit_weight || 0,
+        CutWeight: line.total_weight || 0,
+      };
+      return row;
+    });
+
+    // Update the project record's Material_Allocated subform
+    await axios.patch(
+      `${creatorApiBase()}/report/All_Projects/${projectId}`,
+      {
+        data: {
+          Material_Allocated: subformRows,
+        },
+      },
+      { headers: zohoHeaders(token) }
+    );
+
+    res.json({ success: true, items_saved: subformRows.length });
+  } catch (err) {
+    console.error('Error saving purchase list:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });
   }
 });
 
