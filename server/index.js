@@ -21,25 +21,70 @@ const ZOHO = {
 };
 const NESTING_API_URL = process.env.NESTING_API_URL || 'https://metal-nesting-api-production.up.railway.app/nest';
 
+// Log config on startup (mask secrets)
+console.log('Zoho Config:', {
+  clientId: ZOHO.clientId ? ZOHO.clientId.substring(0, 10) + '...' : 'MISSING',
+  clientSecret: ZOHO.clientSecret ? ZOHO.clientSecret.substring(0, 6) + '...' : 'MISSING',
+  refreshToken: ZOHO.refreshToken ? ZOHO.refreshToken.substring(0, 10) + '...' + ZOHO.refreshToken.slice(-6) : 'MISSING',
+  accountOwner: ZOHO.accountOwner,
+  appLinkName: ZOHO.appLinkName,
+});
+
 // ─── Token Cache ───────────────────────────────────────────────
 let cachedToken = null;
 let tokenExpiry = 0;
+let lastTokenError = null;
 
 async function getAccessToken() {
-  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
+  if (cachedToken && Date.now() < tokenExpiry) {
+    return cachedToken;
+  }
 
-  const resp = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, {
-    params: {
-      refresh_token: ZOHO.refreshToken,
-      client_id: ZOHO.clientId,
-      client_secret: ZOHO.clientSecret,
-      grant_type: 'refresh_token',
-    },
-  });
+  console.log('Requesting new access token from Zoho...');
+  console.log('Using refresh token:', ZOHO.refreshToken ? ZOHO.refreshToken.substring(0, 10) + '...' + ZOHO.refreshToken.slice(-6) : 'MISSING');
 
-  cachedToken = resp.data.access_token;
-  tokenExpiry = Date.now() + (resp.data.expires_in - 60) * 1000; // refresh 1 min early
-  return cachedToken;
+  try {
+    const resp = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, {
+      params: {
+        refresh_token: ZOHO.refreshToken,
+        client_id: ZOHO.clientId,
+        client_secret: ZOHO.clientSecret,
+        grant_type: 'refresh_token',
+      },
+    });
+
+    console.log('Token response keys:', Object.keys(resp.data));
+
+    // Check if Zoho returned an error
+    if (resp.data.error) {
+      console.error('Zoho token error:', resp.data.error);
+      lastTokenError = resp.data.error;
+      // Do NOT cache a bad token
+      cachedToken = null;
+      tokenExpiry = 0;
+      throw new Error(`Zoho token error: ${resp.data.error}`);
+    }
+
+    if (!resp.data.access_token) {
+      console.error('No access_token in response:', JSON.stringify(resp.data));
+      lastTokenError = 'No access_token in response';
+      cachedToken = null;
+      tokenExpiry = 0;
+      throw new Error('No access_token in Zoho response');
+    }
+
+    cachedToken = resp.data.access_token;
+    tokenExpiry = Date.now() + (resp.data.expires_in - 60) * 1000;
+    lastTokenError = null;
+    console.log('Access token obtained successfully, expires in', resp.data.expires_in, 'seconds');
+    return cachedToken;
+  } catch (err) {
+    console.error('Token request failed:', err.response?.data || err.message);
+    lastTokenError = err.response?.data || err.message;
+    cachedToken = null;
+    tokenExpiry = 0;
+    throw err;
+  }
 }
 
 function zohoHeaders(token) {
@@ -60,16 +105,53 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Debug endpoint — shows token status without exposing secrets
+app.get('/api/debug', async (req, res) => {
+  const info = {
+    config: {
+      clientId: ZOHO.clientId ? ZOHO.clientId.substring(0, 10) + '...' : 'MISSING',
+      clientSecret: ZOHO.clientSecret ? '***set***' : 'MISSING',
+      refreshToken: ZOHO.refreshToken ? ZOHO.refreshToken.substring(0, 10) + '...' + ZOHO.refreshToken.slice(-6) : 'MISSING',
+      accountOwner: ZOHO.accountOwner,
+      appLinkName: ZOHO.appLinkName,
+    },
+    tokenCache: {
+      hasToken: !!cachedToken,
+      tokenExpiry: tokenExpiry ? new Date(tokenExpiry).toISOString() : null,
+      isExpired: Date.now() >= tokenExpiry,
+    },
+    lastTokenError: lastTokenError,
+    apiBase: creatorApiBase(),
+  };
+
+  // Try to get a fresh token
+  try {
+    const token = await getAccessToken();
+    info.tokenTest = { success: true, tokenPrefix: token ? token.substring(0, 10) + '...' : 'null' };
+  } catch (err) {
+    info.tokenTest = { success: false, error: err.message };
+  }
+
+  res.json(info);
+});
+
 // GET /api/project/:id — fetch project info
 app.get('/api/project/:id', async (req, res) => {
   try {
     const token = await getAccessToken();
     const projectId = req.params.id;
 
+    console.log('Fetching project:', projectId);
+    console.log('URL:', `${creatorApiBase()}/report/All_Projects?criteria=(ID==${projectId})`);
+
     const resp = await axios.get(
       `${creatorApiBase()}/report/All_Projects?criteria=(ID==${projectId})`,
       { headers: zohoHeaders(token) }
     );
+
+    console.log('Project response status:', resp.status);
+    console.log('Project response data keys:', resp.data ? Object.keys(resp.data) : 'null');
+    console.log('Project records found:', resp.data?.data?.length || 0);
 
     if (!resp.data.data || resp.data.data.length === 0) {
       return res.status(404).json({ error: 'Project not found' });
@@ -151,7 +233,6 @@ app.get('/api/stock', async (req, res) => {
 });
 
 // POST /api/nest — run nesting (proxies to existing Railway nesting API)
-// Frontend sends only enabled stock (user can toggle library stock on/off and add custom sizes)
 app.post('/api/nest', async (req, res) => {
   try {
     const resp = await axios.post(NESTING_API_URL, req.body, {
@@ -167,7 +248,6 @@ app.post('/api/nest', async (req, res) => {
 });
 
 // POST /api/project/:id/save-results — save nesting results back to Zoho
-// STATUS-BASED FLOW: Previous "Approved" runs → "Superseded", new run → "Approved"
 app.post('/api/project/:id/save-results', async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -200,7 +280,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
         console.log(`Superseded run #${prevRun.Run_Number} (ID: ${prevRun.ID})`);
       } catch (supersErr) {
         console.error(`Failed to supersede run ${prevRun.ID}:`, supersErr.response?.data || supersErr.message);
-        // Continue — don't block the new run if superseding fails
       }
     }
 
@@ -220,7 +299,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     }
 
     // 3. Create Nesting_Run_Header with "Approved" status
-    // Note: Run_Date auto-populates via Zoho's ${zoho.currenttime} initial value
     const headerData = {
       Project_Lookup: projectId,
       Run_Number: runNum,
@@ -246,7 +324,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     console.log('Header create response:', JSON.stringify(headerResp.data));
     const nestRunID = headerResp.data.data.ID;
 
-    // 4. Save 1D results (only selected patterns sent from frontend)
+    // 4. Save 1D results
     let savedCount1D = 0;
     for (const result of results_1d || []) {
       if (result.error) continue;
@@ -305,7 +383,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       }
     }
 
-    // 5. Save 2D results (only selected patterns sent from frontend)
+    // 5. Save 2D results
     let savedCount2D = 0;
     for (const result of results_2d || []) {
       if (result.error) continue;
@@ -364,14 +442,13 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       }
     }
 
-    // 6. Update run header with summary (total pieces, waste, notes)
+    // 6. Update run header with summary — use FORM endpoint instead of report
     const supersededCount = approvedRuns.length;
     const totalWaste = summary?.total_remnant_length_in || 0;
     const wastePct = summary?.avg_waste_pct_1d || 0;
     const notesStr = `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${wastePct}%${supersededCount > 0 ? ` | Superseded ${supersededCount} previous run(s)` : ''}`;
 
     try {
-      // Build Run_Date in Zoho's format: "Mar 01, 2026 14:30:00"
       const now = new Date();
       const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
       const runDateStr = `${months[now.getMonth()]} ${now.getDate().toString().padStart(2,'0')}, ${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
@@ -383,13 +460,14 @@ app.post('/api/project/:id/save-results', async (req, res) => {
         Notes: notesStr,
       };
       console.log('Header PATCH payload:', JSON.stringify(patchData));
-      console.log('Header PATCH URL:', `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`);
+      
+      // Try form endpoint first (more reliable for updates)
+      const patchUrl = `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`;
+      console.log('Header PATCH URL:', patchUrl);
       
       const patchResp = await axios.patch(
-        `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`,
-        {
-          data: patchData,
-        },
+        patchUrl,
+        { data: patchData },
         { 
           headers: {
             ...zohoHeaders(token),
@@ -401,7 +479,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     } catch (patchErr) {
       console.error('ERROR updating run header summary:', JSON.stringify(patchErr.response?.data || patchErr.message));
       console.error('ERROR status:', patchErr.response?.status);
-      // Don't fail the whole save — the results are already saved
     }
 
     res.json({
@@ -419,12 +496,12 @@ app.post('/api/project/:id/save-results', async (req, res) => {
   }
 });
 
-// POST /api/project/:id/generate-purchase-list — aggregate nesting results into Material_Allocated subform
+// POST /api/project/:id/generate-purchase-list
 app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
   try {
     const token = await getAccessToken();
     const projectId = req.params.id;
-    const { purchase_lines } = req.body; // pre-aggregated from frontend
+    const { purchase_lines } = req.body;
 
     if (!purchase_lines || purchase_lines.length === 0) {
       return res.status(400).json({ error: 'No purchase lines provided' });
@@ -446,7 +523,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       return row;
     });
 
-    // Update the project record's Material_Allocated subform
     await axios.patch(
       `${creatorApiBase()}/report/All_Projects/${projectId}`,
       {
@@ -461,48 +537,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
   } catch (err) {
     console.error('Error saving purchase list:', err.response?.data || err.message);
     res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });
-  }
-});
-
-// POST /api/project/:id/save-purchase-material — write to Purchase Material subform
-app.post('/api/project/:id/save-purchase-material', async (req, res) => {
-  try {
-    const token = await getAccessToken();
-    const projectId = req.params.id;
-    const { items } = req.body; // array of purchase material line items
-
-    const subformRows = items.map((item, idx) => ({
-      Line_Item_Fitting: idx + 1,
-      Form_Type: item.form_type_id,
-      Material_Types: item.material_type_id,
-      Specification: item.specification_id,
-      Material: item.material_id,
-      Item_Description: item.description || '',
-      QTY: item.quantity,
-      Feet_Length: item.feet_length || 0,
-      Length_INCH: item.length_inch || '',
-      Width_FT: item.width_ft || '',
-      Width_INCH: item.width_inch || '',
-      Weight_Per_FT: item.weight_per_ft || 0,
-      Unit_Weight: item.unit_weight || 0,
-      CutWeight: item.total_weight || 0,
-    }));
-
-    // Update the project record's Material_Allocated subform
-    await axios.patch(
-      `${creatorApiBase()}/report/All_Projects/${projectId}`,
-      {
-        data: {
-          Material_Allocated: subformRows,
-        },
-      },
-      { headers: zohoHeaders(token) }
-    );
-
-    res.json({ success: true, items_saved: subformRows.length });
-  } catch (err) {
-    console.error('Error saving purchase material:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to save purchase material', details: err.response?.data || err.message });
   }
 });
 
