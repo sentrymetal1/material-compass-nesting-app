@@ -259,12 +259,24 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     const projectId = req.params.id;
     const { results_1d, results_2d, summary, kerf_1d, kerf_2d, run_by } = req.body;
 
-    // 1. Fetch existing runs for this project
-    const runsResp = await axios.get(
-      `${creatorApiBase()}/report/Nesting_Run_Header_Report?criteria=(Project_Lookup==${projectId})`,
-      { headers: zohoHeaders(token) }
-    );
-    const existingRuns = runsResp.data.data || [];
+    // 1. Fetch existing runs for this project (handle no-records gracefully)
+    let existingRuns = [];
+    try {
+      const runsResp = await axios.get(
+        `${creatorApiBase()}/report/Nesting_Run_Header_Report?criteria=(Project_Lookup==${projectId})`,
+        { headers: zohoHeaders(token) }
+      );
+      existingRuns = runsResp.data.data || [];
+    } catch (runsErr) {
+      // Zoho returns code 9280 when no records match the criteria — treat as empty
+      const zCode = runsErr.response?.data?.code;
+      if (zCode === 9280) {
+        console.log('No existing nesting runs for this project (first run)');
+        existingRuns = [];
+      } else {
+        throw runsErr;
+      }
+    }
     const runNum = existingRuns.length + 1;
 
     // 2. Supersede previous "Approved" runs
@@ -304,9 +316,15 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     }
 
     // 3. Create Nesting_Run_Header with "Approved" status
+    // Build Run_Date in dd-MMM-yyyy format (Zoho Date field, no time)
+    const now = new Date();
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const runDateStr = `${now.getDate().toString().padStart(2,'0')}-${months[now.getMonth()]}-${now.getFullYear()}`;
+
     const headerData = {
       Project_Lookup: projectId,
       Run_Number: runNum,
+      Run_Date: runDateStr,
       Run_Status: 'Approved',
       Added_User: 'web_app',
     };
@@ -447,20 +465,14 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       }
     }
 
-    // 6. Update run header with summary
+    // 6. Update run header with summary (Total_Stock_Pieces, Total_Waste_Inches, Notes)
     const supersededCount = approvedRuns.length;
     const totalWaste = summary?.total_remnant_length_in || 0;
     const wastePct = summary?.avg_waste_pct_1d || 0;
     const notesStr = `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${wastePct}%${supersededCount > 0 ? ` | Superseded ${supersededCount} previous run(s)` : ''}`;
 
     try {
-      // Zoho Date-Time format: dd-MMM-yyyy HH:mm:ss (e.g., "01-Mar-2026 14:30:00")
-      const now = new Date();
-      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const runDateStr = `${now.getDate().toString().padStart(2,'0')}-${months[now.getMonth()]}-${now.getFullYear()}`;
-
       const patchData = {
-        Run_Date: runDateStr,
         Total_Stock_Pieces: (savedCount1D + savedCount2D) || 0,
         Total_Waste_Inches: Math.round(totalWaste * 10000) / 10000,
         Notes: notesStr,
