@@ -316,7 +316,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     }
 
     // 3. Create Nesting_Run_Header with "Approved" status
-    // Run_Date is a Date-Time field — format: MM/dd/yyyy HH:mm:ss
+    // Run_Date is a Single Line text field — store as timestamp string
     const now = new Date();
     const runDateStr = `${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getDate().toString().padStart(2,'0')}/${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
 
