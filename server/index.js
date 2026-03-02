@@ -346,7 +346,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     console.log('Header create response:', JSON.stringify(headerResp.data));
     const nestRunID = headerResp.data.data.ID;
 
-    // 4. Save 1D results
+    // 4. Save 1D results — cut details embedded as subform rows
     let savedCount1D = 0;
     for (const result of results_1d || []) {
       if (result.error) continue;
@@ -354,6 +354,15 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
       const firstCut = result.cuts[0];
       try {
+        // Build cut detail subform rows
+        const cutDetailRows = result.cuts.map((cut, idx) => ({
+          BOM_Line_Lookup: cut.bom_line_id,
+          Part_Mark: cut.part_mark,
+          Cut_Length: cut.cut_length,
+          Quantity_On_This_Stock: cut.quantity_on_this_stock,
+          Cut_Sequence: idx + 1,
+        }));
+
         const srData = {
           Nesting_Run_Header: nestRunID,
           Nesting_Type: '1D - Linear',
@@ -361,12 +370,14 @@ app.post('/api/project/:id/save-results', async (req, res) => {
           Material_Type: result.material_origin,
           Specification: firstCut.spec_name,
           Material: firstCut.material_type,
-          Stock_Size_Label: firstCut.stock_label || '',
+          Stock_Size_Label: result.stock_label || firstCut.stock_label || '',
           Stock_Length: result.stock_length_in,
+          Stock_Thickness: result.stock_thickness || firstCut.stock_thickness || 0,
           Remnant_Length: Math.round((result.remnant_length_in || 0) * 100) / 100,
           Waste_Percentage: result.waste_percentage,
           Stock_Weight_LBS: result.stock_weight_lbs || 0,
           Stock_Sequence: result.stock_sequence || savedCount1D + 1,
+          Nesting_Cut_Detail: cutDetailRows,
         };
         console.log('1D Stock Result payload:', JSON.stringify(srData));
         const srResp = await axios.post(
@@ -380,32 +391,13 @@ app.post('/api/project/:id/save-results', async (req, res) => {
           console.error('1D Stock Result - no ID in response:', JSON.stringify(srResp.data));
           continue;
         }
-        const srID = srResp.data.data.ID;
-        let cutSeq = 1;
-        for (const cut of result.cuts) {
-          await axios.post(
-            `${creatorApiBase()}/form/Nesting_Cut_Detail`,
-            {
-              data: {
-                Nesting_Stock_Result: srID,
-                BOM_Line_Lookup: cut.bom_line_id,
-                Part_Mark: cut.part_mark,
-                Cut_Length: cut.cut_length,
-                Quantity_On_This_Stock: cut.quantity_on_this_stock,
-                Cut_Sequence: cutSeq,
-              },
-            },
-            { headers: zohoHeaders(token) }
-          );
-          cutSeq++;
-        }
         savedCount1D++;
       } catch (srErr) {
         console.error(`Error saving 1D stock result ${savedCount1D + 1}:`, srErr.response?.data || srErr.message);
       }
     }
 
-    // 5. Save 2D results
+    // 5. Save 2D results — cut details embedded as subform rows
     let savedCount2D = 0;
     for (const result of results_2d || []) {
       if (result.error) continue;
@@ -413,50 +405,48 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
       const firstCut = result.cuts[0];
       try {
+        // Build cut detail subform rows
+        const cutDetailRows = result.cuts.map((cut, idx) => ({
+          BOM_Line_Lookup: cut.bom_line_id,
+          Part_Mark: cut.part_mark,
+          Cut_Length: cut.cut_length,
+          Cut_Width: cut.cut_width,
+          Quantity_On_This_Stock: cut.quantity_on_this_stock,
+          X_Position: cut.x_position || 0,
+          Y_Position: cut.y_position || 0,
+          Rotation: cut.rotation === 90 ? '90°' : '0°',
+          Cut_Sequence: idx + 1,
+        }));
+
+        const srData = {
+          Nesting_Run_Header: nestRunID,
+          Nesting_Type: '2D - Panel',
+          Form_Type: result.form_type,
+          Material_Type: result.material_origin,
+          Specification: firstCut.spec_name,
+          Material: firstCut.material_type,
+          Stock_Size_Label: result.stock_label || firstCut.stock_label || '',
+          Stock_Length: result.stock_length_in,
+          Stock_Width: result.stock_width_in,
+          Stock_Thickness: result.stock_thickness || firstCut.stock_thickness || 0,
+          Remnant_Area: result.remnant_area_in2 || 0,
+          Waste_Percentage: result.waste_percentage,
+          Stock_Weight_LBS: result.stock_weight_lbs || 0,
+          Stock_Sequence: result.stock_sequence || savedCount2D + 1,
+          Nesting_Cut_Detail: cutDetailRows,
+        };
+
+        console.log('2D Stock Result payload:', JSON.stringify(srData));
         const srResp = await axios.post(
           `${creatorApiBase()}/form/Nesting_Stock_Result`,
-          {
-            data: {
-              Nesting_Run_Header: nestRunID,
-              Nesting_Type: '2D - Panel',
-              Form_Type: result.form_type,
-              Material_Type: result.material_origin,
-              Specification: firstCut.spec_name,
-              Material: firstCut.material_type,
-              Stock_Size_Label: firstCut.stock_label || '',
-              Stock_Length: result.stock_length_in,
-              Stock_Width: result.stock_width_in,
-              Remnant_Area: result.remnant_area_in2 || 0,
-              Waste_Percentage: result.waste_percentage,
-              Stock_Weight_LBS: result.stock_weight_lbs || 0,
-              Stock_Sequence: result.stock_sequence || savedCount2D + 1,
-            },
-          },
+          { data: srData },
           { headers: zohoHeaders(token) }
         );
+        console.log('2D Stock Result response:', JSON.stringify(srResp.data));
 
-        const srID = srResp.data.data.ID;
-        let cutSeq = 1;
-        for (const cut of result.cuts) {
-          await axios.post(
-            `${creatorApiBase()}/form/Nesting_Cut_Detail`,
-            {
-              data: {
-                Nesting_Stock_Result: srID,
-                BOM_Line_Lookup: cut.bom_line_id,
-                Part_Mark: cut.part_mark,
-                Cut_Length: cut.cut_length,
-                Cut_Width: cut.cut_width,
-                Quantity_On_This_Stock: cut.quantity_on_this_stock,
-                X_Position: cut.x_position || 0,
-                Y_Position: cut.y_position || 0,
-                Rotation: cut.rotation === 90 ? '90°' : '0°',
-                Cut_Sequence: cutSeq,
-              },
-            },
-            { headers: zohoHeaders(token) }
-          );
-          cutSeq++;
+        if (!srResp.data?.data?.ID) {
+          console.error('2D Stock Result - no ID in response:', JSON.stringify(srResp.data));
+          continue;
         }
         savedCount2D++;
       } catch (srErr) {
