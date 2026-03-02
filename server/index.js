@@ -457,7 +457,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       // Zoho Date-Time format: dd-MMM-yyyy HH:mm:ss (e.g., "01-Mar-2026 14:30:00")
       const now = new Date();
       const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const runDateStr = `${now.getDate().toString().padStart(2,'0')}-${months[now.getMonth()]}-${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
+      const runDateStr = `${now.getDate().toString().padStart(2,'0')}-${months[now.getMonth()]}-${now.getFullYear()}`;
 
       const patchData = {
         Run_Date: runDateStr,
