@@ -55,11 +55,9 @@ async function getAccessToken() {
 
     console.log('Token response keys:', Object.keys(resp.data));
 
-    // Check if Zoho returned an error
     if (resp.data.error) {
       console.error('Zoho token error:', resp.data.error);
       lastTokenError = resp.data.error;
-      // Do NOT cache a bad token
       cachedToken = null;
       tokenExpiry = 0;
       throw new Error(`Zoho token error: ${resp.data.error}`);
@@ -124,7 +122,6 @@ app.get('/api/debug', async (req, res) => {
     apiBase: creatorApiBase(),
   };
 
-  // Try to get a fresh token
   try {
     const token = await getAccessToken();
     info.tokenTest = { success: true, tokenPrefix: token ? token.substring(0, 10) + '...' : 'null' };
@@ -240,17 +237,14 @@ app.get('/api/stock', async (req, res) => {
 // POST /api/nest — run nesting (proxies to existing Railway nesting API)
 app.post('/api/nest', async (req, res) => {
   try {
-    // Compact logging — one line per group and per part
     const groups = req.body.groups || [];
     console.log(`NEST REQUEST: ${groups.length} group(s), kerf=${req.body.kerf || 'default'}`);
     groups.forEach((g, i) => {
       const stockInfo = (g.stock || []).map(s => `${s.length || s.stock_length}x${s.width || s.stock_width || 'N/A'}`).join(', ');
       const partInfo = (g.parts || g.items || []).map(p => `${p.part_mark || p.label || '?'}:${p.length || p.cut_length}x${p.width || p.cut_width || 'N/A'}xQty${p.quantity || p.qty || 1}`).join(', ');
       console.log(`GROUP ${i}: type=${g.nesting_type || g.type}, stock=[${stockInfo}], parts=[${partInfo}]`);
-      // Log grain direction if present
       if (g.grain_direction || g.grain) console.log(`GROUP ${i} GRAIN: ${g.grain_direction || g.grain}`);
     });
-    // Also log the raw request as single compact line (no pretty print)
     console.log('NEST RAW REQUEST:', JSON.stringify(req.body));
 
     const resp = await axios.post(NESTING_API_URL, req.body, {
@@ -258,7 +252,6 @@ app.post('/api/nest', async (req, res) => {
       timeout: 120000,
     });
 
-    // Compact response logging — just errors and summary per group
     const results = resp.data.results || resp.data;
     if (Array.isArray(results)) {
       results.forEach((r, i) => {
@@ -270,11 +263,9 @@ app.post('/api/nest', async (req, res) => {
         }
       });
     }
-    // Log errors array if present
     if (resp.data.errors && resp.data.errors.length > 0) {
       console.log('NEST ERRORS:', JSON.stringify(resp.data.errors));
     }
-    // Raw response as single line
     console.log('NEST RAW RESPONSE:', JSON.stringify(resp.data));
 
     res.json(resp.data);
@@ -299,11 +290,8 @@ app.post('/api/project/:id/save-results', async (req, res) => {
         { headers: zohoHeaders(token) }
       );
       bomItems = (bomResp.data.data || []).map(row => {
-        // Weight_Per_Ft may be on the BOM form directly, or nested in Material lookup
         const weightPerFt = parseFloat(row.Weight_Per_Ft) || parseFloat(row.Material?.Weight_Lb_Ft) || 0;
-        // Dim1 for thickness — on the Material lookup
         const dim1 = parseFloat(row.Material?.Dim1) || parseFloat(row.Dim1) || 0;
-        // Density from BOM
         const density = parseFloat(row.Density) || 0;
         
         return {
@@ -317,7 +305,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
           density: density,
         };
       });
-      // Log first BOM item for debugging
       if (bomItems.length > 0) {
         console.log('BOM sample item:', JSON.stringify(bomItems[0]));
         console.log(`Fetched ${bomItems.length} BOM items for weight/thickness lookup`);
@@ -326,7 +313,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       console.error('Failed to fetch BOM for weight calc:', bomErr.response?.data || bomErr.message);
     }
 
-    // Helper: find BOM item by bom_line_id from a result's cuts
     function getBomDataForResult(result) {
       const firstCutBomId = result.cuts?.[0]?.bom_line_id;
       if (!firstCutBomId) return { weight_per_ft: 0, thickness: 0 };
@@ -339,21 +325,16 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       return { weight_per_ft: bom.weight_per_ft, thickness: bom.dim1, density: bom.density };
     }
 
-    // Helper: calculate stock weight
-    // 1D linear: Weight_Per_Ft × (Stock_Length / 12)
-    // 2D panel:  (Stock_Length × Stock_Width / 144) × Weight_Per_Ft
     function calcStockWeight(result, weight_per_ft) {
       if (!weight_per_ft || !result.stock_length_in) return 0;
       if (result.stock_width_in) {
-        // 2D panel (plate/bar): area in sq ft × weight per sq ft
         return Math.round((result.stock_length_in * result.stock_width_in / 144) * weight_per_ft * 100) / 100;
       } else {
-        // 1D linear (beam/angle/channel): length in ft × weight per ft
         return Math.round(weight_per_ft * (result.stock_length_in / 12) * 100) / 100;
       }
     }
 
-    // 1. Fetch existing runs for this project (handle no-records gracefully)
+    // 1. Fetch existing runs for this project
     let existingRuns = [];
     try {
       const runsResp = await axios.get(
@@ -362,7 +343,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       );
       existingRuns = runsResp.data.data || [];
     } catch (runsErr) {
-      // Zoho returns code 9280 when no records match the criteria — treat as empty
       const zCode = runsErr.response?.data?.code;
       if (zCode === 9280) {
         console.log('No existing nesting runs for this project (first run)');
@@ -410,7 +390,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     }
 
     // 3. Create Nesting_Run_Header with "Approved" status
-    // Run_Date is a Single Line text field — store as timestamp string
     const now = new Date();
     const runDateStr = `${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getDate().toString().padStart(2,'0')}/${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
 
@@ -440,7 +419,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     console.log('Header create response:', JSON.stringify(headerResp.data));
     const nestRunID = headerResp.data.data.ID;
 
-    // 4. Save 1D results — cut details embedded as subform rows
+    // 4. Save 1D results
     let savedCount1D = 0;
     for (const result of results_1d || []) {
       if (result.error) continue;
@@ -448,10 +427,8 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
       const firstCut = result.cuts[0];
       try {
-        // Look up weight and thickness from BOM
         const bomData = getBomDataForResult(result);
 
-        // Build cut detail subform rows
         const cutDetailRows = result.cuts.map((cut, idx) => {
           const cutWeight = cut.cut_length
             ? Math.round(bomData.weight_per_ft * (cut.cut_length / 12) * 10000) / 10000
@@ -502,7 +479,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       }
     }
 
-    // 5. Save 2D results — cut details embedded as subform rows
+    // 5. Save 2D results
     let savedCount2D = 0;
     for (const result of results_2d || []) {
       if (result.error) continue;
@@ -510,10 +487,8 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
       const firstCut = result.cuts[0];
       try {
-        // Look up weight and thickness from BOM
         const bomData = getBomDataForResult(result);
 
-        // Build cut detail subform rows
         const cutDetailRows = result.cuts.map((cut, idx) => {
           const cutWeight = (cut.cut_length && cut.cut_width)
             ? Math.round((cut.cut_length * cut.cut_width / 144) * bomData.weight_per_ft * 10000) / 10000
@@ -570,7 +545,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       }
     }
 
-    // 6. Update run header with summary (Total_Stock_Pieces, Total_Waste_Inches, Notes)
+    // 6. Update run header with summary
     const supersededCount = approvedRuns.length;
     const totalWaste = summary?.total_remnant_length_in || 0;
     const wastePct = summary?.avg_waste_pct_1d || 0;
@@ -584,7 +559,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       };
       console.log('Header PATCH payload:', JSON.stringify(patchData));
 
-      // Try report endpoint first
       const reportUrl = `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`;
       console.log('Header PATCH URL (report):', reportUrl);
 
@@ -601,7 +575,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
           }
         );
         console.log('Header PATCH response (report):', JSON.stringify(patchResp.data));
-        // Check if Zoho returned an error code
         if (patchResp.data?.code === 3000 || patchResp.data?.data) {
           patchSuccess = true;
         }
@@ -609,7 +582,6 @@ app.post('/api/project/:id/save-results', async (req, res) => {
         console.error('Report PATCH failed:', JSON.stringify(reportErr.response?.data || reportErr.message));
       }
 
-      // Fallback: try form endpoint if report failed
       if (!patchSuccess) {
         console.log('Trying form endpoint fallback...');
         const formUrl = `${creatorApiBase()}/form/Nesting_Run_Header/${nestRunID}`;
@@ -652,14 +624,8 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 });
 
 // POST /api/project/:id/generate-purchase-list
-// REPLACE the existing endpoint in server/index.js with this version
-//
-// FIXES:
-// 1. Round all decimal values to 4 decimal places max to prevent
-//    Zoho "Unit weight has exceeded its maximum digits" error
-// 2. Added Project_Bi_Directional_Lookup field on each subform row
-// 3. Safe number helper to catch NaN/Infinity
-
+// Fixed: Round all decimals to prevent "exceeded maximum digits" error
+// Added: Project_Bi_Directional_Lookup on each subform row
 app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -672,8 +638,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
 
     console.log(`Purchase list: ${purchase_lines.length} lines for project ${projectId}`);
 
-    // Helper: safely round a number to maxDigits decimal places
-    // Returns 0 if value is NaN, undefined, null, or Infinity
+    // Helper: safely round a number to prevent Zoho decimal overflow
     function safeNum(val, decimals = 4) {
       const n = parseFloat(val);
       if (!Number.isFinite(n)) return 0;
@@ -732,4 +697,15 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     console.error('Error status:', err.response?.status);
     res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });
   }
+});
+
+// Catch-all: serve React app
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html'));
+});
+
+// ─── Start Server ──────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Material Compass Nesting server running on port ${PORT}`);
 });
