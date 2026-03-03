@@ -662,23 +662,33 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       return res.status(400).json({ error: 'No purchase lines provided' });
     }
 
+    console.log('Purchase lines received:', JSON.stringify(purchase_lines, null, 2));
+
     const subformRows = purchase_lines.map((line, idx) => {
       const row = {
         Form_Type: line.form_type_id,
         Material_Types: line.material_type_id,
         Specification: line.specification_id,
         Material: line.material_id,
-        Item_Description: line.description || '',
+        Item_QTY_and_Description: line.description || '',
+        Description: line.description || '',
         QTY: line.quantity,
         Feet_Length: line.feet_length || 0,
-        Weight_Per_Ft: line.weight_per_ft || 0,
+        Weight_Per_FT: line.weight_per_ft || 0,
         Unit_Weight: line.unit_weight || 0,
         CutWeight: line.total_weight || 0,
+        Material_Size: line.material_size || '',
+        Total_Length: line.total_length || 0,
+        Total_Plate_Width: line.total_plate_width || 0,
       };
+      console.log(`Purchase row ${idx + 1}:`, JSON.stringify(row));
       return row;
     });
 
-    await axios.patch(
+    console.log('PATCH URL:', `${creatorApiBase()}/report/All_Projects/${projectId}`);
+    console.log('Subform rows count:', subformRows.length);
+
+    const patchResp = await axios.patch(
       `${creatorApiBase()}/report/All_Projects/${projectId}`,
       {
         data: {
@@ -688,9 +698,12 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       { headers: zohoHeaders(token) }
     );
 
+    console.log('Purchase list PATCH response:', JSON.stringify(patchResp.data));
+
     res.json({ success: true, items_saved: subformRows.length });
   } catch (err) {
-    console.error('Error saving purchase list:', err.response?.data || err.message);
+    console.error('Error saving purchase list:', JSON.stringify(err.response?.data || err.message));
+    console.error('Error status:', err.response?.status);
     res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });
   }
 });
