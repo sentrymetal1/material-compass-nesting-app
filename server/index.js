@@ -340,6 +340,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
 });
 
 // GET /api/project/:id/purchase-list — retrieve saved purchase list from Zoho
+// Queries the Material_Allocated subform report directly (subform data not included in project GET)
 app.get('/api/project/:id/purchase-list', async (req, res) => {
   try {
     var token = await getAccessToken();
@@ -347,19 +348,19 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
 
     console.log('Fetching purchase list for project:', projectId);
 
-    var resp = await axios.get(
-      creatorApiBase() + '/report/All_Projects/' + projectId,
-      { headers: zohoHeaders(token) }
-    );
+    // Try the subform report — filter by Project_LU
+    var reportName = 'Project_Material_Allocated_Detail_Form_Report';
+    var url = creatorApiBase() + '/report/' + reportName + '?criteria=(Project_LU==' + projectId + ')&limit=200';
+    console.log('Purchase list GET URL:', url);
 
-    var projData = resp.data.data;
-    if (!projData) return res.status(404).json({ error: 'Project not found' });
+    var resp = await axios.get(url, { headers: zohoHeaders(token) });
+    var rawRows = resp.data.data || [];
+    console.log('Purchase list rows found:', rawRows.length);
 
-    var rawRows = projData.Material_Allocated || [];
-    console.log('Material_Allocated rows found:', rawRows.length);
+    // Log first row keys for debugging
+    if (rawRows.length > 0) console.log('First row keys:', Object.keys(rawRows[0]).join(', '));
 
     var lines = rawRows.map(function(row, idx) {
-      // Extract lookup display values and IDs
       var formType = row.Form_Type || {};
       var materialType = row.Material_Type || {};
       var specification = row.Specification || {};
@@ -391,7 +392,7 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
         width_inch_display: widthInch.zc_display_value || widthInch.display_value || '',
         weight_per_ft: parseFloat(row.Weight_Per_FT) || 0,
         unit_weight: parseFloat(row.Unit_Weight) || 0,
-        total_weight: parseFloat(row.CalcWeight) || 0,
+        total_weight: parseFloat(row.CalcWeight) || parseFloat(row.Total_Weight) || 0,
         price_per_lb: parseFloat(row.Price_Per_LB) || 0,
         unit_price: parseFloat(row.Unit_Price) || 0,
         unit_total: parseFloat(row.Unit_Total) || 0,
@@ -405,13 +406,13 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
 
     res.json({
       project_id: projectId,
-      project_name: projData.Project_Quote_Number || projData.Project_Description || '',
       line_count: lines.length,
       purchase_lines: lines,
     });
   } catch (err) {
     console.error('Error fetching purchase list:', err.response?.data || err.message);
-    if (err.response?.status === 404 || err.response?.data?.code === 9280) {
+    // If report not found or no data, return empty
+    if (err.response?.data?.code === 9280 || err.response?.status === 404) {
       return res.json({ project_id: req.params.id, line_count: 0, purchase_lines: [] });
     }
     res.status(500).json({ error: 'Failed to fetch purchase list', details: err.response?.data || err.message });
