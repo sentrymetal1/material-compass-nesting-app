@@ -623,9 +623,12 @@ app.post('/api/project/:id/save-results', async (req, res) => {
   }
 });
 
+// ─── Purchase List ─────────────────────────────────────────────
 // POST /api/project/:id/generate-purchase-list
-// Fixed: Round all decimals to prevent "exceeded maximum digits" error
-// Added: Project_Bi_Directional_Lookup on each subform row
+// FIXES:
+// 1. safeNum() rounds all decimals to prevent "exceeded maximum digits"
+// 2. Material_Size as number (was string like "L3 x 3 x 1/2" — Zoho rejected it)
+// 3. All 3 project ID fields: MCP_Customer_Project_Form, Project_Bi_Directional_Lookup, Project_LU
 app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -639,6 +642,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     console.log(`Purchase list: ${purchase_lines.length} lines for project ${projectId}`);
 
     // Helper: safely round a number to prevent Zoho decimal overflow
+    // Returns 0 if value is NaN, undefined, null, Infinity, or a non-numeric string
     function safeNum(val, decimals = 4) {
       const n = parseFloat(val);
       if (!Number.isFinite(n)) return 0;
@@ -647,14 +651,16 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
 
     const subformRows = purchase_lines.map((line, idx) => {
       const row = {
-        // Lookup fields — record IDs as strings
+        // Lookup fields — record IDs
         Form_Type: line.form_type_id,
         Material_Types: line.material_type_id,
         Specification: line.specification_id,
         Material: line.material_id,
 
-        // Project bi-directional lookup — links back to this project
+        // All 3 project ID fields
+        MCP_Customer_Project_Form: projectId,
         Project_Bi_Directional_Lookup: projectId,
+        Project_LU: safeNum(projectId, 0),
 
         // Text fields
         Item_QTY_and_Description: line.description || '',
@@ -668,9 +674,11 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Weight_Per_FT: safeNum(line.weight_per_ft, 4),
         Unit_Weight: safeNum(line.unit_weight, 4),
         CutWeight: safeNum(line.total_weight, 4),
-        Material_Size: line.material_size || '',
         Total_Length: safeNum(line.total_length, 4),
         Total_Plate_Width: safeNum(line.total_plate_width, 4),
+
+        // Material_Size is a DECIMAL field in Zoho — must be number, not string
+        Material_Size: safeNum(line.material_size, 4),
       };
       console.log(`Purchase row ${idx + 1}:`, JSON.stringify(row));
       return row;
