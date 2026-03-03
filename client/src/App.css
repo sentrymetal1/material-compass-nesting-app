@@ -899,7 +899,68 @@ body {
   border-top: 2px solid var(--gray-300);
   background: var(--gray-100);
 }
+/* ─── Enhanced Error Styling ─── */
+.error-enhanced {
+  padding: 14px 18px;
+  margin-bottom: 12px;
+}
 
+.error-title {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.error-details {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #fca5a5;
+}
+
+.error-dimension {
+  font-size: 12px;
+  margin-bottom: 6px;
+  color: #7f1d1d;
+}
+
+.error-stock-info {
+  font-size: 11px;
+  color: #991b1b;
+  margin-bottom: 8px;
+  opacity: 0.8;
+}
+
+.error-suggestions {
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.error-suggestions strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.error-suggestions ol {
+  margin: 4px 0 0 18px;
+  padding: 0;
+}
+
+.error-suggestions li {
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+
+/* ─── Panel Visualization ─── */
+.panel-viz-wrap {
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.panel-viz-svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
 /* ─── Print Styles ─── */
 @media print {
   body { background: white; font-size: 11px; }
@@ -916,4 +977,8 @@ body {
   .bar-remnant { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .badge, .waste-badge, .summary-val { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .project-badge { border: 1px solid #999; }
+  .panel-viz-wrap svg rect {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
 }
