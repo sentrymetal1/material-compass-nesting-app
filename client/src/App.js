@@ -381,7 +381,6 @@ export default function App() {
   const [showPurchasePreview, setShowPurchasePreview] = useState(false);
   const [savingPurchase, setSavingPurchase] = useState(false);
   const [purchaseStatus, setPurchaseStatus] = useState('');
-// ADD these lines AFTER it:
 
   // Saved purchase list state
   const [savedPurchaseLines, setSavedPurchaseLines] = useState([]);
@@ -1054,7 +1053,6 @@ export default function App() {
               </div>
             )}
 
-
         {/* Step 2: Configure */}
         {step === 2 && (
           <div className="card">
@@ -1243,7 +1241,6 @@ export default function App() {
                 </div>
               </div>
             )}
-
             {/* 1D Results */}
             {results.results_1d?.length > 0 && (
               <div className="result-section">
@@ -1257,7 +1254,6 @@ export default function App() {
                   const groupTotalPieces = group.patterns.reduce((sum, p) => sum + p.count, 0);
                   const groupUnitWeight = calcUnitWeight(groupWeightPerFt, group.stock_length_in, 0);
                   const groupTotalWeight = groupUnitWeight * groupTotalPieces;
-
                   return (
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
@@ -1276,7 +1272,6 @@ export default function App() {
                       const patternStockWeight = calcUnitWeight(patternWpf, r.stock_length_in, 0);
                       const patternCutWeight = r.cuts?.reduce((sum, c) => sum + (patternWpf * (c.cut_length / 12) * (c.quantity_on_this_stock || 1)), 0) || 0;
                       const patternWasteWeight = patternStockWeight - patternCutWeight;
-
                       return (
                         <div key={pi} className={`stock-result ${isPatternSelected ? 'pattern-selected' : 'pattern-deselected'}`}>
                           <div className="stock-result-header">
@@ -1362,7 +1357,6 @@ export default function App() {
                 })}
               </div>
             )}
-
             {/* 2D Results */}
             {results.results_2d?.length > 0 && (
               <div className="result-section">
@@ -1376,7 +1370,6 @@ export default function App() {
                   const groupTotalPieces = group.patterns.reduce((sum, p) => sum + p.count, 0);
                   const groupUnitWeight = calcUnitWeight(groupWeightPerFt, group.stock_length_in, group.stock_width_in);
                   const groupTotalWeight = groupUnitWeight * groupTotalPieces;
-
                   return (
                   <div key={gi} className="material-group">
                     <div className="material-group-header">
@@ -1395,7 +1388,6 @@ export default function App() {
                       const patternStockWeight = calcUnitWeight(patternWpf, r.stock_length_in, r.stock_width_in);
                       const patternCutWeight = r.cuts?.reduce((sum, c) => sum + (patternWpf * (c.cut_length * c.cut_width / 144) * (c.quantity_on_this_stock || 1)), 0) || 0;
                       const patternWasteWeight = patternStockWeight - patternCutWeight;
-
                       return (
                         <div key={pi} className={`stock-result ${isPatternSelected ? 'pattern-selected' : 'pattern-deselected'}`}>
                           <div className="stock-result-header">
@@ -1591,7 +1583,6 @@ export default function App() {
                 </div>
               </div>
             )}
-
             <div className="card-footer">
               <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
               <div className="btn-group" style={{ alignItems: 'center' }}>
