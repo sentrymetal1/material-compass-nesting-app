@@ -259,6 +259,62 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     const projectId = req.params.id;
     const { results_1d, results_2d, summary, kerf_1d, kerf_2d, run_by } = req.body;
 
+    // 0. Fetch BOM items to get weight_per_ft, density, and thickness for calculations
+    let bomItems = [];
+    try {
+      const bomResp = await axios.get(
+        `${creatorApiBase()}/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Project_LU==${projectId})&limit=200`,
+        { headers: zohoHeaders(token) }
+      );
+      bomItems = (bomResp.data.data || []).map(row => {
+        // Weight_Per_Ft may be on the BOM form directly, or nested in Material lookup
+        const weightPerFt = parseFloat(row.Weight_Per_Ft) || parseFloat(row.Material?.Weight_Lb_Ft) || 0;
+        // Dim1 for thickness — on the Material lookup
+        const dim1 = parseFloat(row.Material?.Dim1) || parseFloat(row.Dim1) || 0;
+        // Density from BOM
+        const density = parseFloat(row.Density) || 0;
+        
+        return {
+          id: row.ID,
+          form_type_id: row.Form_Type?.ID,
+          form_type_name: row.Form_Type?.zc_display_value || '',
+          spec_name: row.Specification?.zc_display_value || row.Specification?.display_value || '',
+          material_name: row.Material?.zc_display_value || row.Material?.display_value || '',
+          dim1: dim1,
+          weight_per_ft: weightPerFt,
+          density: density,
+        };
+      });
+      // Log first BOM item for debugging
+      if (bomItems.length > 0) {
+        console.log('BOM sample item:', JSON.stringify(bomItems[0]));
+        console.log(`Fetched ${bomItems.length} BOM items for weight/thickness lookup`);
+      }
+    } catch (bomErr) {
+      console.error('Failed to fetch BOM for weight calc:', bomErr.response?.data || bomErr.message);
+    }
+
+    // Helper: find BOM item by bom_line_id from a result's cuts
+    function getBomDataForResult(result) {
+      const firstCutBomId = result.cuts?.[0]?.bom_line_id;
+      if (!firstCutBomId) return { weight_per_ft: 0, thickness: 0 };
+      const bom = bomItems.find(b => b.id === firstCutBomId);
+      if (!bom) {
+        console.log(`BOM item not found for bom_line_id: ${firstCutBomId}`);
+        return { weight_per_ft: 0, thickness: 0 };
+      }
+      console.log(`BOM match for ${firstCutBomId}: wt/ft=${bom.weight_per_ft}, dim1=${bom.dim1}, material=${bom.material_name}`);
+      return { weight_per_ft: bom.weight_per_ft, thickness: bom.dim1, density: bom.density };
+    }
+
+    // Helper: calculate stock weight
+    function calcStockWeight(result, weight_per_ft) {
+      if (weight_per_ft && result.stock_length_in) {
+        return Math.round(weight_per_ft * (result.stock_length_in / 12) * 100) / 100;
+      }
+      return 0;
+    }
+
     // 1. Fetch existing runs for this project (handle no-records gracefully)
     let existingRuns = [];
     try {
@@ -354,6 +410,9 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
       const firstCut = result.cuts[0];
       try {
+        // Look up weight and thickness from BOM
+        const bomData = getBomDataForResult(result);
+
         // Build cut detail subform rows
         const cutDetailRows = result.cuts.map((cut, idx) => ({
           BOM_Line_Lookup: cut.bom_line_id,
@@ -362,6 +421,8 @@ app.post('/api/project/:id/save-results', async (req, res) => {
           Quantity_On_This_Stock: cut.quantity_on_this_stock,
           Cut_Sequence: idx + 1,
         }));
+
+        const stockWeight = calcStockWeight(result, bomData.weight_per_ft);
 
         const srData = {
           Nesting_Run_Header: nestRunID,
@@ -372,10 +433,10 @@ app.post('/api/project/:id/save-results', async (req, res) => {
           Material: firstCut.material_type,
           Stock_Size_Label: result.stock_label || firstCut.stock_label || '',
           Stock_Length: result.stock_length_in,
-          Stock_Thickness: result.stock_thickness || firstCut.stock_thickness || 0,
+          Stock_Thickness: bomData.thickness || 0,
           Remnant_Length: Math.round((result.remnant_length_in || 0) * 100) / 100,
           Waste_Percentage: result.waste_percentage,
-          Stock_Weight_LBS: result.stock_weight_lbs || 0,
+          Stock_Weight_LBS: stockWeight || result.stock_weight_lbs || 0,
           Stock_Sequence: result.stock_sequence || savedCount1D + 1,
           Nesting_Cut_Detail: cutDetailRows,
         };
@@ -405,6 +466,9 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
       const firstCut = result.cuts[0];
       try {
+        // Look up weight and thickness from BOM
+        const bomData = getBomDataForResult(result);
+
         // Build cut detail subform rows
         const cutDetailRows = result.cuts.map((cut, idx) => ({
           BOM_Line_Lookup: cut.bom_line_id,
@@ -418,6 +482,8 @@ app.post('/api/project/:id/save-results', async (req, res) => {
           Cut_Sequence: idx + 1,
         }));
 
+        const stockWeight = calcStockWeight(result, bomData.weight_per_ft);
+
         const srData = {
           Nesting_Run_Header: nestRunID,
           Nesting_Type: '2D - Panel',
@@ -428,10 +494,10 @@ app.post('/api/project/:id/save-results', async (req, res) => {
           Stock_Size_Label: result.stock_label || firstCut.stock_label || '',
           Stock_Length: result.stock_length_in,
           Stock_Width: result.stock_width_in,
-          Stock_Thickness: result.stock_thickness || firstCut.stock_thickness || 0,
+          Stock_Thickness: bomData.thickness || 0,
           Remnant_Area: result.remnant_area_in2 || 0,
           Waste_Percentage: result.waste_percentage,
-          Stock_Weight_LBS: result.stock_weight_lbs || 0,
+          Stock_Weight_LBS: stockWeight || result.stock_weight_lbs || 0,
           Stock_Sequence: result.stock_sequence || savedCount2D + 1,
           Nesting_Cut_Detail: cutDetailRows,
         };
