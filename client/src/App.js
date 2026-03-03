@@ -212,16 +212,20 @@ function PanelVisualization({ result, kerf2D }) {
 
   if (!stockL || !stockW || cuts.length === 0) return null;
 
-  // Scale to fit container (max 600px wide)
-  const maxDisplayWidth = 600;
-  const maxDisplayHeight = 300;
-  const scaleX = maxDisplayWidth / stockL;
-  const scaleY = maxDisplayHeight / stockW;
+  const marginLeft = 30;
+  const marginTop = 5;
+  const marginBottom = 20;
+  const marginRight = 5;
+  const maxDrawWidth = 600;
+  const maxDrawHeight = 300;
+  const scaleX = maxDrawWidth / stockL;
+  const scaleY = maxDrawHeight / stockW;
   const scale = Math.min(scaleX, scaleY);
-  const displayW = stockL * scale;
-  const displayH = stockW * scale;
+  const drawW = stockL * scale;
+  const drawH = stockW * scale;
+  const svgWidth = drawW + marginLeft + marginRight;
+  const svgHeight = drawH + marginTop + marginBottom;
 
-  // Color palette for different part marks
   const colors = [
     '#4A90D9', '#5BA55B', '#D4A843', '#C75B5B', '#7B68AE',
     '#3AAFA9', '#E07B53', '#8D6E63', '#5C6BC0', '#26A69A',
@@ -235,93 +239,113 @@ function PanelVisualization({ result, kerf2D }) {
   return (
     <div className="panel-viz-wrap">
       <svg
-        width={displayW + 2}
-        height={displayH + 2}
-        viewBox={`-1 -1 ${displayW + 2} ${displayH + 2}`}
+        width={svgWidth}
+        height={svgHeight}
+        viewBox={`0 0 ${svgWidth} ${svgHeight}`}
         className="panel-viz-svg"
       >
-        {/* Stock outline */}
-        <rect
-          x={0} y={0}
-          width={displayW} height={displayH}
-          fill="#f5f5f5" stroke="#999" strokeWidth={1}
-        />
-        {/* Grid lines every 12 inches */}
-        {Array.from({ length: Math.floor(stockL / 12) }, (_, i) => (
-          <line
-            key={`vg-${i}`}
-            x1={(i + 1) * 12 * scale} y1={0}
-            x2={(i + 1) * 12 * scale} y2={displayH}
-            stroke="#e0e0e0" strokeWidth={0.5}
+        <g transform={`translate(${marginLeft}, ${marginTop})`}>
+          {/* Stock outline */}
+          <rect
+            x={0} y={0}
+            width={drawW} height={drawH}
+            fill="#f5f5f5" stroke="#999" strokeWidth={1}
           />
-        ))}
-        {Array.from({ length: Math.floor(stockW / 12) }, (_, i) => (
-          <line
-            key={`hg-${i}`}
-            x1={0} y1={(i + 1) * 12 * scale}
-            x2={displayW} y2={(i + 1) * 12 * scale}
-            stroke="#e0e0e0" strokeWidth={0.5}
-          />
-        ))}
-        {/* Cut pieces */}
-        {cuts.map((cut, i) => {
-          const x = (cut.x_position || 0) * scale;
-          const y = (cut.y_position || 0) * scale;
-          const rotation = cut.rotation || 0;
-          // When rotated 90°, the cut's length and width swap visually
-          const cutDisplayW = rotation === 90 ? cut.cut_width * scale : cut.cut_length * scale;
-          const cutDisplayH = rotation === 90 ? cut.cut_length * scale : cut.cut_width * scale;
-          const color = colorMap[cut.part_mark] || '#4A90D9';
+          {/* Grid lines every 12 inches */}
+          {Array.from({ length: Math.floor(stockL / 12) }, (_, i) => (
+            <line
+              key={`vg-${i}`}
+              x1={(i + 1) * 12 * scale} y1={0}
+              x2={(i + 1) * 12 * scale} y2={drawH}
+              stroke="#e0e0e0" strokeWidth={0.5}
+            />
+          ))}
+          {Array.from({ length: Math.floor(stockW / 12) }, (_, i) => (
+            <line
+              key={`hg-${i}`}
+              x1={0} y1={(i + 1) * 12 * scale}
+              x2={drawW} y2={(i + 1) * 12 * scale}
+              stroke="#e0e0e0" strokeWidth={0.5}
+            />
+          ))}
+          {/* Cut pieces */}
+          {cuts.map((cut, i) => {
+            const x = (parseFloat(cut.x_position) || 0) * scale;
+            const y = (parseFloat(cut.y_position) || 0) * scale;
+            // FIX: coerce rotation to number — API may return string "90"
+            const rotation = parseInt(cut.rotation) || 0;
+            const cutW = rotation === 90 ? (cut.cut_width * scale) : (cut.cut_length * scale);
+            const cutH = rotation === 90 ? (cut.cut_length * scale) : (cut.cut_width * scale);
+            const color = colorMap[cut.part_mark] || '#4A90D9';
+            // Clamp to stock boundaries
+            const clampedW = Math.min(cutW, drawW - x);
+            const clampedH = Math.min(cutH, drawH - y);
 
-          return (
-            <g key={i}>
-              <rect
-                x={x} y={y}
-                width={cutDisplayW} height={cutDisplayH}
-                fill={color} fillOpacity={0.7}
-                stroke={color} strokeWidth={1}
-              />
-              {/* Label if piece is big enough */}
-              {cutDisplayW > 30 && cutDisplayH > 14 && (
-                <text
-                  x={x + cutDisplayW / 2}
-                  y={y + cutDisplayH / 2}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fill="white"
-                  fontSize={Math.min(11, cutDisplayH * 0.4)}
-                  fontWeight="bold"
-                >
-                  {cut.part_mark}
-                </text>
-              )}
-              {/* Dimension label if big enough */}
-              {cutDisplayW > 50 && cutDisplayH > 24 && (
-                <text
-                  x={x + cutDisplayW / 2}
-                  y={y + cutDisplayH / 2 + 10}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fill="rgba(255,255,255,0.8)"
-                  fontSize={Math.min(9, cutDisplayH * 0.3)}
-                >
-                  {cut.cut_length}"×{cut.cut_width}"
-                </text>
-              )}
-            </g>
-          );
-        })}
-        {/* Dimension labels on stock */}
-        <text x={displayW / 2} y={displayH + 14} textAnchor="middle" fontSize={10} fill="#666">
-          {stockL}" ({(stockL / 12).toFixed(1)}')
-        </text>
-        <text
-          x={-displayH / 2} y={-8}
-          textAnchor="middle" fontSize={10} fill="#666"
-          transform="rotate(-90)"
-        >
-          {stockW}" ({(stockW / 12).toFixed(1)}')
-        </text>
+            return (
+              <g key={i}>
+                <rect
+                  x={x} y={y}
+                  width={clampedW} height={clampedH}
+                  fill={color} fillOpacity={0.75}
+                  stroke="white" strokeWidth={1}
+                />
+                {clampedW > 28 && clampedH > 14 && (
+                  <text
+                    x={x + clampedW / 2}
+                    y={y + clampedH / 2 - (clampedH > 28 ? 5 : 0)}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="white"
+                    fontSize={Math.min(12, Math.min(clampedW * 0.3, clampedH * 0.4))}
+                    fontWeight="bold"
+                    fontFamily="'IBM Plex Mono', monospace"
+                  >
+                    {cut.part_mark}
+                  </text>
+                )}
+                {clampedW > 50 && clampedH > 28 && (
+                  <text
+                    x={x + clampedW / 2}
+                    y={y + clampedH / 2 + 8}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="rgba(255,255,255,0.85)"
+                    fontSize={Math.min(9, Math.min(clampedW * 0.2, clampedH * 0.25))}
+                    fontFamily="'IBM Plex Mono', monospace"
+                  >
+                    {cut.cut_length}"×{cut.cut_width}"
+                  </text>
+                )}
+                {rotation === 90 && clampedW > 40 && clampedH > 36 && (
+                  <text
+                    x={x + clampedW / 2}
+                    y={y + clampedH / 2 + 18}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="rgba(255,255,255,0.6)"
+                    fontSize={8}
+                    fontFamily="'IBM Plex Mono', monospace"
+                  >
+                    (R90°)
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          {/* Dimension labels */}
+          <text x={drawW / 2} y={drawH + 15} textAnchor="middle" fontSize={10} fill="#666"
+            fontFamily="'IBM Plex Mono', monospace">
+            {stockL}" ({(stockL / 12).toFixed(0)}')
+          </text>
+          <text
+            x={-drawH / 2} y={-14}
+            textAnchor="middle" fontSize={10} fill="#666"
+            fontFamily="'IBM Plex Mono', monospace"
+            transform="rotate(-90)"
+          >
+            {stockW}" ({(stockW / 12).toFixed(0)}')
+          </text>
+        </g>
       </svg>
     </div>
   );
