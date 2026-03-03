@@ -1048,11 +1048,10 @@ export default function App() {
                         </tr>
                       </tbody>
                     </table>
-                  </div>
-                )}
-              </div>
-            )}
-
+               </div>
+        )}
+ </div>
+        )}
         {/* Step 2: Configure */}
         {step === 2 && (
           <div className="card">
