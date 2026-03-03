@@ -339,6 +339,85 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
   }
 });
 
+// GET /api/project/:id/purchase-list — retrieve saved purchase list from Zoho
+app.get('/api/project/:id/purchase-list', async (req, res) => {
+  try {
+    var token = await getAccessToken();
+    var projectId = req.params.id;
+
+    console.log('Fetching purchase list for project:', projectId);
+
+    var resp = await axios.get(
+      creatorApiBase() + '/report/All_Projects/' + projectId,
+      { headers: zohoHeaders(token) }
+    );
+
+    var projData = resp.data.data;
+    if (!projData) return res.status(404).json({ error: 'Project not found' });
+
+    var rawRows = projData.Material_Allocated || [];
+    console.log('Material_Allocated rows found:', rawRows.length);
+
+    var lines = rawRows.map(function(row, idx) {
+      // Extract lookup display values and IDs
+      var formType = row.Form_Type || {};
+      var materialType = row.Material_Type || {};
+      var specification = row.Specification || {};
+      var material = row.Material || {};
+      var lengthInch = row.Length_INCH || {};
+      var widthFt = row.Width_FT || {};
+      var widthInch = row.Width_INCH || {};
+
+      return {
+        line_item: row.Line_Item || idx + 1,
+        form_type_id: formType.ID || formType,
+        form_type_name: formType.zc_display_value || formType.display_value || '',
+        material_type_id: materialType.ID || materialType,
+        material_type_name: materialType.zc_display_value || materialType.display_value || '',
+        specification_id: specification.ID || specification,
+        spec_name: specification.zc_display_value || specification.display_value || '',
+        material_id: material.ID || material,
+        material_name: material.zc_display_value || material.display_value || '',
+        item_description: row.Item_Description || '',
+        item_qty_and_description: row.Item_QTY_and_Description || '',
+        description: row.Description || '',
+        quantity: parseFloat(row.QTY) || 0,
+        feet_length: parseFloat(row.Feet_Length) || 0,
+        length_inch_id: lengthInch.ID || lengthInch || '',
+        length_inch_display: lengthInch.zc_display_value || lengthInch.display_value || '',
+        width_ft_id: widthFt.ID || widthFt || '',
+        width_ft_display: widthFt.zc_display_value || widthFt.display_value || '',
+        width_inch_id: widthInch.ID || widthInch || '',
+        width_inch_display: widthInch.zc_display_value || widthInch.display_value || '',
+        weight_per_ft: parseFloat(row.Weight_Per_FT) || 0,
+        unit_weight: parseFloat(row.Unit_Weight) || 0,
+        total_weight: parseFloat(row.CalcWeight) || 0,
+        price_per_lb: parseFloat(row.Price_Per_LB) || 0,
+        unit_price: parseFloat(row.Unit_Price) || 0,
+        unit_total: parseFloat(row.Unit_Total) || 0,
+        area: parseFloat(row.Area) || 0,
+        total_length: parseFloat(row.Total_Length) || 0,
+        total_plate_width: parseFloat(row.Total_Plate_Width) || 0,
+        material_size: parseFloat(row.Material_Size) || 0,
+        row_id: row.ID || null,
+      };
+    });
+
+    res.json({
+      project_id: projectId,
+      project_name: projData.Project_Quote_Number || projData.Project_Description || '',
+      line_count: lines.length,
+      purchase_lines: lines,
+    });
+  } catch (err) {
+    console.error('Error fetching purchase list:', err.response?.data || err.message);
+    if (err.response?.status === 404 || err.response?.data?.code === 9280) {
+      return res.json({ project_id: req.params.id, line_count: 0, purchase_lines: [] });
+    }
+    res.status(500).json({ error: 'Failed to fetch purchase list', details: err.response?.data || err.message });
+  }
+});
+
 // Catch-all: serve React app
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html')); });
 
