@@ -308,11 +308,17 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     }
 
     // Helper: calculate stock weight
+    // 1D linear: Weight_Per_Ft × (Stock_Length / 12)
+    // 2D panel:  (Stock_Length × Stock_Width / 144) × Weight_Per_Ft
     function calcStockWeight(result, weight_per_ft) {
-      if (weight_per_ft && result.stock_length_in) {
+      if (!weight_per_ft || !result.stock_length_in) return 0;
+      if (result.stock_width_in) {
+        // 2D panel (plate/bar): area in sq ft × weight per sq ft
+        return Math.round((result.stock_length_in * result.stock_width_in / 144) * weight_per_ft * 100) / 100;
+      } else {
+        // 1D linear (beam/angle/channel): length in ft × weight per ft
         return Math.round(weight_per_ft * (result.stock_length_in / 12) * 100) / 100;
       }
-      return 0;
     }
 
     // 1. Fetch existing runs for this project (handle no-records gracefully)
@@ -414,13 +420,19 @@ app.post('/api/project/:id/save-results', async (req, res) => {
         const bomData = getBomDataForResult(result);
 
         // Build cut detail subform rows
-        const cutDetailRows = result.cuts.map((cut, idx) => ({
-          BOM_Line_Lookup: cut.bom_line_id,
-          Part_Mark: cut.part_mark,
-          Cut_Length: cut.cut_length,
-          Quantity_On_This_Stock: cut.quantity_on_this_stock,
-          Cut_Sequence: idx + 1,
-        }));
+        const cutDetailRows = result.cuts.map((cut, idx) => {
+          const cutWeight = cut.cut_length
+            ? Math.round(bomData.weight_per_ft * (cut.cut_length / 12) * 10000) / 10000
+            : 0;
+          return {
+            BOM_Line_Lookup: cut.bom_line_id,
+            Part_Mark: cut.part_mark,
+            Cut_Length: cut.cut_length,
+            Cut_Weight: cutWeight,
+            Quantity_On_This_Stock: cut.quantity_on_this_stock,
+            Cut_Sequence: idx + 1,
+          };
+        });
 
         const stockWeight = calcStockWeight(result, bomData.weight_per_ft);
 
@@ -470,17 +482,23 @@ app.post('/api/project/:id/save-results', async (req, res) => {
         const bomData = getBomDataForResult(result);
 
         // Build cut detail subform rows
-        const cutDetailRows = result.cuts.map((cut, idx) => ({
-          BOM_Line_Lookup: cut.bom_line_id,
-          Part_Mark: cut.part_mark,
-          Cut_Length: cut.cut_length,
-          Cut_Width: cut.cut_width,
-          Quantity_On_This_Stock: cut.quantity_on_this_stock,
-          X_Position: cut.x_position || 0,
-          Y_Position: cut.y_position || 0,
-          Rotation: cut.rotation === 90 ? '90°' : '0°',
-          Cut_Sequence: idx + 1,
-        }));
+        const cutDetailRows = result.cuts.map((cut, idx) => {
+          const cutWeight = (cut.cut_length && cut.cut_width)
+            ? Math.round((cut.cut_length * cut.cut_width / 144) * bomData.weight_per_ft * 10000) / 10000
+            : 0;
+          return {
+            BOM_Line_Lookup: cut.bom_line_id,
+            Part_Mark: cut.part_mark,
+            Cut_Length: cut.cut_length,
+            Cut_Width: cut.cut_width,
+            Cut_Weight: cutWeight,
+            Quantity_On_This_Stock: cut.quantity_on_this_stock,
+            X_Position: cut.x_position || 0,
+            Y_Position: cut.y_position || 0,
+            Rotation: cut.rotation === 90 ? '90°' : '0°',
+            Cut_Sequence: idx + 1,
+          };
+        });
 
         const stockWeight = calcStockWeight(result, bomData.weight_per_ft);
 
