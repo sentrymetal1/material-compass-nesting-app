@@ -381,7 +381,12 @@ export default function App() {
   const [showPurchasePreview, setShowPurchasePreview] = useState(false);
   const [savingPurchase, setSavingPurchase] = useState(false);
   const [purchaseStatus, setPurchaseStatus] = useState('');
+// ADD these lines AFTER it:
 
+  // Saved purchase list state
+  const [savedPurchaseLines, setSavedPurchaseLines] = useState([]);
+  const [loadingSavedPurchase, setLoadingSavedPurchase] = useState(false);
+  const [showSavedPurchase, setShowSavedPurchase] = useState(false);
   const loadProject = useCallback(async (id) => {
     setLoading(true);
     setError('');
@@ -416,6 +421,22 @@ export default function App() {
   useEffect(() => {
     if (projectId) loadProject(projectId);
   }, [projectId, loadProject]);
+ async function fetchSavedPurchaseList() {
+    setLoadingSavedPurchase(true);
+    try {
+      const resp = await fetch(`${API}/api/project/${projectId}/purchase-list`);
+      if (!resp.ok) throw new Error('Failed to fetch purchase list');
+      const data = await resp.json();
+      setSavedPurchaseLines(data.purchase_lines || []);
+      setShowSavedPurchase(true);
+    } catch (err) {
+      console.error('Error fetching saved purchase list:', err);
+      setSavedPurchaseLines([]);
+      setShowSavedPurchase(true);
+    } finally {
+      setLoadingSavedPurchase(false);
+    }
+  }
 
   function toggleSelect(id) {
     setSelected(prev => {
@@ -959,12 +980,80 @@ export default function App() {
             </div>
             <div className="card-footer">
               <span className="count">{selected.size} items selected</span>
-              <button onClick={() => setStep(2)} className="btn btn-primary" disabled={selected.size === 0}>
-                Next → Configure
-              </button>
+              <div className="btn-group">
+                <button onClick={fetchSavedPurchaseList} className="btn btn-secondary" disabled={loadingSavedPurchase}>
+                  {loadingSavedPurchase ? 'Loading...' : 'View Saved Purchase List'}
+                </button>
+                <button onClick={() => setStep(2)} className="btn btn-primary" disabled={selected.size === 0}>
+                  Next → Configure
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+
+            {/* Saved Purchase List Display */}
+            {showSavedPurchase && (
+              <div className="result-section" style={{ marginTop: 16 }}>
+                <div className="card-header">
+                  <h3>Saved Purchase List ({savedPurchaseLines.length} items)</h3>
+                  <button onClick={() => setShowSavedPurchase(false)} className="btn btn-small">Close</button>
+                </div>
+                {savedPurchaseLines.length === 0 ? (
+                  <p className="hint">No purchase list saved for this project yet.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Description</th>
+                          <th>Form Type</th>
+                          <th>Material</th>
+                          <th>Spec</th>
+                          <th>Qty</th>
+                          <th>Feet</th>
+                          <th>Wt/Ft</th>
+                          <th>Unit Wt</th>
+                          <th>Total Wt</th>
+                          <th>Price/LB</th>
+                          <th>Unit Price</th>
+                          <th>Unit Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {savedPurchaseLines.map((line, i) => (
+                          <tr key={i}>
+                            <td className="num">{line.line_item}</td>
+                            <td>{line.item_description || line.description}</td>
+                            <td>{line.form_type_name}</td>
+                            <td>{line.material_name}</td>
+                            <td>{line.spec_name}</td>
+                            <td className="num">{line.quantity}</td>
+                            <td className="num">{line.feet_length}</td>
+                            <td className="num">{line.weight_per_ft > 0 ? line.weight_per_ft.toFixed(2) : '—'}</td>
+                            <td className="num">{line.unit_weight > 0 ? fmtLbs(line.unit_weight) : '—'}</td>
+                            <td className="num">{line.total_weight > 0 ? fmtLbs(line.total_weight) : '—'}</td>
+                            <td className="num">{line.price_per_lb > 0 ? `$${line.price_per_lb.toFixed(2)}` : '—'}</td>
+                            <td className="num">{line.unit_price > 0 ? `$${line.unit_price.toFixed(2)}` : '—'}</td>
+                            <td className="num">{line.unit_total > 0 ? `$${line.unit_total.toFixed(2)}` : '—'}</td>
+                          </tr>
+                        ))}
+                        <tr className="purchase-total-row">
+                          <td></td>
+                          <td><strong>Total</strong></td>
+                          <td></td><td></td><td></td>
+                          <td className="num"><strong>{savedPurchaseLines.reduce((s, l) => s + l.quantity, 0)}</strong></td>
+                          <td></td><td></td><td></td>
+                          <td className="num"><strong>{fmtLbs(savedPurchaseLines.reduce((s, l) => s + l.total_weight, 0))}</strong></td>
+                          <td></td><td></td>
+                          <td className="num"><strong>${savedPurchaseLines.reduce((s, l) => s + l.unit_total, 0).toFixed(2)}</strong></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
 
         {/* Step 2: Configure */}
         {step === 2 && (
@@ -1469,6 +1558,39 @@ export default function App() {
                 )}
               </div>
             )}
+     {/* Saved Purchase List in Results view */}
+            {showSavedPurchase && savedPurchaseLines.length > 0 && (
+              <div className="result-section">
+                <div className="card-header">
+                  <h3>Saved Purchase List ({savedPurchaseLines.length} items)</h3>
+                  <button onClick={() => setShowSavedPurchase(false)} className="btn btn-small">Close</button>
+                </div>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>#</th><th>Description</th><th>Qty</th><th>Feet</th>
+                        <th>Unit Wt</th><th>Total Wt</th><th>Price/LB</th><th>Unit Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {savedPurchaseLines.map((line, i) => (
+                        <tr key={i}>
+                          <td className="num">{line.line_item}</td>
+                          <td>{line.item_description || line.description}</td>
+                          <td className="num">{line.quantity}</td>
+                          <td className="num">{line.feet_length}</td>
+                          <td className="num">{line.unit_weight > 0 ? fmtLbs(line.unit_weight) : '—'}</td>
+                          <td className="num">{line.total_weight > 0 ? fmtLbs(line.total_weight) : '—'}</td>
+                          <td className="num">{line.price_per_lb > 0 ? `$${line.price_per_lb.toFixed(2)}` : '—'}</td>
+                          <td className="num">{line.unit_total > 0 ? `$${line.unit_total.toFixed(2)}` : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="card-footer">
               <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
@@ -1483,6 +1605,9 @@ export default function App() {
                   disabled={selectedPatternCount === 0}
                 >
                   Generate Purchase List
+                </button>
+                     <button onClick={fetchSavedPurchaseList} className="btn btn-small" disabled={loadingSavedPurchase}>
+                  {loadingSavedPurchase ? 'Loading...' : 'View Saved'}
                 </button>
               </div>
             </div>
