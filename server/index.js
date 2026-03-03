@@ -288,10 +288,10 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
 
       console.log('Row ' + (idx+1) + ': MatType=' + (matTypeId ? 'OK('+matTypeId+')' : 'MISS('+line.material_type_name+')') + ' LenInch=' + (lengthInchId ? 'OK' : 'MISS') + '(' + lenInchRem + ') WidFt=' + (widthFtId ? 'OK' : 'MISS') + '(' + widFt + ') WidInch=' + (widthInchId ? 'OK' : 'MISS') + '(' + widInchRem + ') TotWt=' + totalWt);
 
-      return {
+      // Build row - ONLY include lookup fields when we have a valid record ID
+      var row = {
         Line_Item: idx + 1,
         Form_Type: line.form_type_id,
-        Material_Type: matTypeId || line.material_type_id,
         Specification: line.specification_id,
         Material: line.material_id,
         MCP_Customer_Project_Form: projectId,
@@ -302,9 +302,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Description: fullDesc,
         QTY: qty,
         Feet_Length: safeNum(lenFt, 0),
-        Length_INCH: lengthInchId || '',
-        Width_FT: widthFtId || '',
-        Width_INCH: widthInchId || '',
         Weight_Per_FT: safeNum(line.weight_per_ft, 4),
         Unit_Weight: unitWt,
         CalcWeight: totalWt,
@@ -313,6 +310,12 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Total_Plate_Width: totalPlateWidth,
         Material_Size: safeNum(line.material_size, 4),
       };
+      if (matTypeId) row.Material_Type = matTypeId;
+      else if (line.material_type_id) row.Material_Type = line.material_type_id;
+      if (lengthInchId) row.Length_INCH = lengthInchId;
+      if (widthFtId) row.Width_FT = widthFtId;
+      if (widthInchId) row.Width_INCH = widthInchId;
+      return row;
     });
 
     console.log('PATCH URL:', creatorApiBase()+'/report/All_Projects/'+projectId);
