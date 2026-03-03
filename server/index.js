@@ -240,14 +240,24 @@ app.get('/api/stock', async (req, res) => {
 // POST /api/nest — run nesting (proxies to existing Railway nesting API)
 app.post('/api/nest', async (req, res) => {
   try {
+    console.log('========== NEST REQUEST ==========');
+    console.log('NEST REQUEST PAYLOAD:', JSON.stringify(req.body, null, 2));
+    console.log('==================================');
+
     const resp = await axios.post(NESTING_API_URL, req.body, {
       headers: { 'Content-Type': 'application/json' },
       timeout: 120000,
     });
 
+    console.log('========== NEST RESPONSE ==========');
+    console.log('NEST RESPONSE:', JSON.stringify(resp.data, null, 2));
+    console.log('===================================');
+
     res.json(resp.data);
   } catch (err) {
-    console.error('Error running nesting:', err.response?.data || err.message);
+    console.error('========== NEST ERROR ==========');
+    console.error('Error running nesting:', JSON.stringify(err.response?.data || err.message, null, 2));
+    console.error('================================');
     res.status(500).json({ error: 'Nesting failed', details: err.response?.data || err.message });
   }
 });
