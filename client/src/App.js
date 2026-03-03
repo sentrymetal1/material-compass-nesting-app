@@ -91,6 +91,242 @@ function resolveErrorNames(errorMsg, nameLookup) {
   return resolved;
 }
 
+/** Enhanced error analysis — parses "too large" errors and adds stock dimension context */
+function analyzeError(errorMsg, nameLookup, parts1D, parts2D, stock2D, stock1D) {
+  const resolved = resolveErrorNames(errorMsg, nameLookup);
+
+  // Try to parse "Part X (WxH") too large for any stock in TYPE | MATERIAL"
+  const tooLargeMatch = resolved.match(/Part\s+(\S+)\s+\(([^)]+)\)\s+too large for any stock in\s+(.+)/i);
+  if (!tooLargeMatch) {
+    return { message: resolved, details: null };
+  }
+
+  const partMark = tooLargeMatch[1];
+  const partDims = tooLargeMatch[2]; // e.g. "72.0x131.5"" or "480.0""
+  const stockCategory = tooLargeMatch[3].replace(/\.$/, ''); // e.g. "Plate | Carbon Steel"
+
+  // Parse part dimensions
+  const dimMatch = partDims.match(/([\d.]+)[x×]([\d.]+)/);
+  const lenMatch = partDims.match(/([\d.]+)"/);
+
+  // Find the actual part from the request data
+  const allParts = [...(parts1D || []), ...(parts2D || [])];
+  const part = allParts.find(p => String(p.part_mark || p.bom_item) === String(partMark));
+
+  if (dimMatch) {
+    // 2D part
+    const partLength = parseFloat(dimMatch[1]);
+    const partWidth = parseFloat(dimMatch[2]);
+
+    // Find matching stock for this category
+    const allStock = [...(stock2D || [])];
+    const matchingStock = allStock.filter(s => {
+      const label = s.stock_label || '';
+      return label.toLowerCase().includes(stockCategory.toLowerCase()) ||
+        (s.form_type_name && s.material_type_name &&
+          stockCategory.toLowerCase().includes(s.form_type_name.toLowerCase()) &&
+          stockCategory.toLowerCase().includes(s.material_type_name.toLowerCase()));
+    });
+
+    const maxStockLength = matchingStock.length > 0 ? Math.max(...matchingStock.map(s => parseFloat(s.length_in || s.stock_length) || 0)) : 0;
+    const maxStockWidth = matchingStock.length > 0 ? Math.max(...matchingStock.map(s => parseFloat(s.width_in || s.stock_width) || 0)) : 0;
+
+    // Determine which dimension(s) exceed stock
+    const lengthExceeds = partLength > maxStockLength && partLength > maxStockWidth;
+    const widthExceeds = partWidth > maxStockLength && partWidth > maxStockWidth;
+    // Check if it could fit if rotated on any stock
+    const couldFitSomeStock = matchingStock.some(s => {
+      const sL = parseFloat(s.length_in || s.stock_length) || 0;
+      const sW = parseFloat(s.width_in || s.stock_width) || 0;
+      return (partLength <= sL && partWidth <= sW) || (partLength <= sW && partWidth <= sL);
+    });
+
+    let dimensionNote = '';
+    if (widthExceeds && !lengthExceeds) {
+      dimensionNote = `Requires ${partWidth}" in one dimension, but max available stock width is ${maxStockWidth}" and max length is ${maxStockLength}".`;
+    } else if (lengthExceeds && !widthExceeds) {
+      dimensionNote = `Requires ${partLength}" in one dimension, but max available stock length is ${maxStockLength}" and max width is ${maxStockWidth}".`;
+    } else if (lengthExceeds && widthExceeds) {
+      dimensionNote = `Both dimensions (${partLength}" × ${partWidth}") exceed all available stock (max: ${maxStockLength}" × ${maxStockWidth}").`;
+    } else {
+      dimensionNote = `Part dimensions are ${partLength}" × ${partWidth}". Max available stock is ${maxStockLength}" × ${maxStockWidth}".`;
+    }
+
+    const availableSizes = matchingStock.map(s => {
+      const sL = parseFloat(s.length_in || s.stock_length) || 0;
+      const sW = parseFloat(s.width_in || s.stock_width) || 0;
+      return `${sL}" × ${sW}"`;
+    });
+
+    // Calculate minimum stock size needed (part dims + some kerf allowance)
+    const minLength = Math.max(partLength, partWidth);
+    const minWidth = Math.min(partLength, partWidth);
+
+    return {
+      message: `Part ${partMark} (${partLength}" × ${partWidth}") — no stock available in ${stockCategory}`,
+      details: {
+        type: '2d',
+        dimensionNote,
+        availableSizes: [...new Set(availableSizes)],
+        suggestions: [
+          `Add stock at least ${Math.ceil(minWidth)}" × ${Math.ceil(minLength)}" (or larger) to the Stock Library for ${stockCategory}.`,
+          `Review Part ${partMark} in the BOM — if length and width can be swapped or dimensions reduced, adjust accordingly.`,
+          part?.grain_direction && part.grain_direction !== 'none'
+            ? `Grain direction is set to "${part.grain_direction}" which prevents rotation. Setting to "None" may allow more stock options.`
+            : null,
+        ].filter(Boolean),
+      },
+    };
+  } else if (lenMatch) {
+    // 1D part
+    const partLength = parseFloat(lenMatch[1]);
+    const allStock = [...(stock1D || [])];
+    const matchingStock = allStock.filter(s => {
+      const label = s.stock_label || '';
+      return label.toLowerCase().includes(stockCategory.toLowerCase());
+    });
+    const maxStockLength = matchingStock.length > 0 ? Math.max(...matchingStock.map(s => parseFloat(s.length_in || s.stock_length) || 0)) : 0;
+
+    return {
+      message: `Part ${partMark} (${partLength}") — no stock available in ${stockCategory}`,
+      details: {
+        type: '1d',
+        dimensionNote: `Requires ${partLength}" length, but max available stock length is ${maxStockLength}".`,
+        availableSizes: matchingStock.map(s => `${parseFloat(s.length_in || s.stock_length)}"`),
+        suggestions: [
+          `Add stock at least ${Math.ceil(partLength)}" long to the Stock Library for ${stockCategory}.`,
+          `Review Part ${partMark} in the BOM — if the length can be reduced, adjust accordingly.`,
+        ],
+      },
+    };
+  }
+
+  return { message: resolved, details: null };
+}
+
+/** 2D Panel Visualization Component — replaces broken SVG from nesting API */
+function PanelVisualization({ result, kerf2D }) {
+  const stockL = result.stock_length_in || 0;
+  const stockW = result.stock_width_in || 0;
+  const cuts = result.cuts || [];
+
+  if (!stockL || !stockW || cuts.length === 0) return null;
+
+  // Scale to fit container (max 600px wide)
+  const maxDisplayWidth = 600;
+  const maxDisplayHeight = 300;
+  const scaleX = maxDisplayWidth / stockL;
+  const scaleY = maxDisplayHeight / stockW;
+  const scale = Math.min(scaleX, scaleY);
+  const displayW = stockL * scale;
+  const displayH = stockW * scale;
+
+  // Color palette for different part marks
+  const colors = [
+    '#4A90D9', '#5BA55B', '#D4A843', '#C75B5B', '#7B68AE',
+    '#3AAFA9', '#E07B53', '#8D6E63', '#5C6BC0', '#26A69A',
+  ];
+  const partMarks = [...new Set(cuts.map(c => c.part_mark))];
+  const colorMap = {};
+  partMarks.forEach((mark, i) => {
+    colorMap[mark] = colors[i % colors.length];
+  });
+
+  return (
+    <div className="panel-viz-wrap">
+      <svg
+        width={displayW + 2}
+        height={displayH + 2}
+        viewBox={`-1 -1 ${displayW + 2} ${displayH + 2}`}
+        className="panel-viz-svg"
+      >
+        {/* Stock outline */}
+        <rect
+          x={0} y={0}
+          width={displayW} height={displayH}
+          fill="#f5f5f5" stroke="#999" strokeWidth={1}
+        />
+        {/* Grid lines every 12 inches */}
+        {Array.from({ length: Math.floor(stockL / 12) }, (_, i) => (
+          <line
+            key={`vg-${i}`}
+            x1={(i + 1) * 12 * scale} y1={0}
+            x2={(i + 1) * 12 * scale} y2={displayH}
+            stroke="#e0e0e0" strokeWidth={0.5}
+          />
+        ))}
+        {Array.from({ length: Math.floor(stockW / 12) }, (_, i) => (
+          <line
+            key={`hg-${i}`}
+            x1={0} y1={(i + 1) * 12 * scale}
+            x2={displayW} y2={(i + 1) * 12 * scale}
+            stroke="#e0e0e0" strokeWidth={0.5}
+          />
+        ))}
+        {/* Cut pieces */}
+        {cuts.map((cut, i) => {
+          const x = (cut.x_position || 0) * scale;
+          const y = (cut.y_position || 0) * scale;
+          const rotation = cut.rotation || 0;
+          // When rotated 90°, the cut's length and width swap visually
+          const cutDisplayW = rotation === 90 ? cut.cut_width * scale : cut.cut_length * scale;
+          const cutDisplayH = rotation === 90 ? cut.cut_length * scale : cut.cut_width * scale;
+          const color = colorMap[cut.part_mark] || '#4A90D9';
+
+          return (
+            <g key={i}>
+              <rect
+                x={x} y={y}
+                width={cutDisplayW} height={cutDisplayH}
+                fill={color} fillOpacity={0.7}
+                stroke={color} strokeWidth={1}
+              />
+              {/* Label if piece is big enough */}
+              {cutDisplayW > 30 && cutDisplayH > 14 && (
+                <text
+                  x={x + cutDisplayW / 2}
+                  y={y + cutDisplayH / 2}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fill="white"
+                  fontSize={Math.min(11, cutDisplayH * 0.4)}
+                  fontWeight="bold"
+                >
+                  {cut.part_mark}
+                </text>
+              )}
+              {/* Dimension label if big enough */}
+              {cutDisplayW > 50 && cutDisplayH > 24 && (
+                <text
+                  x={x + cutDisplayW / 2}
+                  y={y + cutDisplayH / 2 + 10}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fill="rgba(255,255,255,0.8)"
+                  fontSize={Math.min(9, cutDisplayH * 0.3)}
+                >
+                  {cut.cut_length}"×{cut.cut_width}"
+                </text>
+              )}
+            </g>
+          );
+        })}
+        {/* Dimension labels on stock */}
+        <text x={displayW / 2} y={displayH + 14} textAnchor="middle" fontSize={10} fill="#666">
+          {stockL}" ({(stockL / 12).toFixed(1)}')
+        </text>
+        <text
+          x={-displayH / 2} y={-8}
+          textAnchor="middle" fontSize={10} fill="#666"
+          transform="rotate(-90)"
+        >
+          {stockW}" ({(stockW / 12).toFixed(1)}')
+        </text>
+      </svg>
+    </div>
+  );
+}
+
 /** Build full material description: Form Type | Material Type | Spec | Material */
 function matDesc(group) {
   const parts = [group.form_type_name, group.material_type_name];
@@ -118,6 +354,9 @@ export default function App() {
   const [stockFilter, setStockFilter] = useState('all');
   const [newStock, setNewStock] = useState({ form_type: '', material_type: '', stock_length: '', stock_width: '' });
   const [nextCustomId, setNextCustomId] = useState(900000);
+
+  // Store the last nest request payload for error analysis
+  const [lastNestPayload, setLastNestPayload] = useState(null);
 
   // Pattern-level selection for import approval
   const [selectedPatterns, setSelectedPatterns] = useState(new Set());
@@ -534,6 +773,10 @@ export default function App() {
         stock_1d: stock1D,
         stock_2d: stock2D,
       };
+
+      // Store payload for error analysis
+      setLastNestPayload(payload);
+
       const resp = await fetch(`${API}/api/nest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1092,7 +1335,8 @@ export default function App() {
                               )}
                             </div>
                           </div>
-                          {r.svg_layout && <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: r.svg_layout }} />}
+                          {/* Frontend-rendered 2D panel visualization */}
+                          <PanelVisualization result={r} kerf2D={kerf2D} />
                           <table className="cut-table">
                             <thead>
                               <tr><th>Mark</th><th>Length</th><th>Width</th><th>Qty on Stock</th><th>Total Qty</th><th>Cut Weight</th></tr>
@@ -1123,13 +1367,43 @@ export default function App() {
               </div>
             )}
 
-            {/* Errors */}
+            {/* Enhanced Errors */}
             {results.summary?.errors?.length > 0 && (
               <div className="result-section">
                 <h3>Errors</h3>
-                {results.summary.errors.map((e, i) => (
-                  <div key={i} className="error-box">{resolveErrorNames(e, results._nameLookup)}</div>
-                ))}
+                {results.summary.errors.map((e, i) => {
+                  const analysis = analyzeError(
+                    e,
+                    results._nameLookup,
+                    lastNestPayload?.parts_1d,
+                    lastNestPayload?.parts_2d,
+                    lastNestPayload?.stock_2d,
+                    lastNestPayload?.stock_1d
+                  );
+                  return (
+                    <div key={i} className="error-box error-enhanced">
+                      <div className="error-title">{analysis.message}</div>
+                      {analysis.details && (
+                        <div className="error-details">
+                          <p className="error-dimension">{analysis.details.dimensionNote}</p>
+                          {analysis.details.availableSizes.length > 0 && (
+                            <p className="error-stock-info">
+                              Available stock sizes: {analysis.details.availableSizes.join(', ')}
+                            </p>
+                          )}
+                          <div className="error-suggestions">
+                            <strong>To resolve:</strong>
+                            <ol>
+                              {analysis.details.suggestions.map((s, si) => (
+                                <li key={si}>{s}</li>
+                              ))}
+                            </ol>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
 
