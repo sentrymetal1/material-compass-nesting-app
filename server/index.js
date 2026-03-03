@@ -652,6 +652,14 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 });
 
 // POST /api/project/:id/generate-purchase-list
+// REPLACE the existing endpoint in server/index.js with this version
+//
+// FIXES:
+// 1. Round all decimal values to 4 decimal places max to prevent
+//    Zoho "Unit weight has exceeded its maximum digits" error
+// 2. Added Project_Bi_Directional_Lookup field on each subform row
+// 3. Safe number helper to catch NaN/Infinity
+
 app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -662,24 +670,42 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       return res.status(400).json({ error: 'No purchase lines provided' });
     }
 
-    console.log('Purchase lines received:', JSON.stringify(purchase_lines, null, 2));
+    console.log(`Purchase list: ${purchase_lines.length} lines for project ${projectId}`);
+
+    // Helper: safely round a number to maxDigits decimal places
+    // Returns 0 if value is NaN, undefined, null, or Infinity
+    function safeNum(val, decimals = 4) {
+      const n = parseFloat(val);
+      if (!Number.isFinite(n)) return 0;
+      return Math.round(n * Math.pow(10, decimals)) / Math.pow(10, decimals);
+    }
 
     const subformRows = purchase_lines.map((line, idx) => {
       const row = {
+        // Lookup fields — record IDs as strings
         Form_Type: line.form_type_id,
         Material_Types: line.material_type_id,
         Specification: line.specification_id,
         Material: line.material_id,
+
+        // Project bi-directional lookup — links back to this project
+        Project_Bi_Directional_Lookup: projectId,
+
+        // Text fields
         Item_QTY_and_Description: line.description || '',
         Description: line.description || '',
-        QTY: line.quantity,
-        Feet_Length: line.feet_length || 0,
-        Weight_Per_FT: line.weight_per_ft || 0,
-        Unit_Weight: line.unit_weight || 0,
-        CutWeight: line.total_weight || 0,
+
+        // Number field
+        QTY: safeNum(line.quantity, 0),
+
+        // Decimal fields — ALL rounded to prevent "exceeded maximum digits" error
+        Feet_Length: safeNum(line.feet_length, 4),
+        Weight_Per_FT: safeNum(line.weight_per_ft, 4),
+        Unit_Weight: safeNum(line.unit_weight, 4),
+        CutWeight: safeNum(line.total_weight, 4),
         Material_Size: line.material_size || '',
-        Total_Length: line.total_length || 0,
-        Total_Plate_Width: line.total_plate_width || 0,
+        Total_Length: safeNum(line.total_length, 4),
+        Total_Plate_Width: safeNum(line.total_plate_width, 4),
       };
       console.log(`Purchase row ${idx + 1}:`, JSON.stringify(row));
       return row;
@@ -706,15 +732,4 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     console.error('Error status:', err.response?.status);
     res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });
   }
-});
-
-// Catch-all: serve React app
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html'));
-});
-
-// ─── Start Server ──────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Material Compass Nesting server running on port ${PORT}`);
 });
