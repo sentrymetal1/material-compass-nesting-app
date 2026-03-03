@@ -7,11 +7,8 @@ const path = require('path');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-
-// Serve React frontend in production
 app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 
-// ─── Zoho Config ───────────────────────────────────────────────
 const ZOHO = {
   clientId: process.env.ZOHO_CLIENT_ID,
   clientSecret: process.env.ZOHO_CLIENT_SECRET,
@@ -21,699 +18,323 @@ const ZOHO = {
 };
 const NESTING_API_URL = process.env.NESTING_API_URL || 'https://metal-nesting-api-production.up.railway.app/nest';
 
-// Log config on startup (mask secrets)
-console.log('Zoho Config:', {
-  clientId: ZOHO.clientId ? ZOHO.clientId.substring(0, 10) + '...' : 'MISSING',
-  clientSecret: ZOHO.clientSecret ? ZOHO.clientSecret.substring(0, 6) + '...' : 'MISSING',
-  refreshToken: ZOHO.refreshToken ? ZOHO.refreshToken.substring(0, 10) + '...' + ZOHO.refreshToken.slice(-6) : 'MISSING',
-  accountOwner: ZOHO.accountOwner,
-  appLinkName: ZOHO.appLinkName,
-});
+console.log('Zoho Config:', { clientId: ZOHO.clientId ? ZOHO.clientId.substring(0,10)+'...' : 'MISSING', clientSecret: ZOHO.clientSecret ? ZOHO.clientSecret.substring(0,6)+'...' : 'MISSING', refreshToken: ZOHO.refreshToken ? ZOHO.refreshToken.substring(0,10)+'...'+ZOHO.refreshToken.slice(-6) : 'MISSING', accountOwner: ZOHO.accountOwner, appLinkName: ZOHO.appLinkName });
 
-// ─── Token Cache ───────────────────────────────────────────────
-let cachedToken = null;
-let tokenExpiry = 0;
-let lastTokenError = null;
+let cachedToken = null, tokenExpiry = 0, lastTokenError = null;
 
 async function getAccessToken() {
-  if (cachedToken && Date.now() < tokenExpiry) {
-    return cachedToken;
-  }
-
-  console.log('Requesting new access token from Zoho...');
-  console.log('Using refresh token:', ZOHO.refreshToken ? ZOHO.refreshToken.substring(0, 10) + '...' + ZOHO.refreshToken.slice(-6) : 'MISSING');
-
+  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
   try {
-    const resp = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, {
-      params: {
-        refresh_token: ZOHO.refreshToken,
-        client_id: ZOHO.clientId,
-        client_secret: ZOHO.clientSecret,
-        grant_type: 'refresh_token',
-      },
-    });
-
-    console.log('Token response keys:', Object.keys(resp.data));
-
-    if (resp.data.error) {
-      console.error('Zoho token error:', resp.data.error);
-      lastTokenError = resp.data.error;
-      cachedToken = null;
-      tokenExpiry = 0;
-      throw new Error(`Zoho token error: ${resp.data.error}`);
-    }
-
-    if (!resp.data.access_token) {
-      console.error('No access_token in response:', JSON.stringify(resp.data));
-      lastTokenError = 'No access_token in response';
-      cachedToken = null;
-      tokenExpiry = 0;
-      throw new Error('No access_token in Zoho response');
-    }
-
-    cachedToken = resp.data.access_token;
-    tokenExpiry = Date.now() + (resp.data.expires_in - 60) * 1000;
-    lastTokenError = null;
-    console.log('Access token obtained successfully, expires in', resp.data.expires_in, 'seconds');
-    return cachedToken;
-  } catch (err) {
-    console.error('Token request failed:', err.response?.data || err.message);
-    lastTokenError = err.response?.data || err.message;
-    cachedToken = null;
-    tokenExpiry = 0;
-    throw err;
-  }
+    const resp = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, { params: { refresh_token: ZOHO.refreshToken, client_id: ZOHO.clientId, client_secret: ZOHO.clientSecret, grant_type: 'refresh_token' } });
+    if (resp.data.error) { lastTokenError = resp.data.error; cachedToken = null; tokenExpiry = 0; throw new Error('Zoho token error: ' + resp.data.error); }
+    if (!resp.data.access_token) { lastTokenError = 'No access_token'; cachedToken = null; tokenExpiry = 0; throw new Error('No access_token'); }
+    cachedToken = resp.data.access_token; tokenExpiry = Date.now() + (resp.data.expires_in - 60) * 1000; lastTokenError = null;
+    console.log('Token obtained, expires in', resp.data.expires_in, 's'); return cachedToken;
+  } catch (err) { lastTokenError = err.response?.data || err.message; cachedToken = null; tokenExpiry = 0; throw err; }
 }
 
-function zohoHeaders(token) {
-  return { 
-    Authorization: `Zoho-oauthtoken ${token}`,
-    Accept: 'application/json'
-  };
-}
+function zohoHeaders(token) { return { Authorization: 'Zoho-oauthtoken ' + token, Accept: 'application/json' }; }
+function creatorApiBase() { return 'https://www.zohoapis.com/creator/v2.1/data/' + ZOHO.accountOwner + '/' + ZOHO.appLinkName; }
+function safeNum(val, dec) { dec = dec || 4; const n = parseFloat(val); if (!Number.isFinite(n)) return 0; return Math.round(n * Math.pow(10, dec)) / Math.pow(10, dec); }
 
-function creatorApiBase() {
-  return `https://www.zohoapis.com/creator/v2.1/data/${ZOHO.accountOwner}/${ZOHO.appLinkName}`;
-}
-
-// ─── API Routes ────────────────────────────────────────────────
-
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Debug endpoint — shows token status without exposing secrets
+// Health & Debug
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/debug', async (req, res) => {
-  const info = {
-    config: {
-      clientId: ZOHO.clientId ? ZOHO.clientId.substring(0, 10) + '...' : 'MISSING',
-      clientSecret: ZOHO.clientSecret ? '***set***' : 'MISSING',
-      refreshToken: ZOHO.refreshToken ? ZOHO.refreshToken.substring(0, 10) + '...' + ZOHO.refreshToken.slice(-6) : 'MISSING',
-      accountOwner: ZOHO.accountOwner,
-      appLinkName: ZOHO.appLinkName,
-    },
-    tokenCache: {
-      hasToken: !!cachedToken,
-      tokenExpiry: tokenExpiry ? new Date(tokenExpiry).toISOString() : null,
-      isExpired: Date.now() >= tokenExpiry,
-    },
-    lastTokenError: lastTokenError,
-    apiBase: creatorApiBase(),
-  };
-
-  try {
-    const token = await getAccessToken();
-    info.tokenTest = { success: true, tokenPrefix: token ? token.substring(0, 10) + '...' : 'null' };
-  } catch (err) {
-    info.tokenTest = { success: false, error: err.message };
-  }
-
+  const info = { config: { accountOwner: ZOHO.accountOwner, appLinkName: ZOHO.appLinkName }, tokenCache: { hasToken: !!cachedToken }, lastTokenError, apiBase: creatorApiBase() };
+  try { await getAccessToken(); info.tokenTest = { success: true }; } catch(e) { info.tokenTest = { success: false, error: e.message }; }
   res.json(info);
 });
 
-// GET /api/project/:id — fetch project info
+// Project
 app.get('/api/project/:id', async (req, res) => {
-  try {
-    const token = await getAccessToken();
-    const projectId = req.params.id;
-
-    console.log('Fetching project:', projectId);
-    console.log('URL:', `${creatorApiBase()}/report/All_Projects?criteria=(ID==${projectId})`);
-
-    const resp = await axios.get(
-      `${creatorApiBase()}/report/All_Projects?criteria=(ID==${projectId})`,
-      { headers: zohoHeaders(token) }
-    );
-
-    console.log('Project response status:', resp.status);
-    console.log('Project response data keys:', resp.data ? Object.keys(resp.data) : 'null');
-    console.log('Project full response:', JSON.stringify(resp.data).substring(0, 500));
-    console.log('Project records found:', resp.data?.data?.length || 0);
-
-    if (!resp.data.data || resp.data.data.length === 0) {
-      return res.status(404).json({ 
-        error: 'Project not found', 
-        zoho_response: resp.data,
-        url_used: `${creatorApiBase()}/report/All_Projects?criteria=(ID==${projectId})`
-      });
-    }
-
-    res.json(resp.data.data[0]);
-  } catch (err) {
-    console.error('Error fetching project:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch project', details: err.response?.data || err.message });
-  }
+  try { const token = await getAccessToken(); const resp = await axios.get(creatorApiBase()+'/report/All_Projects?criteria=(ID=='+req.params.id+')', { headers: zohoHeaders(token) });
+    if (!resp.data.data?.length) return res.status(404).json({ error: 'Project not found' }); res.json(resp.data.data[0]);
+  } catch (err) { res.status(500).json({ error: 'Failed', details: err.response?.data || err.message }); }
 });
 
-// GET /api/project/:id/bom — fetch BOM items for a project
+// BOM
 app.get('/api/project/:id/bom', async (req, res) => {
-  try {
-    const token = await getAccessToken();
-    const projectId = req.params.id;
-
-    const resp = await axios.get(
-      `${creatorApiBase()}/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Project_LU==${projectId})&limit=200`,
-      { headers: zohoHeaders(token) }
-    );
-
-    const bomItems = (resp.data.data || []).map(row => ({
-      id: row.ID,
-      bom_item: row.BOM_Item,
-      nest_type: row.Nest_Type,
-      form_type_id: row.Form_Type?.ID,
-      form_type_name: row.Form_Type?.zc_display_value || row.Form_Type?.display_value,
-      material_type_id: row.Material_Type?.ID,
-      material_type_name: row.Material_Type?.zc_display_value || row.Material_Type?.display_value,
-      specification_id: row.Specification?.ID,
-      spec_name: row.Specification?.zc_display_value || row.Specification?.display_value,
-      material_type_origin: row.Specification?.Material_Type_Origin || '',
-      material_id: row.Material?.ID,
-      material_name: row.Material?.zc_display_value || row.Material?.display_value,
-      material_dim1: row.Material?.Dim1,
-      quantity: row.Quantity,
-      length_nest: row.Length_Nest,
-      width_nest: row.Width_Nest,
-      density: row.Density,
-      weight_per_ft: row.Weight_Per_Ft,
-    }));
-
-    res.json(bomItems);
-  } catch (err) {
-    console.error('Error fetching BOM:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch BOM', details: err.response?.data || err.message });
-  }
+  try { const token = await getAccessToken();
+    const resp = await axios.get(creatorApiBase()+'/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Project_LU=='+req.params.id+')&limit=200', { headers: zohoHeaders(token) });
+    res.json((resp.data.data || []).map(row => ({ id: row.ID, bom_item: row.BOM_Item, nest_type: row.Nest_Type, form_type_id: row.Form_Type?.ID, form_type_name: row.Form_Type?.zc_display_value || row.Form_Type?.display_value, material_type_id: row.Material_Type?.ID, material_type_name: row.Material_Type?.zc_display_value || row.Material_Type?.display_value, specification_id: row.Specification?.ID, spec_name: row.Specification?.zc_display_value || row.Specification?.display_value, material_type_origin: row.Specification?.Material_Type_Origin || '', material_id: row.Material?.ID, material_name: row.Material?.zc_display_value || row.Material?.display_value, material_dim1: row.Material?.Dim1, quantity: row.Quantity, length_nest: row.Length_Nest, width_nest: row.Width_Nest, density: row.Density, weight_per_ft: row.Weight_Per_Ft })));
+  } catch (err) { res.status(500).json({ error: 'Failed', details: err.response?.data || err.message }); }
 });
 
-// GET /api/stock — fetch active stock library
+// Stock
 app.get('/api/stock', async (req, res) => {
-  try {
-    const token = await getAccessToken();
-
-    const resp = await axios.get(
-      `${creatorApiBase()}/report/Nesting_Stock_Library_Report?criteria=(Is_Active=="Yes")&limit=200`,
-      { headers: zohoHeaders(token) }
-    );
-
-    const stock = (resp.data.data || []).map(row => ({
-      id: row.ID,
-      form_type: row.Form_Type?.ID || row.Form_Type,
-      form_type_name: row.Form_Type?.zc_display_value || row.Form_Type,
-      material_type: row.Material_Type?.ID || row.Material_Type,
-      material_type_name: row.Material_Type?.zc_display_value || row.Material_Type,
-      stock_length: row.Stock_Length,
-      stock_width: row.Stock_Width,
-      density: row.Density_LBS_per_Culin,
-      is_standard: row.Is_Standard,
-    }));
-
-    res.json(stock);
-  } catch (err) {
-    console.error('Error fetching stock:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch stock', details: err.response?.data || err.message });
-  }
+  try { const token = await getAccessToken();
+    const resp = await axios.get(creatorApiBase()+'/report/Nesting_Stock_Library_Report?criteria=(Is_Active=="Yes")&limit=200', { headers: zohoHeaders(token) });
+    res.json((resp.data.data || []).map(row => ({ id: row.ID, form_type: row.Form_Type?.ID || row.Form_Type, form_type_name: row.Form_Type?.zc_display_value || row.Form_Type, material_type: row.Material_Type?.ID || row.Material_Type, material_type_name: row.Material_Type?.zc_display_value || row.Material_Type, stock_length: row.Stock_Length, stock_width: row.Stock_Width, density: row.Density_LBS_per_Culin, is_standard: row.Is_Standard })));
+  } catch (err) { res.status(500).json({ error: 'Failed', details: err.response?.data || err.message }); }
 });
 
-// POST /api/nest — run nesting (proxies to existing Railway nesting API)
+// Nest
 app.post('/api/nest', async (req, res) => {
-  try {
-    const groups = req.body.groups || [];
-    console.log(`NEST REQUEST: ${groups.length} group(s), kerf=${req.body.kerf || 'default'}`);
-    groups.forEach((g, i) => {
-      const stockInfo = (g.stock || []).map(s => `${s.length || s.stock_length}x${s.width || s.stock_width || 'N/A'}`).join(', ');
-      const partInfo = (g.parts || g.items || []).map(p => `${p.part_mark || p.label || '?'}:${p.length || p.cut_length}x${p.width || p.cut_width || 'N/A'}xQty${p.quantity || p.qty || 1}`).join(', ');
-      console.log(`GROUP ${i}: type=${g.nesting_type || g.type}, stock=[${stockInfo}], parts=[${partInfo}]`);
-      if (g.grain_direction || g.grain) console.log(`GROUP ${i} GRAIN: ${g.grain_direction || g.grain}`);
-    });
-    console.log('NEST RAW REQUEST:', JSON.stringify(req.body));
-
-    const resp = await axios.post(NESTING_API_URL, req.body, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 120000,
-    });
-
-    const results = resp.data.results || resp.data;
-    if (Array.isArray(results)) {
-      results.forEach((r, i) => {
-        if (r.error) {
-          console.log(`NEST RESULT ${i}: ERROR - ${r.error}`);
-        } else {
-          const cutCount = r.cuts?.length || 0;
-          console.log(`NEST RESULT ${i}: stock=${r.stock_length_in}x${r.stock_width_in || 'N/A'}, cuts=${cutCount}, waste=${r.waste_percentage}%`);
-        }
-      });
-    }
-    if (resp.data.errors && resp.data.errors.length > 0) {
-      console.log('NEST ERRORS:', JSON.stringify(resp.data.errors));
-    }
-    console.log('NEST RAW RESPONSE:', JSON.stringify(resp.data));
-
-    res.json(resp.data);
-  } catch (err) {
-    console.error('NEST ERROR:', JSON.stringify(err.response?.data || err.message));
-    res.status(500).json({ error: 'Nesting failed', details: err.response?.data || err.message });
-  }
+  try { console.log('NEST REQUEST:', JSON.stringify(req.body));
+    const resp = await axios.post(NESTING_API_URL, req.body, { headers: { 'Content-Type': 'application/json' }, timeout: 120000 });
+    console.log('NEST RESPONSE:', JSON.stringify(resp.data)); res.json(resp.data);
+  } catch (err) { res.status(500).json({ error: 'Nesting failed', details: err.response?.data || err.message }); }
 });
 
-// POST /api/project/:id/save-results — save nesting results back to Zoho
+// Save Nesting Results
 app.post('/api/project/:id/save-results', async (req, res) => {
   try {
     const token = await getAccessToken();
     const projectId = req.params.id;
     const { results_1d, results_2d, summary, kerf_1d, kerf_2d, run_by } = req.body;
 
-    // 0. Fetch BOM items to get weight_per_ft, density, and thickness for calculations
     let bomItems = [];
     try {
-      const bomResp = await axios.get(
-        `${creatorApiBase()}/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Project_LU==${projectId})&limit=200`,
-        { headers: zohoHeaders(token) }
-      );
-      bomItems = (bomResp.data.data || []).map(row => {
-        const weightPerFt = parseFloat(row.Weight_Per_Ft) || parseFloat(row.Material?.Weight_Lb_Ft) || 0;
-        const dim1 = parseFloat(row.Material?.Dim1) || parseFloat(row.Dim1) || 0;
-        const density = parseFloat(row.Density) || 0;
-        
-        return {
-          id: row.ID,
-          form_type_id: row.Form_Type?.ID,
-          form_type_name: row.Form_Type?.zc_display_value || '',
-          spec_name: row.Specification?.zc_display_value || row.Specification?.display_value || '',
-          material_name: row.Material?.zc_display_value || row.Material?.display_value || '',
-          dim1: dim1,
-          weight_per_ft: weightPerFt,
-          density: density,
-        };
-      });
-      if (bomItems.length > 0) {
-        console.log('BOM sample item:', JSON.stringify(bomItems[0]));
-        console.log(`Fetched ${bomItems.length} BOM items for weight/thickness lookup`);
-      }
-    } catch (bomErr) {
-      console.error('Failed to fetch BOM for weight calc:', bomErr.response?.data || bomErr.message);
+      const bomResp = await axios.get(creatorApiBase()+'/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Project_LU=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
+      bomItems = (bomResp.data.data || []).map(row => ({ id: row.ID, form_type_id: row.Form_Type?.ID, dim1: parseFloat(row.Material?.Dim1) || parseFloat(row.Dim1) || 0, weight_per_ft: parseFloat(row.Weight_Per_Ft) || parseFloat(row.Material?.Weight_Lb_Ft) || 0, density: parseFloat(row.Density) || 0 }));
+    } catch (e) { console.error('BOM fetch failed for weights'); }
+
+    function getBomData(result) {
+      const id = result.cuts?.[0]?.bom_line_id;
+      if (!id) return { weight_per_ft: 0, thickness: 0 };
+      const b = bomItems.find(x => x.id === id);
+      return b ? { weight_per_ft: b.weight_per_ft, thickness: b.dim1, density: b.density } : { weight_per_ft: 0, thickness: 0 };
+    }
+    function calcStockWt(r, wpf) {
+      if (!wpf || !r.stock_length_in) return 0;
+      return r.stock_width_in ? Math.round((r.stock_length_in * r.stock_width_in / 144) * wpf * 100) / 100 : Math.round(wpf * (r.stock_length_in / 12) * 100) / 100;
     }
 
-    function getBomDataForResult(result) {
-      const firstCutBomId = result.cuts?.[0]?.bom_line_id;
-      if (!firstCutBomId) return { weight_per_ft: 0, thickness: 0 };
-      const bom = bomItems.find(b => b.id === firstCutBomId);
-      if (!bom) {
-        console.log(`BOM item not found for bom_line_id: ${firstCutBomId}`);
-        return { weight_per_ft: 0, thickness: 0 };
-      }
-      console.log(`BOM match for ${firstCutBomId}: wt/ft=${bom.weight_per_ft}, dim1=${bom.dim1}, material=${bom.material_name}`);
-      return { weight_per_ft: bom.weight_per_ft, thickness: bom.dim1, density: bom.density };
-    }
-
-    function calcStockWeight(result, weight_per_ft) {
-      if (!weight_per_ft || !result.stock_length_in) return 0;
-      if (result.stock_width_in) {
-        return Math.round((result.stock_length_in * result.stock_width_in / 144) * weight_per_ft * 100) / 100;
-      } else {
-        return Math.round(weight_per_ft * (result.stock_length_in / 12) * 100) / 100;
-      }
-    }
-
-    // 1. Fetch existing runs for this project
     let existingRuns = [];
     try {
-      const runsResp = await axios.get(
-        `${creatorApiBase()}/report/Nesting_Run_Header_Report?criteria=(Project_Lookup==${projectId})`,
-        { headers: zohoHeaders(token) }
-      );
-      existingRuns = runsResp.data.data || [];
-    } catch (runsErr) {
-      const zCode = runsErr.response?.data?.code;
-      if (zCode === 9280) {
-        console.log('No existing nesting runs for this project (first run)');
-        existingRuns = [];
-      } else {
-        throw runsErr;
-      }
-    }
-    const runNum = existingRuns.length + 1;
+      const rr = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Project_Lookup=='+projectId+')', { headers: zohoHeaders(token) });
+      existingRuns = rr.data.data || [];
+    } catch (e) { if (e.response?.data?.code === 9280) existingRuns = []; else throw e; }
 
-    // 2. Supersede previous "Approved" runs
-    const approvedRuns = existingRuns.filter(
-      r => r.Run_Status === 'Approved'
-    );
-    for (const prevRun of approvedRuns) {
-      try {
-        await axios.patch(
-          `${creatorApiBase()}/report/Nesting_Run_Header_Report/${prevRun.ID}`,
-          {
-            data: {
-              Run_Status: 'Superseded',
-            },
-          },
-          { headers: zohoHeaders(token) }
-        );
-        console.log(`Superseded run #${prevRun.Run_Number} (ID: ${prevRun.ID})`);
-      } catch (supersErr) {
-        console.error(`Failed to supersede run ${prevRun.ID}:`, supersErr.response?.data || supersErr.message);
-      }
-    }
+    const approvedRuns = existingRuns.filter(r => r.Run_Status === 'Approved');
+    for (const pr of approvedRuns) { try { await axios.patch(creatorApiBase()+'/report/Nesting_Run_Header_Report/'+pr.ID, { data: { Run_Status: 'Superseded' } }, { headers: zohoHeaders(token) }); } catch(e) {} }
 
-    // 2b. Fetch project record to get MANUFACTURE for Run_By
-    let manufactureName = '';
-    try {
-      const projResp = await axios.get(
-        `${creatorApiBase()}/report/All_Projects/${projectId}`,
-        { headers: zohoHeaders(token) }
-      );
-      const projData = projResp.data.data;
-      const mfgRaw = projData?.MANUFACTURE;
-      manufactureName = mfgRaw?.ID || mfgRaw?.zc_display_value || mfgRaw?.display_value || mfgRaw || '';
-      console.log('Project MANUFACTURE raw:', JSON.stringify(mfgRaw), '→ using:', manufactureName);
-    } catch (projErr) {
-      console.error('Failed to fetch project for MANUFACTURE:', projErr.response?.data || projErr.message);
-    }
+    let mfg = '';
+    try { const pr = await axios.get(creatorApiBase()+'/report/All_Projects/'+projectId, { headers: zohoHeaders(token) }); const m = pr.data.data?.MANUFACTURE; mfg = m?.ID || m?.zc_display_value || m || ''; } catch(e) {}
 
-    // 3. Create Nesting_Run_Header with "Approved" status
     const now = new Date();
-    const runDateStr = `${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getDate().toString().padStart(2,'0')}/${now.getFullYear()} ${now.toTimeString().slice(0,8)}`;
+    const rd = (now.getMonth()+1).toString().padStart(2,'0')+'/'+now.getDate().toString().padStart(2,'0')+'/'+now.getFullYear()+' '+now.toTimeString().slice(0,8);
+    const hd = { Project_Lookup: projectId, Run_Number: existingRuns.length + 1, Run_Date: rd, Run_Status: 'Approved', Added_User: 'web_app' };
+    if (run_by) hd.Run_By = run_by; else if (mfg) hd.Run_By = mfg;
+    if (kerf_1d !== undefined) hd.Kerf_1D = kerf_1d;
+    if (kerf_2d !== undefined) hd.Kerf_2D = kerf_2d;
 
-    const headerData = {
-      Project_Lookup: projectId,
-      Run_Number: runNum,
-      Run_Date: runDateStr,
-      Run_Status: 'Approved',
-      Added_User: 'web_app',
-    };
-    if (run_by) {
-      headerData.Run_By = run_by;
-    } else if (manufactureName) {
-      headerData.Run_By = manufactureName;
-    }
-    if (kerf_1d !== undefined) headerData.Kerf_1D = kerf_1d;
-    if (kerf_2d !== undefined) headerData.Kerf_2D = kerf_2d;
+    const hr = await axios.post(creatorApiBase()+'/form/Nesting_Run_Header', { data: hd }, { headers: zohoHeaders(token) });
+    const nestRunID = hr.data.data.ID;
 
-    console.log('Header create payload:', JSON.stringify(headerData));
-
-    const headerResp = await axios.post(
-      `${creatorApiBase()}/form/Nesting_Run_Header`,
-      { data: headerData },
-      { headers: zohoHeaders(token) }
-    );
-
-    console.log('Header create response:', JSON.stringify(headerResp.data));
-    const nestRunID = headerResp.data.data.ID;
-
-    // 4. Save 1D results
-    let savedCount1D = 0;
+    let s1d = 0;
     for (const result of results_1d || []) {
-      if (result.error) continue;
-      if (!result.cuts || result.cuts.length === 0) continue;
-
-      const firstCut = result.cuts[0];
+      if (result.error || !result.cuts?.length) continue;
       try {
-        const bomData = getBomDataForResult(result);
-
-        const cutDetailRows = result.cuts.map((cut, idx) => {
-          const cutWeight = cut.cut_length
-            ? Math.round(bomData.weight_per_ft * (cut.cut_length / 12) * 10000) / 10000
-            : 0;
-          return {
-            BOM_Line_Lookup: cut.bom_line_id,
-            Part_Mark: cut.part_mark,
-            Cut_Length: cut.cut_length,
-            Cut_Weight: cutWeight,
-            Quantity_On_This_Stock: cut.quantity_on_this_stock,
-            Cut_Sequence: idx + 1,
-          };
-        });
-
-        const stockWeight = calcStockWeight(result, bomData.weight_per_ft);
-
-        const srData = {
-          Nesting_Run_Header: nestRunID,
-          Nesting_Type: '1D - Linear',
-          Form_Type: result.form_type,
-          Material_Type: result.material_origin,
-          Specification: firstCut.spec_name,
-          Material: firstCut.material_type,
-          Stock_Size_Label: result.stock_label || firstCut.stock_label || '',
-          Stock_Length: result.stock_length_in,
-          Stock_Thickness: bomData.thickness || 0,
-          Remnant_Length: Math.round((result.remnant_length_in || 0) * 100) / 100,
-          Waste_Percentage: result.waste_percentage,
-          Stock_Weight_LBS: stockWeight || result.stock_weight_lbs || 0,
-          Stock_Sequence: result.stock_sequence || savedCount1D + 1,
-          Nesting_Cut_Detail: cutDetailRows,
-        };
-        console.log('1D Stock Result payload:', JSON.stringify(srData));
-        const srResp = await axios.post(
-          `${creatorApiBase()}/form/Nesting_Stock_Result`,
-          { data: srData },
-          { headers: zohoHeaders(token) }
-        );
-        console.log('1D Stock Result response:', JSON.stringify(srResp.data));
-
-        if (!srResp.data?.data?.ID) {
-          console.error('1D Stock Result - no ID in response:', JSON.stringify(srResp.data));
-          continue;
-        }
-        savedCount1D++;
-      } catch (srErr) {
-        console.error(`Error saving 1D stock result ${savedCount1D + 1}:`, srErr.response?.data || srErr.message);
-      }
+        const bd = getBomData(result);
+        const cuts = result.cuts.map((c, i) => ({ BOM_Line_Lookup: c.bom_line_id, Part_Mark: c.part_mark, Cut_Length: c.cut_length, Cut_Weight: c.cut_length ? Math.round(bd.weight_per_ft * (c.cut_length / 12) * 10000) / 10000 : 0, Quantity_On_This_Stock: c.quantity_on_this_stock, Cut_Sequence: i + 1 }));
+        await axios.post(creatorApiBase()+'/form/Nesting_Stock_Result', { data: { Nesting_Run_Header: nestRunID, Nesting_Type: '1D - Linear', Form_Type: result.form_type, Material_Type: result.material_origin, Specification: result.cuts[0].spec_name, Material: result.cuts[0].material_type, Stock_Size_Label: result.stock_label || '', Stock_Length: result.stock_length_in, Stock_Thickness: bd.thickness || 0, Remnant_Length: Math.round((result.remnant_length_in || 0) * 100) / 100, Waste_Percentage: result.waste_percentage, Stock_Weight_LBS: calcStockWt(result, bd.weight_per_ft), Stock_Sequence: s1d + 1, Nesting_Cut_Detail: cuts } }, { headers: zohoHeaders(token) });
+        s1d++;
+      } catch (e) { console.error('1D save error:', e.response?.data || e.message); }
     }
 
-    // 5. Save 2D results
-    let savedCount2D = 0;
+    let s2d = 0;
     for (const result of results_2d || []) {
-      if (result.error) continue;
-      if (!result.cuts || result.cuts.length === 0) continue;
-
-      const firstCut = result.cuts[0];
+      if (result.error || !result.cuts?.length) continue;
       try {
-        const bomData = getBomDataForResult(result);
-
-        const cutDetailRows = result.cuts.map((cut, idx) => {
-          const cutWeight = (cut.cut_length && cut.cut_width)
-            ? Math.round((cut.cut_length * cut.cut_width / 144) * bomData.weight_per_ft * 10000) / 10000
-            : 0;
-          return {
-            BOM_Line_Lookup: cut.bom_line_id,
-            Part_Mark: cut.part_mark,
-            Cut_Length: cut.cut_length,
-            Cut_Width: cut.cut_width,
-            Cut_Weight: cutWeight,
-            Quantity_On_This_Stock: cut.quantity_on_this_stock,
-            X_Position: cut.x_position || 0,
-            Y_Position: cut.y_position || 0,
-            Rotation: cut.rotation === 90 ? '90°' : '0°',
-            Cut_Sequence: idx + 1,
-          };
-        });
-
-        const stockWeight = calcStockWeight(result, bomData.weight_per_ft);
-
-        const srData = {
-          Nesting_Run_Header: nestRunID,
-          Nesting_Type: '2D - Panel',
-          Form_Type: result.form_type,
-          Material_Type: result.material_origin,
-          Specification: firstCut.spec_name,
-          Material: firstCut.material_type,
-          Stock_Size_Label: result.stock_label || firstCut.stock_label || '',
-          Stock_Length: result.stock_length_in,
-          Stock_Width: result.stock_width_in,
-          Stock_Thickness: bomData.thickness || 0,
-          Remnant_Area: result.remnant_area_in2 || 0,
-          Waste_Percentage: result.waste_percentage,
-          Stock_Weight_LBS: stockWeight || result.stock_weight_lbs || 0,
-          Stock_Sequence: result.stock_sequence || savedCount2D + 1,
-          Nesting_Cut_Detail: cutDetailRows,
-        };
-
-        console.log('2D Stock Result payload:', JSON.stringify(srData));
-        const srResp = await axios.post(
-          `${creatorApiBase()}/form/Nesting_Stock_Result`,
-          { data: srData },
-          { headers: zohoHeaders(token) }
-        );
-        console.log('2D Stock Result response:', JSON.stringify(srResp.data));
-
-        if (!srResp.data?.data?.ID) {
-          console.error('2D Stock Result - no ID in response:', JSON.stringify(srResp.data));
-          continue;
-        }
-        savedCount2D++;
-      } catch (srErr) {
-        console.error(`Error saving 2D stock result ${savedCount2D + 1}:`, srErr.response?.data || srErr.message);
-      }
+        const bd = getBomData(result);
+        const degreeSign = String.fromCharCode(176);
+        const cuts = result.cuts.map((c, i) => ({ BOM_Line_Lookup: c.bom_line_id, Part_Mark: c.part_mark, Cut_Length: c.cut_length, Cut_Width: c.cut_width, Cut_Weight: (c.cut_length && c.cut_width) ? Math.round((c.cut_length * c.cut_width / 144) * bd.weight_per_ft * 10000) / 10000 : 0, Quantity_On_This_Stock: c.quantity_on_this_stock, X_Position: c.x_position || 0, Y_Position: c.y_position || 0, Rotation: c.rotation === 90 ? '90'+degreeSign : '0'+degreeSign, Cut_Sequence: i + 1 }));
+        await axios.post(creatorApiBase()+'/form/Nesting_Stock_Result', { data: { Nesting_Run_Header: nestRunID, Nesting_Type: '2D - Panel', Form_Type: result.form_type, Material_Type: result.material_origin, Specification: result.cuts[0].spec_name, Material: result.cuts[0].material_type, Stock_Size_Label: result.stock_label || '', Stock_Length: result.stock_length_in, Stock_Width: result.stock_width_in, Stock_Thickness: bd.thickness || 0, Remnant_Area: result.remnant_area_in2 || 0, Waste_Percentage: result.waste_percentage, Stock_Weight_LBS: calcStockWt(result, bd.weight_per_ft), Stock_Sequence: s2d + 1, Nesting_Cut_Detail: cuts } }, { headers: zohoHeaders(token) });
+        s2d++;
+      } catch (e) { console.error('2D save error:', e.response?.data || e.message); }
     }
-
-    // 6. Update run header with summary
-    const supersededCount = approvedRuns.length;
-    const totalWaste = summary?.total_remnant_length_in || 0;
-    const wastePct = summary?.avg_waste_pct_1d || 0;
-    const notesStr = `Saved ${savedCount1D} 1D + ${savedCount2D} 2D results | Waste: ${wastePct}%${supersededCount > 0 ? ` | Superseded ${supersededCount} previous run(s)` : ''}`;
 
     try {
-      const patchData = {
-        Total_Stock_Pieces: (savedCount1D + savedCount2D) || 0,
-        Total_Waste_Inches: Math.round(totalWaste * 10000) / 10000,
-        Notes: notesStr,
-      };
-      console.log('Header PATCH payload:', JSON.stringify(patchData));
+      await axios.patch(creatorApiBase()+'/report/Nesting_Run_Header_Report/'+nestRunID, { data: { Total_Stock_Pieces: s1d + s2d, Total_Waste_Inches: Math.round((summary?.total_remnant_length_in || 0) * 10000) / 10000, Notes: 'Saved '+s1d+' 1D + '+s2d+' 2D | Waste: '+(summary?.avg_waste_pct_1d || 0)+'%' } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    } catch (e) { console.error('Header patch failed'); }
 
-      const reportUrl = `${creatorApiBase()}/report/Nesting_Run_Header_Report/${nestRunID}`;
-      console.log('Header PATCH URL (report):', reportUrl);
-
-      let patchSuccess = false;
-      try {
-        const patchResp = await axios.patch(
-          reportUrl,
-          { data: patchData },
-          { 
-            headers: {
-              ...zohoHeaders(token),
-              'Content-Type': 'application/json',
-            }
-          }
-        );
-        console.log('Header PATCH response (report):', JSON.stringify(patchResp.data));
-        if (patchResp.data?.code === 3000 || patchResp.data?.data) {
-          patchSuccess = true;
-        }
-      } catch (reportErr) {
-        console.error('Report PATCH failed:', JSON.stringify(reportErr.response?.data || reportErr.message));
-      }
-
-      if (!patchSuccess) {
-        console.log('Trying form endpoint fallback...');
-        const formUrl = `${creatorApiBase()}/form/Nesting_Run_Header/${nestRunID}`;
-        console.log('Header PATCH URL (form):', formUrl);
-        try {
-          const formResp = await axios.patch(
-            formUrl,
-            { data: patchData },
-            { 
-              headers: {
-                ...zohoHeaders(token),
-                'Content-Type': 'application/json',
-              }
-            }
-          );
-          console.log('Header PATCH response (form):', JSON.stringify(formResp.data));
-        } catch (formErr) {
-          console.error('Form PATCH also failed:', JSON.stringify(formErr.response?.data || formErr.message));
-          console.error('Form PATCH error status:', formErr.response?.status);
-        }
-      }
-    } catch (patchErr) {
-      console.error('ERROR updating run header summary:', JSON.stringify(patchErr.response?.data || patchErr.message));
-      console.error('ERROR status:', patchErr.response?.status);
-    }
-
-    res.json({
-      success: true,
-      nest_run_id: nestRunID,
-      run_number: runNum,
-      run_status: 'Approved',
-      saved_1d: savedCount1D,
-      saved_2d: savedCount2D,
-      superseded_runs: supersededCount,
-    });
-  } catch (err) {
-    console.error('Error saving results:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to save results', details: err.response?.data || err.message });
-  }
+    res.json({ success: true, nest_run_id: nestRunID, run_number: existingRuns.length + 1, run_status: 'Approved', saved_1d: s1d, saved_2d: s2d, superseded_runs: approvedRuns.length });
+  } catch (err) { console.error('Save error:', err.response?.data || err.message); res.status(500).json({ error: 'Failed to save results', details: err.response?.data || err.message }); }
 });
 
-// ─── Purchase List ─────────────────────────────────────────────
-// POST /api/project/:id/generate-purchase-list
-// FIXES:
-// 1. safeNum() rounds all decimals to prevent "exceeded maximum digits"
-// 2. Material_Size as number (was string like "L3 x 3 x 1/2" — Zoho rejected it)
-// 3. All 3 project ID fields: MCP_Customer_Project_Form, Project_Bi_Directional_Lookup, Project_LU
+// ─── Purchase List (fully populated with lookup resolution) ────
+let lookupCache = { lengthInch: null, plateWidthFt: null, materialTypes: null, cacheTime: 0 };
+
+async function fetchLookupTables(token) {
+  const CACHE_TTL = 5 * 60 * 1000;
+  if (lookupCache.lengthInch && (Date.now() - lookupCache.cacheTime) < CACHE_TTL) return lookupCache;
+  console.log('Fetching lookup tables for purchase list...');
+  let lengthInch = [], plateWidthFt = [], materialTypes = [];
+
+  try {
+    const r = await axios.get(creatorApiBase()+'/report/All_Length_Inch_Lookups?limit=200', { headers: zohoHeaders(token) });
+    lengthInch = (r.data.data || []).map(row => ({ id: row.ID, description: row.Description || '', result: parseFloat(row.Result) || 0 }));
+    console.log('Length INCH Lookups:', lengthInch.length);
+  } catch (e) { console.error('Failed Length INCH fetch:', e.response?.data || e.message); }
+
+  try {
+    const r = await axios.get(creatorApiBase()+'/report/All_Plate_Standard_Sizes?limit=200', { headers: zohoHeaders(token) });
+    plateWidthFt = (r.data.data || []).map(row => ({
+      id: row.ID,
+      description: row.Description || '',
+      widthFt: parseFloat(row.Width_Ft) || parseFloat(row.Width_ft) || parseFloat(row['Width (ft)']) || 0
+    }));
+    console.log('Plate Standard Sizes:', plateWidthFt.length);
+    // If widthFt is all 0, try parsing from Description (e.g. "8'" -> 8)
+    if (plateWidthFt.length > 0 && plateWidthFt.every(r => r.widthFt === 0)) {
+      console.log('widthFt all zero, parsing from Description...');
+      plateWidthFt.forEach(r => {
+        const m = (r.description || '').match(/^(\d+)/);
+        if (m) r.widthFt = parseInt(m[1]);
+      });
+    }
+  } catch (e) { console.error('Failed Plate Sizes fetch:', e.response?.data || e.message); }
+
+  try {
+    const r = await axios.get(creatorApiBase()+'/report/All_Material_Types?limit=200', { headers: zohoHeaders(token) });
+    materialTypes = (r.data.data || []).map(row => ({
+      id: row.ID,
+      name: row.Material_Type || row.zc_display_value || row.display_value || ''
+    }));
+    console.log('Material Types:', materialTypes.length);
+  } catch (e) { console.error('Failed Material Types fetch:', e.response?.data || e.message); }
+
+  lookupCache = { lengthInch, plateWidthFt, materialTypes, cacheTime: Date.now() };
+  return lookupCache;
+}
+
+function findLengthInchId(table, inchVal) {
+  if (!table || !table.length) return null;
+  const target = parseFloat(inchVal) || 0;
+  let best = null, bestDiff = Infinity;
+  for (const rec of table) {
+    const d = Math.abs(rec.result - target);
+    if (d < bestDiff) { bestDiff = d; best = rec; }
+  }
+  return (best && bestDiff <= 0.05) ? best.id : null;
+}
+
+function findWidthFtId(table, ftVal) {
+  if (!table || !table.length) return null;
+  const target = Math.floor(parseFloat(ftVal) || 0);
+  // Try by widthFt number first
+  const byNum = table.find(r => r.widthFt === target);
+  if (byNum) return byNum.id;
+  // Try by description string
+  const byDesc = table.find(r => r.description === target + "'" || r.description === String(target));
+  return byDesc ? byDesc.id : null;
+}
+
+function findMaterialTypeId(table, name) {
+  if (!table || !table.length || !name) return null;
+  const exact = table.find(r => r.name === name);
+  if (exact) return exact.id;
+  const lower = name.toLowerCase();
+  const fuzzy = table.find(r => r.name.toLowerCase() === lower);
+  return fuzzy ? fuzzy.id : null;
+}
+
 app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
   try {
     const token = await getAccessToken();
     const projectId = req.params.id;
     const { purchase_lines } = req.body;
+    if (!purchase_lines || purchase_lines.length === 0) return res.status(400).json({ error: 'No purchase lines' });
 
-    if (!purchase_lines || purchase_lines.length === 0) {
-      return res.status(400).json({ error: 'No purchase lines provided' });
-    }
+    console.log('Purchase list: ' + purchase_lines.length + ' lines for project ' + projectId);
 
-    console.log(`Purchase list: ${purchase_lines.length} lines for project ${projectId}`);
+    // Fetch lookup tables for Length_INCH, Width_FT, Width_INCH, Material_Type
+    const lookups = await fetchLookupTables(token);
 
-    // Helper: safely round a number to prevent Zoho decimal overflow
-    // Returns 0 if value is NaN, undefined, null, Infinity, or a non-numeric string
-    function safeNum(val, decimals = 4) {
-      const n = parseFloat(val);
-      if (!Number.isFinite(n)) return 0;
-      return Math.round(n * Math.pow(10, decimals)) / Math.pow(10, decimals);
-    }
+    // Log first few lookup entries for debugging
+    if (lookups.lengthInch.length > 0) console.log('Sample Length INCH:', JSON.stringify(lookups.lengthInch.slice(0, 3)));
+    if (lookups.plateWidthFt.length > 0) console.log('Sample Plate Sizes:', JSON.stringify(lookups.plateWidthFt.slice(0, 3)));
+    if (lookups.materialTypes.length > 0) console.log('Sample Mat Types:', JSON.stringify(lookups.materialTypes.slice(0, 3)));
 
-    const subformRows = purchase_lines.map((line, idx) => {
-      const row = {
-        // Lookup fields — record IDs
+    const subformRows = purchase_lines.map(function(line, idx) {
+      var stockLenIn = parseFloat(line.stock_length_in) || 0;
+      var stockWidIn = parseFloat(line.stock_width_in) || 0;
+      var is2D = stockWidIn > 0;
+
+      // Calculate feet/inches split
+      var lenFt = Math.floor(stockLenIn / 12);
+      var lenInchRem = safeNum(stockLenIn % 12, 4);
+      var widFt = is2D ? Math.floor(stockWidIn / 12) : 0;
+      var widInchRem = is2D ? safeNum(stockWidIn % 12, 4) : 0;
+
+      // Resolve lookup record IDs
+      var lengthInchId = findLengthInchId(lookups.lengthInch, lenInchRem);
+      var widthFtId = is2D ? findWidthFtId(lookups.plateWidthFt, widFt) : findWidthFtId(lookups.plateWidthFt, 0);
+      var widthInchId = findLengthInchId(lookups.lengthInch, widInchRem);
+      var matTypeId = findMaterialTypeId(lookups.materialTypes, line.material_type_name);
+
+      // Calculate weights
+      var unitWt = safeNum(line.unit_weight, 4);
+      var qty = safeNum(line.quantity, 0);
+      var totalWt = safeNum(unitWt * qty, 2);
+
+      // Area in sq ft: for 2D = (length x width) / 144
+      var area = is2D ? safeNum((stockLenIn * stockWidIn) / 144, 2) : 0;
+
+      // Total Length (1D only) = feet_length * qty
+      var totalLength = is2D ? 0 : safeNum((stockLenIn / 12) * qty, 4);
+
+      // Total Plate Width (2D only) = stock_width_in (single piece width)
+      var totalPlateWidth = is2D ? safeNum(stockWidIn, 4) : 0;
+
+      // Build description
+      var descParts = [line.form_type_name, line.material_type_name, line.spec_name, line.material_name].filter(Boolean);
+      var lenStr = lenFt + "'-" + (lenInchRem > 0 ? Math.round(lenInchRem) + '"' : '0"');
+      var sizeStr = is2D
+        ? lenStr + ' x ' + widFt + "'-" + (widInchRem > 0 ? Math.round(widInchRem) + '"' : '0"')
+        : lenStr;
+      var fullDesc = descParts.join(' | ') + ' | ' + sizeStr;
+
+      console.log('Row ' + (idx+1) + ': MatType=' + (matTypeId ? 'OK('+matTypeId+')' : 'MISS('+line.material_type_name+')') + ' LenInch=' + (lengthInchId ? 'OK' : 'MISS') + '(' + lenInchRem + ') WidFt=' + (widthFtId ? 'OK' : 'MISS') + '(' + widFt + ') WidInch=' + (widthInchId ? 'OK' : 'MISS') + '(' + widInchRem + ') TotWt=' + totalWt);
+
+      return {
+        Line_Item: idx + 1,
         Form_Type: line.form_type_id,
-        Material_Types: line.material_type_id,
+        Material_Type: matTypeId || line.material_type_id,
         Specification: line.specification_id,
         Material: line.material_id,
-
-        // All 3 project ID fields
         MCP_Customer_Project_Form: projectId,
         Project_Bi_Directional_Lookup: projectId,
         Project_LU: safeNum(projectId, 0),
-
-        // Text fields
-        Item_QTY_and_Description: line.description || '',
-        Description: line.description || '',
-
-        // Number field
-        QTY: safeNum(line.quantity, 0),
-
-        // Decimal fields — ALL rounded to prevent "exceeded maximum digits" error
-        Feet_Length: safeNum(line.feet_length, 4),
+        Item_Description: fullDesc,
+        Item_QTY_and_Description: line.description || fullDesc,
+        Description: fullDesc,
+        QTY: qty,
+        Feet_Length: safeNum(lenFt, 0),
+        Length_INCH: lengthInchId || '',
+        Width_FT: widthFtId || '',
+        Width_INCH: widthInchId || '',
         Weight_Per_FT: safeNum(line.weight_per_ft, 4),
-        Unit_Weight: safeNum(line.unit_weight, 4),
-        CutWeight: safeNum(line.total_weight, 4),
-        Total_Length: safeNum(line.total_length, 4),
-        Total_Plate_Width: safeNum(line.total_plate_width, 4),
-
-        // Material_Size is a DECIMAL field in Zoho — must be number, not string
+        Unit_Weight: unitWt,
+        CalcWeight: totalWt,
+        Area: area,
+        Total_Length: totalLength,
+        Total_Plate_Width: totalPlateWidth,
         Material_Size: safeNum(line.material_size, 4),
       };
-      console.log(`Purchase row ${idx + 1}:`, JSON.stringify(row));
-      return row;
     });
 
-    console.log('PATCH URL:', `${creatorApiBase()}/report/All_Projects/${projectId}`);
-    console.log('Subform rows count:', subformRows.length);
+    console.log('PATCH URL:', creatorApiBase()+'/report/All_Projects/'+projectId);
+    console.log('Subform rows:', subformRows.length);
+    // Log first row for debugging
+    if (subformRows.length > 0) console.log('First row:', JSON.stringify(subformRows[0]));
 
-    const patchResp = await axios.patch(
-      `${creatorApiBase()}/report/All_Projects/${projectId}`,
-      {
-        data: {
-          Material_Allocated: subformRows,
-        },
-      },
+    var patchResp = await axios.patch(
+      creatorApiBase()+'/report/All_Projects/'+projectId,
+      { data: { Material_Allocated: subformRows } },
       { headers: zohoHeaders(token) }
     );
-
-    console.log('Purchase list PATCH response:', JSON.stringify(patchResp.data));
-
+    console.log('Purchase PATCH response:', JSON.stringify(patchResp.data));
     res.json({ success: true, items_saved: subformRows.length });
   } catch (err) {
-    console.error('Error saving purchase list:', JSON.stringify(err.response?.data || err.message));
-    console.error('Error status:', err.response?.status);
+    console.error('Purchase list error:', JSON.stringify(err.response?.data || err.message));
     res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });
   }
 });
 
 // Catch-all: serve React app
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html'));
-});
+app.get('*', function(req, res) { res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html')); });
 
-// ─── Start Server ──────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Material Compass Nesting server running on port ${PORT}`);
-});
+var PORT = process.env.PORT || 3000;
+app.listen(PORT, function() { console.log('Material Compass Nesting server running on port ' + PORT); });
