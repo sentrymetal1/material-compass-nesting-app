@@ -309,6 +309,9 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Total_Length: totalLength,
         Total_Plate_Width: totalPlateWidth,
         Material_Size: safeNum(line.material_size, 4),
+        Price_Per_LB: 0,
+        Unit_Price: 0,
+        Unit_Total: 0,
       };
       if (matTypeId) row.Material_Type = matTypeId;
       else if (line.material_type_id) row.Material_Type = line.material_type_id;
