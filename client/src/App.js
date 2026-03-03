@@ -102,8 +102,8 @@ function analyzeError(errorMsg, nameLookup, parts1D, parts2D, stock2D, stock1D) 
   }
 
   const partMark = tooLargeMatch[1];
-  const partDims = tooLargeMatch[2]; // e.g. "72.0x131.5"" or "480.0""
-  const stockCategory = tooLargeMatch[3].replace(/\.$/, ''); // e.g. "Plate | Carbon Steel"
+  const partDims = tooLargeMatch[2];
+  const stockCategory = tooLargeMatch[3].replace(/\.$/, '');
 
   // Parse part dimensions
   const dimMatch = partDims.match(/([\d.]+)[x×]([\d.]+)/);
@@ -131,15 +131,8 @@ function analyzeError(errorMsg, nameLookup, parts1D, parts2D, stock2D, stock1D) 
     const maxStockLength = matchingStock.length > 0 ? Math.max(...matchingStock.map(s => parseFloat(s.length_in || s.stock_length) || 0)) : 0;
     const maxStockWidth = matchingStock.length > 0 ? Math.max(...matchingStock.map(s => parseFloat(s.width_in || s.stock_width) || 0)) : 0;
 
-    // Determine which dimension(s) exceed stock
     const lengthExceeds = partLength > maxStockLength && partLength > maxStockWidth;
     const widthExceeds = partWidth > maxStockLength && partWidth > maxStockWidth;
-    // Check if it could fit if rotated on any stock
-    const couldFitSomeStock = matchingStock.some(s => {
-      const sL = parseFloat(s.length_in || s.stock_length) || 0;
-      const sW = parseFloat(s.width_in || s.stock_width) || 0;
-      return (partLength <= sL && partWidth <= sW) || (partLength <= sW && partWidth <= sL);
-    });
 
     let dimensionNote = '';
     if (widthExceeds && !lengthExceeds) {
@@ -158,7 +151,6 @@ function analyzeError(errorMsg, nameLookup, parts1D, parts2D, stock2D, stock1D) 
       return `${sL}" × ${sW}"`;
     });
 
-    // Calculate minimum stock size needed (part dims + some kerf allowance)
     const minLength = Math.max(partLength, partWidth);
     const minWidth = Math.min(partLength, partWidth);
 
@@ -516,7 +508,6 @@ export default function App() {
   }
 
   // ─── Weight Lookup Helper ───
-  // Build a map from bom_line_id → weight_per_ft for quick access
   function getWeightMap() {
     const map = {};
     bom.forEach(b => {
@@ -525,7 +516,6 @@ export default function App() {
     return map;
   }
 
-  // Get weight_per_ft for a stock result by looking at its first cut's bom_line_id
   function getStockWeightPerFt(result, weightMap) {
     const firstCut = result.cuts?.[0];
     if (!firstCut) return 0;
@@ -555,6 +545,8 @@ export default function App() {
         );
         const ftn = results._nameLookup?.[r.form_type] || r.form_type;
         const mtn = results._nameLookup?.[r.material_origin] || r.material_origin;
+        const specName = results._nameLookup?.[firstCut.spec_name] || '';
+        const matName = results._nameLookup?.[firstCut.material_type] || '';
         const sizeDesc = is2D
           ? `${inToFt(r.stock_length_in)} × ${inToFt(r.stock_width_in)}`
           : inToFt(r.stock_length_in);
@@ -564,11 +556,12 @@ export default function App() {
           material_type_id: r.material_origin,
           specification_id: firstCut.spec_name,
           material_id: firstCut.material_type,
-          description: `${ftn} | ${mtn} | ${sizeDesc}`,
+          description: `${ftn} | ${mtn} | ${specName} | ${matName} | ${sizeDesc}`,
           form_type_name: ftn,
           material_type_name: mtn,
           spec_name: bomItem?.spec_name || '',
           material_name: bomItem?.material_name || '',
+          material_size: matName,
           stock_length_in: r.stock_length_in,
           stock_width_in: r.stock_width_in || 0,
           quantity: 0,
@@ -576,6 +569,8 @@ export default function App() {
           weight_per_ft: wpf,
           unit_weight: unitWt,
           total_weight: 0,
+          total_length: is2D ? 0 : (r.stock_length_in / 12),
+          total_plate_width: is2D ? r.stock_width_in : 0,
           is2D,
         };
       }
@@ -606,7 +601,7 @@ export default function App() {
       });
       if (!resp.ok) throw new Error('Save failed');
       const data = await resp.json();
-      setPurchaseStatus(`Purchase list saved! ${data.items_saved} line items written to Material Allocated.`);
+      setPurchaseStatus(`Purchase list saved! ${data.items_saved} line items written to project.`);
     } catch (err) {
       setPurchaseStatus(`Error: ${err.message}`);
     } finally {
@@ -629,7 +624,6 @@ export default function App() {
       const stockWt = calcUnitWeight(wpf, r.stock_length_in, is2D ? r.stock_width_in : 0);
       totalStock += stockWt;
 
-      // Sum cut weights
       for (const cut of r.cuts) {
         const cutWt = is2D
           ? wpf * ((cut.cut_length * cut.cut_width) / 144)
@@ -905,7 +899,7 @@ export default function App() {
                 type="text"
                 value={projectId}
                 onChange={e => setProjectId(e.target.value)}
-                placeholder="Zoho Project ID"
+                placeholder="Project ID"
                 className="input"
               />
               <button onClick={() => loadProject(projectId)} className="btn btn-primary" disabled={!projectId}>
@@ -1117,7 +1111,7 @@ export default function App() {
               <div className="btn-group">
                 <button onClick={selectAllPatterns} className="btn btn-small">Select All Patterns</button>
                 <button onClick={clearAllPatterns} className="btn btn-small">Clear Selection</button>
-                <button onClick={() => window.print()} className="btn btn-small btn-print">🖨 Print</button>
+                <button onClick={() => window.print()} className="btn btn-small btn-print">Print</button>
               </div>
             </div>
             {results.summary && (
@@ -1166,7 +1160,6 @@ export default function App() {
               <div className="result-section">
                 <h3>1D — Linear Results</h3>
                 {groupResults(results.results_1d, results._nameLookup).map((group, gi) => {
-                  // Group-level weight
                   const groupWeightPerFt = (() => {
                     const firstResult = group.patterns[0]?.representative;
                     if (!firstResult?.cuts?.[0]) return 0;
@@ -1435,7 +1428,7 @@ export default function App() {
             {showPurchasePreview && purchaseLines.length > 0 && (
               <div className="result-section">
                 <h3>Purchase List Preview</h3>
-                <p className="hint">Review the aggregated purchase lines below before saving to Zoho Material Allocated subform.</p>
+                <p className="hint">Review the aggregated purchase lines below before saving to the project.</p>
                 <table className="table">
                   <thead>
                     <tr>
@@ -1465,7 +1458,7 @@ export default function App() {
                 </table>
                 <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
                   <button onClick={savePurchaseList} className="btn btn-primary" disabled={savingPurchase}>
-                    {savingPurchase ? 'Saving...' : 'Save Purchase List to Zoho'}
+                    {savingPurchase ? 'Saving...' : 'Save Purchase List to Project'}
                   </button>
                   <button onClick={() => setShowPurchasePreview(false)} className="btn">Cancel</button>
                 </div>
