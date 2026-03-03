@@ -240,24 +240,46 @@ app.get('/api/stock', async (req, res) => {
 // POST /api/nest — run nesting (proxies to existing Railway nesting API)
 app.post('/api/nest', async (req, res) => {
   try {
-    console.log('========== NEST REQUEST ==========');
-    console.log('NEST REQUEST PAYLOAD:', JSON.stringify(req.body, null, 2));
-    console.log('==================================');
+    // Compact logging — one line per group and per part
+    const groups = req.body.groups || [];
+    console.log(`NEST REQUEST: ${groups.length} group(s), kerf=${req.body.kerf || 'default'}`);
+    groups.forEach((g, i) => {
+      const stockInfo = (g.stock || []).map(s => `${s.length || s.stock_length}x${s.width || s.stock_width || 'N/A'}`).join(', ');
+      const partInfo = (g.parts || g.items || []).map(p => `${p.part_mark || p.label || '?'}:${p.length || p.cut_length}x${p.width || p.cut_width || 'N/A'}xQty${p.quantity || p.qty || 1}`).join(', ');
+      console.log(`GROUP ${i}: type=${g.nesting_type || g.type}, stock=[${stockInfo}], parts=[${partInfo}]`);
+      // Log grain direction if present
+      if (g.grain_direction || g.grain) console.log(`GROUP ${i} GRAIN: ${g.grain_direction || g.grain}`);
+    });
+    // Also log the raw request as single compact line (no pretty print)
+    console.log('NEST RAW REQUEST:', JSON.stringify(req.body));
 
     const resp = await axios.post(NESTING_API_URL, req.body, {
       headers: { 'Content-Type': 'application/json' },
       timeout: 120000,
     });
 
-    console.log('========== NEST RESPONSE ==========');
-    console.log('NEST RESPONSE:', JSON.stringify(resp.data, null, 2));
-    console.log('===================================');
+    // Compact response logging — just errors and summary per group
+    const results = resp.data.results || resp.data;
+    if (Array.isArray(results)) {
+      results.forEach((r, i) => {
+        if (r.error) {
+          console.log(`NEST RESULT ${i}: ERROR - ${r.error}`);
+        } else {
+          const cutCount = r.cuts?.length || 0;
+          console.log(`NEST RESULT ${i}: stock=${r.stock_length_in}x${r.stock_width_in || 'N/A'}, cuts=${cutCount}, waste=${r.waste_percentage}%`);
+        }
+      });
+    }
+    // Log errors array if present
+    if (resp.data.errors && resp.data.errors.length > 0) {
+      console.log('NEST ERRORS:', JSON.stringify(resp.data.errors));
+    }
+    // Raw response as single line
+    console.log('NEST RAW RESPONSE:', JSON.stringify(resp.data));
 
     res.json(resp.data);
   } catch (err) {
-    console.error('========== NEST ERROR ==========');
-    console.error('Error running nesting:', JSON.stringify(err.response?.data || err.message, null, 2));
-    console.error('================================');
+    console.error('NEST ERROR:', JSON.stringify(err.response?.data || err.message));
     res.status(500).json({ error: 'Nesting failed', details: err.response?.data || err.message });
   }
 });
