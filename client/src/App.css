@@ -762,9 +762,11 @@ body {
   text-align: right;
 }
 
-.cut-table th:nth-child(2),
-.cut-table th:nth-child(3),
-.cut-table th:nth-child(4) {
+.cut-table th:not(:first-child) {
+  text-align: right;
+}
+
+.cut-table td:not(:first-child) {
   text-align: right;
 }
 
