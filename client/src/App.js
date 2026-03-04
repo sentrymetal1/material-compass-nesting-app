@@ -386,6 +386,8 @@ export default function App() {
   const [savedPurchaseLines, setSavedPurchaseLines] = useState([]);
   const [loadingSavedPurchase, setLoadingSavedPurchase] = useState(false);
   const [showSavedPurchase, setShowSavedPurchase] = useState(false);
+  // Saved nesting run state
+  const [savedRunInfo, setSavedRunInfo] = useState(null);
   const loadProject = useCallback(async (id) => {
     setLoading(true);
     setError('');
@@ -410,6 +412,29 @@ export default function App() {
       setSelected(autoSelect);
     setEnabledStock(new Set(taggedStock.map(s => s.id)));
       setStep(1);
+      // Auto-load saved nesting results
+      try {
+        const nestRes = await fetch(`${API}/api/project/${id}/nesting-results`);
+        if (nestRes.ok) {
+          const nestData = await nestRes.json();
+          if (nestData.found && (nestData.results_1d?.length > 0 || nestData.results_2d?.length > 0)) {
+            // Enrich nameLookup from BOM data
+            if (nestData._nameLookup && bomData.length > 0) {
+              bomData.forEach(b => {
+                if (b.form_type_id && b.form_type_name) nestData._nameLookup[b.form_type_id] = b.form_type_name;
+                if (b.material_type_id && b.material_type_name) nestData._nameLookup[b.material_type_id] = b.material_type_name;
+                if (b.specification_id && b.spec_name) nestData._nameLookup[b.specification_id] = b.spec_name;
+                if (b.material_id && b.material_name) nestData._nameLookup[b.material_id] = b.material_name;
+              });
+            }
+            setSavedRunInfo(nestData.run_header);
+            setResults(nestData);
+            autoSelectAllPatterns(nestData);
+            if (nestData.run_header?.kerf_1d) setKerf1D(nestData.run_header.kerf_1d);
+            if (nestData.run_header?.kerf_2d) setKerf2D(nestData.run_header.kerf_2d);
+          }
+        }
+      } catch (e) { console.error('Auto-load nesting results:', e); }
       // Auto-load saved purchase list
       try {
         const plRes = await fetch(`${API}/api/project/${id}/purchase-list`);
@@ -431,6 +456,31 @@ export default function App() {
   useEffect(() => {
     if (projectId) loadProject(projectId);
   }, [projectId, loadProject]);
+  async function fetchSavedNestingResults() {
+    try {
+      const resp = await fetch(`${API}/api/project/${projectId}/nesting-results`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!data.found) return;
+      // Build nameLookup from BOM if not provided
+      if (data._nameLookup && bom.length > 0) {
+        bom.forEach(b => {
+          if (b.form_type_id && b.form_type_name) data._nameLookup[b.form_type_id] = b.form_type_name;
+          if (b.material_type_id && b.material_type_name) data._nameLookup[b.material_type_id] = b.material_type_name;
+          if (b.specification_id && b.spec_name) data._nameLookup[b.specification_id] = b.spec_name;
+          if (b.material_id && b.material_name) data._nameLookup[b.material_id] = b.material_name;
+        });
+      }
+      setSavedRunInfo(data.run_header);
+      setResults(data);
+      autoSelectAllPatterns(data);
+      // Set kerf values from saved run
+      if (data.run_header?.kerf_1d) setKerf1D(data.run_header.kerf_1d);
+      if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
+    } catch (err) {
+      console.error('Error fetching saved nesting results:', err);
+    }
+  }
  async function fetchSavedPurchaseList() {
     setLoadingSavedPurchase(true);
     try {
@@ -740,6 +790,7 @@ export default function App() {
     setResults(null);
     setSelectedPatterns(new Set());
     setShowPurchasePreview(false);
+    setSavedRunInfo(null);
     setPurchaseStatus('');
     try {
       const parts1D = [];
@@ -988,6 +1039,17 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+                    {/* Saved Nesting Run Banner */}
+            {savedRunInfo && results && (
+              <div className="save-status save-success" style={{ margin: '12px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>
+                  Previous nesting run found — Run #{savedRunInfo.run_number} ({savedRunInfo.run_date}) — {results.summary?.total_stock_pieces || 0} stock pieces — Status: {savedRunInfo.run_status}
+                </span>
+                <button onClick={() => setStep(3)} className="btn btn-primary btn-small" style={{ marginLeft: 12 }}>
+                  View Saved Results →
+                </button>
+              </div>
+            )}
             <div className="card-footer">
               <span className="count">{selected.size} items selected</span>
               <div className="btn-group">
@@ -1214,6 +1276,11 @@ export default function App() {
                 <button onClick={() => window.print()} className="btn btn-small btn-print">Print</button>
               </div>
             </div>
+{savedRunInfo && (
+              <div className="save-status save-success" style={{ marginBottom: 12 }}>
+                Viewing saved nesting run #{savedRunInfo.run_number} — {savedRunInfo.run_date} — {savedRunInfo.run_by || 'Unknown'} — Status: {savedRunInfo.run_status}
+              </div>
+            )}
             {results.summary && (
               <div className="summary-bar">
                 <div className="summary-item">
