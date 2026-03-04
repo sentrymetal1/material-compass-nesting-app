@@ -944,7 +944,7 @@ export default function App() {
       <header className="header">
         <div className="header-inner">
           <div className="logo-group">
-            <div className="logo-icon">◈</div>
+            <img src="/Material Compass Circle Logo.png" alt="Material Compass" className="logo-icon" style={{ width: 40, height: 40, borderRadius: '50%' }} />
             <div>
               <h1 className="logo-title">Material Compass</h1>
               <p className="logo-sub">Nesting</p>
