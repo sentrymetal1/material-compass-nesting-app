@@ -449,15 +449,17 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
 
     // Step 2: Fetch all stock results for this run
     var stockResults = [];
-    var page = 1;
+    var startIndex = 0;
     var hasMore = true;
     while (hasMore) {
       try {
-        var srResp = await axios.get(creatorApiBase()+'/report/Nesting_Stock_Results?criteria=(Nesting_Run_Header=='+nestRunID+')&limit=200&page='+page, { headers: zohoHeaders(token) });
+        var srUrl = creatorApiBase()+'/report/Nesting_Stock_Results?criteria=(Nesting_Run_Header=='+nestRunID+')&limit=200';
+        if (startIndex > 0) srUrl += '&from='+startIndex;
+        var srResp = await axios.get(srUrl, { headers: zohoHeaders(token) });
         var batch = srResp.data.data || [];
         stockResults = stockResults.concat(batch);
         hasMore = batch.length === 200;
-        page++;
+        startIndex += 200;
       } catch (e) {
         if (e.response?.data?.code === 9280) hasMore = false;
         else throw e;
