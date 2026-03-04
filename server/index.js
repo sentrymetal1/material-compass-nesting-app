@@ -428,7 +428,7 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
     // Step 1: Find latest Approved run header
     var runResp;
     try {
-      runResp = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Project_Lookup=='+projectId+' && Run_Status=="Approved")&limit=10', { headers: zohoHeaders(token) });
+      runResp = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Project_Lookup=='+projectId+')&limit=10', { headers: zohoHeaders(token) });
     } catch (e) {
       if (e.response?.data?.code === 9280 || e.response?.status === 404) {
         return res.json({ found: false, message: 'No approved nesting run found' });
@@ -436,7 +436,7 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       throw e;
     }
 
-    var runs = runResp.data.data || [];
+    var runs = (runResp.data.data || []).filter(function(r) { return r.Run_Status === 'Approved'; });
     if (runs.length === 0) {
       return res.json({ found: false, message: 'No approved nesting run found' });
     }
