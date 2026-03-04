@@ -408,8 +408,19 @@ export default function App() {
         if (item.nest_type && item.nest_type !== '') autoSelect.add(item.id);
       });
       setSelected(autoSelect);
-      setEnabledStock(new Set(taggedStock.map(s => s.id)));
+    setEnabledStock(new Set(taggedStock.map(s => s.id)));
       setStep(1);
+      // Auto-load saved purchase list
+      try {
+        const plRes = await fetch(`${API}/api/project/${id}/purchase-list`);
+        if (plRes.ok) {
+          const plData = await plRes.json();
+          if (plData.purchase_lines && plData.purchase_lines.length > 0) {
+            setSavedPurchaseLines(plData.purchase_lines);
+            setShowSavedPurchase(true);
+          }
+        }
+      } catch (e) { console.error('Auto-load purchase list:', e); }
     } catch (err) {
       setError(err.message || 'Failed to load project');
     } finally {
