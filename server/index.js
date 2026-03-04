@@ -419,6 +419,209 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
   }
 });
 
+// ─── Load Saved Nesting Results ────
+app.get('/api/project/:id/nesting-results', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const projectId = req.params.id;
+
+    // Step 1: Find latest Approved run header
+    var runResp;
+    try {
+      runResp = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Project_Lookup=='+projectId+' && Run_Status=="Approved")&limit=10', { headers: zohoHeaders(token) });
+    } catch (e) {
+      if (e.response?.data?.code === 9280 || e.response?.status === 404) {
+        return res.json({ found: false, message: 'No approved nesting run found' });
+      }
+      throw e;
+    }
+
+    var runs = runResp.data.data || [];
+    if (runs.length === 0) {
+      return res.json({ found: false, message: 'No approved nesting run found' });
+    }
+
+    // Get latest run (highest Run_Number)
+    runs.sort(function(a, b) { return (parseInt(b.Run_Number) || 0) - (parseInt(a.Run_Number) || 0); });
+    var runHeader = runs[0];
+    var nestRunID = runHeader.ID;
+    console.log('Loading nesting run:', nestRunID, 'Run #'+runHeader.Run_Number);
+
+    // Step 2: Fetch all stock results for this run
+    var stockResults = [];
+    var page = 1;
+    var hasMore = true;
+    while (hasMore) {
+      try {
+        var srResp = await axios.get(creatorApiBase()+'/report/Nesting_Stock_Results?criteria=(Nesting_Run_Header=='+nestRunID+')&limit=200&page='+page, { headers: zohoHeaders(token) });
+        var batch = srResp.data.data || [];
+        stockResults = stockResults.concat(batch);
+        hasMore = batch.length === 200;
+        page++;
+      } catch (e) {
+        if (e.response?.data?.code === 9280) hasMore = false;
+        else throw e;
+      }
+    }
+
+    if (stockResults.length === 0) {
+      return res.json({ found: true, run_header: { id: nestRunID, run_number: runHeader.Run_Number, run_date: runHeader.Run_Date, run_status: runHeader.Run_Status, notes: runHeader.Notes }, results_1d: [], results_2d: [], summary: { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
+    }
+
+    // Step 3: Fetch all cut details for this run's stock results
+    // Build list of stock result IDs
+    var stockResultIds = stockResults.map(function(sr) { return sr.ID; });
+
+    // Fetch cut details in batches — use Nesting_Stock_Result_Lookup field
+    var allCutDetails = [];
+    // Fetch all cuts for each stock result
+    for (var i = 0; i < stockResultIds.length; i++) {
+      try {
+        var cdResp = await axios.get(creatorApiBase()+'/report/All_Nesting_Cut_Details?criteria=(Nesting_Stock_Result_Lookup=='+stockResultIds[i]+')&limit=200', { headers: zohoHeaders(token) });
+        var cuts = cdResp.data.data || [];
+        cuts.forEach(function(c) { c._stock_result_id = stockResultIds[i]; });
+        allCutDetails = allCutDetails.concat(cuts);
+      } catch (e) {
+        if (e.response?.data?.code !== 9280) {
+          console.error('Cut detail fetch error for SR', stockResultIds[i], ':', e.response?.data || e.message);
+        }
+      }
+    }
+
+    // Group cut details by stock result ID
+    var cutsByStock = {};
+    allCutDetails.forEach(function(cd) {
+      var srId = cd._stock_result_id;
+      if (!cutsByStock[srId]) cutsByStock[srId] = [];
+      cutsByStock[srId].push(cd);
+    });
+
+    // Step 4: Build the results in the format the frontend expects
+    var results_1d = [];
+    var results_2d = [];
+    var nameLookup = {};
+    var totalWaste1d = 0;
+    var count1d = 0;
+
+    stockResults.forEach(function(sr) {
+      var nestType = sr.Nesting_Type || '';
+      var formType = sr.Form_Type || {};
+      var materialType = sr.Material_Type || {};
+      var specification = sr.Specification || {};
+      var material = sr.Material || {};
+
+      var formTypeId = formType.ID || formType || '';
+      var materialTypeId = materialType.ID || materialType || '';
+      var specId = specification.ID || specification || '';
+      var materialId = material.ID || material || '';
+
+      // Build name lookup
+      var ftName = formType.zc_display_value || formType.display_value || '';
+      var mtName = materialType.zc_display_value || materialType.display_value || '';
+      var spName = specification.zc_display_value || specification.display_value || '';
+      var matName = material.zc_display_value || material.display_value || '';
+
+      if (formTypeId && ftName) nameLookup[formTypeId] = ftName;
+      if (materialTypeId && mtName) nameLookup[materialTypeId] = mtName;
+      if (specId && spName) nameLookup[specId] = spName;
+      if (materialId && matName) nameLookup[materialId] = matName;
+
+      // Build cuts array from cut details
+      var srCuts = cutsByStock[sr.ID] || [];
+      // Sort by Cut_Sequence
+      srCuts.sort(function(a, b) { return (parseInt(a.Cut_Sequence) || 0) - (parseInt(b.Cut_Sequence) || 0); });
+
+      var cuts = srCuts.map(function(cd) {
+        var bomLineLookup = cd.BOM_Line_Lookup || {};
+        var rotationStr = cd.Rotation || '0';
+        // Parse rotation — may be "90°" or "0°"
+        var rotation = parseInt(rotationStr) || 0;
+
+        return {
+          bom_line_id: bomLineLookup.ID || bomLineLookup || '',
+          part_mark: cd.Part_Mark || '',
+          cut_length: parseFloat(cd.Cut_Length) || 0,
+          cut_width: parseFloat(cd.Cut_Width) || 0,
+          cut_weight: parseFloat(cd.Cut_Weight) || 0,
+          quantity_on_this_stock: parseInt(cd.Quantity_On_This_Stock) || 1,
+          x_position: parseFloat(cd.X_Position) || 0,
+          y_position: parseFloat(cd.Y_Position) || 0,
+          rotation: rotation,
+          cut_sequence: parseInt(cd.Cut_Sequence) || 0,
+          spec_name: specId,
+          material_type: materialId,
+        };
+      });
+
+      var stockLength = parseFloat(sr.Stock_Length) || 0;
+      var stockWidth = parseFloat(sr.Stock_Width) || 0;
+      var wastePercentage = parseFloat(sr.Waste_Percentage) || 0;
+      var remnantLength = parseFloat(sr.Remnant_Length) || 0;
+      var remnantArea = parseFloat(sr.Remnant_Area) || 0;
+
+      var resultObj = {
+        stock_result_id: sr.ID,
+        form_type: formTypeId,
+        material_origin: materialTypeId,
+        stock_length_in: stockLength,
+        stock_label: sr.Stock_Size_Label || (ftName + ' | ' + mtName),
+        waste_percentage: wastePercentage,
+        stock_weight_lbs: parseFloat(sr.Stock_Weight_LBS) || 0,
+        stock_sequence: parseInt(sr.Stock_Sequence) || 0,
+        grain_direction: sr.Grain_Direction || '',
+        cuts: cuts,
+      };
+
+      if (nestType.indexOf('1D') >= 0 || nestType.indexOf('Linear') >= 0) {
+        resultObj.remnant_length_in = remnantLength;
+        results_1d.push(resultObj);
+        totalWaste1d += wastePercentage;
+        count1d++;
+      } else if (nestType.indexOf('2D') >= 0 || nestType.indexOf('Panel') >= 0) {
+        resultObj.stock_width_in = stockWidth;
+        resultObj.remnant_area_in2 = remnantArea;
+        results_2d.push(resultObj);
+      }
+    });
+
+    // Sort by stock_sequence
+    results_1d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
+    results_2d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
+
+    var avgWaste1d = count1d > 0 ? totalWaste1d / count1d : 0;
+
+    res.json({
+      found: true,
+      run_header: {
+        id: nestRunID,
+        run_number: parseInt(runHeader.Run_Number) || 1,
+        run_date: runHeader.Run_Date || '',
+        run_status: runHeader.Run_Status || '',
+        run_by: runHeader.Run_By || '',
+        kerf_1d: parseFloat(runHeader.Kerf_1D) || 0,
+        kerf_2d: parseFloat(runHeader.Kerf_2D) || 0,
+        notes: runHeader.Notes || '',
+        total_stock_pieces: parseInt(runHeader.Total_Stock_Pieces) || (results_1d.length + results_2d.length),
+      },
+      results_1d: results_1d,
+      results_2d: results_2d,
+      summary: {
+        total_stock_pieces: results_1d.length + results_2d.length,
+        avg_waste_pct_1d: Math.round(avgWaste1d * 10) / 10,
+        errors: [],
+      },
+      _nameLookup: nameLookup,
+    });
+
+  } catch (err) {
+    console.error('Error fetching nesting results:', err.response?.data || err.message);
+    if (err.response?.data?.code === 9280 || err.response?.status === 404) {
+      return res.json({ found: false, message: 'No nesting results found' });
+    }
+    res.status(500).json({ error: 'Failed to fetch nesting results', details: err.response?.data || err.message });
+  }
+});
+
 // Catch-all: serve React app
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html')); });
 
