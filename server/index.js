@@ -296,7 +296,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Material: line.material_id,
         MCP_Customer_Project_Form: projectId,
         Project_Bi_Directional_Lookup: projectId,
-        Project_LU: safeNum(projectId, 0),
+        Project_LU: projectId,
         Item_Description: fullDesc,
         Item_QTY_and_Description: line.description || fullDesc,
         Description: fullDesc,
@@ -407,7 +407,7 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
     res.json({
       project_id: projectId,
       line_count: lines.length,
-      purchase_lines: lines,
+      purchase_lines: lines.sort(function(a, b) { return (a.line_item || 0) - (b.line_item || 0); }),
     });
   } catch (err) {
     console.error('Error fetching purchase list:', err.response?.data || err.message);
