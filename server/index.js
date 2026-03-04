@@ -466,8 +466,20 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       }
     }
 
+    // Helper to ensure values are never objects (Zoho returns lookups as objects)
+    function safeStr(val) {
+      if (val === null || val === undefined) return '';
+      if (typeof val === 'object') return val.zc_display_value || val.display_value || val.ID || '';
+      return String(val);
+    }
+    function safeId(val) {
+      if (val === null || val === undefined) return '';
+      if (typeof val === 'object') return val.ID || val.zc_display_value || '';
+      return String(val);
+    }
+
     if (stockResults.length === 0) {
-      return res.json({ found: true, run_header: { id: nestRunID, run_number: runHeader.Run_Number, run_date: runHeader.Run_Date, run_status: runHeader.Run_Status, notes: runHeader.Notes }, results_1d: [], results_2d: [], summary: { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
+      return res.json({ found: true, run_header: { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: safeStr(runHeader.Run_Date), run_status: safeStr(runHeader.Run_Status), run_by: safeStr(runHeader.Run_By), notes: safeStr(runHeader.Notes) }, results_1d: [], results_2d: [], summary: { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
     }
 
     // Step 3: Fetch all cut details for this run's stock results
@@ -506,22 +518,22 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
     var count1d = 0;
 
     stockResults.forEach(function(sr) {
-      var nestType = sr.Nesting_Type || '';
+      var nestType = safeStr(sr.Nesting_Type);
       var formType = sr.Form_Type || {};
       var materialType = sr.Material_Type || {};
       var specification = sr.Specification || {};
       var material = sr.Material || {};
 
-      var formTypeId = formType.ID || formType || '';
-      var materialTypeId = materialType.ID || materialType || '';
-      var specId = specification.ID || specification || '';
-      var materialId = material.ID || material || '';
+      var formTypeId = safeId(formType);
+      var materialTypeId = safeId(materialType);
+      var specId = safeId(specification);
+      var materialId = safeId(material);
 
       // Build name lookup
-      var ftName = formType.zc_display_value || formType.display_value || '';
-      var mtName = materialType.zc_display_value || materialType.display_value || '';
-      var spName = specification.zc_display_value || specification.display_value || '';
-      var matName = material.zc_display_value || material.display_value || '';
+      var ftName = (typeof formType === 'object') ? (formType.zc_display_value || formType.display_value || '') : '';
+      var mtName = (typeof materialType === 'object') ? (materialType.zc_display_value || materialType.display_value || '') : '';
+      var spName = (typeof specification === 'object') ? (specification.zc_display_value || specification.display_value || '') : '';
+      var matName = (typeof material === 'object') ? (material.zc_display_value || material.display_value || '') : '';
 
       if (formTypeId && ftName) nameLookup[formTypeId] = ftName;
       if (materialTypeId && mtName) nameLookup[materialTypeId] = mtName;
@@ -535,13 +547,13 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
 
       var cuts = srCuts.map(function(cd) {
         var bomLineLookup = cd.BOM_Line_Lookup || {};
-        var rotationStr = cd.Rotation || '0';
+        var rotationStr = safeStr(cd.Rotation) || '0';
         // Parse rotation — may be "90°" or "0°"
         var rotation = parseInt(rotationStr) || 0;
 
         return {
-          bom_line_id: bomLineLookup.ID || bomLineLookup || '',
-          part_mark: cd.Part_Mark || '',
+          bom_line_id: safeId(bomLineLookup),
+          part_mark: safeStr(cd.Part_Mark),
           cut_length: parseFloat(cd.Cut_Length) || 0,
           cut_width: parseFloat(cd.Cut_Width) || 0,
           cut_weight: parseFloat(cd.Cut_Weight) || 0,
@@ -562,15 +574,15 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       var remnantArea = parseFloat(sr.Remnant_Area) || 0;
 
       var resultObj = {
-        stock_result_id: sr.ID,
+        stock_result_id: safeStr(sr.ID),
         form_type: formTypeId,
         material_origin: materialTypeId,
         stock_length_in: stockLength,
-        stock_label: sr.Stock_Size_Label || (ftName + ' | ' + mtName),
+        stock_label: safeStr(sr.Stock_Size_Label) || (ftName + ' | ' + mtName),
         waste_percentage: wastePercentage,
         stock_weight_lbs: parseFloat(sr.Stock_Weight_LBS) || 0,
         stock_sequence: parseInt(sr.Stock_Sequence) || 0,
-        grain_direction: sr.Grain_Direction || '',
+        grain_direction: safeStr(sr.Grain_Direction),
         cuts: cuts,
       };
 
@@ -597,12 +609,12 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       run_header: {
         id: nestRunID,
         run_number: parseInt(runHeader.Run_Number) || 1,
-        run_date: runHeader.Run_Date || '',
-        run_status: runHeader.Run_Status || '',
-        run_by: runHeader.Run_By || '',
+        run_date: safeStr(runHeader.Run_Date),
+        run_status: safeStr(runHeader.Run_Status),
+        run_by: safeStr(runHeader.Run_By),
         kerf_1d: parseFloat(runHeader.Kerf_1D) || 0,
         kerf_2d: parseFloat(runHeader.Kerf_2D) || 0,
-        notes: runHeader.Notes || '',
+        notes: (typeof runHeader.Notes === 'object') ? '' : (runHeader.Notes || ''),
         total_stock_pieces: parseInt(runHeader.Total_Stock_Pieces) || (results_1d.length + results_2d.length),
       },
       results_1d: results_1d,
