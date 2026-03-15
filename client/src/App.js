@@ -681,14 +681,22 @@ export default function App() {
         body: JSON.stringify({ purchase_lines: lines }),
       });
       if (!resp.ok) throw new Error('Save failed');
-      const data = await resp.json();
+    const data = await resp.json();
       setPurchaseStatus(`Purchase list saved! ${data.items_saved} line items written to project.`);
+      // ── Auto-refresh the saved purchase list so "View Saved" shows new data ──
+      try {
+        const refreshResp = await fetch(`${API}/api/project/${projectId}/purchase-list`);
+        if (refreshResp.ok) {
+          const refreshData = await refreshResp.json();
+          setSavedPurchaseLines(refreshData.purchase_lines || []);
+          setShowSavedPurchase(true);   // open it automatically so user sees the update
+        }
+      } catch (e) { console.error('Purchase list refresh failed:', e); }
     } catch (err) {
       setPurchaseStatus(`Error: ${err.message}`);
     } finally {
       setSavingPurchase(false);
     }
-  }
 
   // ─── Weight Summary Calculations ───
   function calcWeightSummary() {
