@@ -20,16 +20,20 @@ const NESTING_API_URL = process.env.NESTING_API_URL || 'https://metal-nesting-ap
 
 console.log('Zoho Config:', { clientId: ZOHO.clientId ? ZOHO.clientId.substring(0,10)+'...' : 'MISSING', clientSecret: ZOHO.clientSecret ? ZOHO.clientSecret.substring(0,6)+'...' : 'MISSING', refreshToken: ZOHO.refreshToken ? ZOHO.refreshToken.substring(0,10)+'...'+ZOHO.refreshToken.slice(-6) : 'MISSING', accountOwner: ZOHO.accountOwner, appLinkName: ZOHO.appLinkName });
 
-let cachedToken = null, tokenExpiry = 0, lastTokenError = null;
+let cachedToken = null, tokenExpiry = 0, lastTokenError = null, tokenObtainedAt = null;
 
-async function getAccessToken() {
-  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
+async function getAccessToken(forceRefresh) {
+  if (!forceRefresh && cachedToken && Date.now() < tokenExpiry) return cachedToken;
   try {
     const resp = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, { params: { refresh_token: ZOHO.refreshToken, client_id: ZOHO.clientId, client_secret: ZOHO.clientSecret, grant_type: 'refresh_token' } });
     if (resp.data.error) { lastTokenError = resp.data.error; cachedToken = null; tokenExpiry = 0; throw new Error('Zoho token error: ' + resp.data.error); }
     if (!resp.data.access_token) { lastTokenError = 'No access_token'; cachedToken = null; tokenExpiry = 0; throw new Error('No access_token'); }
-    cachedToken = resp.data.access_token; tokenExpiry = Date.now() + (resp.data.expires_in - 60) * 1000; lastTokenError = null;
-    console.log('Token obtained, expires in', resp.data.expires_in, 's'); return cachedToken;
+    cachedToken = resp.data.access_token;
+    tokenExpiry = Date.now() + (resp.data.expires_in - 60) * 1000;
+    tokenObtainedAt = Date.now();
+    lastTokenError = null;
+    console.log('Token obtained, expires in', resp.data.expires_in, 's');
+    return cachedToken;
   } catch (err) { lastTokenError = err.response?.data || err.message; cachedToken = null; tokenExpiry = 0; throw err; }
 }
 
@@ -37,18 +41,59 @@ function zohoHeaders(token) { return { Authorization: 'Zoho-oauthtoken ' + token
 function creatorApiBase() { return 'https://www.zohoapis.com/creator/v2.1/data/' + ZOHO.accountOwner + '/' + ZOHO.appLinkName; }
 function safeNum(val, dec) { dec = dec || 4; const n = parseFloat(val); if (!Number.isFinite(n)) return 0; return Math.round(n * Math.pow(10, dec)) / Math.pow(10, dec); }
 
+// Warm up token on startup so first request is never cold
+getAccessToken().then(() => console.log('Startup token warm-up successful')).catch(e => console.error('Startup token warm-up failed:', e.message));
+
 // Health & Debug
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+// Token Status
+app.get('/api/token-status', async (req, res) => {
+  const now = Date.now();
+  const hasToken = !!cachedToken;
+  const expiresInMs = hasToken ? Math.max(0, tokenExpiry - now) : 0;
+  const expiresInMinutes = Math.round(expiresInMs / 60000);
+  const obtainedAgo = tokenObtainedAt ? Math.round((now - tokenObtainedAt) / 60000) : null;
+
+  // Optionally force a fresh token test
+  let freshTest = null;
+  try {
+    await getAccessToken();
+    freshTest = true;
+  } catch(e) {
+    freshTest = false;
+  }
+
+  res.json({
+    token_valid: hasToken && now < tokenExpiry,
+    expires_in_minutes: expiresInMinutes,
+    obtained_minutes_ago: obtainedAgo,
+    last_error: lastTokenError || null,
+    refresh_test: freshTest
+  });
+});
+
 app.get('/api/debug', async (req, res) => {
   const info = { config: { accountOwner: ZOHO.accountOwner, appLinkName: ZOHO.appLinkName }, tokenCache: { hasToken: !!cachedToken }, lastTokenError, apiBase: creatorApiBase() };
   try { await getAccessToken(); info.tokenTest = { success: true }; } catch(e) { info.tokenTest = { success: false, error: e.message }; }
   res.json(info);
 });
 
-// Project
+// Project — with auto-retry on empty result (handles stale token edge case)
 app.get('/api/project/:id', async (req, res) => {
-  try { const token = await getAccessToken(); const resp = await axios.get(creatorApiBase()+'/report/All_Projects?criteria=(ID=='+req.params.id+')', { headers: zohoHeaders(token) });
-    if (!resp.data.data?.length) return res.status(404).json({ error: 'Project not found' }); res.json(resp.data.data[0]);
+  try {
+    let token = await getAccessToken();
+    let resp = await axios.get(creatorApiBase()+'/report/All_Projects?criteria=(ID=='+req.params.id+')', { headers: zohoHeaders(token) });
+
+    // If empty, force token refresh and retry once
+    if (!resp.data.data?.length) {
+      console.log('Project not found on first attempt, forcing token refresh and retrying...');
+      token = await getAccessToken(true);
+      resp = await axios.get(creatorApiBase()+'/report/All_Projects?criteria=(ID=='+req.params.id+')', { headers: zohoHeaders(token) });
+    }
+
+    if (!resp.data.data?.length) return res.status(404).json({ error: 'Project not found' });
+    res.json(resp.data.data[0]);
   } catch (err) { res.status(500).json({ error: 'Failed', details: err.response?.data || err.message }); }
 });
 
@@ -257,7 +302,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       var widthInchId = findLengthInchId(lookups.lengthInch, widInchRem);
       var matTypeId = findMaterialTypeId(lookups.materialTypes, line.material_type_name);
 
-      var unitWt = Math.round((parseFloat(line.unit_weight) || 0) * 100) / 100;  // FIX: round to 2 decimal places
+      var unitWt = Math.round((parseFloat(line.unit_weight) || 0) * 100) / 100;
       var qty = safeNum(line.quantity, 0);
       var totalWt = Math.round(unitWt * qty * 100) / 100;
 
@@ -288,7 +333,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         QTY: qty,
         Feet_Length: safeNum(lenFt, 0),
         Weight_Per_FT: safeNum(line.weight_per_ft, 4),
-        Unit_Weight: unitWt,          // FIX: now rounded to 2 decimal places
+        Unit_Weight: unitWt,
         CalcWeight: totalWt,
         Area: area,
         Total_Length: totalLength,
@@ -309,7 +354,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     console.log('Subform rows to write:', subformRows.length);
     if (subformRows.length > 0) console.log('First row:', JSON.stringify(subformRows[0]));
 
-    // Fetch existing rows so we can UPDATE them (no DELETE scope needed)
     var existingRows = [];
     try {
       var existingResp = await axios.get(
@@ -325,7 +369,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     console.log('Existing rows found:', existingRows.length, '| New rows to write:', subformRows.length);
 
     var saved = 0;
-    // UPDATE existing rows with new data
     for (var u = 0; u < Math.min(existingRows.length, subformRows.length); u++) {
       try {
         await axios.patch(
@@ -340,7 +383,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       }
     }
 
-    // POST new rows if we have more new rows than existing
     for (var p = existingRows.length; p < subformRows.length; p++) {
       try {
         await axios.post(
@@ -355,8 +397,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       }
     }
 
-    // If existing rows > new rows, update extra rows with blank/placeholder data
-    // (We can't delete, so we zero them out)
     for (var z = subformRows.length; z < existingRows.length; z++) {
       try {
         await axios.patch(
