@@ -326,6 +326,31 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     // Log first row for debugging
     if (subformRows.length > 0) console.log('First row:', JSON.stringify(subformRows[0]));
 
+    // Delete existing purchase list rows first
+    try {
+      var existingResp = await axios.get(
+        creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(Project_LU=='+projectId+')&limit=200',
+        { headers: zohoHeaders(token) }
+      );
+      var existingRows = existingResp.data.data || [];
+      console.log('Deleting ' + existingRows.length + ' existing purchase list rows');
+      for (var d = 0; d < existingRows.length; d++) {
+        try {
+          await axios.delete(
+            creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[d].ID,
+            { headers: zohoHeaders(token) }
+          );
+        } catch (delErr) {
+          console.error('Failed to delete row ' + existingRows[d].ID + ':', delErr.response?.data || delErr.message);
+        }
+      }
+    } catch (fetchErr) {
+      // If no existing rows (9280 = no data), that's fine
+      if (fetchErr.response?.data?.code !== 9280) {
+        console.error('Error fetching existing rows:', fetchErr.response?.data || fetchErr.message);
+      }
+    }
+
     var patchResp = await axios.patch(
       creatorApiBase()+'/report/All_Projects/'+projectId,
       { data: { Material_Allocated: subformRows } },
