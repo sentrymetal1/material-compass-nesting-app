@@ -354,36 +354,34 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     console.log('Subform rows to write:', subformRows.length);
     if (subformRows.length > 0) console.log('First row:', JSON.stringify(subformRows[0]));
 
-    var existingRows = [];
+    // DELETE all existing rows first (clean slate)
     try {
       var existingResp = await axios.get(
         creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(Project_LU=='+projectId+')&limit=200',
         { headers: zohoHeaders(token) }
       );
-      existingRows = existingResp.data.data || [];
+      var existingRows = existingResp.data.data || [];
+      console.log('Deleting ' + existingRows.length + ' existing rows...');
+      for (var d = 0; d < existingRows.length; d++) {
+        try {
+          await axios.delete(
+            creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[d].ID,
+            { headers: zohoHeaders(token) }
+          );
+          console.log('Deleted row ID=' + existingRows[d].ID);
+        } catch (delErr) {
+          console.error('Failed to delete row ' + existingRows[d].ID + ':', delErr.response?.data || delErr.message);
+        }
+      }
     } catch (fetchErr) {
       if (fetchErr.response?.data?.code !== 9280) {
         console.error('Error fetching existing rows:', fetchErr.response?.data || fetchErr.message);
       }
     }
-    console.log('Existing rows found:', existingRows.length, '| New rows to write:', subformRows.length);
 
+    // POST all new rows fresh
     var saved = 0;
-    for (var u = 0; u < Math.min(existingRows.length, subformRows.length); u++) {
-      try {
-        await axios.patch(
-          creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[u].ID,
-          { data: subformRows[u] },
-          { headers: zohoHeaders(token) }
-        );
-        saved++;
-        console.log('Updated row ' + (u+1) + ' ID=' + existingRows[u].ID);
-      } catch (updErr) {
-        console.error('Failed to update row ' + existingRows[u].ID + ':', updErr.response?.data || updErr.message);
-      }
-    }
-
-    for (var p = existingRows.length; p < subformRows.length; p++) {
+    for (var p = 0; p < subformRows.length; p++) {
       try {
         await axios.post(
           creatorApiBase()+'/form/Project_Material_Allocated_Detail_Form',
@@ -391,22 +389,9 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
           { headers: zohoHeaders(token) }
         );
         saved++;
-        console.log('Created new row ' + (p+1));
+        console.log('Created row ' + (p+1));
       } catch (postErr) {
         console.error('Failed to create row ' + (p+1) + ':', postErr.response?.data || postErr.message);
-      }
-    }
-
-    for (var z = subformRows.length; z < existingRows.length; z++) {
-      try {
-        await axios.patch(
-          creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[z].ID,
-          { data: { Line_Item: 0, QTY: 0, Unit_Weight: 0, CalcWeight: 0, Item_Description: '(removed)', Feet_Length: 0 } },
-          { headers: zohoHeaders(token) }
-        );
-        console.log('Zeroed out extra row ' + (z+1) + ' ID=' + existingRows[z].ID);
-      } catch (zErr) {
-        console.error('Failed to zero row ' + existingRows[z].ID + ':', zErr.response?.data || zErr.message);
       }
     }
 
