@@ -12,7 +12,7 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 const ZOHO = {
   clientId: process.env.ZOHO_CLIENT_ID,
   clientSecret: process.env.ZOHO_CLIENT_SECRET,
-  refreshToken: process.env.ZOHO_REFRESH_TOKEN || '1000.f0b270455a2b4ec7ba3007e43ad98cfc.f97300bee9408c83ecaa603fd0e908ae',
+  refreshToken: process.env.ZOHO_REFRESH_TOKEN,
   accountOwner: process.env.ZOHO_ACCOUNT_OWNER || 'mark_sentrymetal',
   appLinkName: process.env.ZOHO_APP_LINK_NAME || 'type-formsheet-2-18-21',
 };
@@ -310,30 +310,8 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     console.log('Subform rows:', subformRows.length);
     if (subformRows.length > 0) console.log('First row:', JSON.stringify(subformRows[0]));
 
-    // Delete existing purchase list rows first
-    try {
-      var existingResp = await axios.get(
-        creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(Project_LU=='+projectId+')&limit=200',
-        { headers: zohoHeaders(token) }
-      );
-      var existingRows = existingResp.data.data || [];
-      console.log('Deleting ' + existingRows.length + ' existing purchase list rows');
-      for (var d = 0; d < existingRows.length; d++) {
-        try {
-          await axios.delete(
-            creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[d].ID,
-            { headers: zohoHeaders(token) }
-          );
-        } catch (delErr) {
-          console.error('Failed to delete row ' + existingRows[d].ID + ':', delErr.response?.data || delErr.message);
-        }
-      }
-    } catch (fetchErr) {
-      if (fetchErr.response?.data?.code !== 9280) {
-        console.error('Error fetching existing rows:', fetchErr.response?.data || fetchErr.message);
-      }
-    }
-
+    // PATCH the subform — Zoho replaces all rows when full subform array is sent
+    console.log('Patching subform with ' + subformRows.length + ' rows (no delete needed)');
     var patchResp = await axios.patch(
       creatorApiBase()+'/report/All_Projects/'+projectId,
       { data: { Material_Allocated: subformRows } },
