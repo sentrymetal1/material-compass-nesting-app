@@ -153,7 +153,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
   } catch (err) { console.error('Save error:', err.response?.data || err.message); res.status(500).json({ error: 'Failed to save results', details: err.response?.data || err.message }); }
 });
 
-// ─── Purchase List (fully populated with lookup resolution) ────
+// ─── Purchase List ────
 let lookupCache = { lengthInch: null, plateWidthFt: null, materialTypes: null, cacheTime: 0 };
 
 async function fetchLookupTables(token) {
@@ -176,7 +176,6 @@ async function fetchLookupTables(token) {
       widthFt: parseFloat(row.Width_Ft) || parseFloat(row.Width_ft) || parseFloat(row['Width (ft)']) || 0
     }));
     console.log('Plate Standard Sizes:', plateWidthFt.length);
-    // If widthFt is all 0, try parsing from Description (e.g. "8'" -> 8)
     if (plateWidthFt.length > 0 && plateWidthFt.every(r => r.widthFt === 0)) {
       console.log('widthFt all zero, parsing from Description...');
       plateWidthFt.forEach(r => {
@@ -213,10 +212,8 @@ function findLengthInchId(table, inchVal) {
 function findWidthFtId(table, ftVal) {
   if (!table || !table.length) return null;
   const target = Math.floor(parseFloat(ftVal) || 0);
-  // Try by widthFt number first
   const byNum = table.find(r => r.widthFt === target);
   if (byNum) return byNum.id;
-  // Try by description string
   const byDesc = table.find(r => r.description === target + "'" || r.description === String(target));
   return byDesc ? byDesc.id : null;
 }
@@ -239,10 +236,8 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
 
     console.log('Purchase list: ' + purchase_lines.length + ' lines for project ' + projectId);
 
-    // Fetch lookup tables for Length_INCH, Width_FT, Width_INCH, Material_Type
     const lookups = await fetchLookupTables(token);
 
-    // Log first few lookup entries for debugging
     if (lookups.lengthInch.length > 0) console.log('Sample Length INCH:', JSON.stringify(lookups.lengthInch.slice(0, 3)));
     if (lookups.plateWidthFt.length > 0) console.log('Sample Plate Sizes:', JSON.stringify(lookups.plateWidthFt.slice(0, 3)));
     if (lookups.materialTypes.length > 0) console.log('Sample Mat Types:', JSON.stringify(lookups.materialTypes.slice(0, 3)));
@@ -252,33 +247,24 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       var stockWidIn = parseFloat(line.stock_width_in) || 0;
       var is2D = stockWidIn > 0;
 
-      // Calculate feet/inches split
       var lenFt = Math.floor(stockLenIn / 12);
       var lenInchRem = safeNum(stockLenIn % 12, 4);
       var widFt = is2D ? Math.floor(stockWidIn / 12) : 0;
       var widInchRem = is2D ? safeNum(stockWidIn % 12, 4) : 0;
 
-      // Resolve lookup record IDs
       var lengthInchId = findLengthInchId(lookups.lengthInch, lenInchRem);
       var widthFtId = is2D ? findWidthFtId(lookups.plateWidthFt, widFt) : findWidthFtId(lookups.plateWidthFt, 0);
       var widthInchId = findLengthInchId(lookups.lengthInch, widInchRem);
       var matTypeId = findMaterialTypeId(lookups.materialTypes, line.material_type_name);
 
-      // Calculate weights
-      var unitWt = safeNum(line.unit_weight, 4);
+      var unitWt = Math.round((parseFloat(line.unit_weight) || 0) * 100) / 100;  // FIX: round to 2 decimal places
       var qty = safeNum(line.quantity, 0);
-      var totalWt = safeNum(unitWt * qty, 2);
+      var totalWt = Math.round(unitWt * qty * 100) / 100;
 
-      // Area in sq ft: for 2D = (length x width) / 144
       var area = is2D ? safeNum((stockLenIn * stockWidIn) / 144, 2) : 0;
-
-      // Total Length (1D only) = feet_length * qty
       var totalLength = is2D ? 0 : safeNum((stockLenIn / 12) * qty, 4);
-
-      // Total Plate Width (2D only) = stock_width_in (single piece width)
       var totalPlateWidth = is2D ? safeNum(stockWidIn, 4) : 0;
 
-      // Build description
       var descParts = [line.form_type_name, line.material_type_name, line.spec_name, line.material_name].filter(Boolean);
       var lenStr = lenFt + "'-" + (lenInchRem > 0 ? Math.round(lenInchRem) + '"' : '0"');
       var sizeStr = is2D
@@ -286,9 +272,8 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         : lenStr;
       var fullDesc = descParts.join(' | ') + ' | ' + sizeStr;
 
-      console.log('Row ' + (idx+1) + ': MatType=' + (matTypeId ? 'OK('+matTypeId+')' : 'MISS('+line.material_type_name+')') + ' LenInch=' + (lengthInchId ? 'OK' : 'MISS') + '(' + lenInchRem + ') WidFt=' + (widthFtId ? 'OK' : 'MISS') + '(' + widFt + ') WidInch=' + (widthInchId ? 'OK' : 'MISS') + '(' + widInchRem + ') TotWt=' + totalWt);
+      console.log('Row ' + (idx+1) + ': MatType=' + (matTypeId ? 'OK('+matTypeId+')' : 'MISS('+line.material_type_name+')') + ' LenInch=' + (lengthInchId ? 'OK' : 'MISS') + '(' + lenInchRem + ') WidFt=' + (widthFtId ? 'OK' : 'MISS') + '(' + widFt + ') WidInch=' + (widthInchId ? 'OK' : 'MISS') + '(' + widInchRem + ') UnitWt=' + unitWt + ' TotWt=' + totalWt);
 
-      // Build row - ONLY include lookup fields when we have a valid record ID
       var row = {
         Line_Item: idx + 1,
         Form_Type: line.form_type_id,
@@ -303,7 +288,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         QTY: qty,
         Feet_Length: safeNum(lenFt, 0),
         Weight_Per_FT: safeNum(line.weight_per_ft, 4),
-        Unit_Weight: unitWt,
+        Unit_Weight: unitWt,          // FIX: now rounded to 2 decimal places
         CalcWeight: totalWt,
         Area: area,
         Total_Length: totalLength,
@@ -323,7 +308,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
 
     console.log('PATCH URL:', creatorApiBase()+'/report/All_Projects/'+projectId);
     console.log('Subform rows:', subformRows.length);
-    // Log first row for debugging
     if (subformRows.length > 0) console.log('First row:', JSON.stringify(subformRows[0]));
 
     // Delete existing purchase list rows first
@@ -345,7 +329,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         }
       }
     } catch (fetchErr) {
-      // If no existing rows (9280 = no data), that's fine
       if (fetchErr.response?.data?.code !== 9280) {
         console.error('Error fetching existing rows:', fetchErr.response?.data || fetchErr.message);
       }
@@ -364,8 +347,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
   }
 });
 
-// GET /api/project/:id/purchase-list — retrieve saved purchase list from Zoho
-// Queries the Material_Allocated subform report directly (subform data not included in project GET)
+// GET /api/project/:id/purchase-list
 app.get('/api/project/:id/purchase-list', async (req, res) => {
   try {
     var token = await getAccessToken();
@@ -373,7 +355,6 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
 
     console.log('Fetching purchase list for project:', projectId);
 
-    // Try the subform report — filter by Project_LU
     var reportName = 'Project_Material_Allocated_Detail_Form_Report';
     var url = creatorApiBase() + '/report/' + reportName + '?criteria=(Project_LU==' + projectId + ')&limit=200';
     console.log('Purchase list GET URL:', url);
@@ -382,7 +363,6 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
     var rawRows = resp.data.data || [];
     console.log('Purchase list rows found:', rawRows.length);
 
-    // Log first row keys for debugging
     if (rawRows.length > 0) console.log('First row keys:', Object.keys(rawRows[0]).join(', '));
 
     var lines = rawRows.map(function(row, idx) {
@@ -436,7 +416,6 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching purchase list:', err.response?.data || err.message);
-    // If report not found or no data, return empty
     if (err.response?.data?.code === 9280 || err.response?.status === 404) {
       return res.json({ project_id: req.params.id, line_count: 0, purchase_lines: [] });
     }
@@ -450,7 +429,6 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
     const token = await getAccessToken();
     const projectId = req.params.id;
 
-    // Step 1: Find latest Approved run header
     var runResp;
     try {
       runResp = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Project_Lookup=='+projectId+')&limit=10', { headers: zohoHeaders(token) });
@@ -466,13 +444,11 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       return res.json({ found: false, message: 'No approved nesting run found' });
     }
 
-    // Get latest run (highest Run_Number)
     runs.sort(function(a, b) { return (parseInt(b.Run_Number) || 0) - (parseInt(a.Run_Number) || 0); });
     var runHeader = runs[0];
     var nestRunID = runHeader.ID;
     console.log('Loading nesting run:', nestRunID, 'Run #'+runHeader.Run_Number);
 
-    // Step 2: Fetch all stock results for this run
     var stockResults = [];
     var startIndex = 0;
     var hasMore = true;
@@ -491,7 +467,6 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       }
     }
 
-    // Helper to ensure values are never objects (Zoho returns lookups as objects)
     function safeStr(val) {
       if (val === null || val === undefined) return '';
       if (typeof val === 'object') return val.zc_display_value || val.display_value || val.ID || '';
@@ -507,13 +482,9 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       return res.json({ found: true, run_header: { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: safeStr(runHeader.Run_Date), run_status: safeStr(runHeader.Run_Status), run_by: safeStr(runHeader.Run_By), notes: safeStr(runHeader.Notes) }, results_1d: [], results_2d: [], summary: { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
     }
 
-    // Step 3: Fetch all cut details for this run's stock results
-    // Build list of stock result IDs
     var stockResultIds = stockResults.map(function(sr) { return sr.ID; });
 
-    // Fetch cut details in batches — use Nesting_Stock_Result_Lookup field
     var allCutDetails = [];
-    // Fetch all cuts for each stock result
     for (var i = 0; i < stockResultIds.length; i++) {
       try {
         var cdResp = await axios.get(creatorApiBase()+'/report/All_Nesting_Cut_Details?criteria=(Nesting_Stock_Result_Lookup=='+stockResultIds[i]+')&limit=200', { headers: zohoHeaders(token) });
@@ -527,7 +498,6 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       }
     }
 
-    // Group cut details by stock result ID
     var cutsByStock = {};
     allCutDetails.forEach(function(cd) {
       var srId = cd._stock_result_id;
@@ -535,7 +505,6 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       cutsByStock[srId].push(cd);
     });
 
-    // Step 4: Build the results in the format the frontend expects
     var results_1d = [];
     var results_2d = [];
     var nameLookup = {};
@@ -554,7 +523,6 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       var specId = safeId(specification);
       var materialId = safeId(material);
 
-      // Build name lookup
       var ftName = (typeof formType === 'object') ? (formType.zc_display_value || formType.display_value || '') : '';
       var mtName = (typeof materialType === 'object') ? (materialType.zc_display_value || materialType.display_value || '') : '';
       var spName = (typeof specification === 'object') ? (specification.zc_display_value || specification.display_value || '') : '';
@@ -565,17 +533,13 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       if (specId && spName) nameLookup[specId] = spName;
       if (materialId && matName) nameLookup[materialId] = matName;
 
-      // Build cuts array from cut details
       var srCuts = cutsByStock[sr.ID] || [];
-      // Sort by Cut_Sequence
       srCuts.sort(function(a, b) { return (parseInt(a.Cut_Sequence) || 0) - (parseInt(b.Cut_Sequence) || 0); });
 
       var cuts = srCuts.map(function(cd) {
         var bomLineLookup = cd.BOM_Line_Lookup || {};
         var rotationStr = safeStr(cd.Rotation) || '0';
-        // Parse rotation — may be "90°" or "0°"
         var rotation = parseInt(rotationStr) || 0;
-
         return {
           bom_line_id: safeId(bomLineLookup),
           part_mark: safeStr(cd.Part_Mark),
@@ -623,7 +587,6 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       }
     });
 
-    // Sort by stock_sequence
     results_1d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
     results_2d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
 
