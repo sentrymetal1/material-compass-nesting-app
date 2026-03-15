@@ -538,16 +538,22 @@ export default function App() {
       });
       if (!resp.ok) throw new Error('Save failed');
       const data = await resp.json();
-      setPurchaseStatus(`Purchase list saved! ${data.items_saved} line items written to project.`);
-      // Auto-refresh saved purchase list so View Saved shows new data immediately
+      setPurchaseStatus(`Purchase list saved! ${data.items_saved} line items written to project. Refreshing...`);
+      // Wait 2s for Zoho to finish writing before re-fetching
+      await new Promise(resolve => setTimeout(resolve, 2000));
       try {
         const refreshResp = await fetch(`${API}/api/project/${projectId}/purchase-list`);
         if (refreshResp.ok) {
           const refreshData = await refreshResp.json();
-          setSavedPurchaseLines(refreshData.purchase_lines || []);
+          const newLines = refreshData.purchase_lines || [];
+          setSavedPurchaseLines(newLines);
           setShowSavedPurchase(true);
+          setPurchaseStatus(`Purchase list saved! ${newLines.length} line items confirmed in project.`);
         }
-      } catch (e) { console.error('Purchase list refresh failed:', e); }
+      } catch (e) {
+        console.error('Purchase list refresh failed:', e);
+        setPurchaseStatus(`Purchase list saved! ${data.items_saved} line items written. Click "View Saved" to refresh.`);
+      }
     } catch (err) {
       setPurchaseStatus(`Error: ${err.message}`);
     } finally {
