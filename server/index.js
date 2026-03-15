@@ -12,7 +12,7 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 const ZOHO = {
   clientId: process.env.ZOHO_CLIENT_ID,
   clientSecret: process.env.ZOHO_CLIENT_SECRET,
-  refreshToken: process.env.ZOHO_REFRESH_TOKEN,1000.f0b270455a2b4ec7ba3007e43ad90cfc.fb7108bee940bc03ecaa469fd9ef08ae
+  refreshToken: process.env.ZOHO_REFRESH_TOKEN || '1000.f0b270455a2b4ec7ba3007e43ad98cfc.f97300bee9408c83ecaa603fd0e908ae',
   accountOwner: process.env.ZOHO_ACCOUNT_OWNER || 'mark_sentrymetal',
   appLinkName: process.env.ZOHO_APP_LINK_NAME || 'type-formsheet-2-18-21',
 };
