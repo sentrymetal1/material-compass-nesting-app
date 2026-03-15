@@ -354,64 +354,15 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     console.log('Subform rows to write:', subformRows.length);
     if (subformRows.length > 0) console.log('First row:', JSON.stringify(subformRows[0]));
 
-    var existingRows = [];
-    try {
-      var existingResp = await axios.get(
-        creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(Project_LU=='+projectId+')&limit=200',
-        { headers: zohoHeaders(token) }
-      );
-      existingRows = existingResp.data.data || [];
-    } catch (fetchErr) {
-      if (fetchErr.response?.data?.code !== 9280) {
-        console.error('Error fetching existing rows:', fetchErr.response?.data || fetchErr.message);
-      }
-    }
-    console.log('Existing rows found:', existingRows.length, '| New rows to write:', subformRows.length);
-
-    var saved = 0;
-    for (var u = 0; u < Math.min(existingRows.length, subformRows.length); u++) {
-      try {
-        await axios.patch(
-          creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[u].ID,
-          { data: subformRows[u] },
-          { headers: zohoHeaders(token) }
-        );
-        saved++;
-        console.log('Updated row ' + (u+1) + ' ID=' + existingRows[u].ID);
-      } catch (updErr) {
-        console.error('Failed to update row ' + existingRows[u].ID + ':', updErr.response?.data || updErr.message);
-      }
-    }
-
-    for (var p = existingRows.length; p < subformRows.length; p++) {
-      try {
-        await axios.post(
-          creatorApiBase()+'/form/Project_Material_Allocated_Detail_Form',
-          { data: subformRows[p] },
-          { headers: zohoHeaders(token) }
-        );
-        saved++;
-        console.log('Created new row ' + (p+1));
-      } catch (postErr) {
-        console.error('Failed to create row ' + (p+1) + ':', postErr.response?.data || postErr.message);
-      }
-    }
-
-    for (var z = subformRows.length; z < existingRows.length; z++) {
-      try {
-        await axios.patch(
-          creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[z].ID,
-          { data: { Line_Item: 0, QTY: 0, Unit_Weight: 0, CalcWeight: 0, Item_Description: '(removed)', Feet_Length: 0 } },
-          { headers: zohoHeaders(token) }
-        );
-        console.log('Zeroed out extra row ' + (z+1) + ' ID=' + existingRows[z].ID);
-      } catch (zErr) {
-        console.error('Failed to zero row ' + existingRows[z].ID + ':', zErr.response?.data || zErr.message);
-      }
-    }
-
-    console.log('Purchase list save complete: ' + saved + ' rows written');
-    res.json({ success: true, items_saved: saved });
+    // PATCH parent project record with entire subform array in one shot
+    // This is the approach that auto-reflects in Zoho UI without a manual refresh
+    var patchResp = await axios.patch(
+      creatorApiBase()+'/report/All_Projects/'+projectId,
+      { data: { Material_Allocated: subformRows } },
+      { headers: zohoHeaders(token) }
+    );
+    console.log('Purchase PATCH response:', JSON.stringify(patchResp.data));
+    res.json({ success: true, items_saved: subformRows.length });
   } catch (err) {
     console.error('Purchase list error:', JSON.stringify(err.response?.data || err.message));
     res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });
