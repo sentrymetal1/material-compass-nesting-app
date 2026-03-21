@@ -272,6 +272,18 @@ function findMaterialTypeId(table, name) {
   return fuzzy ? fuzzy.id : null;
 }
 
+function findLengthInchResult(table, inchId) {
+  if (!table || !table.length || !inchId) return 0;
+  const rec = table.find(r => r.id === inchId);
+  return rec ? rec.result : 0;
+}
+
+function findWidthFtResult(table, ftId) {
+  if (!table || !table.length || !ftId) return 0;
+  const rec = table.find(r => r.id === ftId);
+  return rec ? rec.widthFt : 0;
+}
+
 app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -302,12 +314,17 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       var widthInchId = findLengthInchId(lookups.lengthInch, widInchRem);
       var matTypeId = findMaterialTypeId(lookups.materialTypes, line.material_type_name);
 
+      // Get the .Result values from lookup tables
+      var lengthInchResult = lengthInchId ? findLengthInchResult(lookups.lengthInch, lengthInchId) : lenInchRem;
+      var widthFtResult = widthFtId ? findWidthFtResult(lookups.plateWidthFt, widthFtId) : widFt;
+      var widthInchResult = widthInchId ? findLengthInchResult(lookups.lengthInch, widthInchId) : widInchRem;
+
       var unitWt = Math.round((parseFloat(line.unit_weight) || 0) * 100) / 100;
       var qty = safeNum(line.quantity, 0);
       var totalWt = Math.round(unitWt * qty * 100) / 100;
 
       var area = is2D ? safeNum((stockLenIn * stockWidIn) / 144, 2) : 0;
-      var totalLength = is2D ? 0 : safeNum((stockLenIn / 12) * qty, 4);
+      var totalLength = is2D ? 0 : safeNum((lenFt * 12) + lengthInchResult, 4);
       var totalPlateWidth = is2D ? safeNum(stockWidIn, 4) : 0;
 
       var descParts = [line.form_type_name, line.material_type_name, line.spec_name, line.material_name].filter(Boolean);
@@ -342,12 +359,20 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Price_Per_LB: 0,
         Unit_Price: 0,
         Unit_Total: 0,
+        Input_of_Material: "Add Material",
+        Density: 0,
+        Dim1_Result: lengthInchResult,
+        Length_INCH_Result: lengthInchResult,
+        Dim2_Result: widthFtResult,
+        Dim3_Result: widthInchResult,
       };
+
       if (matTypeId) row.Material_Type = matTypeId;
       else if (line.material_type_id) row.Material_Type = line.material_type_id;
       if (lengthInchId) row.Length_INCH = lengthInchId;
       if (widthFtId) row.Width_FT = widthFtId;
       if (widthInchId) row.Width_INCH = widthInchId;
+
       return row;
     });
 
