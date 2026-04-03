@@ -704,6 +704,26 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch nesting results', details: err.response?.data || err.message });
   }
 });
+
+app.get('/api/debug-mfg', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const base  = creatorApiBase();
+    const hdrs  = zohoHeaders(token);
+    const resp  = await axios.get(
+      `${base}/report/Customer_Entry_Report?limit=5`,
+      { headers: hdrs }
+    );
+    res.json(resp.data);
+  } catch (err) {
+    res.status(500).json({ error: err.message, details: err.response?.data });
+  }
+});
+```
+
+Deploy that, then hit:
+```
+https://material-compass-nesting-app-production.up.railway.app/api/debug-mfg
 // Match Suggestions
 function haversine(lat1, lng1, lat2, lng2) {
   const R = 3958.8;
