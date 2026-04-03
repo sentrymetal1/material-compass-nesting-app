@@ -766,7 +766,7 @@ app.get('/api/match-suggestions', async (req, res) => {
 
     // 1. MFG record
     const mfgResp = await axios.get(
-      `${base}/report/Customer_Entry_Report?criteria=(ID==${mfg_id})`,
+      `${base}/report/Customer_Entry_Report?criteria=(ID=="${mfg_id}")`,
       { headers: hdrs }
     );
     const mfg = mfgResp.data.data?.[0];
