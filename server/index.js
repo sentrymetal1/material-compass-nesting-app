@@ -619,10 +619,10 @@ app.get('/api/match-suggestions', async (req, res) => {
     const hdrs  = zohoHeaders(token);
 
     // 1. MFG record
-    const mfgResp = await axios.get(
-      `${base}/report/Customer_Entry_Report?criteria=(ID=="${mfg_id}")`,
-      { headers: hdrs }
-    );
+ const mfgResp = await axios.get(
+  `${base}/report/Customer_Entry_Report?criteria=(ID==${mfg_id})`,
+  { headers: hdrs }
+);
     const mfg = mfgResp.data.data?.[0];
     if (!mfg) return res.status(404).json({ error: 'MFG not found' });
 
