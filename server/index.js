@@ -537,19 +537,6 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
   }
 });
 
-// Debug MFG
-app.get('/api/debug-mfg', async (req, res) => {
-  try {
-    const token = await getAccessToken();
-    const base  = creatorApiBase();
-    const hdrs  = zohoHeaders(token);
-    const resp  = await axios.get(`${base}/report/Customer_Entry_Report?limit=5`, { headers: hdrs });
-    res.json(resp.data);
-  } catch (err) {
-    res.status(500).json({ error: err.message, details: err.response?.data });
-  }
-});
-
 // Match Suggestions
 const geoCache = {};
 
