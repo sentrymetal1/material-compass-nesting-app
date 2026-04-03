@@ -715,7 +715,21 @@ app.get('/api/match-suggestions', async (req, res) => {
     res.status(500).json({ error: err.message, details: err.response?.data });
   }
 });
+// Debug Stock
+app.get('/api/debug-stock', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const resp = await axios.get(
+      `${creatorApiBase()}/report/Stocked_Material_List?criteria=(Supplier_ID==4111484000000994005)&limit=3`,
+      { headers: zohoHeaders(token) }
+    );
+    res.json(resp.data);
+  } catch (err) {
+    res.status(500).json({ error: err.message, details: err.response?.data });
+  }
+});
 
+// Catch-all: serve React app
 // Catch-all: serve React app
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html')); });
 
