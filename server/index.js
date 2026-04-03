@@ -766,7 +766,7 @@ app.get('/api/match-suggestions', async (req, res) => {
 
     // 1. MFG record
     const mfgResp = await axios.get(
-      `${base}/report/Customer_Entry_Report?criteria=ID=="${mfg_id}"`,
+      `${base}/report/Customer_Entry_Report?criteria=(ID==${mfg_id})`,
       { headers: hdrs }
     );
     const mfg = mfgResp.data.data?.[0];
@@ -780,7 +780,7 @@ app.get('/api/match-suggestions', async (req, res) => {
 
     // 2. Quote history
     const rfqResp = await axios.get(
-      `${base}/report/All_RFQs_Sent_Report?criteria=Quote_LU.Customer_Entry_LU=="${mfg_id}"&limit=200`,
+      `${base}/report/All_RFQs_Sent_Report?criteria=(Quote_LU.Customer_Entry_LU==${mfg_id})&limit=200`,
       { headers: hdrs }
     );
     const quoteHistory = {};
@@ -791,7 +791,7 @@ app.get('/api/match-suggestions', async (req, res) => {
 
     // 3. All registered suppliers
     const supResp = await axios.get(
-      `${base}/report/All_Suppliers_Entry_Report?criteria=Register=="Yes"&limit=200`,
+      `${base}/report/All_Suppliers_Entry_Report?criteria=(Register=="Yes")&limit=200`,
       { headers: hdrs }
     );
     const suppliers = supResp.data.data || [];
@@ -808,11 +808,11 @@ app.get('/api/match-suggestions', async (req, res) => {
 
         const [stockResp, capResp] = await Promise.all([
           axios.get(
-            `${base}/report/Stocked_Material_List?criteria=Supplier_ID=="${sup.ID}"&&Material_Stocked==true&limit=500`,
+            `${base}/report/Stocked_Material_List?criteria=(Supplier_ID==${sup.ID})&&(Material_Stocked==true)&limit=500`,
             { headers: hdrs }
           ).catch(() => ({ data: { data: [] } })),
           axios.get(
-            `${base}/report/Capabilities_Processes_Per_Supplier_Report?criteria=Supplier_Entry_Form=="${sup.ID}"&limit=200`,
+            `${base}/report/Capabilities_Processes_Per_Supplier_Report?criteria=(Supplier_Entry_Form==${sup.ID})&limit=200`,
             { headers: hdrs }
           ).catch(() => ({ data: { data: [] } }))
         ]);
