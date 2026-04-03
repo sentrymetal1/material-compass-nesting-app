@@ -588,10 +588,11 @@ function haversine(lat1, lng1, lat2, lng2) {
 function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCaps, distanceMi, radius, quoteCount }) {
   let stockScore = 0;
   if (mfgShape || mfgMaterial || mfgSpec) {
-    const fullKey = `${mfgShape}|${mfgMaterial}|${mfgSpec}`.toLowerCase();
-    const catKey  = `${mfgShape}|${mfgMaterial}`.toLowerCase();
-    const hasExact = supplierStock.some(s => `${s.Form_Type}|${s.Material_Type}|${s.Type_Detail}`.toLowerCase() === fullKey);
-    const hasCat   = supplierStock.some(s => `${s.Form_Type}|${s.Material_Type}`.toLowerCase() === catKey);
+    // *** FIX: compare IDs directly, no toLowerCase — Zoho IDs are numeric strings ***
+    const fullKey = `${mfgShape}|${mfgMaterial}|${mfgSpec}`;
+    const catKey  = `${mfgShape}|${mfgMaterial}`;
+    const hasExact = supplierStock.some(s => `${s.Form_Type?.ID||s.Form_Type}|${s.Material_Type?.ID||s.Material_Type}|${s.Type_Detail_LU?.ID||s.Type_Detail_LU}` === fullKey);
+    const hasCat   = supplierStock.some(s => `${s.Form_Type?.ID||s.Form_Type}|${s.Material_Type?.ID||s.Material_Type}` === catKey);
     stockScore = hasExact ? 1.0 : hasCat ? 0.5 : 0;
   }
   const supCapSet = new Set(supplierCaps.map(c => c.Supplier_Process?.Capabilities?.toLowerCase()).filter(Boolean));
@@ -619,10 +620,10 @@ app.get('/api/match-suggestions', async (req, res) => {
     const hdrs  = zohoHeaders(token);
 
     // 1. MFG record
-   const mfgResp = await axios.get(
-  `${base}/report/Customer_Entry_Report?criteria=(ID==${mfg_id})`,
-  { headers: hdrs }
-);
+    const mfgResp = await axios.get(
+      `${base}/report/Customer_Entry_Report?criteria=(ID==${mfg_id})`,
+      { headers: hdrs }
+    );
     const mfg = mfgResp.data.data?.[0];
     if (!mfg) return res.status(404).json({ error: 'MFG not found' });
 
@@ -715,6 +716,7 @@ app.get('/api/match-suggestions', async (req, res) => {
     res.status(500).json({ error: err.message, details: err.response?.data });
   }
 });
+
 // Debug Stock
 app.get('/api/debug-stock', async (req, res) => {
   try {
@@ -729,7 +731,6 @@ app.get('/api/debug-stock', async (req, res) => {
   }
 });
 
-// Catch-all: serve React app
 // Catch-all: serve React app
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html')); });
 
