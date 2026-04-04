@@ -641,7 +641,7 @@ app.get('/api/match-suggestions', async (req, res) => {
 
     // 3. Quote history
     const rfqResp = await axios.get(
-    `${base}/report/All_RFQs_Sent_Report?criteria=(Manufacturer==${mfg_id})&limit=200`,
+      `${base}/report/All_RFQs_Sent_Report?criteria=(Customer_LU==${mfg_id})&limit=200`,
       { headers: hdrs }
     ).catch(() => ({ data: { data: [] } }));
     const quoteHistory = {};
