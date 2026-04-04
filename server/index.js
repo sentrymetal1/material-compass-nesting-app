@@ -575,7 +575,7 @@ function haversine(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCaps, distanceMi, radius, quoteCount }) {
+function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCaps, distanceMi, radius, quoteCount, maxCaps }) {
   let stockScore = 0;
   if (mfgShape || mfgMaterial || mfgSpec) {
     const fullKey = `${mfgShape}|${mfgMaterial}|${mfgSpec}`;
@@ -585,7 +585,7 @@ function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCap
     stockScore = hasExact ? 1.0 : hasCat ? 0.5 : 0;
   }
   const supCapSet = new Set(supplierCaps.map(c => c.Supplier_Process?.Capabilities?.toLowerCase()).filter(Boolean));
-  const capScore = supCapSet.size > 0 ? Math.min(supCapSet.size / 10, 1) : 0;
+  const capScore = (maxCaps > 0 && supCapSet.size > 0) ? supCapSet.size / maxCaps : 0;
   const distanceScore = Math.max(0, 1 - (distanceMi / radius));
   const historyScore = quoteCount > 0 ? Math.min(Math.log10(quoteCount + 1) / Math.log10(11), 1) : 0;
   const total = (stockScore * 0.50) + (capScore * 0.20) + (distanceScore * 0.15) + (historyScore * 0.15);
@@ -640,8 +640,8 @@ app.get('/api/match-suggestions', async (req, res) => {
     );
     const suppliers = supResp.data.data || [];
 
-    // 5. Score each supplier in radius
-    const results = await Promise.all(suppliers.map(async (sup) => {
+    // 5. Fetch data for each supplier in radius (no scoring yet)
+    const rawResults = await Promise.all(suppliers.map(async (sup) => {
       const supZip     = sup.Address?.postal_code;
       const supCountry = sup.Address?.country;
       const supGeo     = await getLatLng(supZip, supCountry);
@@ -664,6 +664,15 @@ app.get('/api/match-suggestions', async (req, res) => {
       const supplierStock = stockResp.data.data || [];
       const supplierCaps  = capResp.data.data  || [];
 
+      return { sup, distanceMi, supplierStock, supplierCaps };
+    }));
+
+    // 6. Find max cap count across all in-radius suppliers for normalization
+    const inRadius = rawResults.filter(Boolean);
+    const maxCaps = inRadius.reduce((max, r) => Math.max(max, r.supplierCaps.length), 0);
+
+    // 7. Score each supplier using normalized cap count
+    const results = inRadius.map(({ sup, distanceMi, supplierStock, supplierCaps }) => {
       const score = scoreMatch({
         supplierStock,
         mfgShape:    shape,
@@ -672,7 +681,8 @@ app.get('/api/match-suggestions', async (req, res) => {
         supplierCaps,
         distanceMi,
         radius:      parseFloat(radius),
-        quoteCount:  quoteHistory[sup.ID] || 0
+        quoteCount:  quoteHistory[sup.ID] || 0,
+        maxCaps
       });
 
       return {
@@ -688,9 +698,9 @@ app.get('/api/match-suggestions', async (req, res) => {
         stockCount:  supplierStock.length,
         capCount:    supplierCaps.length
       };
-    }));
+    });
 
-    const filtered = results.filter(Boolean).sort((a, b) => b.score - a.score);
+    const filtered = results.sort((a, b) => b.score - a.score);
 
     res.json({
       mfg_id,
