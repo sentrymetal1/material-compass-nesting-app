@@ -575,7 +575,7 @@ function haversine(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCaps, distanceMi, radius, quoteCount, maxCaps }) {
+function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCaps, distanceMi, radius, quoteCount, checkedCaps }) {
   let stockScore = 0;
   if (mfgShape || mfgMaterial || mfgSpec) {
     const fullKey = `${mfgShape}|${mfgMaterial}|${mfgSpec}`;
@@ -584,8 +584,12 @@ function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCap
     const hasCat   = supplierStock.some(s => `${s.Form_Type?.ID||s.Form_Type}|${s.Material_Type?.ID||s.Material_Type}` === catKey);
     stockScore = hasExact ? 1.0 : hasCat ? 0.5 : 0;
   }
-  const supCapSet = new Set(supplierCaps.map(c => c.Supplier_Process?.Capabilities?.toLowerCase()).filter(Boolean));
-  const capScore = (maxCaps > 0 && supCapSet.size > 0) ? supCapSet.size / maxCaps : 0;
+  const supCapNames = supplierCaps.map(c => (c.Supplier_Process?.Capabilities || '').toLowerCase()).filter(Boolean);
+  let capScore = 0;
+  if (checkedCaps.length > 0) {
+    const matches = checkedCaps.filter(c => supCapNames.indexOf(c) !== -1).length;
+    capScore = matches / checkedCaps.length;
+  }
   const distanceScore = Math.max(0, 1 - (distanceMi / radius));
   const historyScore = quoteCount > 0 ? Math.min(Math.log10(quoteCount + 1) / Math.log10(11), 1) : 0;
   const total = (stockScore * 0.50) + (capScore * 0.20) + (distanceScore * 0.15) + (historyScore * 0.15);
@@ -601,7 +605,8 @@ function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCap
 }
 
 app.get('/api/match-suggestions', async (req, res) => {
-  const { mfg_id, radius = 150, shape = '', material = '', spec = '' } = req.query;
+  const { mfg_id, radius = 150, shape = '', material = '', spec = '', caps = '' } = req.query;
+  const checkedCaps = caps ? caps.split(',').map(c => c.trim().toLowerCase()).filter(Boolean) : [];
   if (!mfg_id) return res.status(400).json({ error: 'mfg_id required' });
   try {
     const token = await getAccessToken();
@@ -667,22 +672,20 @@ app.get('/api/match-suggestions', async (req, res) => {
       return { sup, distanceMi, supplierStock, supplierCaps };
     }));
 
-    // 6. Find max cap count across all in-radius suppliers for normalization
+    // 6. Score each supplier
     const inRadius = rawResults.filter(Boolean);
-    const maxCaps = inRadius.reduce((max, r) => Math.max(max, r.supplierCaps.length), 0);
-
-    // 7. Score each supplier using normalized cap count
     const results = inRadius.map(({ sup, distanceMi, supplierStock, supplierCaps }) => {
+      const supCapNames = supplierCaps.map(c => (c.Supplier_Process?.Capabilities || '').toLowerCase()).filter(Boolean);
       const score = scoreMatch({
         supplierStock,
-        mfgShape:    shape,
-        mfgMaterial: material,
-        mfgSpec:     spec,
+        mfgShape:     shape,
+        mfgMaterial:  material,
+        mfgSpec:      spec,
         supplierCaps,
         distanceMi,
-        radius:      parseFloat(radius),
-        quoteCount:  quoteHistory[sup.ID] || 0,
-        maxCaps
+        radius:       parseFloat(radius),
+        quoteCount:   quoteHistory[sup.ID] || 0,
+        checkedCaps
       });
 
       return {
@@ -696,7 +699,8 @@ app.get('/api/match-suggestions', async (req, res) => {
         phone:       sup.Phone,
         email:       sup.Email,
         stockCount:  supplierStock.length,
-        capCount:    supplierCaps.length
+        capCount:    supplierCaps.length,
+        capNames:    supCapNames
       };
     });
 
