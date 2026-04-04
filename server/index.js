@@ -613,13 +613,21 @@ app.get('/api/match-suggestions', async (req, res) => {
     const base  = creatorApiBase();
     const hdrs  = zohoHeaders(token);
 
-    // 1. MFG record
-    const mfgResp = await axios.get(
+    // 1. MFG record — retry once with forced token refresh if empty
+    let mfgResp = await axios.get(
       `${base}/report/Customer_Entry_Report?criteria=(ID==${mfg_id})`,
       { headers: hdrs }
     );
+    if (!mfgResp.data.data?.length) {
+      console.log('MFG lookup empty, forcing token refresh and retrying...');
+      const freshToken = await getAccessToken(true);
+      mfgResp = await axios.get(
+        `${base}/report/Customer_Entry_Report?criteria=(ID==${mfg_id})`,
+        { headers: zohoHeaders(freshToken) }
+      );
+    }
     const mfg = mfgResp.data.data?.[0];
-    if (!mfg) return res.status(404).json({ error: 'MFG not found' });
+    if (!mfg) return res.status(404).json({ error: 'MFG not found — ID: ' + mfg_id });
 
     // 2. Geocode MFG by zip
     const mfgZip = mfg.Address?.postal_code;
