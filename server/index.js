@@ -669,7 +669,7 @@ app.get('/api/match-suggestions', async (req, res) => {
 
       const [stockResp, capResp] = await Promise.all([
         axios.get(
-          `${base}/report/Stocked_Material_List?criteria=(Supplier_ID==${sup.ID})&&(Material_Stocked==true)&limit=500`,
+          `${base}/report/Stocked_Material_List?criteria=(Supplier_ID==${sup.ID})&limit=500`,
           { headers: hdrs }
         ).catch(() => ({ data: { data: [] } })),
         axios.get(
