@@ -269,10 +269,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
 
     const lookups = await fetchLookupTables(token);
 
-    if (lookups.lengthInch.length > 0) console.log('Sample Length INCH:', JSON.stringify(lookups.lengthInch.slice(0, 3)));
-    if (lookups.plateWidthFt.length > 0) console.log('Sample Plate Sizes:', JSON.stringify(lookups.plateWidthFt.slice(0, 3)));
-    if (lookups.materialTypes.length > 0) console.log('Sample Mat Types:', JSON.stringify(lookups.materialTypes.slice(0, 3)));
-
     const subformRows = purchase_lines.map(function(line, idx) {
       var stockLenIn = parseFloat(line.stock_length_in) || 0;
       var stockWidIn = parseFloat(line.stock_width_in) || 0;
@@ -298,7 +294,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       var lenStr = lenFt + "'-" + (lenInchRem > 0 ? Math.round(lenInchRem) + '"' : '0"');
       var sizeStr = is2D ? lenStr + ' x ' + widFt + "'-" + (widInchRem > 0 ? Math.round(widInchRem) + '"' : '0"') : lenStr;
       var fullDesc = descParts.join(' | ') + ' | ' + sizeStr;
-      console.log('Row ' + (idx+1) + ': MatType=' + (matTypeId ? 'OK('+matTypeId+')' : 'MISS('+line.material_type_name+')') + ' LenInch=' + (lengthInchId ? 'OK' : 'MISS') + '(' + lenInchRem + ') WidFt=' + (widthFtId ? 'OK' : 'MISS') + '(' + widFt + ') WidInch=' + (widthInchId ? 'OK' : 'MISS') + '(' + widInchRem + ') UnitWt=' + unitWt + ' TotWt=' + totalWt);
       var row = {
         Line_Item: idx + 1,
         Form_Type: line.form_type_id,
@@ -338,7 +333,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     });
 
     console.log('Subform rows to write:', subformRows.length);
-    if (subformRows.length > 0) console.log('First row:', JSON.stringify(subformRows[0]));
 
     try {
       var existingResp = await axios.get(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(Project_LU=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
@@ -347,7 +341,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       for (var d = 0; d < existingRows.length; d++) {
         try {
           await axios.delete(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[d].ID, { headers: zohoHeaders(token) });
-          console.log('Deleted row ID=' + existingRows[d].ID);
         } catch (delErr) { console.error('Failed to delete row ' + existingRows[d].ID + ':', delErr.response?.data || delErr.message); }
       }
     } catch (fetchErr) { if (fetchErr.response?.data?.code !== 9280) { console.error('Error fetching existing rows:', fetchErr.response?.data || fetchErr.message); } }
@@ -357,7 +350,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       try {
         await axios.post(creatorApiBase()+'/form/Project_Material_Allocated_Detail_Form', { data: subformRows[p] }, { headers: zohoHeaders(token) });
         saved++;
-        console.log('Created row ' + (p+1));
       } catch (postErr) { console.error('Failed to create row ' + (p+1) + ':', postErr.response?.data || postErr.message); }
     }
 
@@ -376,11 +368,9 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
     console.log('Fetching purchase list for project:', projectId);
     var reportName = 'Project_Material_Allocated_Detail_Form_Report';
     var url = creatorApiBase() + '/report/' + reportName + '?criteria=(Project_LU==' + projectId + ')&limit=200';
-    console.log('Purchase list GET URL:', url);
     var resp = await axios.get(url, { headers: zohoHeaders(token) });
     var rawRows = resp.data.data || [];
     console.log('Purchase list rows found:', rawRows.length);
-    if (rawRows.length > 0) console.log('First row keys:', Object.keys(rawRows[0]).join(', '));
     var lines = rawRows.map(function(row, idx) {
       var formType = row.Form_Type || {};
       var materialType = row.Material_Type || {};
@@ -588,17 +578,10 @@ function haversine(lat1, lng1, lat2, lng2) {
 function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCaps, distanceMi, radius, quoteCount }) {
   let stockScore = 0;
   if (mfgShape || mfgMaterial || mfgSpec) {
-    // *** FIX: compare IDs directly, no toLowerCase — Zoho IDs are numeric strings ***
     const fullKey = `${mfgShape}|${mfgMaterial}|${mfgSpec}`;
     const catKey  = `${mfgShape}|${mfgMaterial}`;
-    if (supplierStock.length > 0) {
-      const s0 = supplierStock[0];
-      const s0key = `${s0.Form_Type?.ID||s0.Form_Type}|${s0.Material_Type?.ID||s0.Material_Type}|${s0.Type_Detail_LU?.ID||s0.Type_Detail_LU}`;
-      console.log('scoreMatch — fullKey:', fullKey, '| catKey:', catKey, '| sample:', s0key);
-    }
     const hasExact = supplierStock.some(s => `${s.Form_Type?.ID||s.Form_Type}|${s.Material_Type?.ID||s.Material_Type}|${s.Type_Detail_LU?.ID||s.Type_Detail_LU}` === fullKey);
     const hasCat   = supplierStock.some(s => `${s.Form_Type?.ID||s.Form_Type}|${s.Material_Type?.ID||s.Material_Type}` === catKey);
-    console.log('  hasExact:', hasExact, '| hasCat:', hasCat);
     stockScore = hasExact ? 1.0 : hasCat ? 0.5 : 0;
   }
   const supCapSet = new Set(supplierCaps.map(c => c.Supplier_Process?.Capabilities?.toLowerCase()).filter(Boolean));
