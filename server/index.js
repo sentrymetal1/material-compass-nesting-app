@@ -591,8 +591,14 @@ function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCap
     // *** FIX: compare IDs directly, no toLowerCase — Zoho IDs are numeric strings ***
     const fullKey = `${mfgShape}|${mfgMaterial}|${mfgSpec}`;
     const catKey  = `${mfgShape}|${mfgMaterial}`;
+    if (supplierStock.length > 0) {
+      const s0 = supplierStock[0];
+      const s0key = `${s0.Form_Type?.ID||s0.Form_Type}|${s0.Material_Type?.ID||s0.Material_Type}|${s0.Type_Detail_LU?.ID||s0.Type_Detail_LU}`;
+      console.log('scoreMatch — fullKey:', fullKey, '| catKey:', catKey, '| sample:', s0key);
+    }
     const hasExact = supplierStock.some(s => `${s.Form_Type?.ID||s.Form_Type}|${s.Material_Type?.ID||s.Material_Type}|${s.Type_Detail_LU?.ID||s.Type_Detail_LU}` === fullKey);
     const hasCat   = supplierStock.some(s => `${s.Form_Type?.ID||s.Form_Type}|${s.Material_Type?.ID||s.Material_Type}` === catKey);
+    console.log('  hasExact:', hasExact, '| hasCat:', hasCat);
     stockScore = hasExact ? 1.0 : hasCat ? 0.5 : 0;
   }
   const supCapSet = new Set(supplierCaps.map(c => c.Supplier_Process?.Capabilities?.toLowerCase()).filter(Boolean));
