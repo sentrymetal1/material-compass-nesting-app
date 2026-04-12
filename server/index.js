@@ -106,14 +106,14 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     let bomItems = [];
     try {
       const bomResp = await axios.get(creatorApiBase()+'/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Project_LU=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
-      bomItems = (bomResp.data.data || []).map(row => ({ id: row.ID, form_type_id: row.Form_Type?.ID, dim1: parseFloat(row.Material?.Dim1) || parseFloat(row.Dim1) || 0, weight_per_ft: parseFloat(row.Weight_Per_Ft) || parseFloat(row.Material?.Weight_Lb_Ft) || 0, density: parseFloat(row.Density) || 0 }));
+      bomItems = (bomResp.data.data || []).map(row => ({ id: row.ID, form_type_id: row.Form_Type?.ID, material_type_id: row.Material_Type?.ID, specification_id: row.Specification?.ID, material_id: row.Material?.ID, dim1: parseFloat(row.Material?.Dim1) || parseFloat(row.Dim1) || 0, weight_per_ft: parseFloat(row.Weight_Per_Ft) || parseFloat(row.Material?.Weight_Lb_Ft) || 0, density: parseFloat(row.Density) || 0 }));
     } catch (e) { console.error('BOM fetch failed for weights'); }
 
     function getBomData(result) {
       const id = result.cuts?.[0]?.bom_line_id;
-      if (!id) return { weight_per_ft: 0, thickness: 0 };
+      if (!id) return { weight_per_ft: 0, thickness: 0, form_type_id: null, material_type_id: null, specification_id: null, material_id: null };
       const b = bomItems.find(x => x.id === id);
-      return b ? { weight_per_ft: b.weight_per_ft, thickness: b.dim1, density: b.density } : { weight_per_ft: 0, thickness: 0 };
+      return b ? { weight_per_ft: b.weight_per_ft, thickness: b.dim1, density: b.density, form_type_id: b.form_type_id, material_type_id: b.material_type_id, specification_id: b.specification_id, material_id: b.material_id } : { weight_per_ft: 0, thickness: 0, form_type_id: null, material_type_id: null, specification_id: null, material_id: null };
     }
     function calcStockWt(r, wpf) {
       if (!wpf || !r.stock_length_in) return 0;
@@ -148,7 +148,8 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       try {
         const bd = getBomData(result);
         const cuts = result.cuts.map((c, i) => ({ BOM_Line_Lookup: c.bom_line_id, Part_Mark: c.part_mark, Cut_Length: c.cut_length, Cut_Weight: c.cut_length ? Math.round(bd.weight_per_ft * (c.cut_length / 12) * 10000) / 10000 : 0, Quantity_On_This_Stock: c.quantity_on_this_stock, Cut_Sequence: i + 1 }));
-        await axios.post(creatorApiBase()+'/form/Nesting_Stock_Result', { data: { Nesting_Run_Header: nestRunID, Nesting_Type: '1D - Linear', Form_Type: result.form_type, Material_Type: result.material_origin, Specification: result.cuts[0].spec_name, Material: result.cuts[0].material_type, Stock_Size_Label: result.stock_label || '', Stock_Length: result.stock_length_in, Stock_Thickness: bd.thickness || 0, Remnant_Length: Math.round((result.remnant_length_in || 0) * 100) / 100, Waste_Percentage: result.waste_percentage, Stock_Weight_LBS: calcStockWt(result, bd.weight_per_ft), Stock_Sequence: s1d + 1, Nesting_Cut_Detail: cuts } }, { headers: zohoHeaders(token) });
+        const saveData1d = { Nesting_Run_Header: nestRunID, Nesting_Type: '1D - Linear', Form_Type: bd.form_type_id || result.form_type, Material_Type: bd.material_type_id || result.material_origin, Specification: bd.specification_id || result.cuts[0].spec_name, Material: bd.material_id || result.cuts[0].material_type, Stock_Size_Label: result.stock_label || '', Stock_Length: result.stock_length_in, Stock_Thickness: bd.thickness || 0, Remnant_Length: Math.round((result.remnant_length_in || 0) * 100) / 100, Waste_Percentage: result.waste_percentage, Stock_Weight_LBS: calcStockWt(result, bd.weight_per_ft), Stock_Sequence: s1d + 1, Nesting_Cut_Detail: cuts };
+        await axios.post(creatorApiBase()+'/form/Nesting_Stock_Result', { data: saveData1d }, { headers: zohoHeaders(token) });
         s1d++;
       } catch (e) { console.error('1D save error:', e.response?.data || e.message); }
     }
@@ -160,7 +161,8 @@ app.post('/api/project/:id/save-results', async (req, res) => {
         const bd = getBomData(result);
         const degreeSign = String.fromCharCode(176);
         const cuts = result.cuts.map((c, i) => ({ BOM_Line_Lookup: c.bom_line_id, Part_Mark: c.part_mark, Cut_Length: c.cut_length, Cut_Width: c.cut_width, Cut_Weight: (c.cut_length && c.cut_width) ? Math.round((c.cut_length * c.cut_width / 144) * bd.weight_per_ft * 10000) / 10000 : 0, Quantity_On_This_Stock: c.quantity_on_this_stock, X_Position: c.x_position || 0, Y_Position: c.y_position || 0, Rotation: c.rotation === 90 ? '90'+degreeSign : '0'+degreeSign, Cut_Sequence: i + 1 }));
-        await axios.post(creatorApiBase()+'/form/Nesting_Stock_Result', { data: { Nesting_Run_Header: nestRunID, Nesting_Type: '2D - Panel', Form_Type: result.form_type, Material_Type: result.material_origin, Specification: result.cuts[0].spec_name, Material: result.cuts[0].material_type, Stock_Size_Label: result.stock_label || '', Stock_Length: result.stock_length_in, Stock_Width: result.stock_width_in, Stock_Thickness: bd.thickness || 0, Grain_Direction: result.grain_direction || '', Remnant_Area: result.remnant_area_in2 || 0, Waste_Percentage: result.waste_percentage, Stock_Weight_LBS: calcStockWt(result, bd.weight_per_ft), Stock_Sequence: s2d + 1, Nesting_Cut_Detail: cuts } }, { headers: zohoHeaders(token) });
+        const saveData2d = { Nesting_Run_Header: nestRunID, Nesting_Type: '2D - Panel', Form_Type: bd.form_type_id || result.form_type, Material_Type: bd.material_type_id || result.material_origin, Specification: bd.specification_id || result.cuts[0].spec_name, Material: bd.material_id || result.cuts[0].material_type, Stock_Size_Label: result.stock_label || '', Stock_Length: result.stock_length_in, Stock_Width: result.stock_width_in, Stock_Thickness: bd.thickness || 0, Grain_Direction: result.grain_direction || '', Remnant_Area: result.remnant_area_in2 || 0, Waste_Percentage: result.waste_percentage, Stock_Weight_LBS: calcStockWt(result, bd.weight_per_ft), Stock_Sequence: s2d + 1, Nesting_Cut_Detail: cuts };
+        await axios.post(creatorApiBase()+'/form/Nesting_Stock_Result', { data: saveData2d }, { headers: zohoHeaders(token) });
         s2d++;
       } catch (e) { console.error('2D save error:', e.response?.data || e.message); }
     }
