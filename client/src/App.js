@@ -176,7 +176,9 @@ function analyzeError(errorMsg, nameLookup, parts1D, parts2D, stock2D, stock1D) 
 function PanelVisualization({ result, kerf2D }) {
   const stockL = result.stock_length_in || 0;
   const stockW = result.stock_width_in || 0;
-  const cuts = result.cuts || [];
+  // Use per-placement records when available (one rect per physical part).
+  // Falls back to `cuts` for older API responses where placements wasn't sent.
+  const cuts = result.placements || result.cuts || [];
   if (!stockL || !stockW || cuts.length === 0) return null;
   const marginLeft = 30;
   const marginTop = 5;
