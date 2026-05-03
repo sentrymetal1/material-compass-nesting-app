@@ -278,7 +278,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState('');
   const [enabledStock, setEnabledStock] = useState(new Set());
   const [stockFilter, setStockFilter] = useState('all');
-  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', stock_length: '', stock_width: '', quantity: '' });
+  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', material_name: '', stock_length: '', stock_width: '', quantity: '' });
   const [nextCustomId, setNextCustomId] = useState(900000);
   const [lastNestPayload, setLastNestPayload] = useState(null);
   const [selectedPatterns, setSelectedPatterns] = useState(new Set());
@@ -598,6 +598,7 @@ export default function App() {
       form_type_name: newStock.form_type,
       material_type: matchingBom?.material_type_id || newStock.material_type,
       material_type_name: newStock.material_type,
+      material_name: newStock.material_name || '',
       stock_length: parseFloat(newStock.stock_length),
       stock_width: newStock.stock_width ? parseFloat(newStock.stock_width) : null,
       density: 0,
@@ -608,7 +609,7 @@ export default function App() {
     setStock(prev => [...prev, entry]);
     setEnabledStock(prev => { const n = new Set(prev); n.add(id); return n; });
     setNextCustomId(prev => prev + 1);
-    setNewStock(prev => ({ ...prev, stock_length: '', stock_width: '', quantity: '' }));
+    setNewStock(prev => ({ ...prev, material_name: '', stock_length: '', stock_width: '', quantity: '' }));
   }
 
   function removeCustomStock(id) {
@@ -669,6 +670,7 @@ export default function App() {
             form_type: String(row.form_type_id),
             material_type: String(row.material_id),
             material_origin: String(row.material_type_id),
+            material_name: row.material_name || '',
             spec_name: String(row.specification_id),
             density: parseFloat(row.density) || 0,
             length_in: parseFloat(row.length_nest),
@@ -687,6 +689,7 @@ export default function App() {
             form_type: String(row.form_type_id),
             material_type: String(row.material_id),
             material_origin: String(row.material_type_id),
+            material_name: row.material_name || '',
             spec_name: String(row.specification_id),
             density: parseFloat(row.density) || 0,
             length_in: parseFloat(row.length_nest),
@@ -710,6 +713,7 @@ export default function App() {
           stock_label: `${s.form_type_name || s.form_type} | ${s.material_type_name || s.material_type}`,
           form_type: String(s.form_type),
           material_origin: String(s.material_type),
+          material_name: s.material_name || '',
           density: parseFloat(s.density) || 0,
           length_in: parseFloat(s.stock_length),
           is_standard: String(s.is_standard),
@@ -721,6 +725,7 @@ export default function App() {
           stock_label: `${s.form_type_name || s.form_type} | ${s.material_type_name || s.material_type}`,
           form_type: String(s.form_type),
           material_origin: String(s.material_type),
+          material_name: s.material_name || '',
           density: parseFloat(s.density) || 0,
           length_in: parseFloat(s.stock_length),
           width_in: parseFloat(s.stock_width),
@@ -1071,7 +1076,7 @@ export default function App() {
                   <thead>
                     <tr>
                       <th style={{ width: 30 }}>Use</th><th>Source</th><th>Form Type</th>
-                      <th>Material</th><th>Length</th><th>Width</th><th>Standard</th>
+                      <th>Material</th><th>Description</th><th>Length</th><th>Width</th><th>Standard</th>
                       <th style={{ width: 90 }}>Qty</th><th></th>
                     </tr>
                   </thead>
@@ -1086,6 +1091,7 @@ export default function App() {
                         </td>
                         <td>{s.form_type_name || s.form_type}</td>
                         <td>{s.material_type_name || s.material_type}</td>
+                        <td>{s.material_name || <span style={{ color: '#bbb' }}>—</span>}</td>
                         <td className="num">{inToFt(s.stock_length)}</td>
                         <td className="num">{s.stock_width && parseFloat(s.stock_width) > 0 ? inToFt(s.stock_width) : '—'}</td>
                         <td>{s.is_standard}</td>
@@ -1108,7 +1114,7 @@ export default function App() {
                       </tr>
                     ))}
                     {getFilteredStock().length === 0 && (
-                      <tr><td colSpan={9} style={{ textAlign: 'center', color: '#999', padding: 16 }}>No stock items</td></tr>
+                      <tr><td colSpan={10} style={{ textAlign: 'center', color: '#999', padding: 16 }}>No stock items</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1122,10 +1128,28 @@ export default function App() {
                   </div>
                   <div className="mini-field">
                     <label>Material</label>
-                    <select value={newStock.material_type} onChange={e => setNewStock(p => ({ ...p, material_type: e.target.value }))}>
+                    <select value={newStock.material_type} onChange={e => setNewStock(p => ({ ...p, material_type: e.target.value, material_name: '' }))}>
                       <option value="">Select...</option>
                       {matTypes.map(mt => <option key={mt} value={mt}>{mt}</option>)}
                     </select>
+                  </div>
+                  <div className="mini-field">
+                    <label>Description (opt.)</label>
+                    {(() => {
+                      const matchingMats = [...new Set(
+                        selectedBom
+                          .filter(b => (!newStock.form_type || b.form_type_name === newStock.form_type)
+                            && (!newStock.material_type || b.material_type_name === newStock.material_type))
+                          .map(b => b.material_name)
+                          .filter(Boolean)
+                      )];
+                      return (
+                        <select value={newStock.material_name} onChange={e => setNewStock(p => ({ ...p, material_name: e.target.value }))}>
+                          <option value="">Any</option>
+                          {matchingMats.map(mn => <option key={mn} value={mn}>{mn}</option>)}
+                        </select>
+                      );
+                    })()}
                   </div>
                   <div className="mini-field">
                     <label>Length (in)</label>
