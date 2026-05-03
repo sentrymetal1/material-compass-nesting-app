@@ -278,7 +278,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState('');
   const [enabledStock, setEnabledStock] = useState(new Set());
   const [stockFilter, setStockFilter] = useState('all');
-  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', stock_length: '', stock_width: '' });
+  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', stock_length: '', stock_width: '', quantity: '' });
   const [nextCustomId, setNextCustomId] = useState(900000);
   const [lastNestPayload, setLastNestPayload] = useState(null);
   const [selectedPatterns, setSelectedPatterns] = useState(new Set());
@@ -603,16 +603,21 @@ export default function App() {
       density: 0,
       is_standard: 'No',
       source: 'custom',
+      quantity: newStock.quantity || '',
     };
     setStock(prev => [...prev, entry]);
     setEnabledStock(prev => { const n = new Set(prev); n.add(id); return n; });
     setNextCustomId(prev => prev + 1);
-    setNewStock(prev => ({ ...prev, stock_length: '', stock_width: '' }));
+    setNewStock(prev => ({ ...prev, stock_length: '', stock_width: '', quantity: '' }));
   }
 
   function removeCustomStock(id) {
     setStock(prev => prev.filter(s => s.id !== id));
     setEnabledStock(prev => { const n = new Set(prev); n.delete(id); return n; });
+  }
+
+  function setStockQuantity(id, value) {
+    setStock(prev => prev.map(s => s.id === id ? { ...s, quantity: value } : s));
   }
 
   const selectedBom = bom.filter(b => selected.has(b.id) && b.nest_type);
@@ -790,6 +795,33 @@ export default function App() {
 
   const selectedPatternCount = selectedPatterns.size;
   const weightSummary = (step === 3 && results) ? calcWeightSummary() : null;
+  const stockShortages = (() => {
+    if (step !== 3 || !results) return [];
+    const usage = {};
+    [...(results.results_1d || []), ...(results.results_2d || [])].forEach(r => {
+      if (r.error) return;
+      const id = String(r.stock_id);
+      usage[id] = (usage[id] || 0) + 1;
+    });
+    return stock.reduce((acc, s) => {
+      const qty = parseInt(s.quantity, 10);
+      if (!Number.isFinite(qty) || qty < 0) return acc;
+      const used = usage[String(s.id)] || 0;
+      if (used > qty) {
+        acc.push({
+          id: s.id,
+          form_type_name: s.form_type_name || s.form_type,
+          material_type_name: s.material_type_name || s.material_type,
+          stock_length: s.stock_length,
+          stock_width: s.stock_width,
+          used,
+          qty,
+          short: used - qty,
+        });
+      }
+      return acc;
+    }, []);
+  })();
   const purchaseLines = (step === 3 && results && showPurchasePreview) ? buildPurchaseLines() : [];
   const weightMap = (step === 3 && results) ? getWeightMap() : {};
 
@@ -1039,7 +1071,8 @@ export default function App() {
                   <thead>
                     <tr>
                       <th style={{ width: 30 }}>Use</th><th>Source</th><th>Form Type</th>
-                      <th>Material</th><th>Length</th><th>Width</th><th>Standard</th><th></th>
+                      <th>Material</th><th>Length</th><th>Width</th><th>Standard</th>
+                      <th style={{ width: 90 }}>Qty</th><th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1057,6 +1090,17 @@ export default function App() {
                         <td className="num">{s.stock_width && parseFloat(s.stock_width) > 0 ? inToFt(s.stock_width) : '—'}</td>
                         <td>{s.is_standard}</td>
                         <td>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={s.quantity ?? ''}
+                            onChange={e => setStockQuantity(s.id, e.target.value)}
+                            placeholder="—"
+                            style={{ width: 70, padding: '2px 4px', fontFamily: "'IBM Plex Mono', monospace" }}
+                          />
+                        </td>
+                        <td>
                           {s.source === 'custom' && (
                             <button onClick={() => removeCustomStock(s.id)} className="btn btn-small btn-danger">Remove</button>
                           )}
@@ -1064,7 +1108,7 @@ export default function App() {
                       </tr>
                     ))}
                     {getFilteredStock().length === 0 && (
-                      <tr><td colSpan={8} style={{ textAlign: 'center', color: '#999', padding: 16 }}>No stock items</td></tr>
+                      <tr><td colSpan={9} style={{ textAlign: 'center', color: '#999', padding: 16 }}>No stock items</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1090,6 +1134,10 @@ export default function App() {
                   <div className="mini-field">
                     <label>Width (in, 2D only)</label>
                     <input type="number" step="0.25" value={newStock.stock_width} onChange={e => setNewStock(p => ({ ...p, stock_width: e.target.value }))} placeholder="Optional" />
+                  </div>
+                  <div className="mini-field">
+                    <label>Qty</label>
+                    <input type="number" min="0" step="1" value={newStock.quantity} onChange={e => setNewStock(p => ({ ...p, quantity: e.target.value }))} placeholder="Optional" />
                   </div>
                   <button onClick={addCustomStock} className="btn btn-add" disabled={!newStock.form_type || !newStock.material_type || !newStock.stock_length}>
                     + Add Stock
@@ -1163,6 +1211,25 @@ export default function App() {
                   </span>
                   <span className="summary-label">Patterns Selected</span>
                 </div>
+              </div>
+            )}
+
+            {stockShortages.length > 0 && (
+              <div className="stock-shortage-banner" style={{
+                background: '#fdecea', border: '1px solid #d32f2f', borderRadius: 4,
+                padding: '10px 14px', marginBottom: 12, color: '#b71c1c',
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: 13
+              }}>
+                <div style={{ fontWeight: 'bold', marginBottom: 6 }}>
+                  ⚠ Insufficient on-hand stock for {stockShortages.length} size{stockShortages.length > 1 ? 's' : ''}:
+                </div>
+                {stockShortages.map(s => (
+                  <div key={s.id} style={{ marginLeft: 18 }}>
+                    {s.form_type_name} | {s.material_type_name} | {inToFt(s.stock_length)}
+                    {s.stock_width && parseFloat(s.stock_width) > 0 ? ` × ${inToFt(s.stock_width)}` : ''}
+                    {' — need '}<strong>{s.used}</strong>, have <strong>{s.qty}</strong>, short <strong>{s.short}</strong>
+                  </div>
+                ))}
               </div>
             )}
 
