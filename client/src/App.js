@@ -1238,16 +1238,18 @@ export default function App() {
                               </div>
                             </div>
                             <div className="bar-visual">
-                              {r.cuts?.map((cut, j) => (
-                                <div
-                                  key={j}
-                                  className="bar-cut"
-                                  style={{ width: `${(cut.cut_length / r.stock_length_in) * 100}%` }}
-                                  title={`${cut.part_mark}: ${cut.cut_length}" — ${fmtLbs(patternWpf * (cut.cut_length / 12))}`}
-                                >
-                                  <span>{cut.part_mark} ({cut.cut_length}")</span>
-                                </div>
-                              ))}
+                              {r.cuts?.flatMap((cut, j) =>
+                                Array.from({ length: cut.quantity_on_this_stock || 1 }, (_, k) => (
+                                  <div
+                                    key={`${j}-${k}`}
+                                    className="bar-cut"
+                                    style={{ width: `${(cut.cut_length / r.stock_length_in) * 100}%` }}
+                                    title={`${cut.part_mark}: ${cut.cut_length}" — ${fmtLbs(patternWpf * (cut.cut_length / 12))}`}
+                                  >
+                                    <span>{cut.part_mark} ({cut.cut_length}")</span>
+                                  </div>
+                                ))
+                              )}
                               {r.remnant_length_in > 0 && (
                                 <div className="bar-remnant" style={{ width: `${(r.remnant_length_in / r.stock_length_in) * 100}%` }}>
                                   <span>{r.remnant_length_in.toFixed(1)}"</span>
