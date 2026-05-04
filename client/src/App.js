@@ -44,7 +44,11 @@ function groupResults(results, nameLookup) {
   const materialGroups = {};
   for (const r of results) {
     if (r.error) continue;
-    const key = `${r.form_type}|${r.material_origin}|${r.stock_length_in}|${r.stock_width_in || 0}`;
+    // Include material_name in the key so different materials on the same
+    // form/origin/length get their own group (algorithm now locks each
+    // bin/sheet to one material, so this matches reality).
+    const matKey = r.material_name || '';
+    const key = `${r.form_type}|${r.material_origin}|${matKey}|${r.stock_length_in}|${r.stock_width_in || 0}`;
     if (!materialGroups[key]) {
       materialGroups[key] = {
         form_type: r.form_type,
@@ -54,7 +58,7 @@ function groupResults(results, nameLookup) {
         form_type_name: (nameLookup && nameLookup[r.form_type]) || r.form_type,
         material_type_name: (nameLookup && nameLookup[r.material_origin]) || r.material_origin,
         spec_name: (nameLookup && r.cuts?.[0] && nameLookup[r.cuts[0].spec_name]) || '',
-        material_name: (nameLookup && r.cuts?.[0] && nameLookup[r.cuts[0].material_type]) || '',
+        material_name: r.material_name || (nameLookup && r.cuts?.[0] && nameLookup[r.cuts[0].material_type]) || '',
         patterns: [],
       };
     }
