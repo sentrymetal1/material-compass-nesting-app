@@ -282,7 +282,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState('');
   const [enabledStock, setEnabledStock] = useState(new Set());
   const [stockFilter, setStockFilter] = useState('all');
-  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', material_name: '', stock_length: '', stock_width: '', quantity: '' });
+  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', material_name: '', stock_length: '', stock_width: '', quantity: '', reference: '' });
   const [nextCustomId, setNextCustomId] = useState(900000);
   const [lastNestPayload, setLastNestPayload] = useState(null);
   const [selectedPatterns, setSelectedPatterns] = useState(new Set());
@@ -609,11 +609,12 @@ export default function App() {
       is_standard: 'No',
       source: 'custom',
       quantity: newStock.quantity || '',
+      reference: newStock.reference || '',
     };
     setStock(prev => [...prev, entry]);
     setEnabledStock(prev => { const n = new Set(prev); n.add(id); return n; });
     setNextCustomId(prev => prev + 1);
-    setNewStock(prev => ({ ...prev, material_name: '', stock_length: '', stock_width: '', quantity: '' }));
+    setNewStock(prev => ({ ...prev, material_name: '', stock_length: '', stock_width: '', quantity: '', reference: '' }));
   }
 
   function removeCustomStock(id) {
@@ -719,6 +720,7 @@ export default function App() {
           material_origin: String(s.material_type),
           material_name: s.material_name || '',
           quantity: s.quantity ? parseInt(s.quantity, 10) : null,
+          reference: s.reference || '',
           density: parseFloat(s.density) || 0,
           length_in: parseFloat(s.stock_length),
           is_standard: String(s.is_standard),
@@ -732,6 +734,7 @@ export default function App() {
           material_origin: String(s.material_type),
           material_name: s.material_name || '',
           quantity: s.quantity ? parseInt(s.quantity, 10) : null,
+          reference: s.reference || '',
           density: parseFloat(s.density) || 0,
           length_in: parseFloat(s.stock_length),
           width_in: parseFloat(s.stock_width),
@@ -1083,7 +1086,7 @@ export default function App() {
                     <tr>
                       <th style={{ width: 30 }}>Use</th><th>Source</th><th>Form Type</th>
                       <th>Material</th><th>Description</th><th>Length</th><th>Width</th><th>Standard</th>
-                      <th style={{ width: 90 }}>Qty</th><th></th>
+                      <th style={{ width: 90 }}>Qty</th><th>Reference</th><th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1112,6 +1115,7 @@ export default function App() {
                             style={{ width: 70, padding: '2px 4px', fontFamily: "'IBM Plex Mono', monospace" }}
                           />
                         </td>
+                        <td>{s.reference || <span style={{ color: '#bbb' }}>—</span>}</td>
                         <td>
                           {s.source === 'custom' && (
                             <button onClick={() => removeCustomStock(s.id)} className="btn btn-small btn-danger">Remove</button>
@@ -1120,7 +1124,7 @@ export default function App() {
                       </tr>
                     ))}
                     {getFilteredStock().length === 0 && (
-                      <tr><td colSpan={10} style={{ textAlign: 'center', color: '#999', padding: 16 }}>No stock items</td></tr>
+                      <tr><td colSpan={11} style={{ textAlign: 'center', color: '#999', padding: 16 }}>No stock items</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1168,6 +1172,10 @@ export default function App() {
                   <div className="mini-field">
                     <label>Qty</label>
                     <input type="number" min="0" step="1" value={newStock.quantity} onChange={e => setNewStock(p => ({ ...p, quantity: e.target.value }))} placeholder="Optional" />
+                  </div>
+                  <div className="mini-field">
+                    <label>Reference (opt.)</label>
+                    <input type="text" value={newStock.reference} onChange={e => setNewStock(p => ({ ...p, reference: e.target.value }))} placeholder="Heat # / bin / job" />
                   </div>
                   <button onClick={addCustomStock} className="btn btn-add" disabled={!newStock.form_type || !newStock.material_type || !newStock.stock_length}>
                     + Add Stock
@@ -1306,6 +1314,10 @@ export default function App() {
                                 />
                                 <span className="stock-label">
                                   Cut Pattern {pi + 1} — {matDesc(group)} | {inToFt(r.stock_length_in)}
+                                  {(() => {
+                                    const src = stock.find(x => String(x.id) === String(r.stock_id));
+                                    return src?.reference ? <span className="stock-ref-badge" style={{ marginLeft: 8, padding: '1px 6px', background: '#e8f0fb', color: '#2c5aa0', borderRadius: 3, fontSize: 11 }}>Ref: {src.reference}</span> : null;
+                                  })()}
                                   {pattern.count > 1 && <span className="pattern-count-badge">×{pattern.count} identical</span>}
                                   {(() => {
                                     const totalUsed = r.cuts?.reduce((sum, c) => sum + c.cut_length + kerf1D, 0) || 0;
@@ -1425,6 +1437,10 @@ export default function App() {
                                 />
                                 <span className="stock-label">
                                   Cut Pattern {pi + 1} — {matDesc(group)} | {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}
+                                  {(() => {
+                                    const src = stock.find(x => String(x.id) === String(r.stock_id));
+                                    return src?.reference ? <span className="stock-ref-badge" style={{ marginLeft: 8, padding: '1px 6px', background: '#e8f0fb', color: '#2c5aa0', borderRadius: 3, fontSize: 11 }}>Ref: {src.reference}</span> : null;
+                                  })()}
                                   {pattern.count > 1 && <span className="pattern-count-badge">×{pattern.count} identical</span>}
                                   {(() => {
                                     const warnings = [];
