@@ -425,7 +425,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
         <p className="hint">No parts yet — click "Add Part" to start, or upload a CSV.</p>
       ) : (
         <div className="table-wrap">
-          <table className="table">
+          <table className="table" style={{ width: 'auto', minWidth: '100%' }}>
             <thead>
               <tr>
                 <th></th>
@@ -1262,7 +1262,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="main">
+      <main className="main" style={isStandalone && step === 1 ? { maxWidth: 1500 } : {}}>
         <div className="steps">
           {['Select Items', 'Configure', 'Results'].map((label, i) => (
             <div key={i} className={`step-dot ${step >= i + 1 ? 'active' : ''} ${step === i + 1 ? 'current' : ''}`}>
@@ -1297,7 +1297,7 @@ export default function App() {
 
         {/* Step 1 — Standalone: source toggle + manual entry */}
         {step === 1 && isStandalone && (
-          <div className="card" style={{ maxWidth: 'none', width: 'calc(100vw - 64px)', marginLeft: 'calc(50% - 50vw + 32px)', marginRight: 'calc(50% - 50vw + 32px)' }}>
+          <div className="card">
             <div className="card-header">
               <h2>Quick Nest — Standalone</h2>
               <div className="btn-group">
