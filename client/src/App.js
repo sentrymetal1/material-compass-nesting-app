@@ -453,8 +453,8 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                 const valid = isRowValid(p);
                 return (
                   <tr key={p.client_part_id} style={!valid && (p.form_type_id || p.material_type_id) ? { background: '#fff8e1' } : {}}>
-                    <td><button onClick={() => removeRow(idx)} className="btn btn-small btn-danger" title="Remove row">×</button></td>
-                    <td><input type="text" value={p.tag} onChange={e => updateRow(idx, { tag: e.target.value })} placeholder="P-1" style={{ width: 70 }} /></td>
+                    <td style={{ width: 30 }}><button onClick={() => removeRow(idx)} className="btn btn-small btn-danger" title="Remove row" style={{ padding: '2px 6px' }}>×</button></td>
+                    <td><input type="text" value={p.tag} onChange={e => updateRow(idx, { tag: e.target.value })} placeholder="P-1" style={{ width: 60 }} /></td>
                     <td>
                       <select value={p.form_type_id} onChange={e => {
                         const ft = formTypes.find(f => String(f.id) === String(e.target.value));
@@ -1297,7 +1297,7 @@ export default function App() {
 
         {/* Step 1 — Standalone: source toggle + manual entry */}
         {step === 1 && isStandalone && (
-          <div className="card">
+          <div className="card" style={{ maxWidth: 'none', width: 'calc(100vw - 64px)', marginLeft: 'calc(50% - 50vw + 32px)', marginRight: 'calc(50% - 50vw + 32px)' }}>
             <div className="card-header">
               <h2>Quick Nest — Standalone</h2>
               <div className="btn-group">
