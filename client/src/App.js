@@ -389,7 +389,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
       material_id: last.material_id, material_name: last.material_name,
       weight_per_ft: last.weight_per_ft, dim1: last.dim1, density: last.density,
       width_ft_id: last.width_ft_id, // panels often share width
-      galv: last.galv, plate_sa: last.plate_sa, nest_type: last.nest_type
+      nest_type: last.nest_type
     } : {
       form_type_id: '', form_type_name: '',
       material_type_id: '', material_type_name: '',
@@ -397,12 +397,13 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
       material_id: '', material_name: '',
       weight_per_ft: 0, dim1: 0, density: 0,
       width_ft_id: '',
-      galv: false, plate_sa: false, nest_type: 'Linear'
+      nest_type: 'Linear'
     };
     onChange([...parts, {
       client_part_id: newId, tag: '', component: '', drawing: '',
       ...seed,
-      quantity: 1, length_ft: 0, length_inch_id: '', width_inch_id: ''
+      quantity: 1, length_ft: 0, length_inch_id: '', width_inch_id: '',
+      galv: false, plate_sa: false
     }]);
   }
   function removeRow(idx) {
@@ -439,8 +440,6 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                 <th>INCH(L)</th>
                 <th>FT(W)</th>
                 <th>INCH(W)</th>
-                <th>Galv</th>
-                <th>SA</th>
                 <th>Nest Type</th>
               </tr>
             </thead>
@@ -534,8 +533,6 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                         {lengthInch.map(li => <option key={li.id} value={li.id}>{li.description}</option>)}
                       </select>
                     </td>
-                    <td><input type="checkbox" checked={p.galv} onChange={e => updateRow(idx, { galv: e.target.checked })} /></td>
-                    <td><input type="checkbox" checked={p.plate_sa} onChange={e => updateRow(idx, { plate_sa: e.target.checked })} /></td>
                     <td>
                       <select value={p.nest_type} onChange={e => updateRow(idx, {
                         nest_type: e.target.value,
