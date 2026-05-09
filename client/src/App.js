@@ -8,6 +8,32 @@ function getProjectIdFromURL() {
   return params.get('project_id') || params.get('id') || '';
 }
 
+function getManufactureIdFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('Manufacture_ID') || params.get('manufacture_id') || params.get('mfg_id') || '';
+}
+
+// Convert FT/INCH lookup IDs to total inches using the lookup tables
+function dimsToInches(lengthFt, lengthInchId, widthFtId, widthInchId, lengthInchTable, plateWidthTable) {
+  const ft = parseFloat(lengthFt) || 0;
+  let inchVal = 0;
+  if (lengthInchId && lengthInchTable) {
+    const rec = lengthInchTable.find(r => String(r.id) === String(lengthInchId));
+    if (rec) inchVal = parseFloat(rec.result) || 0;
+  }
+  const lengthIn = ft * 12 + inchVal;
+  let widthIn = 0;
+  if (widthFtId && plateWidthTable) {
+    const wRec = plateWidthTable.find(r => String(r.id) === String(widthFtId));
+    if (wRec) widthIn += (parseFloat(wRec.width_ft) || 0) * 12;
+  }
+  if (widthInchId && lengthInchTable) {
+    const wiRec = lengthInchTable.find(r => String(r.id) === String(widthInchId));
+    if (wiRec) widthIn += parseFloat(wiRec.result) || 0;
+  }
+  return { length_in: lengthIn, width_in: widthIn };
+}
+
 function inToFt(val) {
   const n = parseFloat(val);
   if (!n || n === 0) return '—';
@@ -265,9 +291,217 @@ function matDesc(group) {
   return parts.join(' | ');
 }
 
+function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded }) {
+  const [formTypes, setFormTypes] = useState(lookupTables?.formTypes || []);
+  const [matTypes, setMatTypes] = useState(lookupTables?.matTypes || []);
+  const [lengthInch, setLengthInch] = useState(lookupTables?.lengthInch || []);
+  const [plateWidths, setPlateWidths] = useState(lookupTables?.plateWidths || []);
+  // Per-row caches: { rowIdx: [{id,name}] }
+  const [specCache, setSpecCache] = useState({});
+  const [matCache, setMatCache] = useState({});
+
+  useEffect(() => {
+    async function loadBase() {
+      try {
+        const [ftRes, mtRes, liRes, pwRes] = await Promise.all([
+          fetch(`${API}/api/lookups/form-types`),
+          fetch(`${API}/api/lookups/material-types`),
+          fetch(`${API}/api/lookups/length-inch`),
+          fetch(`${API}/api/lookups/plate-widths`),
+        ]);
+        const ft = ftRes.ok ? await ftRes.json() : [];
+        const mt = mtRes.ok ? await mtRes.json() : [];
+        const li = liRes.ok ? await liRes.json() : [];
+        const pw = pwRes.ok ? await pwRes.json() : [];
+        setFormTypes(ft);
+        setMatTypes(mt);
+        setLengthInch(li);
+        setPlateWidths(pw);
+        if (onLookupTablesLoaded) onLookupTablesLoaded({ formTypes: ft, matTypes: mt, lengthInch: li, plateWidths: pw });
+      } catch (e) { console.error('Failed to load lookup tables:', e); }
+    }
+    if (formTypes.length === 0) loadBase();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadSpecsAndMaterialsForRow(idx, formTypeId, materialTypeId) {
+    if (!formTypeId || !materialTypeId) {
+      setSpecCache(p => ({ ...p, [idx]: [] }));
+      setMatCache(p => ({ ...p, [idx]: [] }));
+      return;
+    }
+    try {
+      const [specRes, matRes] = await Promise.all([
+        fetch(`${API}/api/lookups/specifications?form_type_id=${formTypeId}&material_type_id=${materialTypeId}`),
+        fetch(`${API}/api/lookups/materials?form_type_id=${formTypeId}&material_type_id=${materialTypeId}`),
+      ]);
+      const specs = specRes.ok ? await specRes.json() : [];
+      const mats = matRes.ok ? await matRes.json() : [];
+      setSpecCache(p => ({ ...p, [idx]: specs }));
+      setMatCache(p => ({ ...p, [idx]: mats }));
+    } catch (e) { console.error('Cascade load failed:', e); }
+  }
+
+  function updateRow(idx, patch) {
+    const next = parts.map((p, i) => i === idx ? { ...p, ...patch } : p);
+    onChange(next);
+  }
+  function addRow() {
+    const newId = `part_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    onChange([...parts, {
+      client_part_id: newId, tag: '', component: '', drawing: '',
+      form_type_id: '', form_type_name: '',
+      material_type_id: '', material_type_name: '',
+      specification_id: '', spec_name: '',
+      material_id: '', material_name: '',
+      quantity: 1, length_ft: 0, length_inch_id: '', width_ft_id: '', width_inch_id: '',
+      galv: false, plate_sa: false, nest_type: 'Linear',
+      weight_per_ft: 0, dim1: 0, density: 0
+    }]);
+  }
+  function removeRow(idx) {
+    onChange(parts.filter((_, i) => i !== idx));
+    setSpecCache(p => { const n = { ...p }; delete n[idx]; return n; });
+    setMatCache(p => { const n = { ...p }; delete n[idx]; return n; });
+  }
+
+  return (
+    <div className="manual-parts-entry">
+      <div className="card-header">
+        <h3>Parts to nest</h3>
+        <button onClick={addRow} className="btn btn-primary btn-small">+ Add Part</button>
+      </div>
+      {parts.length === 0 ? (
+        <p className="hint">No parts yet — click "Add Part" to start, or upload a CSV.</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Tag</th>
+                <th>Form</th>
+                <th>Mat Type</th>
+                <th>Spec</th>
+                <th>Material</th>
+                <th>Qty</th>
+                <th>FT(L)</th>
+                <th>INCH(L)</th>
+                <th>FT(W)</th>
+                <th>INCH(W)</th>
+                <th>Galv</th>
+                <th>SA</th>
+                <th>Nest Type</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {parts.map((p, idx) => {
+                const specs = specCache[idx] || [];
+                const mats = matCache[idx] || [];
+                return (
+                  <tr key={p.client_part_id}>
+                    <td><input type="text" value={p.tag} onChange={e => updateRow(idx, { tag: e.target.value })} placeholder="P-1" style={{ width: 70 }} /></td>
+                    <td>
+                      <select value={p.form_type_id} onChange={e => {
+                        const ft = formTypes.find(f => String(f.id) === String(e.target.value));
+                        updateRow(idx, {
+                          form_type_id: e.target.value,
+                          form_type_name: ft?.name || '',
+                          specification_id: '', spec_name: '',
+                          material_id: '', material_name: '', weight_per_ft: 0, dim1: 0, density: 0
+                        });
+                        loadSpecsAndMaterialsForRow(idx, e.target.value, p.material_type_id);
+                      }}>
+                        <option value="">—</option>
+                        {formTypes.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <select value={p.material_type_id} onChange={e => {
+                        const mt = matTypes.find(m => String(m.id) === String(e.target.value));
+                        updateRow(idx, {
+                          material_type_id: e.target.value,
+                          material_type_name: mt?.name || '',
+                          specification_id: '', spec_name: '',
+                          material_id: '', material_name: '', weight_per_ft: 0, dim1: 0, density: 0
+                        });
+                        loadSpecsAndMaterialsForRow(idx, p.form_type_id, e.target.value);
+                      }}>
+                        <option value="">—</option>
+                        {matTypes.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <select value={p.specification_id} onChange={e => {
+                        const s = specs.find(x => String(x.id) === String(e.target.value));
+                        updateRow(idx, { specification_id: e.target.value, spec_name: s?.name || '' });
+                      }} disabled={specs.length === 0}>
+                        <option value="">—</option>
+                        {specs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <select value={p.material_id} onChange={e => {
+                        const m = mats.find(x => String(x.id) === String(e.target.value));
+                        updateRow(idx, {
+                          material_id: e.target.value,
+                          material_name: m?.name || '',
+                          weight_per_ft: m?.weight_per_ft || 0,
+                          dim1: m?.dim1 || 0,
+                          density: m?.density || 0
+                        });
+                      }} disabled={mats.length === 0}>
+                        <option value="">—</option>
+                        {mats.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      </select>
+                    </td>
+                    <td><input type="number" min="1" value={p.quantity} onChange={e => updateRow(idx, { quantity: parseInt(e.target.value) || 0 })} style={{ width: 50 }} /></td>
+                    <td><input type="number" min="0" step="1" value={p.length_ft} onChange={e => updateRow(idx, { length_ft: parseInt(e.target.value) || 0 })} style={{ width: 50 }} /></td>
+                    <td>
+                      <select value={p.length_inch_id} onChange={e => updateRow(idx, { length_inch_id: e.target.value })}>
+                        <option value="">0</option>
+                        {lengthInch.map(li => <option key={li.id} value={li.id}>{li.description}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <select value={p.width_ft_id} onChange={e => updateRow(idx, { width_ft_id: e.target.value })} disabled={p.nest_type !== 'Panel'}>
+                        <option value="">—</option>
+                        {plateWidths.map(pw => <option key={pw.id} value={pw.id}>{pw.description || pw.width_ft + "'"}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <select value={p.width_inch_id} onChange={e => updateRow(idx, { width_inch_id: e.target.value })} disabled={p.nest_type !== 'Panel'}>
+                        <option value="">0</option>
+                        {lengthInch.map(li => <option key={li.id} value={li.id}>{li.description}</option>)}
+                      </select>
+                    </td>
+                    <td><input type="checkbox" checked={p.galv} onChange={e => updateRow(idx, { galv: e.target.checked })} /></td>
+                    <td><input type="checkbox" checked={p.plate_sa} onChange={e => updateRow(idx, { plate_sa: e.target.checked })} /></td>
+                    <td>
+                      <select value={p.nest_type} onChange={e => updateRow(idx, { nest_type: e.target.value })}>
+                        <option value="Linear">Linear</option>
+                        <option value="Panel">Panel</option>
+                      </select>
+                    </td>
+                    <td><button onClick={() => removeRow(idx)} className="btn btn-small btn-danger">×</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [projectId, setProjectId] = useState(getProjectIdFromURL());
-  const [step, setStep] = useState(projectId ? 1 : 0);
+  const [manufactureId] = useState(getManufactureIdFromURL());
+  const isStandalone = !projectId && !!manufactureId;
+  const [nestSource, setNestSource] = useState(isStandalone ? 'Manual' : 'Project');
+  const [standaloneParts, setStandaloneParts] = useState([]);
+  const [standaloneLookups, setStandaloneLookups] = useState({ formTypes: [], matTypes: [], lengthInch: [], plateWidths: [] });
+  const [step, setStep] = useState(isStandalone ? 1 : (projectId ? 1 : 0));
   const [project, setProject] = useState(null);
   const [bom, setBom] = useState([]);
   const [stock, setStock] = useState([]);
@@ -362,9 +596,66 @@ export default function App() {
     if (projectId) loadProject(projectId);
   }, [projectId, loadProject]);
 
+  // Standalone mode: convert standaloneParts into bom-shape rows so downstream code (selectedBom, bomKeys, runNesting) works unchanged
+  useEffect(() => {
+    if (!isStandalone) return;
+    const lengthInchTbl = standaloneLookups.lengthInch;
+    const plateWidthTbl = standaloneLookups.plateWidths;
+    const bomRows = standaloneParts.map(p => {
+      const dims = dimsToInches(p.length_ft, p.length_inch_id, p.width_ft_id, p.width_inch_id, lengthInchTbl, plateWidthTbl);
+      return {
+        id: p.client_part_id,
+        bom_item: p.tag || `Part ${p.client_part_id.slice(-4)}`,
+        nest_type: p.nest_type,
+        form_type_id: p.form_type_id,
+        form_type_name: p.form_type_name,
+        material_type_id: p.material_type_id,
+        material_type_name: p.material_type_name,
+        specification_id: p.specification_id,
+        spec_name: p.spec_name,
+        material_id: p.material_id,
+        material_name: p.material_name,
+        material_dim1: parseFloat(p.dim1) || 0,
+        quantity: parseInt(p.quantity) || 0,
+        length_nest: dims.length_in,
+        width_nest: dims.width_in,
+        density: parseFloat(p.density) || 0,
+        weight_per_ft: parseFloat(p.weight_per_ft) || 0,
+        // pass-through standalone-only fields needed at save time
+        _standalone: true,
+        _client_part_id: p.client_part_id,
+        _tag: p.tag, _component: p.component, _drawing: p.drawing,
+        _length_ft: p.length_ft,
+        _length_inch_id: p.length_inch_id, _width_ft_id: p.width_ft_id, _width_inch_id: p.width_inch_id,
+        _galv: p.galv, _plate_sa: p.plate_sa
+      };
+    }).filter(r => r.form_type_id && r.material_type_id && r.quantity > 0 && r.length_nest > 0);
+    setBom(bomRows);
+    setSelected(new Set(bomRows.map(r => r.id)));
+  }, [standaloneParts, standaloneLookups, isStandalone]);
+
+  // Standalone mode: load most recent saved nest on mount
+  useEffect(() => {
+    if (!isStandalone || !manufactureId) return;
+    fetch(`${API}/api/standalone/nesting-results?manufacturer_id=${manufactureId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data || !data.found) return;
+        setSavedRunInfo(data.run_header);
+        setResults(data);
+        autoSelectAllPatterns(data);
+        if (data.run_header?.kerf_1d) setKerf1D(data.run_header.kerf_1d);
+        if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
+      })
+      .catch(e => console.error('Standalone auto-load:', e));
+  }, [isStandalone, manufactureId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function fetchSavedNestingResults() {
     try {
-      const resp = await fetch(`${API}/api/project/${projectId}/nesting-results`);
+      const url = isStandalone
+        ? `${API}/api/standalone/nesting-results?manufacturer_id=${manufactureId}`
+        : `${API}/api/project/${projectId}/nesting-results`;
+      const resp = await fetch(url);
       if (!resp.ok) return;
       const data = await resp.json();
       if (!data.found) return;
@@ -786,20 +1077,57 @@ export default function App() {
     setSaving(true);
     setSaveStatus('');
     try {
-      const resp = await fetch(`${API}/api/project/${projectId}/save-results`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          results_1d: selected_1d,
-          results_2d: selected_2d,
-          summary: results.summary,
-          kerf_1d: kerf1D,
-          kerf_2d: kerf2D,
-        }),
-      });
+      let resp;
+      if (isStandalone) {
+        // Build parts payload from standaloneParts (the user-entered list)
+        const partsPayload = standaloneParts
+          .filter(p => p.form_type_id && p.material_type_id && p.quantity > 0)
+          .map(p => ({
+            client_part_id: p.client_part_id,
+            tag: p.tag, component: p.component, drawing: p.drawing,
+            form_type_id: p.form_type_id, material_type_id: p.material_type_id,
+            specification_id: p.specification_id, material_id: p.material_id,
+            quantity: parseInt(p.quantity) || 0,
+            length_ft: parseInt(p.length_ft) || 0,
+            length_inch_id: p.length_inch_id || '',
+            width_ft_id: p.width_ft_id || '',
+            width_inch_id: p.width_inch_id || '',
+            galv: !!p.galv, plate_sa: !!p.plate_sa,
+            nest_type: p.nest_type || 'Linear',
+            weight_per_ft: parseFloat(p.weight_per_ft) || 0,
+            dim1: parseFloat(p.dim1) || 0,
+            density: parseFloat(p.density) || 0,
+          }));
+        resp = await fetch(`${API}/api/standalone/save-results`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            manufacturer_id: manufactureId,
+            nest_source: nestSource === 'CSV' ? 'CSV' : 'Manual',
+            parts: partsPayload,
+            results_1d: selected_1d,
+            results_2d: selected_2d,
+            summary: results.summary,
+            kerf_1d: kerf1D,
+            kerf_2d: kerf2D,
+          }),
+        });
+      } else {
+        resp = await fetch(`${API}/api/project/${projectId}/save-results`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            results_1d: selected_1d,
+            results_2d: selected_2d,
+            summary: results.summary,
+            kerf_1d: kerf1D,
+            kerf_2d: kerf2D,
+          }),
+        });
+      }
       if (!resp.ok) throw new Error('Save failed');
       const data = await resp.json();
-      setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d} 1D + ${data.saved_2d} 2D results (Status: ${data.run_status})`);
+      setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d || 0} 1D + ${data.saved_2d || 0} 2D results (Status: ${data.run_status})`);
     } catch (err) {
       setSaveStatus(`Error: ${err.message}`);
     } finally {
@@ -855,6 +1183,11 @@ export default function App() {
               {project.Project_Quote_Number || project.Project_Description || `Project #${projectId}`}
             </div>
           )}
+          {isStandalone && (
+            <div className="project-badge">
+              Standalone Nesting — Mfg ID {manufactureId.slice(-6)}
+            </div>
+          )}
         </div>
       </header>
 
@@ -871,8 +1204,8 @@ export default function App() {
         {error && <div className="error-box">{error}</div>}
         {loading && <div className="loading-box">Loading...</div>}
 
-        {/* Step 0: Enter Project ID */}
-        {step === 0 && !loading && (
+        {/* Step 0: Enter Project ID (project mode only) */}
+        {step === 0 && !loading && !isStandalone && (
           <div className="card">
             <h2>Enter Project ID</h2>
             <p className="hint">Or pass ?project_id=123 in the URL</p>
@@ -891,8 +1224,45 @@ export default function App() {
           </div>
         )}
 
-        {/* Step 1: BOM */}
-        {step === 1 && (
+        {/* Step 1 — Standalone: source toggle + manual entry */}
+        {step === 1 && isStandalone && (
+          <div className="card">
+            <div className="card-header">
+              <h2>Quick Nest — Standalone</h2>
+              <div className="btn-group">
+                <button onClick={() => setNestSource('Manual')} className={`btn btn-small ${nestSource === 'Manual' ? 'btn-primary' : ''}`}>Manual entry</button>
+                <button onClick={() => setNestSource('CSV')} className={`btn btn-small ${nestSource === 'CSV' ? 'btn-primary' : ''}`} disabled>CSV upload (coming soon)</button>
+              </div>
+            </div>
+            <p className="hint">
+              Saved nests are visible to everyone at your company.
+              {savedRunInfo && (
+                <span style={{ marginLeft: 12 }}>
+                  Last run: #{savedRunInfo.run_number} — {savedRunInfo.run_date} — Status: {savedRunInfo.run_status}
+                </span>
+              )}
+            </p>
+            <ManualPartsEntry
+              parts={standaloneParts}
+              onChange={setStandaloneParts}
+              lookupTables={standaloneLookups}
+              onLookupTablesLoaded={setStandaloneLookups}
+            />
+            <div className="card-footer">
+              <span className="count">{standaloneParts.length} part{standaloneParts.length !== 1 ? 's' : ''} entered</span>
+              <button
+                onClick={() => setStep(2)}
+                className="btn btn-primary"
+                disabled={standaloneParts.length === 0 || !standaloneParts.some(p => p.form_type_id && p.material_type_id && p.quantity > 0)}
+              >
+                Next → Configure
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 1 — Project mode: BOM */}
+        {step === 1 && !isStandalone && (
           <div className="card">
             <div className="card-header">
               <h2>Bill of Materials</h2>
@@ -1628,18 +1998,22 @@ export default function App() {
               <div className="btn-group" style={{ alignItems: 'center' }}>
                 <span className="count">{selectedPatternCount} pattern{selectedPatternCount !== 1 ? 's' : ''} selected</span>
                 <button onClick={saveToZoho} className="btn btn-primary" disabled={saving || selectedPatternCount === 0}>
-                  {saving ? 'Saving...' : `Import ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''} to Project`}
+                  {saving ? 'Saving...' : `${isStandalone ? 'Save' : 'Import'} ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''}${isStandalone ? '' : ' to Project'}`}
                 </button>
-                <button
-                  onClick={() => { setShowPurchasePreview(true); setPurchaseStatus(''); }}
-                  className="btn btn-secondary"
-                  disabled={selectedPatternCount === 0}
-                >
-                  Generate Purchase List
-                </button>
-                <button onClick={fetchSavedPurchaseList} className="btn btn-small" disabled={loadingSavedPurchase}>
-                  {loadingSavedPurchase ? 'Loading...' : 'View Saved'}
-                </button>
+                {!isStandalone && (
+                  <>
+                    <button
+                      onClick={() => { setShowPurchasePreview(true); setPurchaseStatus(''); }}
+                      className="btn btn-secondary"
+                      disabled={selectedPatternCount === 0}
+                    >
+                      Generate Purchase List
+                    </button>
+                    <button onClick={fetchSavedPurchaseList} className="btn btn-small" disabled={loadingSavedPurchase}>
+                      {loadingSavedPurchase ? 'Loading...' : 'View Saved'}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             {saveStatus && (

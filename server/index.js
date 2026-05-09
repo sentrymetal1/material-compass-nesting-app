@@ -736,6 +736,459 @@ app.get('/api/debug-stock', async (req, res) => {
   }
 });
 
+// ============================================================
+// Standalone Nesting Tool endpoints
+// ============================================================
+
+// Cascade lookup endpoints — feed the manual-entry dropdowns
+app.get('/api/lookups/length-inch', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const resp = await axios.get(creatorApiBase()+'/report/All_Length_Inch_Lookups?limit=200', { headers: zohoHeaders(token) });
+    res.json((resp.data.data || []).map(row => ({
+      id: row.ID,
+      description: row.Description || '',
+      result: parseFloat(row.Result) || 0
+    })).sort((a, b) => a.result - b.result));
+  } catch (err) { res.status(500).json({ error: 'Failed to fetch length inch lookup', details: err.response?.data || err.message }); }
+});
+
+app.get('/api/lookups/plate-widths', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const resp = await axios.get(creatorApiBase()+'/report/All_Plate_Standard_Sizes?limit=200', { headers: zohoHeaders(token) });
+    res.json((resp.data.data || []).map(row => {
+      let widthFt = parseFloat(row.Width_Ft) || parseFloat(row.Width_ft) || 0;
+      if (!widthFt && row.Description) {
+        const m = (row.Description || '').match(/^(\d+)/);
+        if (m) widthFt = parseInt(m[1]);
+      }
+      return { id: row.ID, description: row.Description || '', width_ft: widthFt };
+    }).sort((a, b) => a.width_ft - b.width_ft));
+  } catch (err) { res.status(500).json({ error: 'Failed to fetch plate widths', details: err.response?.data || err.message }); }
+});
+
+app.get('/api/lookups/form-types', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const resp = await axios.get(creatorApiBase()+'/report/Form_Types_Report?limit=200', { headers: zohoHeaders(token) });
+    res.json((resp.data.data || []).map(row => ({ id: row.ID, name: row.Form_Type || row.zc_display_value || row.display_value || '', category: row.Category || '' })));
+  } catch (err) { res.status(500).json({ error: 'Failed to fetch form types', details: err.response?.data || err.message }); }
+});
+
+app.get('/api/lookups/material-types', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const resp = await axios.get(creatorApiBase()+'/report/Material_Types_Report?limit=200', { headers: zohoHeaders(token) });
+    res.json((resp.data.data || []).map(row => ({ id: row.ID, name: row.Material_Type || row.zc_display_value || row.display_value || '' })));
+  } catch (err) { res.status(500).json({ error: 'Failed to fetch material types', details: err.response?.data || err.message }); }
+});
+
+app.get('/api/lookups/specifications', async (req, res) => {
+  try {
+    const { form_type_id, material_type_id } = req.query;
+    if (!form_type_id || !material_type_id) return res.status(400).json({ error: 'form_type_id and material_type_id required' });
+    const token = await getAccessToken();
+    const criteria = '(Form_Type=='+form_type_id+'%26%26Material_Type=='+material_type_id+')';
+    const resp = await axios.get(creatorApiBase()+'/report/Material_Form_Detail_Report?criteria='+criteria+'&limit=200', { headers: zohoHeaders(token) });
+    res.json((resp.data.data || []).map(row => ({ id: row.ID, name: row.Type_Detail || row.zc_display_value || row.display_value || '' })));
+  } catch (err) { res.status(500).json({ error: 'Failed to fetch specifications', details: err.response?.data || err.message }); }
+});
+
+app.get('/api/lookups/materials', async (req, res) => {
+  try {
+    const { form_type_id, material_type_id } = req.query;
+    if (!form_type_id || !material_type_id) return res.status(400).json({ error: 'form_type_id and material_type_id required' });
+    const token = await getAccessToken();
+    const criteria = '(Form_Types=='+form_type_id+'%26%26Material_Types=='+material_type_id+')';
+    const resp = await axios.get(creatorApiBase()+'/report/Beam_Channel_Tee_Lookup_Report?criteria='+criteria+'&limit=500', { headers: zohoHeaders(token) });
+    res.json((resp.data.data || []).map(row => ({
+      id: row.ID,
+      name: row.Description || row.zc_display_value || row.display_value || '',
+      weight_per_ft: parseFloat(row.Weight_Lb_Ft) || 0,
+      dim1: parseFloat(row.Dim1) || 0,
+      density: parseFloat(row.Density) || 0
+    })));
+  } catch (err) { res.status(500).json({ error: 'Failed to fetch materials', details: err.response?.data || err.message }); }
+});
+
+// POST standalone save-results — mirrors /api/project/:id/save-results but no project context
+app.post('/api/standalone/save-results', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const {
+      manufacturer_id,
+      nest_source,
+      parts,
+      results_1d,
+      results_2d,
+      summary,
+      kerf_1d,
+      kerf_2d
+    } = req.body;
+
+    if (!manufacturer_id) return res.status(400).json({ error: 'manufacturer_id required' });
+    if (!nest_source || !['Manual', 'CSV'].includes(nest_source)) return res.status(400).json({ error: 'nest_source must be "Manual" or "CSV"' });
+    if (!Array.isArray(parts) || parts.length === 0) return res.status(400).json({ error: 'parts array required' });
+
+    // Build a map of parts by client-side temp id (used as bom_line_id in cuts)
+    const partsByClientId = {};
+    parts.forEach(p => { if (p.client_part_id) partsByClientId[p.client_part_id] = p; });
+
+    function getPartData(result) {
+      const id = result.cuts?.[0]?.bom_line_id;
+      if (!id) return { weight_per_ft: 0, thickness: 0, form_type_id: null, material_type_id: null, specification_id: null, material_id: null };
+      const p = partsByClientId[id];
+      if (!p) return { weight_per_ft: 0, thickness: 0, form_type_id: null, material_type_id: null, specification_id: null, material_id: null };
+      return {
+        weight_per_ft: parseFloat(p.weight_per_ft) || 0,
+        thickness: parseFloat(p.dim1) || 0,
+        density: parseFloat(p.density) || 0,
+        form_type_id: p.form_type_id || null,
+        material_type_id: p.material_type_id || null,
+        specification_id: p.specification_id || null,
+        material_id: p.material_id || null
+      };
+    }
+    function calcStockWt(r, wpf) {
+      if (!wpf || !r.stock_length_in) return 0;
+      return r.stock_width_in ? Math.round((r.stock_length_in * r.stock_width_in / 144) * wpf * 100) / 100 : Math.round(wpf * (r.stock_length_in / 12) * 100) / 100;
+    }
+
+    // Count existing standalone runs for this manufacturer to set Run_Number
+    let existingRuns = [];
+    try {
+      const rr = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Run_By=='+manufacturer_id+'%26%26(Nest_Source="Manual"%7C%7CNest_Source="CSV"))&limit=200', { headers: zohoHeaders(token) });
+      existingRuns = rr.data.data || [];
+    } catch (e) { if (e.response?.data?.code === 9280) existingRuns = []; else throw e; }
+
+    const now = new Date();
+    const rd = (now.getMonth()+1).toString().padStart(2,'0')+'/'+now.getDate().toString().padStart(2,'0')+'/'+now.getFullYear()+' '+now.toTimeString().slice(0,8);
+    const hd = {
+      Run_Number: existingRuns.length + 1,
+      Run_Date: rd,
+      Run_Status: 'Approved',
+      Run_By: manufacturer_id,
+      Nest_Source: nest_source,
+      Added_User: 'web_app'
+    };
+    if (kerf_1d !== undefined) hd.Kerf_1D = kerf_1d;
+    if (kerf_2d !== undefined) hd.Kerf_2D = kerf_2d;
+
+    const hr = await axios.post(creatorApiBase()+'/form/Nesting_Run_Header', { data: hd }, { headers: zohoHeaders(token) });
+    const nestRunID = hr.data.data.ID;
+
+    // Save Nesting_Run_Part records (one per input part)
+    let savedParts = 0;
+    for (const p of parts) {
+      try {
+        const pd = {
+          Nesting_Run: nestRunID,
+          Tag: p.tag || '',
+          Component: p.component || '',
+          Drawing: p.drawing || '',
+          QTY: parseFloat(p.quantity) || 0,
+          Length_FT: parseFloat(p.length_ft) || 0,
+          Galv: p.galv ? 'true' : 'false',
+          Plate_SA: p.plate_sa ? 'true' : 'false',
+          Nest_Type: p.nest_type || 'Linear'
+        };
+        if (p.form_type_id) pd.Form_Type = p.form_type_id;
+        if (p.material_type_id) pd.Material_Type = p.material_type_id;
+        if (p.specification_id) pd.Specification = p.specification_id;
+        if (p.material_id) pd.Material = p.material_id;
+        if (p.length_inch_id) pd.Length_INCH = p.length_inch_id;
+        if (p.width_ft_id) pd.Width_FT = p.width_ft_id;
+        if (p.width_inch_id) pd.Width_INCH = p.width_inch_id;
+        await axios.post(creatorApiBase()+'/form/Nesting_Run_Part', { data: pd }, { headers: zohoHeaders(token) });
+        savedParts++;
+      } catch (e) { console.error('Run_Part save error:', e.response?.data || e.message); }
+    }
+
+    let s1d = 0;
+    for (const result of results_1d || []) {
+      if (result.error || !result.cuts?.length) continue;
+      try {
+        const pd = getPartData(result);
+        const cuts = result.cuts.map((c, i) => ({
+          Part_Mark: c.part_mark,
+          Cut_Length: c.cut_length,
+          Cut_Weight: c.cut_length ? Math.round(pd.weight_per_ft * (c.cut_length / 12) * 10000) / 10000 : 0,
+          Quantity_On_This_Stock: c.quantity_on_this_stock,
+          Cut_Sequence: i + 1
+        }));
+        const saveData1d = {
+          Nesting_Run_Header: nestRunID,
+          Nesting_Type: '1D - Linear',
+          Form_Type: pd.form_type_id || result.form_type,
+          Material_Type: pd.material_type_id || result.material_origin,
+          Specification: pd.specification_id || result.cuts[0].spec_name,
+          Material: pd.material_id || result.cuts[0].material_type,
+          Stock_Size_Label: result.stock_label || '',
+          Stock_Length: result.stock_length_in,
+          Stock_Thickness: pd.thickness || 0,
+          Remnant_Length: Math.round((result.remnant_length_in || 0) * 100) / 100,
+          Waste_Percentage: result.waste_percentage,
+          Stock_Weight_LBS: calcStockWt(result, pd.weight_per_ft),
+          Stock_Sequence: s1d + 1,
+          Nesting_Cut_Detail: cuts
+        };
+        await axios.post(creatorApiBase()+'/form/Nesting_Stock_Result', { data: saveData1d }, { headers: zohoHeaders(token) });
+        s1d++;
+      } catch (e) { console.error('Standalone 1D save error:', e.response?.data || e.message); }
+    }
+
+    let s2d = 0;
+    for (const result of results_2d || []) {
+      if (result.error || !result.cuts?.length) continue;
+      try {
+        const pd = getPartData(result);
+        const degreeSign = String.fromCharCode(176);
+        const cuts = result.cuts.map((c, i) => ({
+          Part_Mark: c.part_mark,
+          Cut_Length: c.cut_length,
+          Cut_Width: c.cut_width,
+          Cut_Weight: (c.cut_length && c.cut_width) ? Math.round((c.cut_length * c.cut_width / 144) * pd.weight_per_ft * 10000) / 10000 : 0,
+          Quantity_On_This_Stock: c.quantity_on_this_stock,
+          X_Position: c.x_position || 0,
+          Y_Position: c.y_position || 0,
+          Rotation: c.rotation === 90 ? '90'+degreeSign : '0'+degreeSign,
+          Cut_Sequence: i + 1
+        }));
+        const saveData2d = {
+          Nesting_Run_Header: nestRunID,
+          Nesting_Type: '2D - Panel',
+          Form_Type: pd.form_type_id || result.form_type,
+          Material_Type: pd.material_type_id || result.material_origin,
+          Specification: pd.specification_id || result.cuts[0].spec_name,
+          Material: pd.material_id || result.cuts[0].material_type,
+          Stock_Size_Label: result.stock_label || '',
+          Stock_Length: result.stock_length_in,
+          Stock_Width: result.stock_width_in,
+          Stock_Thickness: pd.thickness || 0,
+          Grain_Direction: result.grain_direction || '',
+          Remnant_Area: result.remnant_area_in2 || 0,
+          Waste_Percentage: result.waste_percentage,
+          Stock_Weight_LBS: calcStockWt(result, pd.weight_per_ft),
+          Stock_Sequence: s2d + 1,
+          Nesting_Cut_Detail: cuts
+        };
+        await axios.post(creatorApiBase()+'/form/Nesting_Stock_Result', { data: saveData2d }, { headers: zohoHeaders(token) });
+        s2d++;
+      } catch (e) { console.error('Standalone 2D save error:', e.response?.data || e.message); }
+    }
+
+    try {
+      await axios.patch(creatorApiBase()+'/report/Nesting_Run_Header_Report/'+nestRunID, { data: {
+        Total_Stock_Pieces: s1d + s2d,
+        Total_Waste_Inches: Math.round((summary?.total_remnant_length_in || 0) * 10000) / 10000,
+        Notes: 'Standalone ('+nest_source+') — Saved '+s1d+' 1D + '+s2d+' 2D | '+savedParts+' input parts | Waste: '+(summary?.avg_waste_pct_1d || 0)+'%'
+      } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    } catch (e) { console.error('Standalone header patch failed'); }
+
+    res.json({
+      success: true,
+      nest_run_id: nestRunID,
+      run_number: existingRuns.length + 1,
+      run_status: 'Approved',
+      nest_source: nest_source,
+      saved_parts: savedParts,
+      saved_1d: s1d,
+      saved_2d: s2d
+    });
+  } catch (err) {
+    console.error('Standalone save error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to save standalone results', details: err.response?.data || err.message });
+  }
+});
+
+// GET previous standalone nest runs for this manufacturer (shared across users)
+app.get('/api/standalone/nesting-results', async (req, res) => {
+  try {
+    const { manufacturer_id, run_id } = req.query;
+    if (!manufacturer_id) return res.status(400).json({ error: 'manufacturer_id required' });
+    const token = await getAccessToken();
+
+    var runHeader = null;
+    var nestRunID = null;
+
+    if (run_id) {
+      // Load a specific saved run by ID
+      try {
+        const rr = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report/'+run_id, { headers: zohoHeaders(token) });
+        runHeader = rr.data.data;
+        nestRunID = runHeader?.ID;
+      } catch (e) {
+        if (e.response?.data?.code === 9280 || e.response?.status === 404) return res.json({ found: false, message: 'Run not found' });
+        throw e;
+      }
+    } else {
+      // Load most recent standalone run for this manufacturer
+      var runResp;
+      try {
+        runResp = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Run_By=='+manufacturer_id+'%26%26(Nest_Source="Manual"%7C%7CNest_Source="CSV")%26%26Run_Status="Approved")&limit=10', { headers: zohoHeaders(token) });
+      } catch (e) {
+        if (e.response?.data?.code === 9280 || e.response?.status === 404) return res.json({ found: false, message: 'No standalone nest runs found' });
+        throw e;
+      }
+      var runs = runResp.data.data || [];
+      if (runs.length === 0) return res.json({ found: false, message: 'No standalone nest runs found' });
+      runs.sort(function(a, b) { return (parseInt(b.Run_Number) || 0) - (parseInt(a.Run_Number) || 0); });
+      runHeader = runs[0];
+      nestRunID = runHeader.ID;
+    }
+
+    function safeStr(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.zc_display_value || val.display_value || val.ID || ''; return String(val); }
+    function safeId(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.ID || val.zc_display_value || ''; return String(val); }
+
+    // Load input parts (Nesting_Run_Part)
+    var inputParts = [];
+    try {
+      const pResp = await axios.get(creatorApiBase()+'/report/All_Nesting_Run_Parts?criteria=(Nesting_Run=='+nestRunID+')&limit=500', { headers: zohoHeaders(token) });
+      inputParts = (pResp.data.data || []).map(function(row) {
+        return {
+          id: row.ID,
+          tag: safeStr(row.Tag),
+          component: safeStr(row.Component),
+          drawing: safeStr(row.Drawing),
+          form_type_id: safeId(row.Form_Type),
+          form_type_name: safeStr(row.Form_Type),
+          material_type_id: safeId(row.Material_Type),
+          material_type_name: safeStr(row.Material_Type),
+          specification_id: safeId(row.Specification),
+          spec_name: safeStr(row.Specification),
+          material_id: safeId(row.Material),
+          material_name: safeStr(row.Material),
+          quantity: parseFloat(row.QTY) || 0,
+          length_ft: parseFloat(row.Length_FT) || 0,
+          length_inch_id: safeId(row.Length_INCH),
+          length_inch_display: safeStr(row.Length_INCH),
+          width_ft_id: safeId(row.Width_FT),
+          width_ft_display: safeStr(row.Width_FT),
+          width_inch_id: safeId(row.Width_INCH),
+          width_inch_display: safeStr(row.Width_INCH),
+          galv: safeStr(row.Galv) === 'true',
+          plate_sa: safeStr(row.Plate_SA) === 'true',
+          nest_type: safeStr(row.Nest_Type)
+        };
+      });
+    } catch (e) { if (e.response?.data?.code !== 9280) console.error('Input parts fetch error:', e.response?.data || e.message); }
+
+    // Load stock results + cuts (mirrors project nesting-results)
+    var stockResults = [];
+    var startIndex = 0, hasMore = true;
+    while (hasMore) {
+      try {
+        var srUrl = creatorApiBase()+'/report/Nesting_Stock_Results?criteria=(Nesting_Run_Header=='+nestRunID+')&limit=200';
+        if (startIndex > 0) srUrl += '&from='+startIndex;
+        var srResp = await axios.get(srUrl, { headers: zohoHeaders(token) });
+        var batch = srResp.data.data || [];
+        stockResults = stockResults.concat(batch);
+        hasMore = batch.length === 200;
+        startIndex += 200;
+      } catch (e) {
+        if (e.response?.data?.code === 9280) hasMore = false;
+        else throw e;
+      }
+    }
+
+    var stockResultIds = stockResults.map(function(sr) { return sr.ID; });
+    var allCutDetails = [];
+    for (var i = 0; i < stockResultIds.length; i++) {
+      try {
+        var cdResp = await axios.get(creatorApiBase()+'/report/All_Nesting_Cut_Details?criteria=(Nesting_Stock_Result_Lookup=='+stockResultIds[i]+')&limit=200', { headers: zohoHeaders(token) });
+        var cuts = cdResp.data.data || [];
+        cuts.forEach(function(c) { c._stock_result_id = stockResultIds[i]; });
+        allCutDetails = allCutDetails.concat(cuts);
+      } catch (e) { if (e.response?.data?.code !== 9280) console.error('Cut detail fetch error for SR', stockResultIds[i], ':', e.response?.data || e.message); }
+    }
+    var cutsByStock = {};
+    allCutDetails.forEach(function(cd) { var srId = cd._stock_result_id; if (!cutsByStock[srId]) cutsByStock[srId] = []; cutsByStock[srId].push(cd); });
+
+    var results_1d = [];
+    var results_2d = [];
+    var nameLookup = {};
+    var totalWaste1d = 0, count1d = 0;
+    stockResults.forEach(function(sr) {
+      var nestType = safeStr(sr.Nesting_Type);
+      var formType = sr.Form_Type || {}, materialType = sr.Material_Type || {}, specification = sr.Specification || {}, material = sr.Material || {};
+      var formTypeId = safeId(formType), materialTypeId = safeId(materialType), specId = safeId(specification), materialId = safeId(material);
+      var ftName = (typeof formType === 'object') ? (formType.zc_display_value || formType.display_value || '') : '';
+      var mtName = (typeof materialType === 'object') ? (materialType.zc_display_value || materialType.display_value || '') : '';
+      var spName = (typeof specification === 'object') ? (specification.zc_display_value || specification.display_value || '') : '';
+      var matName = (typeof material === 'object') ? (material.zc_display_value || material.display_value || '') : '';
+      if (formTypeId && ftName) nameLookup[formTypeId] = ftName;
+      if (materialTypeId && mtName) nameLookup[materialTypeId] = mtName;
+      if (specId && spName) nameLookup[specId] = spName;
+      if (materialId && matName) nameLookup[materialId] = matName;
+      var srCuts = cutsByStock[sr.ID] || [];
+      srCuts.sort(function(a, b) { return (parseInt(a.Cut_Sequence) || 0) - (parseInt(b.Cut_Sequence) || 0); });
+      var cuts = srCuts.map(function(cd) {
+        var rotationStr = safeStr(cd.Rotation) || '0';
+        var rotation = parseInt(rotationStr) || 0;
+        return { part_mark: safeStr(cd.Part_Mark), cut_length: parseFloat(cd.Cut_Length) || 0, cut_width: parseFloat(cd.Cut_Width) || 0, cut_weight: parseFloat(cd.Cut_Weight) || 0, quantity_on_this_stock: parseInt(cd.Quantity_On_This_Stock) || 1, x_position: parseFloat(cd.X_Position) || 0, y_position: parseFloat(cd.Y_Position) || 0, rotation: rotation, cut_sequence: parseInt(cd.Cut_Sequence) || 0, spec_name: specId, material_type: materialId };
+      });
+      var stockLength = parseFloat(sr.Stock_Length) || 0, stockWidth = parseFloat(sr.Stock_Width) || 0, wastePercentage = parseFloat(sr.Waste_Percentage) || 0;
+      var resultObj = { stock_result_id: safeStr(sr.ID), form_type: formTypeId, material_origin: materialTypeId, stock_length_in: stockLength, stock_label: safeStr(sr.Stock_Size_Label) || (ftName + ' | ' + mtName), waste_percentage: wastePercentage, stock_weight_lbs: parseFloat(sr.Stock_Weight_LBS) || 0, stock_sequence: parseInt(sr.Stock_Sequence) || 0, grain_direction: safeStr(sr.Grain_Direction), cuts: cuts };
+      if (nestType.indexOf('1D') >= 0 || nestType.indexOf('Linear') >= 0) { resultObj.remnant_length_in = parseFloat(sr.Remnant_Length) || 0; results_1d.push(resultObj); totalWaste1d += wastePercentage; count1d++; }
+      else if (nestType.indexOf('2D') >= 0 || nestType.indexOf('Panel') >= 0) { resultObj.stock_width_in = stockWidth; resultObj.remnant_area_in2 = parseFloat(sr.Remnant_Area) || 0; results_2d.push(resultObj); }
+    });
+    results_1d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
+    results_2d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
+    var avgWaste1d = count1d > 0 ? totalWaste1d / count1d : 0;
+
+    res.json({
+      found: true,
+      run_header: {
+        id: nestRunID,
+        run_number: parseInt(runHeader.Run_Number) || 1,
+        run_date: safeStr(runHeader.Run_Date),
+        run_status: safeStr(runHeader.Run_Status),
+        run_by: safeStr(runHeader.Run_By),
+        nest_source: safeStr(runHeader.Nest_Source),
+        kerf_1d: parseFloat(runHeader.Kerf_1D) || 0,
+        kerf_2d: parseFloat(runHeader.Kerf_2D) || 0,
+        notes: (typeof runHeader.Notes === 'object') ? '' : (runHeader.Notes || ''),
+        total_stock_pieces: parseInt(runHeader.Total_Stock_Pieces) || (results_1d.length + results_2d.length)
+      },
+      input_parts: inputParts,
+      results_1d: results_1d,
+      results_2d: results_2d,
+      summary: { total_stock_pieces: results_1d.length + results_2d.length, avg_waste_pct_1d: Math.round(avgWaste1d * 10) / 10, errors: [] },
+      _nameLookup: nameLookup
+    });
+  } catch (err) {
+    console.error('Standalone nesting-results fetch error:', err.response?.data || err.message);
+    if (err.response?.data?.code === 9280 || err.response?.status === 404) return res.json({ found: false, message: 'No nesting results found' });
+    res.status(500).json({ error: 'Failed to fetch standalone nesting results', details: err.response?.data || err.message });
+  }
+});
+
+// GET list of standalone runs for the recall panel
+app.get('/api/standalone/nesting-runs', async (req, res) => {
+  try {
+    const { manufacturer_id } = req.query;
+    if (!manufacturer_id) return res.status(400).json({ error: 'manufacturer_id required' });
+    const token = await getAccessToken();
+    const resp = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Run_By=='+manufacturer_id+'%26%26(Nest_Source="Manual"%7C%7CNest_Source="CSV")%26%26Run_Status="Approved")&limit=200', { headers: zohoHeaders(token) });
+    function safeStr(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.zc_display_value || val.display_value || val.ID || ''; return String(val); }
+    const runs = (resp.data.data || []).map(r => ({
+      id: r.ID,
+      run_number: parseInt(r.Run_Number) || 0,
+      run_date: safeStr(r.Run_Date),
+      nest_source: safeStr(r.Nest_Source),
+      total_stock_pieces: parseInt(r.Total_Stock_Pieces) || 0,
+      notes: (typeof r.Notes === 'object') ? '' : (r.Notes || '')
+    }));
+    runs.sort((a, b) => b.run_number - a.run_number);
+    res.json({ count: runs.length, runs });
+  } catch (err) {
+    console.error('Standalone runs list error:', err.response?.data || err.message);
+    if (err.response?.data?.code === 9280 || err.response?.status === 404) return res.json({ count: 0, runs: [] });
+    res.status(500).json({ error: 'Failed to fetch standalone runs', details: err.response?.data || err.message });
+  }
+});
+
 // Catch-all: serve React app
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html')); });
 
