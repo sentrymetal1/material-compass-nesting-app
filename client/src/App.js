@@ -1085,7 +1085,12 @@ export default function App() {
       });
       if (!resp.ok) {
         let detail = '';
-        try { const errBody = await resp.json(); detail = errBody.details || errBody.error || JSON.stringify(errBody); } catch (_) { detail = await resp.text().catch(() => ''); }
+        try {
+          const errBody = await resp.json();
+          const d = errBody.details ?? errBody.error ?? errBody;
+          detail = typeof d === 'string' ? d : JSON.stringify(d);
+        } catch (_) { detail = await resp.text().catch(() => ''); }
+        console.error('Nesting API failure:', detail);
         throw new Error(`Nesting API error (${resp.status}): ${detail || 'no detail'}`);
       }
       const data = await resp.json();
