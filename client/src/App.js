@@ -13,6 +13,11 @@ function getManufactureIdFromURL() {
   return params.get('Manufacture_ID') || params.get('manufacture_id') || params.get('mfg_id') || '';
 }
 
+// Lookup record IDs that represent "0" — used as defaults for dimension fields so saved Run_Part
+// records never have null values for INCH(L), FT(W), INCH(W).
+const ZERO_INCH_ID = '4111484000000521139';     // Length_INCH_Lookup record where Description="0"
+const ZERO_FT_WIDTH_ID = '4111484000003558015'; // Plate_Standard_Sizes record where width = 0'
+
 // Parse "1/4", "3/8", "1-1/4", "2", "W10 x 12" etc. into an array of numeric tokens
 // for size-aware sort. "1-1/4" -> [1.25], "W10 x 12" -> [10, 12], "L4 x 4 x 3/8" -> [4, 4, 0.375].
 function materialSortKey(name) {
@@ -388,7 +393,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
       specification_id: last.specification_id, spec_name: last.spec_name,
       material_id: last.material_id, material_name: last.material_name,
       weight_per_ft: last.weight_per_ft, dim1: last.dim1, density: last.density,
-      width_ft_id: last.width_ft_id, // panels often share width
+      width_ft_id: last.width_ft_id || ZERO_FT_WIDTH_ID, // panels often share width
       nest_type: last.nest_type
     } : {
       form_type_id: '', form_type_name: '',
@@ -396,13 +401,13 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
       specification_id: '', spec_name: '',
       material_id: '', material_name: '',
       weight_per_ft: 0, dim1: 0, density: 0,
-      width_ft_id: '',
+      width_ft_id: ZERO_FT_WIDTH_ID,
       nest_type: 'Linear'
     };
     onChange([...parts, {
       client_part_id: newId, tag: '', component: '', drawing: '',
       ...seed,
-      quantity: 1, length_ft: 0, length_inch_id: '', width_inch_id: '',
+      quantity: 1, length_ft: 0, length_inch_id: ZERO_INCH_ID, width_inch_id: ZERO_INCH_ID,
       galv: false, plate_sa: false
     }]);
   }
@@ -411,9 +416,14 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
   }
 
   function isRowValid(p) {
+    let lenIn = (parseInt(p.length_ft) || 0) * 12;
+    if (p.length_inch_id) {
+      const rec = lengthInch.find(r => String(r.id) === String(p.length_inch_id));
+      if (rec) lenIn += parseFloat(rec.result) || 0;
+    }
     return !!(p.form_type_id && p.material_type_id && p.specification_id && p.material_id
       && parseInt(p.quantity) > 0
-      && (parseInt(p.length_ft) > 0 || p.length_inch_id));
+      && lenIn > 0);
   }
 
   return (
@@ -465,8 +475,8 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                           specification_id: '', spec_name: '',
                           material_id: '', material_name: '', weight_per_ft: 0, dim1: 0, density: 0,
                           nest_type: newNestType,
-                          // Clear width fields if switching to Linear
-                          ...(newNestType === 'Linear' ? { width_ft_id: '', width_inch_id: '' } : {})
+                          // Reset width fields to zero IDs if switching to Linear
+                          ...(newNestType === 'Linear' ? { width_ft_id: ZERO_FT_WIDTH_ID, width_inch_id: ZERO_INCH_ID } : {})
                         });
                         ensureCascade(e.target.value, p.material_type_id);
                       }}>
@@ -516,20 +526,17 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                     <td><input type="number" min="1" value={p.quantity} onChange={e => updateRow(idx, { quantity: parseInt(e.target.value) || 0 })} style={{ width: 50 }} /></td>
                     <td><input type="number" min="0" step="1" value={p.length_ft} onChange={e => updateRow(idx, { length_ft: parseInt(e.target.value) || 0 })} style={{ width: 50 }} /></td>
                     <td>
-                      <select value={p.length_inch_id} onChange={e => updateRow(idx, { length_inch_id: e.target.value })}>
-                        <option value="">0</option>
+                      <select value={p.length_inch_id || ZERO_INCH_ID} onChange={e => updateRow(idx, { length_inch_id: e.target.value })}>
                         {lengthInch.map(li => <option key={li.id} value={li.id}>{li.description}</option>)}
                       </select>
                     </td>
                     <td>
-                      <select value={p.width_ft_id} onChange={e => updateRow(idx, { width_ft_id: e.target.value })} disabled={p.nest_type !== 'Panel'}>
-                        <option value="">—</option>
+                      <select value={p.width_ft_id || ZERO_FT_WIDTH_ID} onChange={e => updateRow(idx, { width_ft_id: e.target.value })} disabled={p.nest_type !== 'Panel'}>
                         {plateWidths.map(pw => <option key={pw.id} value={pw.id}>{pw.description || pw.width_ft + "'"}</option>)}
                       </select>
                     </td>
                     <td>
-                      <select value={p.width_inch_id} onChange={e => updateRow(idx, { width_inch_id: e.target.value })} disabled={p.nest_type !== 'Panel'}>
-                        <option value="">0</option>
+                      <select value={p.width_inch_id || ZERO_INCH_ID} onChange={e => updateRow(idx, { width_inch_id: e.target.value })} disabled={p.nest_type !== 'Panel'}>
                         {lengthInch.map(li => <option key={li.id} value={li.id}>{li.description}</option>)}
                       </select>
                     </td>
@@ -1317,11 +1324,17 @@ export default function App() {
               <span className="count">
                 {standaloneParts.length} part{standaloneParts.length !== 1 ? 's' : ''} entered
                 {(() => {
-                  const incomplete = standaloneParts.filter(p =>
-                    !(p.form_type_id && p.material_type_id && p.specification_id && p.material_id
-                      && parseInt(p.quantity) > 0
-                      && (parseInt(p.length_ft) > 0 || p.length_inch_id))
-                  ).length;
+                  const liTbl = standaloneLookups.lengthInch || [];
+                  const isPartValid = (p) => {
+                    let lenIn = (parseInt(p.length_ft) || 0) * 12;
+                    if (p.length_inch_id) {
+                      const rec = liTbl.find(r => String(r.id) === String(p.length_inch_id));
+                      if (rec) lenIn += parseFloat(rec.result) || 0;
+                    }
+                    return !!(p.form_type_id && p.material_type_id && p.specification_id && p.material_id
+                      && parseInt(p.quantity) > 0 && lenIn > 0);
+                  };
+                  const incomplete = standaloneParts.filter(p => !isPartValid(p)).length;
                   if (incomplete > 0) return <span style={{ color: '#d32f2f', marginLeft: 8 }}>— {incomplete} incomplete</span>;
                   return null;
                 })()}
@@ -1329,14 +1342,19 @@ export default function App() {
               <button
                 onClick={() => setStep(2)}
                 className="btn btn-primary"
-                disabled={
-                  standaloneParts.length === 0 ||
-                  standaloneParts.some(p =>
-                    !(p.form_type_id && p.material_type_id && p.specification_id && p.material_id
-                      && parseInt(p.quantity) > 0
-                      && (parseInt(p.length_ft) > 0 || p.length_inch_id))
-                  )
-                }
+                disabled={(() => {
+                  if (standaloneParts.length === 0) return true;
+                  const liTbl = standaloneLookups.lengthInch || [];
+                  return standaloneParts.some(p => {
+                    let lenIn = (parseInt(p.length_ft) || 0) * 12;
+                    if (p.length_inch_id) {
+                      const rec = liTbl.find(r => String(r.id) === String(p.length_inch_id));
+                      if (rec) lenIn += parseFloat(rec.result) || 0;
+                    }
+                    return !(p.form_type_id && p.material_type_id && p.specification_id && p.material_id
+                      && parseInt(p.quantity) > 0 && lenIn > 0);
+                  });
+                })()}
               >
                 Next → Configure
               </button>
