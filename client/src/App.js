@@ -534,10 +534,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                       </select>
                     </td>
                     <td>
-                      <select value={p.nest_type} onChange={e => updateRow(idx, {
-                        nest_type: e.target.value,
-                        ...(e.target.value === 'Linear' ? { width_ft_id: '', width_inch_id: '' } : {})
-                      })}>
+                      <select value={p.nest_type} disabled style={{ background: '#f5f6f8', cursor: 'not-allowed' }}>
                         <option value="Linear">Linear</option>
                         <option value="Panel">Panel</option>
                       </select>
