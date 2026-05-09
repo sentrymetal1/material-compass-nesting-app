@@ -296,9 +296,8 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
   const [matTypes, setMatTypes] = useState(lookupTables?.matTypes || []);
   const [lengthInch, setLengthInch] = useState(lookupTables?.lengthInch || []);
   const [plateWidths, setPlateWidths] = useState(lookupTables?.plateWidths || []);
-  // Per-row caches: { rowIdx: [{id,name}] }
-  const [specCache, setSpecCache] = useState({});
-  const [matCache, setMatCache] = useState({});
+  // Cascade cache keyed by "formTypeId|materialTypeId" — survives row reorders and component remounts
+  const [cascadeCache, setCascadeCache] = useState({});
 
   useEffect(() => {
     async function loadBase() {
@@ -309,10 +308,10 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
           fetch(`${API}/api/lookups/length-inch`),
           fetch(`${API}/api/lookups/plate-widths`),
         ]);
-        const ft = ftRes.ok ? await ftRes.json() : [];
-        const mt = mtRes.ok ? await mtRes.json() : [];
-        const li = liRes.ok ? await liRes.json() : [];
-        const pw = pwRes.ok ? await pwRes.json() : [];
+        const ft = (ftRes.ok ? await ftRes.json() : []).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const mt = (mtRes.ok ? await mtRes.json() : []).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const li = liRes.ok ? await liRes.json() : []; // already sorted by decimal result on server
+        const pw = pwRes.ok ? await pwRes.json() : []; // already sorted by width_ft on server
         setFormTypes(ft);
         setMatTypes(mt);
         setLengthInch(li);
@@ -323,23 +322,31 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
     if (formTypes.length === 0) loadBase();
   }, []); // eslint-disable-line
 
-  async function loadSpecsAndMaterialsForRow(idx, formTypeId, materialTypeId) {
-    if (!formTypeId || !materialTypeId) {
-      setSpecCache(p => ({ ...p, [idx]: [] }));
-      setMatCache(p => ({ ...p, [idx]: [] }));
-      return;
-    }
+  async function ensureCascade(formTypeId, materialTypeId) {
+    if (!formTypeId || !materialTypeId) return;
+    const key = `${formTypeId}|${materialTypeId}`;
+    if (cascadeCache[key]) return;
     try {
       const [specRes, matRes] = await Promise.all([
         fetch(`${API}/api/lookups/specifications?form_type_id=${formTypeId}&material_type_id=${materialTypeId}`),
         fetch(`${API}/api/lookups/materials?form_type_id=${formTypeId}&material_type_id=${materialTypeId}`),
       ]);
-      const specs = specRes.ok ? await specRes.json() : [];
-      const mats = matRes.ok ? await matRes.json() : [];
-      setSpecCache(p => ({ ...p, [idx]: specs }));
-      setMatCache(p => ({ ...p, [idx]: mats }));
+      const specs = (specRes.ok ? await specRes.json() : []).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      const mats = (matRes.ok ? await matRes.json() : []).sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+      setCascadeCache(p => ({ ...p, [key]: { specs, mats } }));
     } catch (e) { console.error('Cascade load failed:', e); }
   }
+
+  // Auto-prefetch cascade for any rows that already have form+mat picked (handles component remount)
+  useEffect(() => {
+    const seen = new Set();
+    parts.forEach(p => {
+      if (p.form_type_id && p.material_type_id) {
+        const key = `${p.form_type_id}|${p.material_type_id}`;
+        if (!seen.has(key)) { seen.add(key); ensureCascade(p.form_type_id, p.material_type_id); }
+      }
+    });
+  }, [parts]); // eslint-disable-line
 
   function updateRow(idx, patch) {
     const next = parts.map((p, i) => i === idx ? { ...p, ...patch } : p);
@@ -360,8 +367,12 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
   }
   function removeRow(idx) {
     onChange(parts.filter((_, i) => i !== idx));
-    setSpecCache(p => { const n = { ...p }; delete n[idx]; return n; });
-    setMatCache(p => { const n = { ...p }; delete n[idx]; return n; });
+  }
+
+  function isRowValid(p) {
+    return !!(p.form_type_id && p.material_type_id && p.specification_id && p.material_id
+      && parseInt(p.quantity) > 0
+      && (parseInt(p.length_ft) > 0 || p.length_inch_id));
   }
 
   return (
@@ -395,10 +406,13 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
             </thead>
             <tbody>
               {parts.map((p, idx) => {
-                const specs = specCache[idx] || [];
-                const mats = matCache[idx] || [];
+                const cacheKey = `${p.form_type_id}|${p.material_type_id}`;
+                const cached = cascadeCache[cacheKey] || { specs: [], mats: [] };
+                const specs = cached.specs;
+                const mats = cached.mats;
+                const valid = isRowValid(p);
                 return (
-                  <tr key={p.client_part_id}>
+                  <tr key={p.client_part_id} style={!valid && (p.form_type_id || p.material_type_id) ? { background: '#fff8e1' } : {}}>
                     <td><input type="text" value={p.tag} onChange={e => updateRow(idx, { tag: e.target.value })} placeholder="P-1" style={{ width: 70 }} /></td>
                     <td>
                       <select value={p.form_type_id} onChange={e => {
@@ -409,7 +423,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                           specification_id: '', spec_name: '',
                           material_id: '', material_name: '', weight_per_ft: 0, dim1: 0, density: 0
                         });
-                        loadSpecsAndMaterialsForRow(idx, e.target.value, p.material_type_id);
+                        ensureCascade(e.target.value, p.material_type_id);
                       }}>
                         <option value="">—</option>
                         {formTypes.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
@@ -424,7 +438,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                           specification_id: '', spec_name: '',
                           material_id: '', material_name: '', weight_per_ft: 0, dim1: 0, density: 0
                         });
-                        loadSpecsAndMaterialsForRow(idx, p.form_type_id, e.target.value);
+                        ensureCascade(p.form_type_id, e.target.value);
                       }}>
                         <option value="">—</option>
                         {matTypes.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -1249,11 +1263,29 @@ export default function App() {
               onLookupTablesLoaded={setStandaloneLookups}
             />
             <div className="card-footer">
-              <span className="count">{standaloneParts.length} part{standaloneParts.length !== 1 ? 's' : ''} entered</span>
+              <span className="count">
+                {standaloneParts.length} part{standaloneParts.length !== 1 ? 's' : ''} entered
+                {(() => {
+                  const incomplete = standaloneParts.filter(p =>
+                    !(p.form_type_id && p.material_type_id && p.specification_id && p.material_id
+                      && parseInt(p.quantity) > 0
+                      && (parseInt(p.length_ft) > 0 || p.length_inch_id))
+                  ).length;
+                  if (incomplete > 0) return <span style={{ color: '#d32f2f', marginLeft: 8 }}>— {incomplete} incomplete</span>;
+                  return null;
+                })()}
+              </span>
               <button
                 onClick={() => setStep(2)}
                 className="btn btn-primary"
-                disabled={standaloneParts.length === 0 || !standaloneParts.some(p => p.form_type_id && p.material_type_id && p.quantity > 0)}
+                disabled={
+                  standaloneParts.length === 0 ||
+                  standaloneParts.some(p =>
+                    !(p.form_type_id && p.material_type_id && p.specification_id && p.material_id
+                      && parseInt(p.quantity) > 0
+                      && (parseInt(p.length_ft) > 0 || p.length_inch_id))
+                  )
+                }
               >
                 Next → Configure
               </button>
