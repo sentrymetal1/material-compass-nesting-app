@@ -772,7 +772,12 @@ app.get('/api/lookups/form-types', async (req, res) => {
   try {
     const token = await getAccessToken();
     const resp = await axios.get(creatorApiBase()+'/report/Form_Types_Report?limit=200', { headers: zohoHeaders(token) });
-    res.json((resp.data.data || []).map(row => ({ id: row.ID, name: row.Form_Type || row.zc_display_value || row.display_value || '', category: row.Category || '' })));
+    res.json((resp.data.data || []).map(row => ({
+      id: row.ID,
+      name: row.Form_Type || row.zc_display_value || row.display_value || '',
+      category: row.Category || '',
+      measurement: row.Measurement || '' // 'Linear' or 'Panel' — drives nest_type default in standalone widget
+    })));
   } catch (err) { res.status(500).json({ error: 'Failed to fetch form types', details: err.response?.data || err.message }); }
 });
 

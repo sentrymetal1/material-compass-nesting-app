@@ -354,15 +354,29 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
   }
   function addRow() {
     const newId = `part_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    onChange([...parts, {
-      client_part_id: newId, tag: '', component: '', drawing: '',
+    // Copy form/mat/spec/material from the last row to speed up similar-part entry; user can change.
+    const last = parts[parts.length - 1];
+    const seed = last ? {
+      form_type_id: last.form_type_id, form_type_name: last.form_type_name,
+      material_type_id: last.material_type_id, material_type_name: last.material_type_name,
+      specification_id: last.specification_id, spec_name: last.spec_name,
+      material_id: last.material_id, material_name: last.material_name,
+      weight_per_ft: last.weight_per_ft, dim1: last.dim1, density: last.density,
+      width_ft_id: last.width_ft_id, // panels often share width
+      galv: last.galv, plate_sa: last.plate_sa, nest_type: last.nest_type
+    } : {
       form_type_id: '', form_type_name: '',
       material_type_id: '', material_type_name: '',
       specification_id: '', spec_name: '',
       material_id: '', material_name: '',
-      quantity: 1, length_ft: 0, length_inch_id: '', width_ft_id: '', width_inch_id: '',
-      galv: false, plate_sa: false, nest_type: 'Linear',
-      weight_per_ft: 0, dim1: 0, density: 0
+      weight_per_ft: 0, dim1: 0, density: 0,
+      width_ft_id: '',
+      galv: false, plate_sa: false, nest_type: 'Linear'
+    };
+    onChange([...parts, {
+      client_part_id: newId, tag: '', component: '', drawing: '',
+      ...seed,
+      quantity: 1, length_ft: 0, length_inch_id: '', width_inch_id: ''
     }]);
   }
   function removeRow(idx) {
@@ -388,6 +402,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
           <table className="table">
             <thead>
               <tr>
+                <th></th>
                 <th>Tag</th>
                 <th>Form</th>
                 <th>Mat Type</th>
@@ -401,7 +416,6 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                 <th>Galv</th>
                 <th>SA</th>
                 <th>Nest Type</th>
-                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -413,15 +427,21 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                 const valid = isRowValid(p);
                 return (
                   <tr key={p.client_part_id} style={!valid && (p.form_type_id || p.material_type_id) ? { background: '#fff8e1' } : {}}>
+                    <td><button onClick={() => removeRow(idx)} className="btn btn-small btn-danger" title="Remove row">×</button></td>
                     <td><input type="text" value={p.tag} onChange={e => updateRow(idx, { tag: e.target.value })} placeholder="P-1" style={{ width: 70 }} /></td>
                     <td>
                       <select value={p.form_type_id} onChange={e => {
                         const ft = formTypes.find(f => String(f.id) === String(e.target.value));
+                        const measurement = ft?.measurement || '';
+                        const newNestType = measurement === 'Panel' ? 'Panel' : (measurement === 'Linear' ? 'Linear' : p.nest_type);
                         updateRow(idx, {
                           form_type_id: e.target.value,
                           form_type_name: ft?.name || '',
                           specification_id: '', spec_name: '',
-                          material_id: '', material_name: '', weight_per_ft: 0, dim1: 0, density: 0
+                          material_id: '', material_name: '', weight_per_ft: 0, dim1: 0, density: 0,
+                          nest_type: newNestType,
+                          // Clear width fields if switching to Linear
+                          ...(newNestType === 'Linear' ? { width_ft_id: '', width_inch_id: '' } : {})
                         });
                         ensureCascade(e.target.value, p.material_type_id);
                       }}>
@@ -491,12 +511,14 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                     <td><input type="checkbox" checked={p.galv} onChange={e => updateRow(idx, { galv: e.target.checked })} /></td>
                     <td><input type="checkbox" checked={p.plate_sa} onChange={e => updateRow(idx, { plate_sa: e.target.checked })} /></td>
                     <td>
-                      <select value={p.nest_type} onChange={e => updateRow(idx, { nest_type: e.target.value })}>
+                      <select value={p.nest_type} onChange={e => updateRow(idx, {
+                        nest_type: e.target.value,
+                        ...(e.target.value === 'Linear' ? { width_ft_id: '', width_inch_id: '' } : {})
+                      })}>
                         <option value="Linear">Linear</option>
                         <option value="Panel">Panel</option>
                       </select>
                     </td>
-                    <td><button onClick={() => removeRow(idx)} className="btn btn-small btn-danger">×</button></td>
                   </tr>
                 );
               })}
@@ -1061,7 +1083,11 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!resp.ok) throw new Error('Nesting API error');
+      if (!resp.ok) {
+        let detail = '';
+        try { const errBody = await resp.json(); detail = errBody.details || errBody.error || JSON.stringify(errBody); } catch (_) { detail = await resp.text().catch(() => ''); }
+        throw new Error(`Nesting API error (${resp.status}): ${detail || 'no detail'}`);
+      }
       const data = await resp.json();
       const nameLookup = {};
       [...parts1D, ...parts2D].forEach(p => {
