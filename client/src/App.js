@@ -321,7 +321,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
       } catch (e) { console.error('Failed to load lookup tables:', e); }
     }
     if (formTypes.length === 0) loadBase();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line
 
   async function loadSpecsAndMaterialsForRow(idx, formTypeId, materialTypeId) {
     if (!formTypeId || !materialTypeId) {
@@ -648,7 +648,7 @@ export default function App() {
         if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
       })
       .catch(e => console.error('Standalone auto-load:', e));
-  }, [isStandalone, manufactureId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isStandalone, manufactureId]); // eslint-disable-line
 
   async function fetchSavedNestingResults() {
     try {
