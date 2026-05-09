@@ -13,6 +13,32 @@ function getManufactureIdFromURL() {
   return params.get('Manufacture_ID') || params.get('manufacture_id') || params.get('mfg_id') || '';
 }
 
+// Parse "1/4", "3/8", "1-1/4", "2", "W10 x 12" etc. into an array of numeric tokens
+// for size-aware sort. "1-1/4" -> [1.25], "W10 x 12" -> [10, 12], "L4 x 4 x 3/8" -> [4, 4, 0.375].
+function materialSortKey(name) {
+  if (!name) return [Infinity];
+  const tokens = String(name).match(/(\d+(?:-\d+\/\d+)?|\d+\/\d+|\d+(?:\.\d+)?)/g) || [];
+  return tokens.map(t => {
+    const mixed = t.match(/^(\d+)-(\d+)\/(\d+)$/);
+    if (mixed) return parseInt(mixed[1]) + parseInt(mixed[2]) / parseInt(mixed[3]);
+    const frac = t.match(/^(\d+)\/(\d+)$/);
+    if (frac) return parseInt(frac[1]) / parseInt(frac[2]);
+    return parseFloat(t) || 0;
+  });
+}
+
+function compareByMaterialName(a, b) {
+  const ka = materialSortKey(a.name);
+  const kb = materialSortKey(b.name);
+  const len = Math.max(ka.length, kb.length);
+  for (let i = 0; i < len; i++) {
+    const ai = ka[i] === undefined ? -Infinity : ka[i];
+    const bi = kb[i] === undefined ? -Infinity : kb[i];
+    if (ai !== bi) return ai - bi;
+  }
+  return (a.name || '').localeCompare(b.name || '');
+}
+
 // Convert FT/INCH lookup IDs to total inches using the lookup tables
 function dimsToInches(lengthFt, lengthInchId, widthFtId, widthInchId, lengthInchTable, plateWidthTable) {
   const ft = parseFloat(lengthFt) || 0;
@@ -332,7 +358,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
         fetch(`${API}/api/lookups/materials?form_type_id=${formTypeId}&material_type_id=${materialTypeId}`),
       ]);
       const specs = (specRes.ok ? await specRes.json() : []).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-      const mats = (matRes.ok ? await matRes.json() : []).sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+      const mats = (matRes.ok ? await matRes.json() : []).sort(compareByMaterialName);
       setCascadeCache(p => ({ ...p, [key]: { specs, mats } }));
     } catch (e) { console.error('Cascade load failed:', e); }
   }
@@ -1068,7 +1094,7 @@ export default function App() {
           is_standard: String(s.is_standard),
         }));
       const payload = {
-        project_id: String(projectId),
+        project_id: String(projectId || manufactureId || 'standalone'),
         run_number: 1,
         kerf_1d: kerf1D,
         kerf_2d: kerf2D,
