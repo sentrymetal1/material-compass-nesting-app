@@ -426,8 +426,18 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
       width_ft_id: ZERO_FT_WIDTH_ID,
       nest_type: 'Linear'
     };
+    let newTag;
+    if (last && last.tag && last.tag.trim()) {
+      newTag = nextTag(last.tag);
+    } else if (!last) {
+      // First part — pre-populate so the auto-increment pattern works from row 2 onward.
+      newTag = 'P-1';
+    } else {
+      // Previous row exists but tag is empty — default to position-based sequence
+      newTag = `P-${parts.length + 1}`;
+    }
     onChange([...parts, {
-      client_part_id: newId, tag: nextTag(last?.tag), component: '', drawing: '',
+      client_part_id: newId, tag: newTag, component: '', drawing: '',
       ...seed,
       quantity: 1, length_ft: 0, length_inch_id: ZERO_INCH_ID, width_inch_id: ZERO_INCH_ID,
       galv: false, plate_sa: false
