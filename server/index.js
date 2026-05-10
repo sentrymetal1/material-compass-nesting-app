@@ -829,7 +829,9 @@ app.post('/api/standalone/save-results', async (req, res) => {
       results_2d,
       summary,
       kerf_1d,
-      kerf_2d
+      kerf_2d,
+      run_title,
+      created_by
     } = req.body;
 
     if (!manufacturer_id) return res.status(400).json({ error: 'manufacturer_id required' });
@@ -875,8 +877,10 @@ app.post('/api/standalone/save-results', async (req, res) => {
       Run_Status: 'Approved',
       Run_By: manufacturer_id,
       Nest_Source: nest_source,
-      Added_User: 'web_app'
+      Added_User: created_by || 'web_app'
     };
+    if (run_title) hd.Run_Title = run_title;
+    if (created_by) hd.Created_By = created_by;
     if (kerf_1d !== undefined) hd.Kerf_1D = kerf_1d;
     if (kerf_2d !== undefined) hd.Kerf_2D = kerf_2d;
 
@@ -1151,6 +1155,8 @@ app.get('/api/standalone/nesting-results', async (req, res) => {
         run_status: safeStr(runHeader.Run_Status),
         run_by: safeStr(runHeader.Run_By),
         nest_source: safeStr(runHeader.Nest_Source),
+        run_title: safeStr(runHeader.Run_Title),
+        created_by: safeStr(runHeader.Created_By) || safeStr(runHeader.Added_User),
         kerf_1d: parseFloat(runHeader.Kerf_1D) || 0,
         kerf_2d: parseFloat(runHeader.Kerf_2D) || 0,
         notes: (typeof runHeader.Notes === 'object') ? '' : (runHeader.Notes || ''),
@@ -1170,18 +1176,29 @@ app.get('/api/standalone/nesting-results', async (req, res) => {
 });
 
 // GET list of standalone runs for the recall panel
+// status: "Active" (default — Approved only), "Archived", or "All"
 app.get('/api/standalone/nesting-runs', async (req, res) => {
   try {
-    const { manufacturer_id } = req.query;
+    const { manufacturer_id, status } = req.query;
     if (!manufacturer_id) return res.status(400).json({ error: 'manufacturer_id required' });
     const token = await getAccessToken();
-    const resp = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Run_By=='+manufacturer_id+'%26%26(Nest_Source="Manual"%7C%7CNest_Source="CSV")%26%26Run_Status="Approved")&limit=200', { headers: zohoHeaders(token) });
+    let statusClause;
+    if (status === 'Archived') statusClause = 'Run_Status="Archived"';
+    else if (status === 'All') statusClause = '(Run_Status="Approved"%7C%7CRun_Status="Archived")';
+    else statusClause = 'Run_Status="Approved"'; // default Active
+    const resp = await axios.get(
+      creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Run_By=='+manufacturer_id+'%26%26(Nest_Source="Manual"%7C%7CNest_Source="CSV")%26%26'+statusClause+')&limit=200',
+      { headers: zohoHeaders(token) }
+    );
     function safeStr(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.zc_display_value || val.display_value || val.ID || ''; return String(val); }
     const runs = (resp.data.data || []).map(r => ({
       id: r.ID,
       run_number: parseInt(r.Run_Number) || 0,
       run_date: safeStr(r.Run_Date),
       nest_source: safeStr(r.Nest_Source),
+      run_status: safeStr(r.Run_Status),
+      run_title: safeStr(r.Run_Title),
+      created_by: safeStr(r.Created_By) || safeStr(r.Added_User),
       total_stock_pieces: parseInt(r.Total_Stock_Pieces) || 0,
       notes: (typeof r.Notes === 'object') ? '' : (r.Notes || '')
     }));
@@ -1191,6 +1208,27 @@ app.get('/api/standalone/nesting-runs', async (req, res) => {
     console.error('Standalone runs list error:', err.response?.data || err.message);
     if (err.response?.data?.code === 9280 || err.response?.status === 404) return res.json({ count: 0, runs: [] });
     res.status(500).json({ error: 'Failed to fetch standalone runs', details: err.response?.data || err.message });
+  }
+});
+
+// PATCH a standalone run's status (archive / unarchive)
+app.patch('/api/standalone/runs/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!['Approved', 'Archived'].includes(status)) {
+      return res.status(400).json({ error: 'status must be Approved or Archived' });
+    }
+    const token = await getAccessToken();
+    await axios.patch(
+      creatorApiBase()+'/report/Nesting_Run_Header_Report/'+id,
+      { data: { Run_Status: status } },
+      { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } }
+    );
+    res.json({ success: true, id, status });
+  } catch (err) {
+    console.error('Standalone runs PATCH error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to update run status', details: err.response?.data || err.message });
   }
 });
 

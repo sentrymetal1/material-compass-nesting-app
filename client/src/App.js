@@ -13,6 +13,18 @@ function getManufactureIdFromURL() {
   return params.get('Manufacture_ID') || params.get('manufacture_id') || params.get('mfg_id') || '';
 }
 
+function getUserFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('User') || params.get('user') || '';
+}
+
+// Display the local part of an email (before @) for the recall panel
+function emailLocalPart(email) {
+  if (!email) return '';
+  const at = email.indexOf('@');
+  return at > 0 ? email.slice(0, at) : email;
+}
+
 // Lookup record IDs that represent "0" — used as defaults for dimension fields so saved Run_Part
 // records never have null values for INCH(L), FT(W), INCH(W).
 const ZERO_INCH_ID = '4111484000000521139';     // Length_INCH_Lookup record where Description="0"
@@ -560,6 +572,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
 export default function App() {
   const [projectId, setProjectId] = useState(getProjectIdFromURL());
   const [manufactureId] = useState(getManufactureIdFromURL());
+  const [userEmail] = useState(getUserFromURL());
   const isStandalone = !projectId && !!manufactureId;
   const [nestSource, setNestSource] = useState(isStandalone ? 'Manual' : 'Project');
   const [standaloneParts, setStandaloneParts] = useState([]);
@@ -567,6 +580,9 @@ export default function App() {
   const [standaloneRuns, setStandaloneRuns] = useState([]);
   const [showAllRuns, setShowAllRuns] = useState(false);
   const [loadingRunId, setLoadingRunId] = useState(null);
+  const [archivingRunId, setArchivingRunId] = useState(null);
+  const [runsFilter, setRunsFilter] = useState('Active');
+  const [runTitle, setRunTitle] = useState('');
   const [step, setStep] = useState(isStandalone ? 1 : (projectId ? 1 : 0));
   const [project, setProject] = useState(null);
   const [bom, setBom] = useState([]);
@@ -700,14 +716,36 @@ export default function App() {
     setSelected(new Set(bomRows.map(r => r.id)));
   }, [standaloneParts, standaloneLookups, isStandalone]);
 
-  // Standalone mode: fetch list of all prior runs for this manufacturer
-  useEffect(() => {
-    if (!isStandalone || !manufactureId) return;
-    fetch(`${API}/api/standalone/nesting-runs?manufacturer_id=${manufactureId}`)
+  // Standalone mode: fetch list of prior runs for this manufacturer (filterable)
+  const refreshStandaloneRuns = useCallback(() => {
+    if (!isStandalone || !manufactureId) return Promise.resolve();
+    return fetch(`${API}/api/standalone/nesting-runs?manufacturer_id=${manufactureId}&status=${runsFilter}`)
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.runs) setStandaloneRuns(data.runs); })
+      .then(data => { if (data?.runs) setStandaloneRuns(data.runs); else setStandaloneRuns([]); })
       .catch(e => console.error('Standalone runs list:', e));
-  }, [isStandalone, manufactureId]);
+  }, [isStandalone, manufactureId, runsFilter]);
+
+  useEffect(() => {
+    if (isStandalone && manufactureId) refreshStandaloneRuns();
+  }, [isStandalone, manufactureId, runsFilter, refreshStandaloneRuns]);
+
+  async function archiveStandaloneRun(runId, newStatus) {
+    setArchivingRunId(runId);
+    try {
+      const resp = await fetch(`${API}/api/standalone/runs/${runId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (!resp.ok) throw new Error('Status update failed');
+      await refreshStandaloneRuns();
+    } catch (e) {
+      console.error('Archive run:', e);
+      setError(e.message || 'Failed to update run');
+    } finally {
+      setArchivingRunId(null);
+    }
+  }
 
   async function loadStandaloneRun(runId) {
     if (!runId) return;
@@ -1199,6 +1237,8 @@ export default function App() {
             summary: results.summary,
             kerf_1d: kerf1D,
             kerf_2d: kerf2D,
+            run_title: runTitle.trim(),
+            created_by: userEmail,
           }),
         });
       } else {
@@ -1217,16 +1257,8 @@ export default function App() {
       if (!resp.ok) throw new Error('Save failed');
       const data = await resp.json();
       setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d || 0} 1D + ${data.saved_2d || 0} 2D results (Status: ${data.run_status})`);
-      // Refresh recall panel with the newly saved run
-      if (isStandalone && manufactureId) {
-        try {
-          const r = await fetch(`${API}/api/standalone/nesting-runs?manufacturer_id=${manufactureId}`);
-          if (r.ok) {
-            const list = await r.json();
-            if (list.runs) setStandaloneRuns(list.runs);
-          }
-        } catch (e) { console.error('Refresh runs list:', e); }
-      }
+      setRunTitle('');
+      if (isStandalone) await refreshStandaloneRuns();
     } catch (err) {
       setSaveStatus(`Error: ${err.message}`);
     } finally {
@@ -1338,56 +1370,91 @@ export default function App() {
             </p>
 
             {/* Recall panel: previously saved standalone nests */}
-            {standaloneRuns.length > 0 && (
-              <div style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, marginBottom: 18, overflow: 'hidden' }}>
-                <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>RECENT STANDALONE NESTS (YOUR COMPANY)</span>
-                  <span style={{ fontWeight: 400, color: '#888' }}>
-                    {showAllRuns ? `${standaloneRuns.length} of ${standaloneRuns.length}` : `${Math.min(5, standaloneRuns.length)} of ${standaloneRuns.length}`}
-                    {standaloneRuns.length > 5 && (
-                      <button
-                        onClick={() => setShowAllRuns(v => !v)}
-                        className="btn btn-small"
-                        style={{ marginLeft: 10, fontSize: 11, padding: '2px 8px' }}
-                      >
-                        {showAllRuns ? 'Show less' : 'Show all'}
-                      </button>
-                    )}
-                  </span>
+            <div style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, marginBottom: 18, overflow: 'hidden' }}>
+              <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>SAVED STANDALONE NESTS (YOUR COMPANY)</span>
+                <span style={{ fontWeight: 400, color: '#888', display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <select
+                    value={runsFilter}
+                    onChange={e => { setRunsFilter(e.target.value); setShowAllRuns(false); }}
+                    style={{ fontSize: 11, padding: '2px 6px' }}
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Archived">Archived</option>
+                    <option value="All">All</option>
+                  </select>
+                  {standaloneRuns.length > 0 && (
+                    <span>
+                      {showAllRuns ? `${standaloneRuns.length} of ${standaloneRuns.length}` : `${Math.min(5, standaloneRuns.length)} of ${standaloneRuns.length}`}
+                    </span>
+                  )}
+                  {standaloneRuns.length > 5 && (
+                    <button
+                      onClick={() => setShowAllRuns(v => !v)}
+                      className="btn btn-small"
+                      style={{ fontSize: 11, padding: '2px 8px' }}
+                    >
+                      {showAllRuns ? 'Show less' : 'Show all'}
+                    </button>
+                  )}
+                </span>
+              </div>
+              {standaloneRuns.length === 0 ? (
+                <div style={{ padding: '20px 16px', fontSize: 12, color: '#888', textAlign: 'center' }}>
+                  No {runsFilter === 'All' ? '' : runsFilter.toLowerCase()} nests saved yet.
                 </div>
+              ) : (
                 <div>
                   {(showAllRuns ? standaloneRuns : standaloneRuns.slice(0, 5)).map(run => {
                     const sourceTagStyle = run.nest_source === 'CSV'
                       ? { background: '#f3e5f5', color: '#7b1fa2' }
                       : { background: '#e3f2fd', color: '#1976d2' };
+                    const isArchived = run.run_status === 'Archived';
                     return (
                       <div key={run.id} style={{
                         padding: '10px 16px', borderBottom: '1px solid #f0f2f5',
-                        display: 'grid', gridTemplateColumns: '70px 70px 1fr 130px 80px',
-                        gap: 12, alignItems: 'center', fontSize: 12
+                        display: 'grid', gridTemplateColumns: '70px 70px 1fr 140px 70px 90px',
+                        gap: 12, alignItems: 'center', fontSize: 12,
+                        opacity: isArchived ? 0.65 : 1
                       }}>
                         <span style={{ fontWeight: 600, color: '#5F94CE' }}>Run #{run.run_number}</span>
                         <span style={{ ...sourceTagStyle, padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, textAlign: 'center' }}>
                           {(run.nest_source || '?').toUpperCase()}
                         </span>
-                        <span style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {run.total_stock_pieces} stock pcs{run.notes ? ` • ${run.notes}` : ''}
+                        <span style={{ color: '#222', overflow: 'hidden' }}>
+                          <div style={{ fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                            {run.run_title || <span style={{ color: '#999', fontWeight: 400, fontStyle: 'italic' }}>Untitled</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#666', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                            {run.total_stock_pieces} stock pcs
+                            {run.created_by ? ` • saved by ${emailLocalPart(run.created_by)}` : ''}
+                            {isArchived ? ' • archived' : ''}
+                          </div>
                         </span>
-                        <span style={{ color: '#888' }}>{run.run_date}</span>
+                        <span style={{ color: '#888', fontSize: 11 }}>{run.run_date}</span>
                         <button
                           onClick={() => loadStandaloneRun(run.id)}
                           className="btn btn-small"
                           disabled={loadingRunId === run.id}
                           style={{ fontSize: 11, padding: '4px 10px' }}
                         >
-                          {loadingRunId === run.id ? 'Loading...' : 'Load'}
+                          {loadingRunId === run.id ? '…' : 'Load'}
+                        </button>
+                        <button
+                          onClick={() => archiveStandaloneRun(run.id, isArchived ? 'Approved' : 'Archived')}
+                          className="btn btn-small"
+                          disabled={archivingRunId === run.id}
+                          style={{ fontSize: 11, padding: '4px 8px' }}
+                          title={isArchived ? 'Restore to Active' : 'Archive (hide from default view)'}
+                        >
+                          {archivingRunId === run.id ? '…' : (isArchived ? 'Restore' : 'Archive')}
                         </button>
                       </div>
                     );
                   })}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             <ManualPartsEntry
               parts={standaloneParts}
@@ -1754,7 +1821,11 @@ export default function App() {
             </div>
             {savedRunInfo && (
               <div className="save-status save-success" style={{ marginBottom: 12 }}>
-                Viewing saved nesting run #{savedRunInfo.run_number} — {savedRunInfo.run_date} — {savedRunInfo.run_by || 'Unknown'} — Status: {savedRunInfo.run_status}
+                Viewing saved nesting run #{savedRunInfo.run_number}
+                {savedRunInfo.run_title ? ` — "${savedRunInfo.run_title}"` : ''}
+                {' — '}{savedRunInfo.run_date}
+                {savedRunInfo.created_by ? ` — saved by ${emailLocalPart(savedRunInfo.created_by)}` : ''}
+                {' — Status: '}{savedRunInfo.run_status}
               </div>
             )}
             {results.summary && (
@@ -2171,7 +2242,17 @@ export default function App() {
 
             <div className="card-footer">
               <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
-              <div className="btn-group" style={{ alignItems: 'center' }}>
+              <div className="btn-group" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                {isStandalone && (
+                  <input
+                    type="text"
+                    value={runTitle}
+                    onChange={e => setRunTitle(e.target.value)}
+                    placeholder="Run title (optional, e.g. 'Smith Job', 'Shop scrap nest')"
+                    className="input"
+                    style={{ width: 320 }}
+                  />
+                )}
                 <span className="count">{selectedPatternCount} pattern{selectedPatternCount !== 1 ? 's' : ''} selected</span>
                 <button onClick={saveToZoho} className="btn btn-primary" disabled={saving || selectedPatternCount === 0}>
                   {saving ? 'Saving...' : `${isStandalone ? 'Save' : 'Import'} ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''}${isStandalone ? '' : ' to Project'}`}
