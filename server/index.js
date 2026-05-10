@@ -101,7 +101,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
   try {
     const token = await getAccessToken();
     const projectId = req.params.id;
-    const { results_1d, results_2d, summary, kerf_1d, kerf_2d, run_by } = req.body;
+    const { results_1d, results_2d, summary, kerf_1d, kerf_2d, run_by, created_by, run_title } = req.body;
 
     let bomItems = [];
     try {
@@ -134,8 +134,10 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
     const now = new Date();
     const rd = (now.getMonth()+1).toString().padStart(2,'0')+'/'+now.getDate().toString().padStart(2,'0')+'/'+now.getFullYear()+' '+now.toTimeString().slice(0,8);
-    const hd = { Project_Lookup: projectId, Run_Number: existingRuns.length + 1, Run_Date: rd, Run_Status: 'Approved', Added_User: 'web_app' };
+    const hd = { Project_Lookup: projectId, Run_Number: existingRuns.length + 1, Run_Date: rd, Run_Status: 'Approved', Added_User: created_by || 'web_app' };
     if (run_by) hd.Run_By = run_by; else if (mfg) hd.Run_By = mfg;
+    if (created_by) hd.Created_By = created_by;
+    if (run_title) hd.Run_Title = run_title;
     if (kerf_1d !== undefined) hd.Kerf_1D = kerf_1d;
     if (kerf_2d !== undefined) hd.Kerf_2D = kerf_2d;
 

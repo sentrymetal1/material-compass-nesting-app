@@ -439,7 +439,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
   }
 
   return (
-    <div className="manual-parts-entry" style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, padding: '14px 16px', marginTop: 24 }}>
+    <div className="manual-parts-entry" style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, padding: '14px 16px' }}>
       <div style={{ background: '#f5f6f8', margin: '-14px -16px 14px -16px', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', borderRadius: '6px 6px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span>PARTS TO NEST</span>
         <button onClick={addRow} className="btn btn-primary btn-small">+ Add Part</button>
@@ -1252,6 +1252,7 @@ export default function App() {
             summary: results.summary,
             kerf_1d: kerf1D,
             kerf_2d: kerf2D,
+            created_by: userEmail,
           }),
         });
       }
@@ -1370,21 +1371,6 @@ export default function App() {
               Saved nests are visible to everyone at your company.
             </p>
 
-            {/* Run title — set up front so user labels their work before nesting */}
-            <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 12 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: '#5F94CE', textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 100 }}>
-                Run Title
-              </label>
-              <input
-                type="text"
-                value={runTitle}
-                onChange={e => setRunTitle(e.target.value)}
-                placeholder="Optional — e.g. 'Smith Job', 'Shop scrap nest', 'Quote #1234'"
-                className="input"
-                style={{ flex: 1, maxWidth: 500 }}
-              />
-            </div>
-
             {/* Recall panel: previously saved standalone nests */}
             <div style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, marginBottom: 18, overflow: 'hidden' }}>
               <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -1495,6 +1481,30 @@ export default function App() {
                   })}
                 </div>
               )}
+            </div>
+
+            {/* Section divider — visually separate "review past nests" from "start a new nest" */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 32, marginBottom: 14 }}>
+              <div style={{ flex: 1, height: 1, background: '#d4dde6' }} />
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#5F94CE', letterSpacing: 1, textTransform: 'uppercase' }}>
+                Start a new nest
+              </span>
+              <div style={{ flex: 1, height: 1, background: '#d4dde6' }} />
+            </div>
+
+            {/* Run title — labels the new nest the user is about to enter */}
+            <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#5F94CE', textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 100 }}>
+                Run Title
+              </label>
+              <input
+                type="text"
+                value={runTitle}
+                onChange={e => setRunTitle(e.target.value)}
+                placeholder="Optional — e.g. 'Smith Job', 'Shop scrap nest', 'Quote #1234'"
+                className="input"
+                style={{ flex: 1, maxWidth: 500 }}
+              />
             </div>
 
             <ManualPartsEntry
