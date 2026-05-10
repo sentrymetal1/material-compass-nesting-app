@@ -25,6 +25,16 @@ function emailLocalPart(email) {
   return at > 0 ? email.slice(0, at) : email;
 }
 
+// Compute the next tag in a sequence: "P-1" -> "P-2", "B3" -> "B4", "1" -> "2",
+// "ABC" (no trailing digits) -> "ABC-1", "" -> "". Used by Add Part to auto-populate.
+function nextTag(prevTag) {
+  const s = String(prevTag || '').trim();
+  if (!s) return '';
+  const m = s.match(/^(.*?)(\d+)$/);
+  if (m) return m[1] + (parseInt(m[2]) + 1);
+  return s + '-1';
+}
+
 // Lookup record IDs that represent "0" — used as defaults for dimension fields so saved Run_Part
 // records never have null values for INCH(L), FT(W), INCH(W).
 const ZERO_INCH_ID = '4111484000000521139';     // Length_INCH_Lookup record where Description="0"
@@ -417,7 +427,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
       nest_type: 'Linear'
     };
     onChange([...parts, {
-      client_part_id: newId, tag: '', component: '', drawing: '',
+      client_part_id: newId, tag: nextTag(last?.tag), component: '', drawing: '',
       ...seed,
       quantity: 1, length_ft: 0, length_inch_id: ZERO_INCH_ID, width_inch_id: ZERO_INCH_ID,
       galv: false, plate_sa: false
@@ -515,7 +525,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                       <select value={p.specification_id} onChange={e => {
                         const s = specs.find(x => String(x.id) === String(e.target.value));
                         updateRow(idx, { specification_id: e.target.value, spec_name: s?.name || '' });
-                      }} disabled={specs.length === 0}>
+                      }} disabled={specs.length === 0} style={{ minWidth: 130 }}>
                         <option value="">—</option>
                         {specs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
@@ -530,7 +540,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                           dim1: m?.dim1 || 0,
                           density: m?.density || 0
                         });
-                      }} disabled={mats.length === 0}>
+                      }} disabled={mats.length === 0} style={{ minWidth: 180 }}>
                         <option value="">—</option>
                         {mats.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                       </select>
@@ -553,10 +563,23 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                       </select>
                     </td>
                     <td>
-                      <select value={p.nest_type} disabled style={{ background: '#f5f6f8', cursor: 'not-allowed' }}>
-                        <option value="Linear">Linear</option>
-                        <option value="Panel">Panel</option>
-                      </select>
+                      {p.nest_type === 'Linear' ? (
+                        <span style={{
+                          background: '#e8f5e9', color: '#2e7d32',
+                          padding: '4px 12px', borderRadius: 12,
+                          fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                          display: 'inline-block'
+                        }}>LINEAR</span>
+                      ) : p.nest_type === 'Panel' ? (
+                        <span style={{
+                          background: '#ffebee', color: '#c62828',
+                          padding: '4px 12px', borderRadius: 12,
+                          fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                          display: 'inline-block'
+                        }}>PANEL</span>
+                      ) : (
+                        <span style={{ color: '#bbb' }}>—</span>
+                      )}
                     </td>
                   </tr>
                 );
