@@ -599,7 +599,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState('');
   const [enabledStock, setEnabledStock] = useState(new Set());
   const [stockFilter, setStockFilter] = useState('all');
-  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', material_name: '', stock_length: '', stock_width: '', quantity: '', reference: '' });
+  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', material_name: '', stock_length: '', stock_width: '', quantity: '1', reference: '' });
   const [nextCustomId, setNextCustomId] = useState(900000);
   const [lastNestPayload, setLastNestPayload] = useState(null);
   const [selectedPatterns, setSelectedPatterns] = useState(new Set());
@@ -1024,7 +1024,7 @@ export default function App() {
     setStock(prev => [...prev, entry]);
     setEnabledStock(prev => { const n = new Set(prev); n.add(id); return n; });
     setNextCustomId(prev => prev + 1);
-    setNewStock(prev => ({ ...prev, material_name: '', stock_length: '', stock_width: '', quantity: '', reference: '' }));
+    setNewStock(prev => ({ ...prev, material_name: '', stock_length: '', stock_width: '', quantity: '1', reference: '' }));
   }
 
   function removeCustomStock(id) {
@@ -1492,18 +1492,18 @@ export default function App() {
               <div style={{ flex: 1, height: 1, background: '#d4dde6' }} />
             </div>
 
-            {/* Run title — labels the new nest the user is about to enter */}
+            {/* Run title — labels the new nest the user is about to enter (required) */}
             <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: '#5F94CE', textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 100 }}>
-                Run Title
+                Run Title <span style={{ color: '#d32f2f' }}>*</span>
               </label>
               <input
                 type="text"
                 value={runTitle}
                 onChange={e => setRunTitle(e.target.value)}
-                placeholder="Optional — e.g. 'Smith Job', 'Shop scrap nest', 'Quote #1234'"
+                placeholder="Required — e.g. 'Smith Job', 'Shop scrap nest', 'Quote #1234'"
                 className="input"
-                style={{ flex: 1, maxWidth: 500 }}
+                style={{ flex: 1, maxWidth: 500, borderColor: runTitle.trim() ? '' : '#f5b7b1' }}
               />
             </div>
 
@@ -1528,6 +1528,7 @@ export default function App() {
                       && parseInt(p.quantity) > 0 && lenIn > 0);
                   };
                   const incomplete = standaloneParts.filter(p => !isPartValid(p)).length;
+                  if (!runTitle.trim()) return <span style={{ color: '#d32f2f', marginLeft: 8 }}>— Run Title required</span>;
                   if (incomplete > 0) return <span style={{ color: '#d32f2f', marginLeft: 8 }}>— {incomplete} incomplete</span>;
                   return null;
                 })()}
@@ -1536,6 +1537,7 @@ export default function App() {
                 onClick={() => setStep(2)}
                 className="btn btn-primary"
                 disabled={(() => {
+                  if (!runTitle.trim()) return true;
                   if (standaloneParts.length === 0) return true;
                   const liTbl = standaloneLookups.lengthInch || [];
                   return standaloneParts.some(p => {
@@ -1792,16 +1794,25 @@ export default function App() {
                     )}
                   </tbody>
                 </table>
+                {(() => {
+                  // Detect if the picked Form Type is panel or linear by matching against selectedBom rows
+                  const matchingPart = selectedBom.find(b => b.form_type_name === newStock.form_type);
+                  const isPanel = matchingPart?.nest_type === 'Panel';
+                  const isLinear = matchingPart?.nest_type === 'Linear';
+                  const qtyOk = parseInt(newStock.quantity) >= 1;
+                  const widthOk = !isPanel || (newStock.stock_width && parseFloat(newStock.stock_width) > 0);
+                  const canAdd = !!(newStock.form_type && newStock.material_type && newStock.stock_length && qtyOk && widthOk);
+                  return (
                 <div className="add-stock-row">
                   <div className="mini-field">
-                    <label>Form Type</label>
+                    <label>Form Type <span style={{ color: '#d32f2f' }}>*</span></label>
                     <select value={newStock.form_type} onChange={e => setNewStock(p => ({ ...p, form_type: e.target.value }))}>
                       <option value="">Select...</option>
                       {formTypes.map(ft => <option key={ft} value={ft}>{ft}</option>)}
                     </select>
                   </div>
                   <div className="mini-field">
-                    <label>Material</label>
+                    <label>Material <span style={{ color: '#d32f2f' }}>*</span></label>
                     <select value={newStock.material_type} onChange={e => setNewStock(p => ({ ...p, material_type: e.target.value, material_name: '' }))}>
                       <option value="">Select...</option>
                       {matTypes.map(mt => <option key={mt} value={mt}>{mt}</option>)}
@@ -1826,25 +1837,39 @@ export default function App() {
                     })()}
                   </div>
                   <div className="mini-field">
-                    <label>Length (in)</label>
+                    <label>Length (in) <span style={{ color: '#d32f2f' }}>*</span></label>
                     <input type="number" step="0.25" value={newStock.stock_length} onChange={e => setNewStock(p => ({ ...p, stock_length: e.target.value }))} placeholder="240" />
                   </div>
                   <div className="mini-field">
-                    <label>Width (in, 2D only)</label>
-                    <input type="number" step="0.25" value={newStock.stock_width} onChange={e => setNewStock(p => ({ ...p, stock_width: e.target.value }))} placeholder="Optional" />
+                    <label>
+                      Width (in)
+                      {isPanel && <span style={{ color: '#d32f2f' }}> *</span>}
+                      {isLinear && <span style={{ color: '#999', fontSize: 10 }}> (linear — N/A)</span>}
+                    </label>
+                    <input
+                      type="number"
+                      step="0.25"
+                      value={isLinear ? '' : newStock.stock_width}
+                      onChange={e => setNewStock(p => ({ ...p, stock_width: e.target.value }))}
+                      placeholder={isPanel ? 'Required' : (isLinear ? '—' : 'Pick form type first')}
+                      disabled={isLinear}
+                      style={isLinear ? { background: '#f5f6f8', cursor: 'not-allowed' } : {}}
+                    />
                   </div>
                   <div className="mini-field">
-                    <label>Qty</label>
-                    <input type="number" min="0" step="1" value={newStock.quantity} onChange={e => setNewStock(p => ({ ...p, quantity: e.target.value }))} placeholder="Optional" />
+                    <label>Qty <span style={{ color: '#d32f2f' }}>*</span></label>
+                    <input type="number" min="1" step="1" value={newStock.quantity} onChange={e => setNewStock(p => ({ ...p, quantity: e.target.value }))} placeholder="1" />
                   </div>
                   <div className="mini-field">
                     <label>Reference (opt.)</label>
                     <input type="text" value={newStock.reference} onChange={e => setNewStock(p => ({ ...p, reference: e.target.value }))} placeholder="Heat # / bin / job" />
                   </div>
-                  <button onClick={addCustomStock} className="btn btn-add" disabled={!newStock.form_type || !newStock.material_type || !newStock.stock_length}>
+                  <button onClick={addCustomStock} className="btn btn-add" disabled={!canAdd}>
                     + Add Stock
                   </button>
                 </div>
+                  );
+                })()}
               </div>
             </div>
             <div className="card-footer">
