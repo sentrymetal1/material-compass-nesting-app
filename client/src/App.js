@@ -750,18 +750,29 @@ export default function App() {
     setSelected(new Set(bomRows.map(r => r.id)));
   }, [standaloneParts, standaloneLookups, isStandalone]);
 
-  // Standalone mode: fetch list of prior runs for this manufacturer (filterable by status + source)
+  // Standalone mode: fetch list of prior runs for this manufacturer (server filters status only;
+  // source is filtered client-side because Zoho's null handling makes the "Project" criteria
+  // exclude legacy runs with empty Nest_Source).
   const refreshStandaloneRuns = useCallback(() => {
     if (!isStandalone || !manufactureId) return Promise.resolve();
-    return fetch(`${API}/api/standalone/nesting-runs?manufacturer_id=${manufactureId}&status=${runsFilter}&source=${runsSource}`)
+    return fetch(`${API}/api/standalone/nesting-runs?manufacturer_id=${manufactureId}&status=${runsFilter}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data?.runs) setStandaloneRuns(data.runs); else setStandaloneRuns([]); })
       .catch(e => console.error('Standalone runs list:', e));
-  }, [isStandalone, manufactureId, runsFilter, runsSource]);
+  }, [isStandalone, manufactureId, runsFilter]);
 
   useEffect(() => {
     if (isStandalone && manufactureId) refreshStandaloneRuns();
-  }, [isStandalone, manufactureId, runsFilter, runsSource, refreshStandaloneRuns]);
+  }, [isStandalone, manufactureId, runsFilter, refreshStandaloneRuns]);
+
+  // Apply source filter client-side over the fetched runs list
+  const filteredStandaloneRuns = standaloneRuns.filter(r => {
+    if (runsSource === 'All') return true;
+    if (runsSource === 'Manual') return r.nest_source === 'Manual';
+    if (runsSource === 'CSV') return r.nest_source === 'CSV';
+    if (runsSource === 'Project') return !!r.project_id; // any run with a project_id is a project run
+    return true;
+  });
 
   async function archiveStandaloneRun(runId, newStatus) {
     setArchivingRunId(runId);
@@ -1430,12 +1441,12 @@ export default function App() {
                     <option value="Archived">Archived</option>
                     <option value="All">All</option>
                   </select>
-                  {standaloneRuns.length > 0 && (
+                  {filteredStandaloneRuns.length > 0 && (
                     <span>
-                      {showAllRuns ? `${standaloneRuns.length} of ${standaloneRuns.length}` : `${Math.min(5, standaloneRuns.length)} of ${standaloneRuns.length}`}
+                      {showAllRuns ? `${filteredStandaloneRuns.length} of ${filteredStandaloneRuns.length}` : `${Math.min(5, filteredStandaloneRuns.length)} of ${filteredStandaloneRuns.length}`}
                     </span>
                   )}
-                  {standaloneRuns.length > 5 && (
+                  {filteredStandaloneRuns.length > 5 && (
                     <button
                       onClick={() => setShowAllRuns(v => !v)}
                       className="btn btn-small"
@@ -1446,13 +1457,13 @@ export default function App() {
                   )}
                 </span>
               </div>
-              {standaloneRuns.length === 0 ? (
+              {filteredStandaloneRuns.length === 0 ? (
                 <div style={{ padding: '20px 16px', fontSize: 12, color: '#888', textAlign: 'center' }}>
-                  No {runsFilter === 'All' ? '' : runsFilter.toLowerCase()} nests saved yet.
+                  No {runsFilter === 'All' ? '' : runsFilter.toLowerCase()} {runsSource === 'All' ? '' : runsSource.toLowerCase()} nests {runsSource !== 'All' ? 'in this category ' : ''}saved yet.
                 </div>
               ) : (
                 <div>
-                  {(showAllRuns ? standaloneRuns : standaloneRuns.slice(0, 5)).map(run => {
+                  {(showAllRuns ? filteredStandaloneRuns : filteredStandaloneRuns.slice(0, 5)).map(run => {
                     const sourceTagStyle = run.nest_source === 'CSV'
                       ? { background: '#f3e5f5', color: '#7b1fa2' }
                       : run.nest_source === 'Project'
