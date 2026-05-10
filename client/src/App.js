@@ -439,9 +439,9 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
   }
 
   return (
-    <div className="manual-parts-entry">
-      <div className="card-header">
-        <h3>Parts to nest</h3>
+    <div className="manual-parts-entry" style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, padding: '14px 16px', marginTop: 24 }}>
+      <div style={{ background: '#f5f6f8', margin: '-14px -16px 14px -16px', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', borderRadius: '6px 6px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>PARTS TO NEST</span>
         <button onClick={addRow} className="btn btn-primary btn-small">+ Add Part</button>
       </div>
       {parts.length === 0 ? (
