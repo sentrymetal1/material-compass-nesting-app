@@ -1369,6 +1369,21 @@ export default function App() {
               Saved nests are visible to everyone at your company.
             </p>
 
+            {/* Run title — set up front so user labels their work before nesting */}
+            <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#5F94CE', textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 100 }}>
+                Run Title
+              </label>
+              <input
+                type="text"
+                value={runTitle}
+                onChange={e => setRunTitle(e.target.value)}
+                placeholder="Optional — e.g. 'Smith Job', 'Shop scrap nest', 'Quote #1234'"
+                className="input"
+                style={{ flex: 1, maxWidth: 500 }}
+              />
+            </div>
+
             {/* Recall panel: previously saved standalone nests */}
             <div style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, marginBottom: 18, overflow: 'hidden' }}>
               <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2243,15 +2258,10 @@ export default function App() {
             <div className="card-footer">
               <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
               <div className="btn-group" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-                {isStandalone && (
-                  <input
-                    type="text"
-                    value={runTitle}
-                    onChange={e => setRunTitle(e.target.value)}
-                    placeholder="Run title (optional, e.g. 'Smith Job', 'Shop scrap nest')"
-                    className="input"
-                    style={{ width: 320 }}
-                  />
+                {isStandalone && runTitle && (
+                  <span style={{ fontSize: 12, color: '#666' }}>
+                    Title: <strong>{runTitle}</strong>
+                  </span>
                 )}
                 <span className="count">{selectedPatternCount} pattern{selectedPatternCount !== 1 ? 's' : ''} selected</span>
                 <button onClick={saveToZoho} className="btn btn-primary" disabled={saving || selectedPatternCount === 0}>
