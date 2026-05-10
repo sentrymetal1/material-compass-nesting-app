@@ -582,6 +582,7 @@ export default function App() {
   const [loadingRunId, setLoadingRunId] = useState(null);
   const [archivingRunId, setArchivingRunId] = useState(null);
   const [runsFilter, setRunsFilter] = useState('Active');
+  const [runsSource, setRunsSource] = useState('All');
   const [runTitle, setRunTitle] = useState('');
   const [step, setStep] = useState(isStandalone ? 1 : (projectId ? 1 : 0));
   const [project, setProject] = useState(null);
@@ -716,18 +717,18 @@ export default function App() {
     setSelected(new Set(bomRows.map(r => r.id)));
   }, [standaloneParts, standaloneLookups, isStandalone]);
 
-  // Standalone mode: fetch list of prior runs for this manufacturer (filterable)
+  // Standalone mode: fetch list of prior runs for this manufacturer (filterable by status + source)
   const refreshStandaloneRuns = useCallback(() => {
     if (!isStandalone || !manufactureId) return Promise.resolve();
-    return fetch(`${API}/api/standalone/nesting-runs?manufacturer_id=${manufactureId}&status=${runsFilter}`)
+    return fetch(`${API}/api/standalone/nesting-runs?manufacturer_id=${manufactureId}&status=${runsFilter}&source=${runsSource}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data?.runs) setStandaloneRuns(data.runs); else setStandaloneRuns([]); })
       .catch(e => console.error('Standalone runs list:', e));
-  }, [isStandalone, manufactureId, runsFilter]);
+  }, [isStandalone, manufactureId, runsFilter, runsSource]);
 
   useEffect(() => {
     if (isStandalone && manufactureId) refreshStandaloneRuns();
-  }, [isStandalone, manufactureId, runsFilter, refreshStandaloneRuns]);
+  }, [isStandalone, manufactureId, runsFilter, runsSource, refreshStandaloneRuns]);
 
   async function archiveStandaloneRun(runId, newStatus) {
     setArchivingRunId(runId);
@@ -1386,9 +1387,21 @@ export default function App() {
 
             {/* Recall panel: previously saved standalone nests */}
             <div style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, marginBottom: 18, overflow: 'hidden' }}>
-              <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>SAVED STANDALONE NESTS (YOUR COMPANY)</span>
-                <span style={{ fontWeight: 400, color: '#888', display: 'flex', gap: 10, alignItems: 'center' }}>
+              <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <span>SAVED NESTS (YOUR COMPANY)</span>
+                <span style={{ fontWeight: 400, color: '#888', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 10, fontWeight: 600 }}>SOURCE:</span>
+                  <select
+                    value={runsSource}
+                    onChange={e => { setRunsSource(e.target.value); setShowAllRuns(false); }}
+                    style={{ fontSize: 11, padding: '2px 6px' }}
+                  >
+                    <option value="All">All</option>
+                    <option value="Manual">Manual</option>
+                    <option value="CSV">CSV</option>
+                    <option value="Project">Project</option>
+                  </select>
+                  <span style={{ fontSize: 10, fontWeight: 600, marginLeft: 6 }}>STATUS:</span>
                   <select
                     value={runsFilter}
                     onChange={e => { setRunsFilter(e.target.value); setShowAllRuns(false); }}
@@ -1423,8 +1436,17 @@ export default function App() {
                   {(showAllRuns ? standaloneRuns : standaloneRuns.slice(0, 5)).map(run => {
                     const sourceTagStyle = run.nest_source === 'CSV'
                       ? { background: '#f3e5f5', color: '#7b1fa2' }
-                      : { background: '#e3f2fd', color: '#1976d2' };
+                      : run.nest_source === 'Project'
+                        ? { background: '#e8f5e9', color: '#2e7d32' }
+                        : { background: '#e3f2fd', color: '#1976d2' };
                     const isArchived = run.run_status === 'Archived';
+                    const isProject = run.nest_source === 'Project';
+                    // Title fallback: explicit title > project name > "Untitled"
+                    const titleNode = run.run_title
+                      ? <span>{run.run_title}</span>
+                      : run.project_name
+                        ? <span>Project: <strong>{run.project_name}</strong></span>
+                        : <span style={{ color: '#999', fontWeight: 400, fontStyle: 'italic' }}>Untitled</span>;
                     return (
                       <div key={run.id} style={{
                         padding: '10px 16px', borderBottom: '1px solid #f0f2f5',
@@ -1438,7 +1460,7 @@ export default function App() {
                         </span>
                         <span style={{ color: '#222', overflow: 'hidden' }}>
                           <div style={{ fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                            {run.run_title || <span style={{ color: '#999', fontWeight: 400, fontStyle: 'italic' }}>Untitled</span>}
+                            {titleNode}
                           </div>
                           <div style={{ fontSize: 11, color: '#666', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
                             {run.total_stock_pieces} stock pcs
@@ -1455,15 +1477,19 @@ export default function App() {
                         >
                           {loadingRunId === run.id ? '…' : 'Load'}
                         </button>
-                        <button
-                          onClick={() => archiveStandaloneRun(run.id, isArchived ? 'Approved' : 'Archived')}
-                          className="btn btn-small"
-                          disabled={archivingRunId === run.id}
-                          style={{ fontSize: 11, padding: '4px 8px' }}
-                          title={isArchived ? 'Restore to Active' : 'Archive (hide from default view)'}
-                        >
-                          {archivingRunId === run.id ? '…' : (isArchived ? 'Restore' : 'Archive')}
-                        </button>
+                        {isProject ? (
+                          <span style={{ fontSize: 10, color: '#888', textAlign: 'center' }} title="Manage project runs from the project page">—</span>
+                        ) : (
+                          <button
+                            onClick={() => archiveStandaloneRun(run.id, isArchived ? 'Approved' : 'Archived')}
+                            className="btn btn-small"
+                            disabled={archivingRunId === run.id}
+                            style={{ fontSize: 11, padding: '4px 8px' }}
+                            title={isArchived ? 'Restore to Active' : 'Archive (hide from default view)'}
+                          >
+                            {archivingRunId === run.id ? '…' : (isArchived ? 'Restore' : 'Archive')}
+                          </button>
+                        )}
                       </div>
                     );
                   })}

@@ -1175,33 +1175,52 @@ app.get('/api/standalone/nesting-results', async (req, res) => {
   }
 });
 
-// GET list of standalone runs for the recall panel
+// GET list of nest runs for the recall panel (standalone + project)
 // status: "Active" (default — Approved only), "Archived", or "All"
+// source: "All" (default), "Manual", "CSV", or "Project"
 app.get('/api/standalone/nesting-runs', async (req, res) => {
   try {
-    const { manufacturer_id, status } = req.query;
+    const { manufacturer_id, status, source } = req.query;
     if (!manufacturer_id) return res.status(400).json({ error: 'manufacturer_id required' });
     const token = await getAccessToken();
     let statusClause;
     if (status === 'Archived') statusClause = 'Run_Status="Archived"';
     else if (status === 'All') statusClause = '(Run_Status="Approved"%7C%7CRun_Status="Archived")';
     else statusClause = 'Run_Status="Approved"'; // default Active
+
+    // Source clause — Manual/CSV target Nest_Source explicitly; Project is the
+    // complement (everything not Manual/CSV — captures empty legacy project runs and "Project" label)
+    let sourceClause = '';
+    if (source === 'Manual') sourceClause = '%26%26Nest_Source="Manual"';
+    else if (source === 'CSV') sourceClause = '%26%26Nest_Source="CSV"';
+    else if (source === 'Project') sourceClause = '%26%26(Nest_Source!="Manual"%26%26Nest_Source!="CSV")';
+
     const resp = await axios.get(
-      creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Run_By=='+manufacturer_id+'%26%26(Nest_Source="Manual"%7C%7CNest_Source="CSV")%26%26'+statusClause+')&limit=200',
+      creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Run_By=='+manufacturer_id+'%26%26'+statusClause+sourceClause+')&limit=200',
       { headers: zohoHeaders(token) }
     );
     function safeStr(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.zc_display_value || val.display_value || val.ID || ''; return String(val); }
-    const runs = (resp.data.data || []).map(r => ({
-      id: r.ID,
-      run_number: parseInt(r.Run_Number) || 0,
-      run_date: safeStr(r.Run_Date),
-      nest_source: safeStr(r.Nest_Source),
-      run_status: safeStr(r.Run_Status),
-      run_title: safeStr(r.Run_Title),
-      created_by: safeStr(r.Created_By) || safeStr(r.Added_User),
-      total_stock_pieces: parseInt(r.Total_Stock_Pieces) || 0,
-      notes: (typeof r.Notes === 'object') ? '' : (r.Notes || '')
-    }));
+    function safeId(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.ID || ''; return String(val); }
+    const runs = (resp.data.data || []).map(r => {
+      const projId = safeId(r.Project_Lookup);
+      const projName = (typeof r.Project_Lookup === 'object') ? (r.Project_Lookup?.zc_display_value || r.Project_Lookup?.display_value || '') : '';
+      const ns = safeStr(r.Nest_Source);
+      // Effective source for display: Manual/CSV if set, otherwise "Project" if Project_Lookup populated
+      const effectiveSource = (ns === 'Manual' || ns === 'CSV') ? ns : (projId ? 'Project' : (ns || ''));
+      return {
+        id: r.ID,
+        run_number: parseInt(r.Run_Number) || 0,
+        run_date: safeStr(r.Run_Date),
+        nest_source: effectiveSource,
+        run_status: safeStr(r.Run_Status),
+        run_title: safeStr(r.Run_Title),
+        created_by: safeStr(r.Created_By) || safeStr(r.Added_User),
+        project_id: projId,
+        project_name: projName,
+        total_stock_pieces: parseInt(r.Total_Stock_Pieces) || 0,
+        notes: (typeof r.Notes === 'object') ? '' : (r.Notes || '')
+      };
+    });
     runs.sort((a, b) => b.run_number - a.run_number);
     res.json({ count: runs.length, runs });
   } catch (err) {
