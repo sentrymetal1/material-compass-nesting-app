@@ -564,6 +564,9 @@ export default function App() {
   const [nestSource, setNestSource] = useState(isStandalone ? 'Manual' : 'Project');
   const [standaloneParts, setStandaloneParts] = useState([]);
   const [standaloneLookups, setStandaloneLookups] = useState({ formTypes: [], matTypes: [], lengthInch: [], plateWidths: [] });
+  const [standaloneRuns, setStandaloneRuns] = useState([]);
+  const [showAllRuns, setShowAllRuns] = useState(false);
+  const [loadingRunId, setLoadingRunId] = useState(null);
   const [step, setStep] = useState(isStandalone ? 1 : (projectId ? 1 : 0));
   const [project, setProject] = useState(null);
   const [bom, setBom] = useState([]);
@@ -697,21 +700,35 @@ export default function App() {
     setSelected(new Set(bomRows.map(r => r.id)));
   }, [standaloneParts, standaloneLookups, isStandalone]);
 
-  // Standalone mode: load most recent saved nest on mount
+  // Standalone mode: fetch list of all prior runs for this manufacturer
   useEffect(() => {
     if (!isStandalone || !manufactureId) return;
-    fetch(`${API}/api/standalone/nesting-results?manufacturer_id=${manufactureId}`)
+    fetch(`${API}/api/standalone/nesting-runs?manufacturer_id=${manufactureId}`)
       .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (!data || !data.found) return;
-        setSavedRunInfo(data.run_header);
-        setResults(data);
-        autoSelectAllPatterns(data);
-        if (data.run_header?.kerf_1d) setKerf1D(data.run_header.kerf_1d);
-        if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
-      })
-      .catch(e => console.error('Standalone auto-load:', e));
-  }, [isStandalone, manufactureId]); // eslint-disable-line
+      .then(data => { if (data?.runs) setStandaloneRuns(data.runs); })
+      .catch(e => console.error('Standalone runs list:', e));
+  }, [isStandalone, manufactureId]);
+
+  async function loadStandaloneRun(runId) {
+    if (!runId) return;
+    setLoadingRunId(runId);
+    try {
+      const resp = await fetch(`${API}/api/standalone/nesting-results?manufacturer_id=${manufactureId}&run_id=${runId}`);
+      if (!resp.ok) throw new Error('Failed to load run');
+      const data = await resp.json();
+      if (!data.found) { setError('Run not found'); return; }
+      setSavedRunInfo(data.run_header);
+      setResults(data);
+      autoSelectAllPatterns(data);
+      if (data.run_header?.kerf_1d) setKerf1D(data.run_header.kerf_1d);
+      if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
+      setStep(3);
+    } catch (e) {
+      setError(e.message || 'Failed to load run');
+    } finally {
+      setLoadingRunId(null);
+    }
+  }
 
   async function fetchSavedNestingResults() {
     try {
@@ -1200,6 +1217,16 @@ export default function App() {
       if (!resp.ok) throw new Error('Save failed');
       const data = await resp.json();
       setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d || 0} 1D + ${data.saved_2d || 0} 2D results (Status: ${data.run_status})`);
+      // Refresh recall panel with the newly saved run
+      if (isStandalone && manufactureId) {
+        try {
+          const r = await fetch(`${API}/api/standalone/nesting-runs?manufacturer_id=${manufactureId}`);
+          if (r.ok) {
+            const list = await r.json();
+            if (list.runs) setStandaloneRuns(list.runs);
+          }
+        } catch (e) { console.error('Refresh runs list:', e); }
+      }
     } catch (err) {
       setSaveStatus(`Error: ${err.message}`);
     } finally {
@@ -1308,12 +1335,60 @@ export default function App() {
             </div>
             <p className="hint">
               Saved nests are visible to everyone at your company.
-              {savedRunInfo && (
-                <span style={{ marginLeft: 12 }}>
-                  Last run: #{savedRunInfo.run_number} — {savedRunInfo.run_date} — Status: {savedRunInfo.run_status}
-                </span>
-              )}
             </p>
+
+            {/* Recall panel: previously saved standalone nests */}
+            {standaloneRuns.length > 0 && (
+              <div style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, marginBottom: 18, overflow: 'hidden' }}>
+                <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>RECENT STANDALONE NESTS (YOUR COMPANY)</span>
+                  <span style={{ fontWeight: 400, color: '#888' }}>
+                    {showAllRuns ? `${standaloneRuns.length} of ${standaloneRuns.length}` : `${Math.min(5, standaloneRuns.length)} of ${standaloneRuns.length}`}
+                    {standaloneRuns.length > 5 && (
+                      <button
+                        onClick={() => setShowAllRuns(v => !v)}
+                        className="btn btn-small"
+                        style={{ marginLeft: 10, fontSize: 11, padding: '2px 8px' }}
+                      >
+                        {showAllRuns ? 'Show less' : 'Show all'}
+                      </button>
+                    )}
+                  </span>
+                </div>
+                <div>
+                  {(showAllRuns ? standaloneRuns : standaloneRuns.slice(0, 5)).map(run => {
+                    const sourceTagStyle = run.nest_source === 'CSV'
+                      ? { background: '#f3e5f5', color: '#7b1fa2' }
+                      : { background: '#e3f2fd', color: '#1976d2' };
+                    return (
+                      <div key={run.id} style={{
+                        padding: '10px 16px', borderBottom: '1px solid #f0f2f5',
+                        display: 'grid', gridTemplateColumns: '70px 70px 1fr 130px 80px',
+                        gap: 12, alignItems: 'center', fontSize: 12
+                      }}>
+                        <span style={{ fontWeight: 600, color: '#5F94CE' }}>Run #{run.run_number}</span>
+                        <span style={{ ...sourceTagStyle, padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600, textAlign: 'center' }}>
+                          {(run.nest_source || '?').toUpperCase()}
+                        </span>
+                        <span style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {run.total_stock_pieces} stock pcs{run.notes ? ` • ${run.notes}` : ''}
+                        </span>
+                        <span style={{ color: '#888' }}>{run.run_date}</span>
+                        <button
+                          onClick={() => loadStandaloneRun(run.id)}
+                          className="btn btn-small"
+                          disabled={loadingRunId === run.id}
+                          style={{ fontSize: 11, padding: '4px 10px' }}
+                        >
+                          {loadingRunId === run.id ? 'Loading...' : 'Load'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <ManualPartsEntry
               parts={standaloneParts}
               onChange={setStandaloneParts}
