@@ -1159,6 +1159,8 @@ app.get('/api/standalone/nesting-results', async (req, res) => {
         nest_source: safeStr(runHeader.Nest_Source),
         run_title: safeStr(runHeader.Run_Title),
         created_by: safeStr(runHeader.Created_By) || safeStr(runHeader.Added_User),
+        project_id: safeId(runHeader.Project_Lookup),
+        project_name: (typeof runHeader.Project_Lookup === 'object') ? (runHeader.Project_Lookup?.zc_display_value || runHeader.Project_Lookup?.display_value || '') : '',
         kerf_1d: parseFloat(runHeader.Kerf_1D) || 0,
         kerf_2d: parseFloat(runHeader.Kerf_2D) || 0,
         notes: (typeof runHeader.Notes === 'object') ? '' : (runHeader.Notes || ''),

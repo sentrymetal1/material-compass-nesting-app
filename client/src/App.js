@@ -617,6 +617,8 @@ export default function App() {
   const [runsFilter, setRunsFilter] = useState('Active');
   const [runsSource, setRunsSource] = useState('All');
   const [runTitle, setRunTitle] = useState('');
+  const [loadedFromRunNumber, setLoadedFromRunNumber] = useState(null);
+  const [loadedRunIsProject, setLoadedRunIsProject] = useState(false);
   const [step, setStep] = useState(isStandalone ? 1 : (projectId ? 1 : 0));
   const [project, setProject] = useState(null);
   const [bom, setBom] = useState([]);
@@ -805,6 +807,82 @@ export default function App() {
       autoSelectAllPatterns(data);
       if (data.run_header?.kerf_1d) setKerf1D(data.run_header.kerf_1d);
       if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
+      if (data.run_header?.run_title) setRunTitle(data.run_header.run_title);
+
+      const isProjectRun = !!data.run_header?.project_id;
+      setLoadedRunIsProject(isProjectRun);
+      setLoadedFromRunNumber(data.run_header?.run_number || null);
+
+      // For standalone runs only: pre-fill parts grid + stock entries so user can revise
+      if (!isProjectRun && Array.isArray(data.input_parts) && data.input_parts.length > 0) {
+        const reconstructedParts = data.input_parts.map((p, idx) => ({
+          client_part_id: `loaded_${p.id || idx}`,
+          tag: p.tag || '',
+          component: p.component || '',
+          drawing: p.drawing || '',
+          form_type_id: p.form_type_id || '',
+          form_type_name: p.form_type_name || '',
+          material_type_id: p.material_type_id || '',
+          material_type_name: p.material_type_name || '',
+          specification_id: p.specification_id || '',
+          spec_name: p.spec_name || '',
+          material_id: p.material_id || '',
+          material_name: p.material_name || '',
+          quantity: parseInt(p.quantity) || 1,
+          length_ft: parseInt(p.length_ft) || 0,
+          length_inch_id: p.length_inch_id || ZERO_INCH_ID,
+          width_ft_id: p.width_ft_id || ZERO_FT_WIDTH_ID,
+          width_inch_id: p.width_inch_id || ZERO_INCH_ID,
+          galv: !!p.galv,
+          plate_sa: !!p.plate_sa,
+          nest_type: p.nest_type || 'Linear',
+          weight_per_ft: 0,
+          dim1: 0,
+          density: 0,
+        }));
+        setStandaloneParts(reconstructedParts);
+
+        // Aggregate stock pieces used in the original nest into custom stock entries
+        const stockMap = {};
+        [...(data.results_1d || []), ...(data.results_2d || [])].forEach(r => {
+          if (r.error) return;
+          const len = r.stock_length_in;
+          const wid = r.stock_width_in || 0;
+          const key = `${r.form_type}|${r.material_origin}|${len}|${wid}`;
+          if (!stockMap[key]) {
+            const matchingPart = reconstructedParts.find(p => String(p.form_type_id) === String(r.form_type) && String(p.material_type_id) === String(r.material_origin));
+            stockMap[key] = {
+              form_type_id: r.form_type,
+              form_type_name: matchingPart?.form_type_name || data._nameLookup?.[r.form_type] || '',
+              material_type_id: r.material_origin,
+              material_type_name: matchingPart?.material_type_name || data._nameLookup?.[r.material_origin] || '',
+              stock_length: len,
+              stock_width: wid > 0 ? wid : null,
+              count: 0,
+            };
+          }
+          stockMap[key].count++;
+        });
+        const reconstructedStock = Object.values(stockMap).map((s, idx) => ({
+          id: 900000 + idx,
+          form_type: s.form_type_id,
+          form_type_name: s.form_type_name,
+          material_type: s.material_type_id,
+          material_type_name: s.material_type_name,
+          material_name: '',
+          stock_length: s.stock_length,
+          stock_width: s.stock_width,
+          density: 0,
+          is_standard: 'No',
+          source: 'custom',
+          quantity: s.count,
+          reference: '',
+        }));
+        setStock(reconstructedStock);
+        setEnabledStock(new Set(reconstructedStock.map(s => s.id)));
+        setNextCustomId(900000 + reconstructedStock.length);
+      }
+
       setStep(3);
     } catch (e) {
       setError(e.message || 'Failed to load run');
@@ -1304,6 +1382,9 @@ export default function App() {
       const data = await resp.json();
       setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d || 0} 1D + ${data.saved_2d || 0} 2D results (Status: ${data.run_status})`);
       setRunTitle('');
+      setLoadedFromRunNumber(null);
+      setLoadedRunIsProject(false);
+      setSavedRunInfo(null);
       if (isStandalone) await refreshStandaloneRuns();
     } catch (err) {
       setSaveStatus(`Error: ${err.message}`);
@@ -1531,10 +1612,33 @@ export default function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 32, marginBottom: 14 }}>
               <div style={{ flex: 1, height: 1, background: '#d4dde6' }} />
               <span style={{ fontSize: 11, fontWeight: 700, color: '#5F94CE', letterSpacing: 1, textTransform: 'uppercase' }}>
-                Start a new nest
+                {loadedFromRunNumber ? `Edit copy of Run #${loadedFromRunNumber}` : 'Start a new nest'}
               </span>
               <div style={{ flex: 1, height: 1, background: '#d4dde6' }} />
             </div>
+
+            {/* Banner shown when user has loaded a previous standalone run for revision */}
+            {loadedFromRunNumber && !loadedRunIsProject && (
+              <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 6, padding: '8px 14px', marginBottom: 14, fontSize: 12, color: '#0d47a1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Editing a copy of Run #{loadedFromRunNumber}. Saving will create a new run; the original remains unchanged.</span>
+                <button
+                  onClick={() => {
+                    setLoadedFromRunNumber(null);
+                    setLoadedRunIsProject(false);
+                    setSavedRunInfo(null);
+                    setStandaloneParts([]);
+                    setStock([]);
+                    setEnabledStock(new Set());
+                    setResults(null);
+                    setRunTitle('');
+                  }}
+                  className="btn btn-small"
+                  style={{ fontSize: 11 }}
+                >
+                  Clear & start fresh
+                </button>
+              </div>
+            )}
 
             {/* Run title — labels the new nest the user is about to enter (required) */}
             <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -2369,8 +2473,13 @@ export default function App() {
                   </span>
                 )}
                 <span className="count">{selectedPatternCount} pattern{selectedPatternCount !== 1 ? 's' : ''} selected</span>
-                <button onClick={saveToZoho} className="btn btn-primary" disabled={saving || selectedPatternCount === 0}>
-                  {saving ? 'Saving...' : `${isStandalone ? 'Save' : 'Import'} ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''}${isStandalone ? '' : ' to Project'}`}
+                <button
+                  onClick={saveToZoho}
+                  className="btn btn-primary"
+                  disabled={saving || selectedPatternCount === 0 || (isStandalone && loadedRunIsProject)}
+                  title={isStandalone && loadedRunIsProject ? 'View-only — go to the project page to modify a project run' : ''}
+                >
+                  {saving ? 'Saving...' : (isStandalone && loadedRunIsProject) ? 'View only (project run)' : `${isStandalone ? 'Save' : 'Import'} ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''}${isStandalone ? '' : ' to Project'}`}
                 </button>
                 {!isStandalone && (
                   <>
