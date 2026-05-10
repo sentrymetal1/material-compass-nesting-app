@@ -813,6 +813,13 @@ export default function App() {
       setLoadedRunIsProject(isProjectRun);
       setLoadedFromRunNumber(data.run_header?.run_number || null);
 
+      // For project runs: clear stale standalone state so user doesn't see parts/stock from a previous load
+      if (isProjectRun) {
+        setStandaloneParts([]);
+        setStock([]);
+        setEnabledStock(new Set());
+      }
+
       // For standalone runs only: pre-fill parts grid + stock entries so user can revise
       if (!isProjectRun && Array.isArray(data.input_parts) && data.input_parts.length > 0) {
         const reconstructedParts = data.input_parts.map((p, idx) => ({
@@ -2465,7 +2472,10 @@ export default function App() {
             )}
 
             <div className="card-footer">
-              <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
+              <div className="btn-group">
+                <button onClick={() => setStep(1)} className="btn">← {isStandalone ? 'Edit Parts' : 'Select Items'}</button>
+                <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
+              </div>
               <div className="btn-group" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
                 {isStandalone && runTitle && (
                   <span style={{ fontSize: 12, color: '#666' }}>
