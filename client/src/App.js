@@ -622,6 +622,12 @@ export default function App() {
   const [loadedFromRunNumber, setLoadedFromRunNumber] = useState(null);
   const [loadedRunIsProject, setLoadedRunIsProject] = useState(false);
   const [archiveUndo, setArchiveUndo] = useState(null); // { runId, previousStatus }
+  const [savedNestsExpanded, setSavedNestsExpanded] = useState(() => {
+    try { return localStorage.getItem('savedNestsExpanded') === 'true'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('savedNestsExpanded', savedNestsExpanded ? 'true' : 'false'); } catch {}
+  }, [savedNestsExpanded]);
   const [step, setStep] = useState(isStandalone ? 1 : (projectId ? 1 : 0));
   const [project, setProject] = useState(null);
   const [bom, setBom] = useState([]);
@@ -1581,9 +1587,16 @@ export default function App() {
 
             {/* Recall panel: previously saved standalone nests */}
             <div style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, marginBottom: 18, overflow: 'hidden' }}>
-              <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                <span>SAVED NESTS (YOUR COMPANY)</span>
-                <span style={{ fontWeight: 400, color: '#888', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: savedNestsExpanded ? '1px solid #e2e6eb' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <span
+                  onClick={() => setSavedNestsExpanded(v => !v)}
+                  style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
+                  title={savedNestsExpanded ? 'Collapse' : 'Expand'}
+                >
+                  <span style={{ fontSize: 10, transition: 'transform 0.15s', display: 'inline-block', transform: savedNestsExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                  SAVED NESTS ({standaloneRuns.length})
+                </span>
+                <span style={{ fontWeight: 400, color: '#888', display: savedNestsExpanded ? 'flex' : 'none', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <input
                     type="text"
                     value={runsSearch}
@@ -1628,7 +1641,7 @@ export default function App() {
                   )}
                 </span>
               </div>
-              {filteredStandaloneRuns.length === 0 ? (
+              {!savedNestsExpanded ? null : filteredStandaloneRuns.length === 0 ? (
                 <div style={{ padding: '20px 16px', fontSize: 12, color: '#888', textAlign: 'center' }}>
                   No {runsFilter === 'All' ? '' : runsFilter.toLowerCase()} {runsSource === 'All' ? '' : runsSource.toLowerCase()} nests {runsSource !== 'All' ? 'in this category ' : ''}saved yet.
                 </div>
