@@ -101,7 +101,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
   try {
     const token = await getAccessToken();
     const projectId = req.params.id;
-    const { results_1d, results_2d, summary, kerf_1d, kerf_2d, run_by, created_by, run_title } = req.body;
+    const { results_1d, results_2d, summary, kerf_1d, kerf_2d, run_by, created_by, run_title, run_notes } = req.body;
 
     let bomItems = [];
     try {
@@ -138,6 +138,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     if (run_by) hd.Run_By = run_by; else if (mfg) hd.Run_By = mfg;
     if (created_by) hd.Created_By = created_by;
     if (run_title) hd.Run_Title = run_title;
+    if (run_notes) hd.Run_Notes = run_notes;
     if (kerf_1d !== undefined) hd.Kerf_1D = kerf_1d;
     if (kerf_2d !== undefined) hd.Kerf_2D = kerf_2d;
 
@@ -833,6 +834,7 @@ app.post('/api/standalone/save-results', async (req, res) => {
       kerf_1d,
       kerf_2d,
       run_title,
+      run_notes,
       created_by
     } = req.body;
 
@@ -882,6 +884,7 @@ app.post('/api/standalone/save-results', async (req, res) => {
       Added_User: created_by || 'web_app'
     };
     if (run_title) hd.Run_Title = run_title;
+    if (run_notes) hd.Run_Notes = run_notes;
     if (created_by) hd.Created_By = created_by;
     if (kerf_1d !== undefined) hd.Kerf_1D = kerf_1d;
     if (kerf_2d !== undefined) hd.Kerf_2D = kerf_2d;
@@ -1158,6 +1161,7 @@ app.get('/api/standalone/nesting-results', async (req, res) => {
         run_by: safeStr(runHeader.Run_By),
         nest_source: safeStr(runHeader.Nest_Source),
         run_title: safeStr(runHeader.Run_Title),
+        run_notes: safeStr(runHeader.Run_Notes),
         created_by: safeStr(runHeader.Created_By) || safeStr(runHeader.Added_User),
         project_id: safeId(runHeader.Project_Lookup),
         project_name: (typeof runHeader.Project_Lookup === 'object') ? (runHeader.Project_Lookup?.zc_display_value || runHeader.Project_Lookup?.display_value || '') : '',
@@ -1214,6 +1218,7 @@ app.get('/api/standalone/nesting-runs', async (req, res) => {
         nest_source: effectiveSource,
         run_status: safeStr(r.Run_Status),
         run_title: safeStr(r.Run_Title),
+        run_notes: safeStr(r.Run_Notes),
         created_by: safeStr(r.Created_By) || safeStr(r.Added_User),
         project_id: projId,
         project_name: projName,

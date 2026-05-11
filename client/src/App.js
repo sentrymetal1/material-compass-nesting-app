@@ -616,9 +616,12 @@ export default function App() {
   const [archivingRunId, setArchivingRunId] = useState(null);
   const [runsFilter, setRunsFilter] = useState('Active');
   const [runsSource, setRunsSource] = useState('All');
+  const [runsSearch, setRunsSearch] = useState('');
   const [runTitle, setRunTitle] = useState('');
+  const [runNotes, setRunNotes] = useState('');
   const [loadedFromRunNumber, setLoadedFromRunNumber] = useState(null);
   const [loadedRunIsProject, setLoadedRunIsProject] = useState(false);
+  const [archiveUndo, setArchiveUndo] = useState(null); // { runId, previousStatus }
   const [step, setStep] = useState(isStandalone ? 1 : (projectId ? 1 : 0));
   const [project, setProject] = useState(null);
   const [bom, setBom] = useState([]);
@@ -767,17 +770,37 @@ export default function App() {
     if (isStandalone && manufactureId) refreshStandaloneRuns();
   }, [isStandalone, manufactureId, runsFilter, refreshStandaloneRuns]);
 
-  // Apply source filter client-side over the fetched runs list
+  // Apply source filter + search client-side over the fetched runs list
   const filteredStandaloneRuns = standaloneRuns.filter(r => {
-    if (runsSource === 'All') return true;
-    if (runsSource === 'Manual') return r.nest_source === 'Manual';
-    if (runsSource === 'CSV') return r.nest_source === 'CSV';
-    if (runsSource === 'Project') return !!r.project_id; // any run with a project_id is a project run
+    // Source filter
+    if (runsSource === 'Manual' && r.nest_source !== 'Manual') return false;
+    if (runsSource === 'CSV' && r.nest_source !== 'CSV') return false;
+    if (runsSource === 'Project' && !r.project_id) return false;
+    // Search filter — case-insensitive match against title, project name, notes, or creator
+    if (runsSearch.trim()) {
+      const q = runsSearch.trim().toLowerCase();
+      const hay = `${r.run_title || ''} ${r.project_name || ''} ${r.notes || ''} ${r.run_notes || ''} ${r.created_by || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
 
+  // Duplicate: like Load, but clears title + savedRunInfo so the user is clearly
+  // starting a fresh run (no "Editing copy of #N" banner, no auto-loaded title).
+  async function duplicateStandaloneRun(runId) {
+    await loadStandaloneRun(runId);
+    setRunTitle('');
+    setRunNotes('');
+    setLoadedFromRunNumber(null);
+    setSavedRunInfo(null);
+    setResults(null);
+    setStep(1);
+  }
+
   async function archiveStandaloneRun(runId, newStatus) {
     setArchivingRunId(runId);
+    const previousStatus = newStatus === 'Archived' ? 'Approved' : 'Archived';
+    const runBeingChanged = standaloneRuns.find(r => r.id === runId);
     try {
       const resp = await fetch(`${API}/api/standalone/runs/${runId}/status`, {
         method: 'PATCH',
@@ -786,9 +809,40 @@ export default function App() {
       });
       if (!resp.ok) throw new Error('Status update failed');
       await refreshStandaloneRuns();
+      // Show undo toast for Archive only (Restore doesn't need an undo)
+      if (newStatus === 'Archived' && runBeingChanged) {
+        setArchiveUndo({ runId, previousStatus, runNumber: runBeingChanged.run_number, expiresAt: Date.now() + 5000 });
+      }
     } catch (e) {
       console.error('Archive run:', e);
       setError(e.message || 'Failed to update run');
+    } finally {
+      setArchivingRunId(null);
+    }
+  }
+
+  // Auto-dismiss undo toast after 5s
+  useEffect(() => {
+    if (!archiveUndo) return;
+    const timer = setTimeout(() => setArchiveUndo(null), 5000);
+    return () => clearTimeout(timer);
+  }, [archiveUndo]);
+
+  async function undoArchive() {
+    if (!archiveUndo) return;
+    const { runId, previousStatus } = archiveUndo;
+    setArchiveUndo(null);
+    setArchivingRunId(runId);
+    try {
+      const resp = await fetch(`${API}/api/standalone/runs/${runId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: previousStatus })
+      });
+      if (!resp.ok) throw new Error('Undo failed');
+      await refreshStandaloneRuns();
+    } catch (e) {
+      setError(e.message || 'Failed to undo archive');
     } finally {
       setArchivingRunId(null);
     }
@@ -808,6 +862,7 @@ export default function App() {
       if (data.run_header?.kerf_1d) setKerf1D(data.run_header.kerf_1d);
       if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
       if (data.run_header?.run_title) setRunTitle(data.run_header.run_title);
+      if (data.run_header?.run_notes) setRunNotes(data.run_header.run_notes); else setRunNotes('');
 
       const isProjectRun = !!data.run_header?.project_id;
       setLoadedRunIsProject(isProjectRun);
@@ -1368,6 +1423,7 @@ export default function App() {
             kerf_1d: kerf1D,
             kerf_2d: kerf2D,
             run_title: runTitle.trim(),
+            run_notes: runNotes.trim(),
             created_by: userEmail,
           }),
         });
@@ -1382,6 +1438,7 @@ export default function App() {
             kerf_1d: kerf1D,
             kerf_2d: kerf2D,
             created_by: userEmail,
+            run_notes: runNotes.trim(),
           }),
         });
       }
@@ -1389,6 +1446,7 @@ export default function App() {
       const data = await resp.json();
       setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d || 0} 1D + ${data.saved_2d || 0} 2D results (Status: ${data.run_status})`);
       setRunTitle('');
+      setRunNotes('');
       setLoadedFromRunNumber(null);
       setLoadedRunIsProject(false);
       setSavedRunInfo(null);
@@ -1503,11 +1561,36 @@ export default function App() {
               Saved nests are visible to everyone at your company.
             </p>
 
+            {/* Archive undo toast — appears for 5s after archiving */}
+            {archiveUndo && (
+              <div style={{
+                background: '#323232', color: 'white', padding: '10px 16px',
+                borderRadius: 6, marginBottom: 12,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                fontSize: 13, boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+              }}>
+                <span>Run #{archiveUndo.runNumber} archived.</span>
+                <button
+                  onClick={undoArchive}
+                  style={{ background: 'transparent', color: '#ffeb3b', border: 'none', fontWeight: 700, textTransform: 'uppercase', fontSize: 12, cursor: 'pointer', padding: '4px 12px' }}
+                >
+                  Undo
+                </button>
+              </div>
+            )}
+
             {/* Recall panel: previously saved standalone nests */}
             <div style={{ background: 'white', border: '1px solid #e2e6eb', borderRadius: 6, marginBottom: 18, overflow: 'hidden' }}>
               <div style={{ background: '#f5f6f8', padding: '10px 16px', fontSize: 12, fontWeight: 600, color: '#444', borderBottom: '1px solid #e2e6eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                 <span>SAVED NESTS (YOUR COMPANY)</span>
                 <span style={{ fontWeight: 400, color: '#888', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    value={runsSearch}
+                    onChange={e => { setRunsSearch(e.target.value); setShowAllRuns(false); }}
+                    placeholder="Search title / project / notes..."
+                    style={{ fontSize: 11, padding: '3px 8px', width: 220, border: '1px solid #ccc', borderRadius: 3 }}
+                  />
                   <span style={{ fontSize: 10, fontWeight: 600 }}>SOURCE:</span>
                   <select
                     value={runsSource}
@@ -1568,8 +1651,8 @@ export default function App() {
                     return (
                       <div key={run.id} style={{
                         padding: '10px 16px', borderBottom: '1px solid #f0f2f5',
-                        display: 'grid', gridTemplateColumns: '70px 70px 1fr 140px 70px 90px',
-                        gap: 12, alignItems: 'center', fontSize: 12,
+                        display: 'grid', gridTemplateColumns: '70px 70px 1fr 130px 60px 80px 80px',
+                        gap: 10, alignItems: 'center', fontSize: 12,
                         opacity: isArchived ? 0.65 : 1
                       }}>
                         <span style={{ fontWeight: 600, color: '#5F94CE' }}>Run #{run.run_number}</span>
@@ -1591,10 +1674,24 @@ export default function App() {
                           onClick={() => loadStandaloneRun(run.id)}
                           className="btn btn-small"
                           disabled={loadingRunId === run.id}
-                          style={{ fontSize: 11, padding: '4px 10px' }}
+                          style={{ fontSize: 11, padding: '4px 8px' }}
+                          title="Load this run (view + revise standalone)"
                         >
                           {loadingRunId === run.id ? '…' : 'Load'}
                         </button>
+                        {isProject ? (
+                          <span style={{ fontSize: 10, color: '#888', textAlign: 'center' }} title="Project runs can't be duplicated from the standalone tool">—</span>
+                        ) : (
+                          <button
+                            onClick={() => duplicateStandaloneRun(run.id)}
+                            className="btn btn-small"
+                            disabled={loadingRunId === run.id}
+                            style={{ fontSize: 11, padding: '4px 8px' }}
+                            title="Duplicate as a fresh new run (parts copied, title cleared)"
+                          >
+                            Duplicate
+                          </button>
+                        )}
                         {isProject ? (
                           <span style={{ fontSize: 10, color: '#888', textAlign: 'center' }} title="Manage project runs from the project page">—</span>
                         ) : (
@@ -1638,6 +1735,7 @@ export default function App() {
                     setEnabledStock(new Set());
                     setResults(null);
                     setRunTitle('');
+                    setRunNotes('');
                   }}
                   className="btn btn-small"
                   style={{ fontSize: 11 }}
@@ -1648,7 +1746,7 @@ export default function App() {
             )}
 
             {/* Run title — labels the new nest the user is about to enter (required) */}
-            <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: '#5F94CE', textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 100 }}>
                 Run Title <span style={{ color: '#d32f2f' }}>*</span>
               </label>
@@ -1659,6 +1757,21 @@ export default function App() {
                 placeholder="Required — e.g. 'Smith Job', 'Shop scrap nest', 'Quote #1234'"
                 className="input"
                 style={{ flex: 1, maxWidth: 500, borderColor: runTitle.trim() ? '' : '#f5b7b1' }}
+              />
+            </div>
+
+            {/* Run notes — optional free-text for longer context */}
+            <div style={{ marginBottom: 14, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#5F94CE', textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 100, paddingTop: 6 }}>
+                Notes
+              </label>
+              <textarea
+                value={runNotes}
+                onChange={e => setRunNotes(e.target.value)}
+                placeholder="Optional — context, customer requests, follow-up items..."
+                className="input"
+                rows={2}
+                style={{ flex: 1, maxWidth: 700, resize: 'vertical', fontFamily: 'inherit' }}
               />
             </div>
 
