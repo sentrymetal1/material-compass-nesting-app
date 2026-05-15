@@ -78,7 +78,7 @@ app.get('/api/project/:id', async (req, res) => {
 
 app.get('/api/project/:id/bom', async (req, res) => {
   try { const token = await getAccessToken();
-    const resp = await axios.get(creatorApiBase()+'/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Project_LU=='+req.params.id+')&limit=200', { headers: zohoHeaders(token) });
+    const resp = await axios.get(creatorApiBase()+'/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(MCP_Customer_Project_Form=='+req.params.id+')&limit=200', { headers: zohoHeaders(token) });
     res.json((resp.data.data || []).map(row => ({ id: row.ID, bom_item: row.BOM_Item, nest_type: row.Nest_Type, form_type_id: row.Form_Type?.ID, form_type_name: row.Form_Type?.zc_display_value || row.Form_Type?.display_value, material_type_id: row.Material_Type?.ID, material_type_name: row.Material_Type?.zc_display_value || row.Material_Type?.display_value, specification_id: row.Specification?.ID, spec_name: row.Specification?.zc_display_value || row.Specification?.display_value, material_type_origin: row.Specification?.Material_Type_Origin || '', material_id: row.Material?.ID, material_name: row.Material?.zc_display_value || row.Material?.display_value, material_dim1: row.Material?.Dim1, quantity: row.Quantity, length_nest: row.Length_Nest, width_nest: row.Width_Nest, density: row.Density, weight_per_ft: row.Weight_Per_Ft })));
   } catch (err) { res.status(500).json({ error: 'Failed', details: err.response?.data || err.message }); }
 });
@@ -105,7 +105,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
 
     let bomItems = [];
     try {
-      const bomResp = await axios.get(creatorApiBase()+'/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Project_LU=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
+      const bomResp = await axios.get(creatorApiBase()+'/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(MCP_Customer_Project_Form=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
       bomItems = (bomResp.data.data || []).map(row => ({ id: row.ID, form_type_id: row.Form_Type?.ID, material_type_id: row.Material_Type?.ID, specification_id: row.Specification?.ID, material_id: row.Material?.ID, dim1: parseFloat(row.Material?.Dim1) || parseFloat(row.Dim1) || 0, weight_per_ft: parseFloat(row.Weight_Per_Ft) || parseFloat(row.Material?.Weight_Lb_Ft) || 0, density: parseFloat(row.Density) || 0 }));
     } catch (e) { console.error('BOM fetch failed for weights'); }
 
@@ -306,7 +306,6 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Material: line.material_id,
         MCP_Customer_Project_Form: projectId,
         Project_Bi_Directional_Lookup: projectId,
-        Project_LU: projectId,
         Item_Description: fullDesc,
         Item_QTY_and_Description: line.description || fullDesc,
         Description: fullDesc,
@@ -340,7 +339,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     console.log('Subform rows to write:', subformRows.length);
 
     try {
-      var existingResp = await axios.get(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(Project_LU=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
+      var existingResp = await axios.get(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(MCP_Customer_Project_Form=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
       var existingRows = existingResp.data.data || [];
       console.log('Deleting ' + existingRows.length + ' existing rows...');
       for (var d = 0; d < existingRows.length; d++) {
@@ -372,7 +371,7 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
     var projectId = req.params.id;
     console.log('Fetching purchase list for project:', projectId);
     var reportName = 'Project_Material_Allocated_Detail_Form_Report';
-    var url = creatorApiBase() + '/report/' + reportName + '?criteria=(Project_LU==' + projectId + ')&limit=200';
+    var url = creatorApiBase() + '/report/' + reportName + '?criteria=(MCP_Customer_Project_Form==' + projectId + ')&limit=200';
     var resp = await axios.get(url, { headers: zohoHeaders(token) });
     var rawRows = resp.data.data || [];
     console.log('Purchase list rows found:', rawRows.length);
