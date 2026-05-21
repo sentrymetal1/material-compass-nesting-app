@@ -136,7 +136,14 @@ app.get('/api/bom-lookups/material-types', async (req, res) => {
 
 app.get('/api/bom-lookups/material-form-detail', async (req, res) => {
   try {
-    const rows = await fetchAllZohoPages('/report/Material_Form_Detail_Report');
+    const { form_type_id, material_type_id } = req.query;
+    let path = '/report/Material_Form_Detail_Report';
+    if (form_type_id && material_type_id) {
+      path += '?criteria=(Form_Type==' + form_type_id + '%26%26Material_Type==' + material_type_id + ')';
+    } else if (form_type_id) {
+      path += '?criteria=(Form_Type==' + form_type_id + ')';
+    }
+    const rows = await fetchAllZohoPages(path);
     res.json(rows.map(r => ({
       id: String(r.ID),
       formTypeId: String(r.Form_Type?.ID || ''),
@@ -150,7 +157,14 @@ app.get('/api/bom-lookups/material-form-detail', async (req, res) => {
 
 app.get('/api/bom-lookups/materials', async (req, res) => {
   try {
-    const rows = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report');
+    const { form_type_id, material_type_id } = req.query;
+    let path = '/report/Beam_Channel_Tee_Lookup_Report';
+    if (form_type_id && material_type_id) {
+      path += '?criteria=(Form_Types==' + form_type_id + '%26%26Material_Types==' + material_type_id + ')';
+    } else if (form_type_id) {
+      path += '?criteria=(Form_Types==' + form_type_id + ')';
+    }
+    const rows = await fetchAllZohoPages(path);
     res.json(rows.map(r => ({
       id: String(r.ID),
       formTypeId: String(r.Form_Types?.ID || ''),
