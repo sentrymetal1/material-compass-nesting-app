@@ -90,6 +90,78 @@ app.get('/api/stock', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Failed', details: err.response?.data || err.message }); }
 });
 
+// ---- BOM Editor lookup endpoints (added 2026-05-21) ----
+// Public reference data proxy for the BOM Editor widget. Bypasses Zoho's
+// portal API perm wall on Form_Types_Report et al.
+// Scoped under /api/bom-lookups/* to avoid collision with the Nesting
+// App's /api/lookups/* family which uses different response shapes.
+// CORS open via app.use(cors()) at the top of this file.
+// See memory: feedback_widget_perm_wall_proxy_route.
+
+async function fetchAllZohoPages(reportPath) {
+  const token = await getAccessToken();
+  let all = [];
+  let from = 1;
+  const pageSize = 200;
+  while (true) {
+    const sep = reportPath.includes('?') ? '&' : '?';
+    const url = creatorApiBase() + reportPath + sep + 'from=' + from + '&limit=' + pageSize;
+    const resp = await axios.get(url, { headers: zohoHeaders(token) });
+    const rows = resp.data.data || [];
+    all.push(...rows);
+    if (rows.length < pageSize) break;
+    from += pageSize;
+    if (from > 10000) break;
+  }
+  return all;
+}
+
+app.get('/api/bom-lookups/form-types', async (req, res) => {
+  try {
+    const rows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
+    res.json(rows.map(r => ({ id: String(r.ID), label: r.Form_Type || '' })));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+  }
+});
+
+app.get('/api/bom-lookups/material-types', async (req, res) => {
+  try {
+    const rows = await fetchAllZohoPages('/report/Material_Types_Report');
+    res.json(rows.map(r => ({ id: String(r.ID), label: r.Material_Type || '' })));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+  }
+});
+
+app.get('/api/bom-lookups/material-form-detail', async (req, res) => {
+  try {
+    const rows = await fetchAllZohoPages('/report/Material_Form_Detail_Report');
+    res.json(rows.map(r => ({
+      id: String(r.ID),
+      formTypeId: String(r.Form_Type?.ID || ''),
+      matTypeId:  String(r.Material_Type?.ID || ''),
+      typeDetail: r.Type_Detail || ''
+    })));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+  }
+});
+
+app.get('/api/bom-lookups/materials', async (req, res) => {
+  try {
+    const rows = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report');
+    res.json(rows.map(r => ({
+      id: String(r.ID),
+      formTypeId: String(r.Form_Types?.ID || ''),
+      matTypeId:  String(r.Material_Types?.ID || ''),
+      description: r.Description || ''
+    })));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+  }
+});
+
 app.post('/api/nest', async (req, res) => {
   try { console.log('NEST REQUEST:', JSON.stringify(req.body));
     const resp = await axios.post(NESTING_API_URL, req.body, { headers: { 'Content-Type': 'application/json' }, timeout: 120000 });
