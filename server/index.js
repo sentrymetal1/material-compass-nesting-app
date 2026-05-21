@@ -98,6 +98,21 @@ app.get('/api/stock', async (req, res) => {
 // CORS open via app.use(cors()) at the top of this file.
 // See memory: feedback_widget_perm_wall_proxy_route.
 
+// Zoho returns HTTP 200 even for API-quota errors. The actual error is in resp.data.code:
+//   3000 = success with data
+//   3100 = success but no records matching criteria (treat as empty, not error)
+//   4000 = "Developer API limit reached" (daily quota exhausted)
+//   Other non-3000 codes = various failures
+// Easy to misdiagnose code 4000 as "the report is empty" — surface it explicitly.
+class ZohoApiError extends Error {
+  constructor(code, message, url) {
+    super('Zoho API code ' + code + ': ' + message);
+    this.zohoCode = code;
+    this.zohoMessage = message;
+    this.url = url;
+  }
+}
+
 async function fetchAllZohoPages(reportPath) {
   const token = await getAccessToken();
   let all = [];
@@ -110,19 +125,36 @@ async function fetchAllZohoPages(reportPath) {
     try {
       resp = await axios.get(url, { headers: zohoHeaders(token) });
     } catch (err) {
-      console.error('[bom-lookups] Zoho call FAILED:', url, '→', err.response?.status, JSON.stringify(err.response?.data || err.message));
+      console.error('[bom-lookups] Zoho HTTP error:', url, '→', err.response?.status, JSON.stringify(err.response?.data || err.message));
       throw err;
     }
-    const rows = resp.data?.data || [];
-    if (rows.length === 0 && from === 1) {
-      console.warn('[bom-lookups] Zoho returned 0 rows:', url, '→ resp.data:', JSON.stringify(resp.data));
+    // Detect Zoho-level error returned with HTTP 200
+    const code = resp.data?.code;
+    if (code && code !== 3000 && code !== 3100 && !Array.isArray(resp.data?.data)) {
+      console.error('[bom-lookups] Zoho error code', code, 'on', url, '→', resp.data?.message);
+      throw new ZohoApiError(code, resp.data.message || 'Unknown', url);
     }
+    const rows = resp.data?.data || [];
     all.push(...rows);
     if (rows.length < pageSize) break;
     from += pageSize;
     if (from > 10000) break;
   }
   return all;
+}
+
+function sendZohoAwareError(res, err) {
+  if (err instanceof ZohoApiError) {
+    // 503 Service Unavailable is the closest HTTP semantic for "Zoho exhausted my daily quota"
+    const status = err.zohoCode === 4000 ? 503 : 502;
+    return res.status(status).json({
+      error: 'Zoho API error',
+      zoho_code: err.zohoCode,
+      zoho_message: err.zohoMessage,
+      hint: err.zohoCode === 4000 ? 'Daily Zoho Developer API quota exhausted. Resets at midnight UTC. Upgrade plan for higher limits.' : null,
+    });
+  }
+  res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
 }
 
 app.get('/api/bom-lookups/form-types', async (req, res) => {
@@ -157,7 +189,7 @@ app.get('/api/bom-lookups/material-types', async (req, res) => {
     const rows = await fetchAllZohoPages('/report/Material_Types_Report');
     res.json(rows.map(r => ({ id: String(r.ID), label: r.Material_Type || '' })));
   } catch (err) {
-    res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+    sendZohoAwareError(res, err);
   }
 });
 
@@ -178,7 +210,7 @@ app.get('/api/bom-lookups/material-form-detail', async (req, res) => {
       typeDetail: r.Type_Detail || ''
     })));
   } catch (err) {
-    res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+    sendZohoAwareError(res, err);
   }
 });
 
@@ -199,7 +231,7 @@ app.get('/api/bom-lookups/materials', async (req, res) => {
       description: r.Description || ''
     })));
   } catch (err) {
-    res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+    sendZohoAwareError(res, err);
   }
 });
 
