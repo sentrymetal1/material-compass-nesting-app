@@ -106,8 +106,17 @@ async function fetchAllZohoPages(reportPath) {
   while (true) {
     const sep = reportPath.includes('?') ? '&' : '?';
     const url = creatorApiBase() + reportPath + sep + 'from=' + from + '&limit=' + pageSize;
-    const resp = await axios.get(url, { headers: zohoHeaders(token) });
-    const rows = resp.data.data || [];
+    let resp;
+    try {
+      resp = await axios.get(url, { headers: zohoHeaders(token) });
+    } catch (err) {
+      console.error('[bom-lookups] Zoho call FAILED:', url, '→', err.response?.status, JSON.stringify(err.response?.data || err.message));
+      throw err;
+    }
+    const rows = resp.data?.data || [];
+    if (rows.length === 0 && from === 1) {
+      console.warn('[bom-lookups] Zoho returned 0 rows:', url, '→ resp.data:', JSON.stringify(resp.data));
+    }
     all.push(...rows);
     if (rows.length < pageSize) break;
     from += pageSize;
@@ -122,6 +131,24 @@ app.get('/api/bom-lookups/form-types', async (req, res) => {
     res.json(rows.map(r => ({ id: String(r.ID), label: r.Form_Type || '' })));
   } catch (err) {
     res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+  }
+});
+
+// Diagnostic: force token refresh + raw Zoho call. Returns whatever Zoho responded.
+app.get('/api/bom-lookups/__debug', async (req, res) => {
+  try {
+    const token = await getAccessToken(true); // force refresh
+    const url = creatorApiBase() + '/report/Form_Types_Report?from=1&limit=5';
+    const r = await axios.get(url, { headers: zohoHeaders(token) });
+    res.json({ ok: true, url, status: r.status, body: r.data });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      url: creatorApiBase() + '/report/Form_Types_Report?from=1&limit=5',
+      zoho_status: err.response?.status,
+      zoho_body: err.response?.data,
+      message: err.message,
+    });
   }
 });
 
