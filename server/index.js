@@ -158,8 +158,8 @@ async function fetchAllZohoPages(reportPath) {
   const token = await getAccessToken();
   let all = [];
   let from = 1;
-  const pageSize = 1000; // Zoho v2.1 API max; 5x fewer paginated calls vs the default 200
-  const hardCap = 2000;  // No realistic dropdown UX needs > 2000 options (autocomplete makes it searchable)
+  const pageSize = 200;  // Zoho v2.1 API rejects > 200 with code 2945 MORE_THAN_MAX_LENGTH
+  const hardCap = 2000;  // No realistic dropdown UX needs > 2000 options. Caps pagination at ~10 calls per combo (was 50).
   while (true) {
     const sep = reportPath.includes('?') ? '&' : '?';
     const url = creatorApiBase() + reportPath + sep + 'from=' + from + '&limit=' + pageSize;
