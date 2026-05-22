@@ -327,6 +327,7 @@ app.get('/api/bom-lookups/materials', async (req, res) => {
         description: r.Description || '',
         weightPerFt: parseFloat(r.Weight_Lb_Ft) || 0,
         dim1: parseFloat(r.Dim1) || 0,
+        surfaceAreaPerFt: parseFloat(r.Surface_Area_Per_FT) || 0,
       }));
     });
     res.json(data);
