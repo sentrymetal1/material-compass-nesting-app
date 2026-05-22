@@ -203,7 +203,11 @@ app.get('/api/bom-lookups/form-types', async (req, res) => {
   try {
     const data = await cachedLookup('bom-lookups:form-types', 60 * 60 * 1000, async () => {
       const rows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
-      return rows.map(r => ({ id: String(r.ID), label: r.Form_Type || '' }));
+      return rows.map(r => ({
+        id: String(r.ID),
+        label: r.Form_Type || '',
+        measurement: r.Measurement || '',  // "Linear" or "Panel" — drives whether width fields are editable
+      }));
     });
     res.json(data);
   } catch (err) {
