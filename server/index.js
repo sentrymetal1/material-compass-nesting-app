@@ -215,13 +215,14 @@ app.get('/api/bom-lookups/form-types', async (req, res) => {
 app.get('/api/bom-lookups/__debug', async (req, res) => {
   try {
     const token = await getAccessToken(true); // force refresh
-    const url = creatorApiBase() + '/report/Form_Types_Report?from=1&limit=5';
+    const report = req.query.report || 'Form_Types_Report';
+    const criteria = req.query.criteria ? '&criteria=' + req.query.criteria : '';
+    const url = creatorApiBase() + '/report/' + report + '?from=1&limit=3' + criteria;
     const r = await axios.get(url, { headers: zohoHeaders(token) });
     res.json({ ok: true, url, status: r.status, body: r.data });
   } catch (err) {
     res.status(500).json({
       ok: false,
-      url: creatorApiBase() + '/report/Form_Types_Report?from=1&limit=5',
       zoho_status: err.response?.status,
       zoho_body: err.response?.data,
       message: err.message,
