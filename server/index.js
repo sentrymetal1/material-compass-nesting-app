@@ -271,6 +271,42 @@ app.get('/api/bom-lookups/material-form-detail', async (req, res) => {
   }
 });
 
+// Per-project components list. Filter: MCP_Customer_Project_Form == project_id
+app.get('/api/bom-lookups/components', async (req, res) => {
+  try {
+    const { project_id } = req.query;
+    if (!project_id) return res.status(400).json({ error: 'project_id query param required' });
+    const data = await cachedLookup('bom-lookups:components:' + project_id, 5 * 60 * 1000, async () => {
+      const rows = await fetchAllZohoPages('/report/All_Project_Components?criteria=(MCP_Customer_Project_Form==' + project_id + ')');
+      return rows.map(r => ({
+        id: String(r.ID),
+        label: r.Component || '',
+      }));
+    });
+    res.json(data);
+  } catch (err) {
+    sendZohoAwareError(res, err);
+  }
+});
+
+// Per-component drawings list. Filter: Components == component_id
+app.get('/api/bom-lookups/drawings', async (req, res) => {
+  try {
+    const { component_id } = req.query;
+    if (!component_id) return res.status(400).json({ error: 'component_id query param required' });
+    const data = await cachedLookup('bom-lookups:drawings:' + component_id, 5 * 60 * 1000, async () => {
+      const rows = await fetchAllZohoPages('/report/All_Project_Drawing_Details?criteria=(Components==' + component_id + ')');
+      return rows.map(r => ({
+        id: String(r.ID),
+        label: r.Drawing_Number || '',
+      }));
+    });
+    res.json(data);
+  } catch (err) {
+    sendZohoAwareError(res, err);
+  }
+});
+
 app.get('/api/bom-lookups/materials', async (req, res) => {
   try {
     const { form_type_id, material_type_id } = req.query;
