@@ -98,6 +98,47 @@ app.get('/api/stock', async (req, res) => {
 // CORS open via app.use(cors()) at the top of this file.
 // See memory: feedback_widget_perm_wall_proxy_route.
 
+// ---- Simple in-memory TTL cache for Zoho lookup responses ----
+// Reduces Developer API quota burn dramatically. Form/Material Types essentially never
+// change minute-to-minute; even per-combo Spec/Material lists are stable for hours.
+// Cache is per-process; Railway restart flushes it (acceptable).
+const lookupResponseCache = new Map(); // key -> { value, expiresAt }
+const lookupInflight = new Map();      // key -> Promise (dedupe concurrent fetches)
+
+async function cachedLookup(cacheKey, ttlMs, fetchFn) {
+  const now = Date.now();
+  const hit = lookupResponseCache.get(cacheKey);
+  if (hit && hit.expiresAt > now) return hit.value;
+  if (lookupInflight.has(cacheKey)) return lookupInflight.get(cacheKey);
+  const p = (async () => {
+    try {
+      const value = await fetchFn();
+      lookupResponseCache.set(cacheKey, { value, expiresAt: Date.now() + ttlMs });
+      return value;
+    } finally {
+      lookupInflight.delete(cacheKey);
+    }
+  })();
+  lookupInflight.set(cacheKey, p);
+  return p;
+}
+
+app.get('/api/cache-status', (req, res) => {
+  const now = Date.now();
+  const entries = Array.from(lookupResponseCache.entries()).map(([key, v]) => ({
+    key,
+    expires_in_seconds: Math.max(0, Math.round((v.expiresAt - now) / 1000)),
+  }));
+  res.json({ size: entries.length, entries, inflight: lookupInflight.size });
+});
+
+app.post('/api/cache-clear', (req, res) => {
+  const cleared = lookupResponseCache.size;
+  lookupResponseCache.clear();
+  lookupInflight.clear();
+  res.json({ ok: true, cleared });
+});
+
 // Zoho returns HTTP 200 even for API-quota errors. The actual error is in resp.data.code:
 //   3000 = success with data
 //   3100 = success but no records matching criteria (treat as empty, not error)
@@ -159,10 +200,13 @@ function sendZohoAwareError(res, err) {
 
 app.get('/api/bom-lookups/form-types', async (req, res) => {
   try {
-    const rows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
-    res.json(rows.map(r => ({ id: String(r.ID), label: r.Form_Type || '' })));
+    const data = await cachedLookup('bom-lookups:form-types', 60 * 60 * 1000, async () => {
+      const rows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
+      return rows.map(r => ({ id: String(r.ID), label: r.Form_Type || '' }));
+    });
+    res.json(data);
   } catch (err) {
-    res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+    sendZohoAwareError(res, err);
   }
 });
 
@@ -186,8 +230,11 @@ app.get('/api/bom-lookups/__debug', async (req, res) => {
 
 app.get('/api/bom-lookups/material-types', async (req, res) => {
   try {
-    const rows = await fetchAllZohoPages('/report/Material_Types_Report');
-    res.json(rows.map(r => ({ id: String(r.ID), label: r.Material_Type || '' })));
+    const data = await cachedLookup('bom-lookups:material-types', 60 * 60 * 1000, async () => {
+      const rows = await fetchAllZohoPages('/report/Material_Types_Report');
+      return rows.map(r => ({ id: String(r.ID), label: r.Material_Type || '' }));
+    });
+    res.json(data);
   } catch (err) {
     sendZohoAwareError(res, err);
   }
@@ -196,19 +243,23 @@ app.get('/api/bom-lookups/material-types', async (req, res) => {
 app.get('/api/bom-lookups/material-form-detail', async (req, res) => {
   try {
     const { form_type_id, material_type_id } = req.query;
-    let path = '/report/Material_Form_Detail_Report';
-    if (form_type_id && material_type_id) {
-      path += '?criteria=(Form_Type==' + form_type_id + '%26%26Material_Type==' + material_type_id + ')';
-    } else if (form_type_id) {
-      path += '?criteria=(Form_Type==' + form_type_id + ')';
-    }
-    const rows = await fetchAllZohoPages(path);
-    res.json(rows.map(r => ({
-      id: String(r.ID),
-      formTypeId: String(r.Form_Type?.ID || ''),
-      matTypeId:  String(r.Material_Type?.ID || ''),
-      typeDetail: r.Type_Detail || ''
-    })));
+    const cacheKey = 'bom-lookups:material-form-detail:' + (form_type_id || '*') + '|' + (material_type_id || '*');
+    const data = await cachedLookup(cacheKey, 15 * 60 * 1000, async () => {
+      let path = '/report/Material_Form_Detail_Report';
+      if (form_type_id && material_type_id) {
+        path += '?criteria=(Form_Type==' + form_type_id + '%26%26Material_Type==' + material_type_id + ')';
+      } else if (form_type_id) {
+        path += '?criteria=(Form_Type==' + form_type_id + ')';
+      }
+      const rows = await fetchAllZohoPages(path);
+      return rows.map(r => ({
+        id: String(r.ID),
+        formTypeId: String(r.Form_Type?.ID || ''),
+        matTypeId:  String(r.Material_Type?.ID || ''),
+        typeDetail: r.Type_Detail || ''
+      }));
+    });
+    res.json(data);
   } catch (err) {
     sendZohoAwareError(res, err);
   }
@@ -217,19 +268,23 @@ app.get('/api/bom-lookups/material-form-detail', async (req, res) => {
 app.get('/api/bom-lookups/materials', async (req, res) => {
   try {
     const { form_type_id, material_type_id } = req.query;
-    let path = '/report/Beam_Channel_Tee_Lookup_Report';
-    if (form_type_id && material_type_id) {
-      path += '?criteria=(Form_Types==' + form_type_id + '%26%26Material_Types==' + material_type_id + ')';
-    } else if (form_type_id) {
-      path += '?criteria=(Form_Types==' + form_type_id + ')';
-    }
-    const rows = await fetchAllZohoPages(path);
-    res.json(rows.map(r => ({
-      id: String(r.ID),
-      formTypeId: String(r.Form_Types?.ID || ''),
-      matTypeId:  String(r.Material_Types?.ID || ''),
-      description: r.Description || ''
-    })));
+    const cacheKey = 'bom-lookups:materials:' + (form_type_id || '*') + '|' + (material_type_id || '*');
+    const data = await cachedLookup(cacheKey, 15 * 60 * 1000, async () => {
+      let path = '/report/Beam_Channel_Tee_Lookup_Report';
+      if (form_type_id && material_type_id) {
+        path += '?criteria=(Form_Types==' + form_type_id + '%26%26Material_Types==' + material_type_id + ')';
+      } else if (form_type_id) {
+        path += '?criteria=(Form_Types==' + form_type_id + ')';
+      }
+      const rows = await fetchAllZohoPages(path);
+      return rows.map(r => ({
+        id: String(r.ID),
+        formTypeId: String(r.Form_Types?.ID || ''),
+        matTypeId:  String(r.Material_Types?.ID || ''),
+        description: r.Description || ''
+      }));
+    });
+    res.json(data);
   } catch (err) {
     sendZohoAwareError(res, err);
   }
