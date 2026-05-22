@@ -282,6 +282,7 @@ app.get('/api/bom-lookups/materials', async (req, res) => {
         id: String(r.ID),
         formTypeId: String(r.Form_Types?.ID || ''),
         matTypeId:  String(r.Material_Types?.ID || ''),
+        specId:     String(r.Specification?.ID || ''),
         description: r.Description || ''
       }));
     });
