@@ -324,7 +324,9 @@ app.get('/api/bom-lookups/materials', async (req, res) => {
         formTypeId: String(r.Form_Types?.ID || ''),
         matTypeId:  String(r.Material_Types?.ID || ''),
         specId:     String(r.Specification?.ID || ''),
-        description: r.Description || ''
+        description: r.Description || '',
+        weightPerFt: parseFloat(r.Weight_Lb_Ft) || 0,
+        dim1: parseFloat(r.Dim1) || 0,
       }));
     });
     res.json(data);
