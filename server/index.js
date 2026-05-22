@@ -280,7 +280,7 @@ app.get('/api/bom-lookups/components', async (req, res) => {
       const rows = await fetchAllZohoPages('/report/All_Project_Components?criteria=(MCP_Customer_Project_Form==' + project_id + ')');
       return rows.map(r => ({
         id: String(r.ID),
-        label: r.Component || '',
+        label: r.Project_Component || '',  // Field link name on Project_Components_Form is Project_Component (display name "Component")
       }));
     });
     res.json(data);
