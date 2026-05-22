@@ -158,7 +158,8 @@ async function fetchAllZohoPages(reportPath) {
   const token = await getAccessToken();
   let all = [];
   let from = 1;
-  const pageSize = 200;
+  const pageSize = 1000; // Zoho v2.1 API max; 5x fewer paginated calls vs the default 200
+  const hardCap = 2000;  // No realistic dropdown UX needs > 2000 options (autocomplete makes it searchable)
   while (true) {
     const sep = reportPath.includes('?') ? '&' : '?';
     const url = creatorApiBase() + reportPath + sep + 'from=' + from + '&limit=' + pageSize;
@@ -178,8 +179,8 @@ async function fetchAllZohoPages(reportPath) {
     const rows = resp.data?.data || [];
     all.push(...rows);
     if (rows.length < pageSize) break;
+    if (all.length >= hardCap) break;
     from += pageSize;
-    if (from > 10000) break;
   }
   return all;
 }
