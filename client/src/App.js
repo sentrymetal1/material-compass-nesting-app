@@ -1082,18 +1082,16 @@ export default function App() {
       const firstCut = r.cuts?.[0];
       if (!firstCut) continue;
       const is2D = r.stock_width_in && r.stock_width_in > 0;
-      const key = `${r.form_type}|${r.material_origin}|${firstCut.spec_name}|${firstCut.material_type}|${r.stock_length_in}|${r.stock_width_in || 0}`;
+      const ftn = results._nameLookup?.[r.form_type] || r.form_type;
+      const mtn = results._nameLookup?.[r.material_origin] || r.material_origin;
+      const specName = results._nameLookup?.[firstCut.spec_name] || '';
+      const matName = results._nameLookup?.[firstCut.material_type] || '';
+      // Key by display values so same-looking material/length collapses to one
+      // purchase line even when underlying IDs differ across BOM rows.
+      const key = `${ftn}|${mtn}|${specName}|${matName}|${r.stock_length_in}|${r.stock_width_in || 0}`;
       if (!agg[key]) {
         const wpf = weightMap[String(firstCut.bom_line_id)] || 0;
         const unitWt = calcUnitWeight(wpf, r.stock_length_in, is2D ? r.stock_width_in : 0);
-        const bomItem = bom.find(b =>
-          String(b.form_type_id) === String(r.form_type) &&
-          String(b.material_type_id) === String(r.material_origin)
-        );
-        const ftn = results._nameLookup?.[r.form_type] || r.form_type;
-        const mtn = results._nameLookup?.[r.material_origin] || r.material_origin;
-        const specName = results._nameLookup?.[firstCut.spec_name] || '';
-        const matName = results._nameLookup?.[firstCut.material_type] || '';
         const sizeDesc = is2D
           ? `${inToFt(r.stock_length_in)} × ${inToFt(r.stock_width_in)}`
           : inToFt(r.stock_length_in);
@@ -1105,8 +1103,8 @@ export default function App() {
           description: `${ftn} | ${mtn} | ${specName} | ${matName} | ${sizeDesc}`,
           form_type_name: ftn,
           material_type_name: mtn,
-          spec_name: bomItem?.spec_name || '',
-          material_name: bomItem?.material_name || '',
+          spec_name: specName,
+          material_name: matName,
           material_size: matName,
           stock_length_in: r.stock_length_in,
           stock_width_in: r.stock_width_in || 0,
