@@ -552,6 +552,12 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Material: line.material_id,
         MCP_Customer_Project_Form: projectId,
         Project_Bi_Directional_Lookup: projectId,
+        // Project_LU is the field the BOM-side Allotted workflow uses to
+        // join Project_Material_Allocated_Detail_Form rows back to the BOM
+        // (NEW PROJECT SUBMITTAL → Update Component Form workflow). Without
+        // it, the workflow's criteria Project_LU == BOM.MCP_Customer_Project_Form
+        // returns no matches and Total_Amount_Of_Allotted_Material stays 0.
+        Project_LU: projectId,
         Item_Description: fullDesc,
         Item_QTY_and_Description: line.description || fullDesc,
         Description: fullDesc,
