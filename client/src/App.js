@@ -1150,7 +1150,10 @@ export default function App() {
         console.error('Purchase list rows rejected by Zoho:', failures);
         const codes = [...new Set(failures.map(f => f.code).filter(c => c != null))];
         const names = failures.map(f => `#${f.line} ${f.description || ''}`).join('; ');
-        failMsg = ` — WARNING: ${failures.length} of ${attempted} row(s) were REJECTED and not saved${codes.length ? ` (Zoho code ${codes.join(', ')})` : ''}: ${names}`;
+        // Surface Zoho's raw field-level error from the first rejected row so
+        // the offending field is visible on-screen (no need to open dev tools).
+        const firstMsg = failures.find(f => f.message)?.message || '';
+        failMsg = ` — WARNING: ${failures.length} of ${attempted} row(s) were REJECTED and not saved${codes.length ? ` (Zoho code ${codes.join(', ')})` : ''}: ${names}.${firstMsg ? ` [Zoho says: ${firstMsg}]` : ''}`;
       }
       const prefix = failures.length > 0 ? 'Error' : '';
       setPurchaseStatus(`${prefix}${prefix ? ': ' : ''}Saved ${data.items_saved}/${attempted} line items to project.${failMsg} Refreshing...`);
@@ -2650,7 +2653,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.1 — purchase-save row-failure reporting</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.2 — purchase-save shows Zoho field error</span></footer>
     </div>
   );
 }
