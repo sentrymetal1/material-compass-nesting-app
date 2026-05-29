@@ -157,15 +157,21 @@ class ZohoApiError extends Error {
 async function fetchAllZohoPages(reportPath) {
   const token = await getAccessToken();
   let all = [];
-  let from = 1;
   const pageSize = 200;  // Zoho v2.1 API rejects > 200 with code 2945 MORE_THAN_MAX_LENGTH
-  const hardCap = 2000;  // No realistic dropdown UX needs > 2000 options. Caps pagination at ~10 calls per combo (was 50).
+  const hardCap = 5000;  // safety stop; 200/page → max 25 calls
+  // Creator API v2.1 paginates via the `record_cursor` response header, NOT the
+  // v2-style `from` param (v2.1 ignores `from`, re-returning the first page every
+  // time). Pass the cursor back as a request header to fetch the next batch; it's
+  // absent on the response once there are no more records.
+  let cursor = null;
   while (true) {
     const sep = reportPath.includes('?') ? '&' : '?';
-    const url = creatorApiBase() + reportPath + sep + 'from=' + from + '&limit=' + pageSize;
+    const url = creatorApiBase() + reportPath + sep + 'limit=' + pageSize;
+    const headers = zohoHeaders(token);
+    if (cursor) headers.record_cursor = cursor;
     let resp;
     try {
-      resp = await axios.get(url, { headers: zohoHeaders(token) });
+      resp = await axios.get(url, { headers });
     } catch (err) {
       console.error('[bom-lookups] Zoho HTTP error:', url, '→', err.response?.status, JSON.stringify(err.response?.data || err.message));
       throw err;
@@ -178,9 +184,13 @@ async function fetchAllZohoPages(reportPath) {
     }
     const rows = resp.data?.data || [];
     all.push(...rows);
-    if (rows.length < pageSize) break;
-    if (all.length >= hardCap) break;
-    from += pageSize;
+    // axios lowercases response header names. No cursor → last page.
+    cursor = resp.headers['record_cursor'] || resp.headers['Record_Cursor'] || null;
+    if (!cursor) break;
+    if (all.length >= hardCap) {
+      console.warn('[bom-lookups] fetchAllZohoPages hit hardCap', hardCap, 'for', reportPath);
+      break;
+    }
   }
   return all;
 }
