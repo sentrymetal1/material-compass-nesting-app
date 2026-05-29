@@ -66,11 +66,15 @@ app.get('/api/project/:id', async (req, res) => {
   try {
     let token = await getAccessToken();
     let resp = await axios.get(creatorApiBase()+'/report/All_Projects?criteria=(ID=='+req.params.id+')', { headers: zohoHeaders(token) });
+    // Zoho returns HTTP 200 with {code:4000} when the daily API quota is gone,
+    // and no data[] — which otherwise reads as a misleading "Project not found".
+    if (resp.data?.code === 4000) return res.status(429).json({ error: 'Zoho API daily quota exhausted — try again after it resets (midnight in your Zoho data-center timezone).', code: 4000 });
     if (!resp.data.data?.length) {
       console.log('Project not found on first attempt, forcing token refresh and retrying...');
       token = await getAccessToken(true);
       resp = await axios.get(creatorApiBase()+'/report/All_Projects?criteria=(ID=='+req.params.id+')', { headers: zohoHeaders(token) });
     }
+    if (resp.data?.code === 4000) return res.status(429).json({ error: 'Zoho API daily quota exhausted — try again after it resets (midnight in your Zoho data-center timezone).', code: 4000 });
     if (!resp.data.data?.length) return res.status(404).json({ error: 'Project not found' });
     res.json(resp.data.data[0]);
   } catch (err) { res.status(500).json({ error: 'Failed', details: err.response?.data || err.message }); }
@@ -626,37 +630,58 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
 
     console.log('Subform rows to write:', subformRows.length);
 
+    // ── Bulk delete existing rows for this project in ONE call ──
+    // (was: fetch all rows + a DELETE per row = N+1 Developer API calls).
+    // Creator v2.1 delete-by-criteria removes all matching rows in a single call.
+    // code 9280 = no records matched (nothing to delete) — treat as success.
     try {
-      var existingResp = await axios.get(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(MCP_Customer_Project_Form=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
-      var existingRows = existingResp.data.data || [];
-      console.log('Deleting ' + existingRows.length + ' existing rows...');
-      for (var d = 0; d < existingRows.length; d++) {
-        try {
-          await axios.delete(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[d].ID, { headers: zohoHeaders(token) });
-        } catch (delErr) { console.error('Failed to delete row ' + existingRows[d].ID + ':', delErr.response?.data || delErr.message); }
+      await axios.delete(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(MCP_Customer_Project_Form=='+projectId+')', { headers: zohoHeaders(token) });
+    } catch (delErr) {
+      var dd = delErr.response && delErr.response.data;
+      if (dd && dd.code === 4000) {
+        return res.status(429).json({ error: 'Zoho API daily quota exhausted — purchase list NOT saved. Try again after the quota resets.', code: 4000 });
       }
-    } catch (fetchErr) { if (fetchErr.response?.data?.code !== 9280) { console.error('Error fetching existing rows:', fetchErr.response?.data || fetchErr.message); } }
+      if (!dd || dd.code !== 9280) console.error('Bulk delete existing rows failed:', dd || delErr.message);
+    }
 
+    // ── Bulk insert all rows in chunks of up to 100 per call ──
+    // (was: a POST per row = M Developer API calls). Creator v2.1 accepts an
+    // array under `data` (max 200) and returns a per-record result[] with its
+    // own code, so per-row failure reporting is preserved.
     var saved = 0;
     var failures = [];
-    for (var p = 0; p < subformRows.length; p++) {
-      var rowDesc = subformRows[p].Item_Description || ('row ' + (p + 1));
+    var CHUNK = 100;
+    for (var c = 0; c < subformRows.length; c += CHUNK) {
+      var batch = subformRows.slice(c, c + CHUNK);
       try {
-        var postResp = await axios.post(creatorApiBase()+'/form/Project_Material_Allocated_Detail_Form', { data: subformRows[p] }, { headers: zohoHeaders(token) });
-        // Zoho Creator returns HTTP 200 even when the record was rejected
-        // (e.g. code 3002 bad value, 4000 quota exhausted). Success is code 3000.
-        var rc = postResp.data && postResp.data.code;
-        if (rc && rc !== 3000) {
-          var detail = postResp.data.error || postResp.data.message || postResp.data;
-          failures.push({ line: p + 1, description: rowDesc, code: rc, message: typeof detail === 'string' ? detail : JSON.stringify(detail) });
-          console.error('Row ' + (p+1) + ' rejected (HTTP 200, code ' + rc + '):', JSON.stringify(postResp.data));
-        } else {
-          saved++;
+        var postResp = await axios.post(creatorApiBase()+'/form/Project_Material_Allocated_Detail_Form', { data: batch }, { headers: zohoHeaders(token) });
+        var body = postResp.data || {};
+        // Whole-request failure (e.g. quota 4000) — no per-record result array.
+        if (body.code === 4000) {
+          return res.status(429).json({ error: 'Zoho API daily quota exhausted — purchase list partially saved (' + saved + '). Try again after the quota resets.', code: 4000, items_saved: saved, items_attempted: subformRows.length });
+        }
+        var result = body.result || [];
+        for (var i = 0; i < batch.length; i++) {
+          var rowDesc = batch[i].Item_Description || ('row ' + (c + i + 1));
+          var rr = result[i];
+          var rc = rr && rr.code;
+          if (rc === 3000) {
+            saved++;
+          } else {
+            var detail = (rr && (rr.error || rr.message)) || body.message || rr || body;
+            failures.push({ line: c + i + 1, description: rowDesc, code: rc != null ? rc : body.code, message: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+            console.error('Row ' + (c + i + 1) + ' rejected (code ' + rc + '):', JSON.stringify(rr || body));
+          }
         }
       } catch (postErr) {
         var ed = postErr.response && postErr.response.data;
-        failures.push({ line: p + 1, description: rowDesc, code: ed && ed.code, message: ed ? JSON.stringify(ed) : postErr.message });
-        console.error('Failed to create row ' + (p+1) + ':', ed || postErr.message);
+        if (ed && ed.code === 4000) {
+          return res.status(429).json({ error: 'Zoho API daily quota exhausted — purchase list partially saved (' + saved + '). Try again after the quota resets.', code: 4000, items_saved: saved, items_attempted: subformRows.length });
+        }
+        for (var j = 0; j < batch.length; j++) {
+          failures.push({ line: c + j + 1, description: batch[j].Item_Description || ('row ' + (c + j + 1)), code: ed && ed.code, message: ed ? JSON.stringify(ed) : postErr.message });
+        }
+        console.error('Bulk insert batch failed:', ed || postErr.message);
       }
     }
 

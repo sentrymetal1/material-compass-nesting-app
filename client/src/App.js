@@ -664,7 +664,13 @@ export default function App() {
         fetch(`${API}/api/project/${id}/bom`),
         fetch(`${API}/api/stock`),
       ]);
-      if (!projRes.ok) throw new Error('Project not found');
+      if (!projRes.ok) {
+        // Surface the server's specific message (e.g. quota exhausted) rather
+        // than a blanket "Project not found".
+        let msg = 'Project not found';
+        try { const ej = await projRes.json(); if (ej?.error) msg = ej.error; } catch (e) {}
+        throw new Error(msg);
+      }
       const projData = await projRes.json();
       const bomData = await bomRes.json();
       const stockData = await stockRes.json();
@@ -2653,7 +2659,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.3 — Weight_Per_FT rounded to 2 dec (fixes rejects)</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.4 — bulk save (1 delete + 1 insert) + quota-aware errors</span></footer>
     </div>
   );
 }
