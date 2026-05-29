@@ -634,15 +634,30 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     } catch (fetchErr) { if (fetchErr.response?.data?.code !== 9280) { console.error('Error fetching existing rows:', fetchErr.response?.data || fetchErr.message); } }
 
     var saved = 0;
+    var failures = [];
     for (var p = 0; p < subformRows.length; p++) {
+      var rowDesc = subformRows[p].Item_Description || ('row ' + (p + 1));
       try {
-        await axios.post(creatorApiBase()+'/form/Project_Material_Allocated_Detail_Form', { data: subformRows[p] }, { headers: zohoHeaders(token) });
-        saved++;
-      } catch (postErr) { console.error('Failed to create row ' + (p+1) + ':', postErr.response?.data || postErr.message); }
+        var postResp = await axios.post(creatorApiBase()+'/form/Project_Material_Allocated_Detail_Form', { data: subformRows[p] }, { headers: zohoHeaders(token) });
+        // Zoho Creator returns HTTP 200 even when the record was rejected
+        // (e.g. code 3002 bad value, 4000 quota exhausted). Success is code 3000.
+        var rc = postResp.data && postResp.data.code;
+        if (rc && rc !== 3000) {
+          var detail = postResp.data.error || postResp.data.message || postResp.data;
+          failures.push({ line: p + 1, description: rowDesc, code: rc, message: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+          console.error('Row ' + (p+1) + ' rejected (HTTP 200, code ' + rc + '):', JSON.stringify(postResp.data));
+        } else {
+          saved++;
+        }
+      } catch (postErr) {
+        var ed = postErr.response && postErr.response.data;
+        failures.push({ line: p + 1, description: rowDesc, code: ed && ed.code, message: ed ? JSON.stringify(ed) : postErr.message });
+        console.error('Failed to create row ' + (p+1) + ':', ed || postErr.message);
+      }
     }
 
-    console.log('Purchase list save complete: ' + saved + ' rows written');
-    res.json({ success: true, items_saved: saved });
+    console.log('Purchase list save complete: ' + saved + ' rows written, ' + failures.length + ' failed of ' + subformRows.length);
+    res.json({ success: true, items_saved: saved, items_attempted: subformRows.length, items_failed: failures.length, failures: failures });
   } catch (err) {
     console.error('Purchase list error:', JSON.stringify(err.response?.data || err.message));
     res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });

@@ -1142,7 +1142,18 @@ export default function App() {
       });
       if (!resp.ok) throw new Error('Save failed');
       const data = await resp.json();
-      setPurchaseStatus(`Purchase list saved! ${data.items_saved} line items written to project. Refreshing...`);
+      const failures = data.failures || [];
+      const attempted = data.items_attempted != null ? data.items_attempted : lines.length;
+      // Build a failure summary so dropped rows never disappear silently.
+      let failMsg = '';
+      if (failures.length > 0) {
+        console.error('Purchase list rows rejected by Zoho:', failures);
+        const codes = [...new Set(failures.map(f => f.code).filter(c => c != null))];
+        const names = failures.map(f => `#${f.line} ${f.description || ''}`).join('; ');
+        failMsg = ` — WARNING: ${failures.length} of ${attempted} row(s) were REJECTED and not saved${codes.length ? ` (Zoho code ${codes.join(', ')})` : ''}: ${names}`;
+      }
+      const prefix = failures.length > 0 ? 'Error' : '';
+      setPurchaseStatus(`${prefix}${prefix ? ': ' : ''}Saved ${data.items_saved}/${attempted} line items to project.${failMsg} Refreshing...`);
       // Wait 2s for Zoho to finish writing before re-fetching
       await new Promise(resolve => setTimeout(resolve, 2000));
       try {
@@ -1152,11 +1163,11 @@ export default function App() {
           const newLines = refreshData.purchase_lines || [];
           setSavedPurchaseLines(newLines);
           setShowSavedPurchase(true);
-          setPurchaseStatus(`Purchase list saved! ${newLines.length} line items confirmed in project.`);
+          setPurchaseStatus(`${prefix}${prefix ? ': ' : ''}${newLines.length}/${attempted} line items confirmed in project.${failMsg}`);
         }
       } catch (e) {
         console.error('Purchase list refresh failed:', e);
-        setPurchaseStatus(`Purchase list saved! ${data.items_saved} line items written. Click "View Saved" to refresh.`);
+        setPurchaseStatus(`${prefix}${prefix ? ': ' : ''}Saved ${data.items_saved}/${attempted} line items.${failMsg} Click "View Saved" to refresh.`);
       }
     } catch (err) {
       setPurchaseStatus(`Error: ${err.message}`);
@@ -2639,7 +2650,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.0</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.1 — purchase-save row-failure reporting</span></footer>
     </div>
   );
 }
