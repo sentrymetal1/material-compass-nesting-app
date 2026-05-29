@@ -2653,7 +2653,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.2 — purchase-save shows Zoho field error</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.3 — Weight_Per_FT rounded to 2 dec (fixes rejects)</span></footer>
     </div>
   );
 }

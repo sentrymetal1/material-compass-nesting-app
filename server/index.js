@@ -595,7 +595,11 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Description: fullDesc,
         QTY: qty,
         Feet_Length: safeNum(lenFt, 0),
-        Weight_Per_FT: safeNum(line.weight_per_ft, 4),
+        // Weight_Per_FT is a tight decimal field on the form — 4-decimal values
+        // (calculated weights for tubes/bars/odd angles, e.g. 8.1667) trip
+        // "Weight_Per_FT has exceeded its maximum digits" and the row is rejected.
+        // Round to 2 decimals to match the field config (all saved rows fit this).
+        Weight_Per_FT: safeNum(line.weight_per_ft, 2),
         Unit_Weight: unitWt,
         CalcWeight: totalWt,
         Area: area,
