@@ -2659,7 +2659,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.4 — bulk save (1 delete + 1 insert) + quota-aware errors</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.5 — fix duplicate rows (reliable delete) + bulk insert</span></footer>
     </div>
   );
 }

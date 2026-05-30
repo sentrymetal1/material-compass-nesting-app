@@ -630,18 +630,44 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
 
     console.log('Subform rows to write:', subformRows.length);
 
-    // ── Bulk delete existing rows for this project in ONE call ──
-    // (was: fetch all rows + a DELETE per row = N+1 Developer API calls).
-    // Creator v2.1 delete-by-criteria removes all matching rows in a single call.
-    // code 9280 = no records matched (nothing to delete) — treat as success.
+    // ── Delete existing rows for this project before inserting fresh ones ──
+    // v1.4 tried a single delete-by-criteria call to save API calls, but it
+    // silently failed and left the old rows in place — the insert then stacked
+    // on top, producing DUPLICATES (same Line_Item appearing twice). Revert to
+    // the proven approach: fetch existing IDs, delete each by ID. If we CANNOT
+    // clear the old rows, abort BEFORE inserting so we never duplicate again.
+    // (The insert is still bulked below — that was the bigger quota win.)
+    var deleteFailed = false;
     try {
-      await axios.delete(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(MCP_Customer_Project_Form=='+projectId+')', { headers: zohoHeaders(token) });
-    } catch (delErr) {
-      var dd = delErr.response && delErr.response.data;
-      if (dd && dd.code === 4000) {
+      var existingResp = await axios.get(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(MCP_Customer_Project_Form=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
+      if (existingResp.data && existingResp.data.code === 4000) {
         return res.status(429).json({ error: 'Zoho API daily quota exhausted — purchase list NOT saved. Try again after the quota resets.', code: 4000 });
       }
-      if (!dd || dd.code !== 9280) console.error('Bulk delete existing rows failed:', dd || delErr.message);
+      var existingRows = (existingResp.data && existingResp.data.data) || [];
+      console.log('Deleting ' + existingRows.length + ' existing rows before re-insert...');
+      for (var d = 0; d < existingRows.length; d++) {
+        try {
+          await axios.delete(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report/'+existingRows[d].ID, { headers: zohoHeaders(token) });
+        } catch (delErr) {
+          var dd = delErr.response && delErr.response.data;
+          if (dd && dd.code === 4000) {
+            return res.status(429).json({ error: 'Zoho API daily quota exhausted while clearing old rows — purchase list NOT saved (would duplicate). Try again after the quota resets.', code: 4000 });
+          }
+          deleteFailed = true;
+          console.error('Failed to delete row ' + existingRows[d].ID + ':', dd || delErr.message);
+        }
+      }
+    } catch (fetchErr) {
+      var fd = fetchErr.response && fetchErr.response.data;
+      if (fd && fd.code === 4000) {
+        return res.status(429).json({ error: 'Zoho API daily quota exhausted — purchase list NOT saved. Try again after the quota resets.', code: 4000 });
+      }
+      if (!fd || fd.code !== 9280) { deleteFailed = true; console.error('Error fetching existing rows:', fd || fetchErr.message); }
+    }
+    // Guard against duplicates: if some old rows could not be removed, do NOT
+    // insert on top of them — surface the problem instead.
+    if (deleteFailed) {
+      return res.status(409).json({ error: 'Could not fully clear existing purchase rows — save aborted to avoid duplicates. Re-try, or delete the rows manually and re-save.', code: 'DELETE_INCOMPLETE' });
     }
 
     // ── Bulk insert all rows in chunks of up to 100 per call ──
@@ -665,7 +691,9 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
           var rowDesc = batch[i].Item_Description || ('row ' + (c + i + 1));
           var rr = result[i];
           var rc = rr && rr.code;
-          if (rc === 3000) {
+          // Count as saved on success code OR when a record ID came back (some
+          // bulk responses return data.ID without an explicit 3000 per row).
+          if (rc === 3000 || (rr && rr.data && rr.data.ID)) {
             saved++;
           } else {
             var detail = (rr && (rr.error || rr.message)) || body.message || rr || body;
