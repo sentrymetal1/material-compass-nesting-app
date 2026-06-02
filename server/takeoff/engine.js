@@ -250,4 +250,70 @@ async function runTakeoff(opts) {
   };
 }
 
-module.exports = { runTakeoff, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
+// -----------------------------------------------------------------------------
+//  reviseTakeoff — the 3c "tell the AI to revise" loop. Takes the CURRENT package
+//  (rows + synopsis) + an estimator instruction, returns the COMPLETE revised
+//  package. Edit-only by default (no PDFs); pass docs[] to let it re-read drawings.
+// -----------------------------------------------------------------------------
+const REVISE_SYSTEM =
+  "You are REVISING an existing structural steel material take-off based on an estimator's instruction. " +
+  "You are given the current package (BOM rows + synopsis) and ONE instruction. Apply it PRECISELY and " +
+  "return the COMPLETE revised package (full rows + full synopsis) via submit_takeoff — NOT a diff, not " +
+  "only the changed parts.\n" +
+  "RULES: (1) Change ONLY what the instruction implies; copy every unaffected row and synopsis field " +
+  "through UNCHANGED. (2) To resolve a conflict or decision: edit the affected rows (e.g. set " +
+  "galvanized=true on the named members, change a spec, add or remove rows) AND remove the resolved item " +
+  "from synopsis.conflicts (or reflect the decision in scope_of_work). (3) Obey every catalog rule from the " +
+  "knowledge base (exact sub-typed form types, size formats, valid specs). (4) Recompute synopsis.totals. " +
+  "(5) OUTPUT DISCIPLINE: rows as a real JSON array; all analysis in the structured synopsis. " +
+  "Then call submit_takeoff. No prose.";
+
+async function reviseTakeoff(opts) {
+  opts = opts || {};
+  const current = opts.current || {};
+  const instruction = opts.instruction;
+  const modelKey = opts.modelKey || "sonnet";
+  const docs = opts.docs;
+  if (!instruction) throw new Error("reviseTakeoff: instruction required");
+  const model = MODELS[modelKey] || MODELS.sonnet;
+  const anthropic = opts.client || new Anthropic();
+
+  const userContent = [];
+  if (Array.isArray(docs) && docs.length) {
+    docs.forEach(function (d) { userContent.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: d } }); });
+  }
+  userContent.push({ type: "text", text:
+    "CURRENT TAKE-OFF PACKAGE (JSON):\n" +
+    JSON.stringify({ rows: current.rows || [], synopsis: current.synopsis || null }) +
+    "\n\nESTIMATOR INSTRUCTION:\n" + instruction +
+    "\n\nApply the instruction and return the COMPLETE revised package via submit_takeoff." });
+
+  const resp = await anthropic.messages.create({
+    model: model.id,
+    max_tokens: 16000,
+    system: [
+      { type: "text", text: REVISE_SYSTEM },
+      { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
+    ],
+    tools: [buildTakeoffTool(true)],
+    tool_choice: { type: "tool", name: "submit_takeoff" },
+    messages: [{ role: "user", content: userContent }],
+  });
+
+  const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
+  const out = toolUse ? toolUse.input : { rows: [], notes: "(no tool_use returned)" };
+  out.rows = unwrap(out.rows, []);
+  if (!Array.isArray(out.rows)) out.rows = [];
+  const synopsis = unwrap(out.synopsis, null);
+
+  return {
+    rows: out.rows,
+    notes: out.notes || "",
+    synopsis: synopsis,
+    cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
+    usage: resp.usage,
+    modelId: model.id,
+  };
+}
+
+module.exports = { runTakeoff, reviseTakeoff, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };

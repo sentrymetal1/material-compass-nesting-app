@@ -15,7 +15,7 @@
 //              cost_usd, import_csv, verify_csv, credits_left, free_left }
 // =============================================================================
 
-const { runTakeoff, LOW_CONF } = require("./engine");
+const { runTakeoff, reviseTakeoff, LOW_CONF } = require("./engine");
 const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
 
@@ -95,4 +95,45 @@ async function takeoffHandler(req, res, deps) {
   }
 }
 
-module.exports = { takeoffHandler };
+// POST /api/takeoff/revise — the 3c revise loop. Body: { instruction, current:{rows,synopsis},
+// project_id?, manufacturer_id?, model?, pdfs? }. Returns the revised package (same shape).
+async function reviseHandler(req, res, deps) {
+  deps = deps || {};
+  try {
+    const body = req.body || {};
+    const instruction = body.instruction;
+    const current = body.current;
+    const modelKey = body.model || "sonnet";
+    if (!instruction || !String(instruction).trim()) return res.status(400).json({ ok: false, error: "instruction required" });
+    if (!current || !Array.isArray(current.rows)) return res.status(400).json({ ok: false, error: "current package (rows[]) required" });
+
+    const out = await reviseTakeoff({
+      current: current,
+      instruction: instruction,
+      modelKey: modelKey,
+      docs: (Array.isArray(body.pdfs) && body.pdfs.length) ? body.pdfs : undefined,
+    });
+    const rows = out.rows;
+    const gap_count = rows.filter(function (r) { return (Number(r.quantity) || 0) <= 0; }).length;
+    const count = rows.length - gap_count;
+    const low_confidence = rows.filter(function (r) { return Number(r.confidence) <= LOW_CONF; }).length;
+
+    return res.json({
+      ok: true,
+      count: count,
+      gap_count: gap_count,
+      low_confidence: low_confidence,
+      rows: rows,
+      notes: out.notes,
+      synopsis: out.synopsis,
+      cost_usd: out.cost_usd,
+      import_csv: buildImportCsv(rows),
+      verify_csv: buildVerifyList(rows),
+    });
+  } catch (err) {
+    console.error("revise error", err);
+    return res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+  }
+}
+
+module.exports = { takeoffHandler, reviseHandler };

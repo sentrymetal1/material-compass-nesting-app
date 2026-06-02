@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
-const { takeoffHandler } = require('./takeoff/route');
+const { takeoffHandler, reviseHandler } = require('./takeoff/route');
 
 const app = express();
 app.use(cors());
@@ -49,6 +49,8 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
 // AI material take-off — PDFs in, BOM + project synopsis out. Stateless (no Zoho writes).
 app.post('/api/takeoff', (req, res) => takeoffHandler(req, res, {}));
+// AI take-off revise (3c) — current package + instruction in, revised package out.
+app.post('/api/takeoff/revise', (req, res) => reviseHandler(req, res, {}));
 
 app.get('/api/token-status', async (req, res) => {
   const now = Date.now();
