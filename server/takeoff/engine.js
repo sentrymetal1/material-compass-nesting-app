@@ -1,0 +1,253 @@
+// =============================================================================
+//  takeoff/engine.js — the proven Claude take-off call (CommonJS, for the server)
+// -----------------------------------------------------------------------------
+//  Mirrors the spike's railway/takeoff-engine.js exactly (validated 52/52 on
+//  Alden), in CommonJS so it drops into the existing nesting server.
+//  runTakeoff({ docs, modelKey, includeSynopsis }) -> { rows, notes, synopsis,
+//    cost_usd, usage, modelKey, modelId }.  docs = array of base64 PDF strings.
+// =============================================================================
+
+const _Anthropic = require("@anthropic-ai/sdk");
+const Anthropic = _Anthropic.default || _Anthropic; // 0.40.x CJS interop
+const fs = require("fs");
+const path = require("path");
+
+const MODELS = {
+  haiku:  { id: "claude-haiku-4-5-20251001", in: 1,  out: 5,  cacheWrite: 1.25,  cacheRead: 0.10 },
+  sonnet: { id: "claude-sonnet-4-6",          in: 3,  out: 15, cacheWrite: 3.75,  cacheRead: 0.30 },
+  opus:   { id: "claude-opus-4-8",            in: 15, out: 75, cacheWrite: 18.75, cacheRead: 1.50 },
+};
+
+const LOW_CONF = 0.6;
+
+let KNOWLEDGE;
+try {
+  KNOWLEDGE = fs.readFileSync(path.join(__dirname, "knowledge.md"), "utf8");
+} catch (e) {
+  KNOWLEDGE = [
+    "MATERIAL CATALOG (fallback — knowledge.md not found):",
+    "FORM TYPES (sub-typed; output the exact sub-type): Beam - I/W/S/HP/WT, Channel, Channel - MC,",
+    "Tube - Square/Round/Rectangle, Bar - Flat/Round/Square/Hex, Angle, Tee, Pipe, Plate, Tread Plate, Sheet.",
+    "MATERIAL TYPES: Carbon Steel, Carbon Steel - Galvanized, Aluminum, Stainless Steel.",
+    "Galvanizing on fabricated shapes = the galvanized flag (material stays Carbon Steel), NOT a material type.",
+  ].join("\n");
+}
+
+const ROW_ITEM = {
+  type: "object",
+  properties: {
+    form_type:     { type: "string", description: "Form Type = the EXACT sub-typed name from §1 (never a generic parent). One of: 'Beam - I','Beam - W','Beam - S','Beam - HP','Beam - WT','Channel','Channel - MC','Tube - Square','Tube - Round','Tube - Rectangle','Bar - Flat','Bar - Round','Bar - Square','Bar - Hex','Angle','Tee','Pipe','Plate','Tread Plate','Sheet'. HSS→Tube-*; C-channel→Channel; MC-channel→Channel - MC." },
+    material_type: { type: "string", description: "Mat Type = exact string: 'Aluminum','Carbon Steel','Carbon Steel - Galvanized', or 'Stainless Steel'. For galvanized fabricated shapes keep 'Carbon Steel' and set galvanized:true." },
+    specification: { type: "string", description: "Spec valid for that Form+Material per §1: e.g. '6061-T6'/'6063-T6'/'6061-B308' (aluminum), 'A36'/'A992'/'A572 Gr 50'/'A500 Gr B' (carbon), 'A36 Galvanized' (galv), '304'/'316'/'A240 304/316' (stainless)." },
+    size:          { type: "string", description: "Material = exact catalog size format from §1 — SPACES around x, correct prefix: 'L4 x 4 x 1/4', 'C10 x 15.3', 'C 12 x 8.274' (alum), 'MC8 x 8.5', 'W12 x 26', '6\" SCH 80 (XS)' (pipe, no 'PIPE'), '1/2\"' (plate, no 'PL'), '4 x 1/4' (square tube, no 'HSS')." },
+    length_ft:     { type: "number", description: "Length per piece in feet (estimate if scaled)." },
+    quantity:      { type: "number", description: "Number of pieces of this exact size/length." },
+    source_sheet:  { type: "string", description: "Sheet number the member was read from, e.g. 'S-201'." },
+    member_mark:   { type: "string", description: "Member mark/tag if shown, e.g. 'B-12'. Empty if none." },
+    confidence:    { type: "number", description: "0.0–1.0 — your confidence in this row. Be honest; flag guesses low." },
+    note:          { type: "string", description: "OPTIONAL one short phrase only (≤100 chars), e.g. 'GAP — verify with spec/PM'. Do NOT write paragraphs here — all detailed analysis goes in `synopsis` or the top-level `notes`, never per-row." },
+    galvanized:    { type: "boolean", description: "true if hot-dip galvanized per spec/drawings. Galvanizing is a FINISH: keep material_type as the base steel ('Carbon Steel') so the size resolves — do NOT use a 'Carbon Steel - Galvanized' material type for fabricated shapes." },
+    width_ft:      { type: "number", description: "REQUIRED for Plate / Sheet / Tread Plate (area-measured): the plate WIDTH in feet (a 12\"-wide plate = 1.0). Put thickness in `size` ('1/2\"') and the width here. Linear members omit this." },
+  },
+  required: ["form_type", "material_type", "specification", "size", "length_ft", "quantity", "confidence"],
+};
+
+const SYNOPSIS_SCHEMA = {
+  type: "object",
+  description: "Structured project review for the estimator's approval page — the full bid-package analysis.",
+  properties: {
+    project: {
+      type: "object", description: "Top-level project identification.",
+      properties: {
+        name:        { type: "string", description: "Project name as shown on the title block." },
+        type:        { type: "string", description: "Project type, e.g. 'K-12 / institutional', 'WWTP', 'commercial'." },
+        sheets_read: { type: "array", items: { type: "string" }, description: "Sheet + spec section numbers you read, e.g. ['S-101','A-220','Spec 05 12 00']." },
+        summary:     { type: "string", description: "1–2 sentence plain-English summary of the steel scope." },
+      },
+    },
+    scope_of_work: {
+      type: "object", description: "Four work streams, each a short bullet list (phrases, not paragraphs).",
+      properties: {
+        fabricate: { type: "array", items: { type: "string" }, description: "What WE fabricate." },
+        buyout:    { type: "array", items: { type: "string" }, description: "Buyout/outsource items (grating, railings, hatches) — quote-only, NOT BOM rows." },
+        by_others: { type: "array", items: { type: "string" }, description: "Out of our scope (concrete, precast, etc.)." },
+        send_out:  { type: "array", items: { type: "string" }, description: "Fabricated by us but sent out for finishing (galvanizing, etc.)." },
+      },
+    },
+    decisions: {
+      type: "array",
+      description: "JUDGMENT CALLS the estimator must confirm — surface them as explicit choices, do not silently decide. Only true scope/finish ambiguities; not data-entry.",
+      items: {
+        type: "object",
+        properties: {
+          id:                { type: "string", description: "Short stable id, e.g. 'd1'." },
+          item:              { type: "string", description: "The question, e.g. '4 davit cranes on S-301 — in fab scope?'." },
+          where:             { type: "string", description: "Sheet/spec reference." },
+          why_flagged:       { type: "string", description: "One sentence: why this needs a human call." },
+          ai_recommendation: { type: "string", description: "The option you recommend (one of the answers), or '' if genuinely undecided." },
+          options:           { type: "array", items: { type: "string" }, description: "The 2 (rarely 3) answer choices, e.g. ['Include','Skip']." },
+        },
+        required: ["id", "item", "options"],
+      },
+    },
+    gaps: {
+      type: "array", description: "Members identified but not countable/sizable from this set (the verify list).",
+      items: {
+        type: "object",
+        properties: {
+          item:             { type: "string" },
+          where:            { type: "string" },
+          why:              { type: "string" },
+          suggested_action: { type: "string" },
+        },
+        required: ["item"],
+      },
+    },
+    conflicts: {
+      type: "array", description: "Drawing-vs-spec (or sheet-vs-sheet) disagreements.",
+      items: {
+        type: "object",
+        properties: {
+          topic:          { type: "string" },
+          drawing_says:   { type: "string" },
+          spec_says:      { type: "string" },
+          recommendation: { type: "string" },
+        },
+        required: ["topic"],
+      },
+    },
+    compliance: {
+      type: "array", description: "Domestic-content (BABA/AIS), finish schedule, code/spec callouts the estimator should know.",
+      items: {
+        type: "object",
+        properties: { topic: { type: "string" }, note: { type: "string" } },
+        required: ["topic", "note"],
+      },
+    },
+    totals: {
+      type: "object", description: "Quick roll-up.",
+      properties: {
+        fab_rows:      { type: "number", description: "Count of quantified fabricate rows." },
+        est_weight_lb: { type: "number", description: "Rough total fabricated weight in lb, if estimable." },
+        gap_count:     { type: "number" },
+        low_conf_count:{ type: "number" },
+      },
+    },
+    confidence: {
+      type: "object", description: "0.0–1.0 self-assessment overall and by section.",
+      properties: {
+        overall: { type: "number" }, scope: { type: "number" }, bom: { type: "number" }, gaps: { type: "number" },
+      },
+    },
+  },
+};
+
+function buildTakeoffTool(includeSynopsis) {
+  if (includeSynopsis === undefined) includeSynopsis = true;
+  const properties = {
+    rows: { type: "array", description: "One row per distinct member size/length/spec combination.", items: ROW_ITEM },
+    notes: { type: "string", description: "Anything ambiguous/illegible/assumed not captured elsewhere — for the human reviewer." },
+  };
+  if (includeSynopsis) properties.synopsis = SYNOPSIS_SCHEMA;
+  return {
+    name: "submit_takeoff",
+    description: "Submit the structural steel material take-off extracted from the drawings.",
+    input_schema: { type: "object", properties, required: ["rows"] },
+  };
+}
+
+const TAKEOFF_TOOL = buildTakeoffTool(true);
+
+function systemBlocks(includeSynopsis) {
+  const base =
+    "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
+    "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
+    "strictly against the provided catalog — never invent a spec or form type.\n\n" +
+    "BE EXHAUSTIVE. Estimators routinely MISS these on a first pass — actively hunt for each: " +
+    "loose/masonry lintels; partition ledger & masonry embed angles; grating support/embed angles; " +
+    "overhead & coiling DOOR FRAMES (channel jambs, plate headers, sill angles); BOLLARDS (pipe); " +
+    "embed beams; column base & cap plates; clip/gusset plates. Read SCHEDULES and DETAIL callouts, " +
+    "not just plan views — many members only appear there.\n\n" +
+    "FLAG GAPS — DON'T DROP THEM. If a member is referenced but you can't size or count it, STILL " +
+    "output a row with your best-guess quantity (or 0), confidence 0, and a note 'GAP — verify with " +
+    "spec/PM'. A flagged gap is far more useful than a silent omission.\n\n" +
+    "CAPTURE FINISH (galvanized / prime / mill) and flag spec-driven finishes. Note if domestic-content " +
+    "(BABA/AIS) appears to apply. When a value isn't legible, lower confidence. Group identical " +
+    "size+length+spec members into one row with a quantity. Always cite the source sheet.\n\n";
+
+  const outputBOM =
+    "OUTPUT DISCIPLINE (critical): Return `rows` as a real JSON ARRAY of row objects — NEVER a " +
+    "single string, never quoted. Each row carries ONLY the schema fields; keep the per-row `note` " +
+    "to one short phrase.";
+
+  const outputSynopsis = includeSynopsis
+    ? " Put ALL detailed analysis in the structured `synopsis` object (NOT in prose, NOT per-row): " +
+      "classify scope into fabricate/buyout/by_others/send_out; surface genuine judgment calls as " +
+      "`decisions` (each a clear question + 2 answer options + your recommendation) — these are scope/" +
+      "finish ambiguities a human must confirm, not data entry; list `gaps`, drawing-vs-spec " +
+      "`conflicts`, `compliance` items, `totals`, and per-section `confidence`. Be specific and cite sheets."
+    : " Put any brief ambiguities in the top-level `notes` field.";
+
+  return [
+    { type: "text", text: base + outputBOM + outputSynopsis + " Then call submit_takeoff. Do not reply in prose." },
+    { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
+  ];
+}
+
+function costOf(usage, model) {
+  return (
+    usage.input_tokens * model.in +
+    (usage.cache_creation_input_tokens || 0) * model.cacheWrite +
+    (usage.cache_read_input_tokens || 0) * model.cacheRead +
+    usage.output_tokens * model.out
+  ) / 1_000_000;
+}
+
+function unwrap(v, fallback) {
+  if (typeof v === "string") { try { v = JSON.parse(v); } catch (e) { return fallback; } }
+  return v == null ? fallback : v;
+}
+
+async function runTakeoff(opts) {
+  opts = opts || {};
+  const docs = opts.docs;
+  const modelKey = opts.modelKey || "sonnet";
+  const includeSynopsis = opts.includeSynopsis !== undefined ? opts.includeSynopsis : true;
+  if (!Array.isArray(docs) || !docs.length) throw new Error("runTakeoff: docs[] (base64 PDFs) required");
+  const model = MODELS[modelKey] || MODELS.sonnet;
+  const anthropic = opts.client || new Anthropic(); // ANTHROPIC_API_KEY from env
+
+  const resp = await anthropic.messages.create({
+    model: model.id,
+    max_tokens: 16000,
+    system: systemBlocks(includeSynopsis),
+    tools: [buildTakeoffTool(includeSynopsis)],
+    tool_choice: { type: "tool", name: "submit_takeoff" },
+    messages: [{
+      role: "user",
+      content: [].concat(
+        docs.map(function (d) { return { type: "document", source: { type: "base64", media_type: "application/pdf", data: d } }; }),
+        [{ type: "text", text: "Perform the full material take-off across ALL the attached documents (drawings + any specs). Cross-reference structural, architectural, and spec sheets." }]
+      ),
+    }],
+  });
+
+  const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
+  const result = toolUse ? toolUse.input : { rows: [], notes: "(no tool_use returned)" };
+
+  result.rows = unwrap(result.rows, []);
+  if (!Array.isArray(result.rows)) result.rows = [];
+  const synopsis = includeSynopsis ? unwrap(result.synopsis, null) : null;
+
+  return {
+    rows: result.rows,
+    notes: result.notes || "",
+    synopsis: synopsis,
+    cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
+    usage: resp.usage,
+    modelKey: MODELS[modelKey] ? modelKey : "sonnet",
+    modelId: model.id,
+  };
+}
+
+module.exports = { runTakeoff, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
