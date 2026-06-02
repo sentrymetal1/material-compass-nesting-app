@@ -266,6 +266,9 @@ const REVISE_SYSTEM =
   "from synopsis.conflicts (or reflect the decision in scope_of_work). (3) Obey every catalog rule from the " +
   "knowledge base (exact sub-typed form types, size formats, valid specs). (4) Recompute synopsis.totals. " +
   "(5) OUTPUT DISCIPLINE: rows as a real JSON array; all analysis in the structured synopsis. " +
+  "(6) In the top-level `notes` field, write ONE short past-tense sentence stating EXACTLY what you changed " +
+  "(e.g. 'Set galvanized = Yes on 12 exterior lintels and shelf angles, and removed the lintel-finish conflict.'). " +
+  "This sentence is shown to the estimator as confirmation of the edit. " +
   "Then call submit_takeoff. No prose.";
 
 async function reviseTakeoff(opts) {
