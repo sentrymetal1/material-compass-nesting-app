@@ -112,6 +112,7 @@ async function reviseHandler(req, res, deps) {
       instruction: instruction,
       modelKey: modelKey,
       docs: (Array.isArray(body.pdfs) && body.pdfs.length) ? body.pdfs : undefined,
+      attachments: (Array.isArray(body.attachments) && body.attachments.length) ? body.attachments : undefined,
     });
     const rows = out.rows;
     const gap_count = rows.filter(function (r) { return (Number(r.quantity) || 0) <= 0; }).length;

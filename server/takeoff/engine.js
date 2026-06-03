@@ -277,6 +277,11 @@ const REVISE_SYSTEM =
   "(6) In the top-level `notes` field, write ONE short past-tense sentence stating EXACTLY what you changed " +
   "(e.g. 'Set galvanized = Yes on 12 exterior lintels and shelf angles, and removed the lintel-finish conflict.'). " +
   "This sentence is shown to the estimator as confirmation of the edit. " +
+  "(7) REFERENCE ATTACHMENTS: if the user attached document(s) (a BOM sheet, cut list, spec, vendor quote, " +
+  "marked-up drawing), treat them as REFERENCE to apply per the instruction — e.g. reconcile the current " +
+  "take-off against the attached BOM (add missing members, remove extras, correct quantities/sizes/specs to " +
+  "match), or merge in listed items. Do NOT blindly replace the package; reconcile per the instruction. Still " +
+  "obey every catalog rule (exact sub-typed form types, size formats, valid specs) when mapping attached items. " +
   "Then call submit_takeoff. No prose.";
 
 async function reviseTakeoff(opts) {
@@ -285,13 +290,36 @@ async function reviseTakeoff(opts) {
   const instruction = opts.instruction;
   const modelKey = opts.modelKey || "sonnet";
   const docs = opts.docs;
+  const attachments = opts.attachments;  // mixed: [{kind:'pdf'|'image'|'text', media_type?, data?, text?, name?}]
   if (!instruction) throw new Error("reviseTakeoff: instruction required");
   const model = MODELS[modelKey] || MODELS.sonnet;
   const anthropic = opts.client || new Anthropic();
 
   const userContent = [];
+  // Legacy path: docs[] = base64 PDFs (re-read drawings).
   if (Array.isArray(docs) && docs.length) {
     docs.forEach(function (d) { userContent.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: d } }); });
+  }
+  // New path: mixed reference attachments (PDF / image / text BOM sheet, etc).
+  let attachLabels = [];
+  if (Array.isArray(attachments) && attachments.length) {
+    attachments.forEach(function (a) {
+      if (!a) return;
+      const nm = a.name ? String(a.name) : "attachment";
+      if (a.kind === "image" && a.data) {
+        userContent.push({ type: "image", source: { type: "base64", media_type: a.media_type || "image/png", data: a.data } });
+        attachLabels.push(nm + " (image)");
+      } else if (a.kind === "text" && a.text) {
+        userContent.push({ type: "text", text: "ATTACHED REFERENCE DOCUMENT — " + nm + " (text/CSV):\n" + String(a.text).slice(0, 200000) });
+        attachLabels.push(nm + " (text)");
+      } else if (a.data) {  // default to PDF document
+        userContent.push({ type: "document", source: { type: "base64", media_type: a.media_type || "application/pdf", data: a.data } });
+        attachLabels.push(nm + " (pdf)");
+      }
+    });
+  }
+  if (attachLabels.length) {
+    userContent.push({ type: "text", text: "The estimator attached " + attachLabels.length + " reference document(s): " + attachLabels.join(", ") + ". Apply them per the instruction below (reconcile / merge — do not blindly replace)." });
   }
   userContent.push({ type: "text", text:
     "CURRENT TAKE-OFF PACKAGE (JSON):\n" +
