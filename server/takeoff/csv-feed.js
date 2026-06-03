@@ -32,7 +32,8 @@ const isQuantified = function (r) { return (Number(r.quantity) || 0) > 0; };
 function splitFt(n) {
   const raw = Number(n) || 0;
   const ft = Math.max(0, Math.floor(raw));
-  return [ft, Math.round((raw - ft) * 12)];
+  const inch = Math.round((raw - ft) * 12);
+  return inch >= 12 ? [ft + 1, 0] : [ft, inch];  // carry: INCH lookup only holds 0–<12"
 }
 
 function buildImportCsv(rows) {
