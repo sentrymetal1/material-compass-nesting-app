@@ -258,8 +258,7 @@ app.post('/api/takeoff/mine', async (req, res) => {
     const base = creatorApiBase();
     let recs = [];
     try {
-      const q = await axios.get(base + '/report/Takeoff_Correction_Report?limit=1000', { headers: zohoHeaders(token) });
-      recs = (q.data && q.data.data) || [];
+      recs = await fetchAllZohoPages('/report/Takeoff_Correction_Report');  // paginated (200/page)
     } catch (e) { return res.status(502).json({ ok: false, error: 'could not read corrections', detail: e.response && e.response.data }); }
     // group: context -> chosen value -> set of distinct manufacturers
     const groups = {};
