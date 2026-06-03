@@ -15,7 +15,7 @@
 //              cost_usd, import_csv, verify_csv, credits_left, free_left }
 // =============================================================================
 
-const { runTakeoff, reviseTakeoff, LOW_CONF } = require("./engine");
+const { runTakeoff, reviseTakeoff, chatTakeoff, LOW_CONF } = require("./engine");
 const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
 
@@ -137,4 +137,37 @@ async function reviseHandler(req, res, deps) {
   }
 }
 
-module.exports = { takeoffHandler, reviseHandler };
+// POST /api/takeoff/chat — conversational "Tell the AI". Body: { messages:[{role,text}],
+// current:{rows,synopsis}, model?, attachments? }. Returns either a text reply or an edited package.
+async function chatHandler(req, res, deps) {
+  deps = deps || {};
+  try {
+    const body = req.body || {};
+    const messages = body.messages;
+    if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ ok: false, error: "messages[] required" });
+    const current = body.current || {};
+
+    const out = await chatTakeoff({
+      messages: messages,
+      current: current,
+      modelKey: body.model || "sonnet",
+      attachments: (Array.isArray(body.attachments) && body.attachments.length) ? body.attachments : undefined,
+    });
+
+    if (out.edited) {
+      const rows = out.rows;
+      return res.json({
+        ok: true, edited: true, reply: out.reply, notes: out.notes,
+        rows: rows, synopsis: out.synopsis, cost_usd: out.cost_usd,
+        import_csv: buildImportCsv(rows), verify_csv: buildVerifyList(rows),
+        count: rows.filter(function (r) { return (Number(r.quantity) || 0) > 0; }).length,
+      });
+    }
+    return res.json({ ok: true, edited: false, reply: out.reply, cost_usd: out.cost_usd });
+  } catch (err) {
+    console.error("chat error", err);
+    return res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+  }
+}
+
+module.exports = { takeoffHandler, reviseHandler, chatHandler };

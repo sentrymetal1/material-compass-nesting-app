@@ -359,4 +359,82 @@ async function reviseTakeoff(opts) {
   };
 }
 
-module.exports = { runTakeoff, reviseTakeoff, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
+// -----------------------------------------------------------------------------
+//  chatTakeoff — CONVERSATIONAL "Tell the AI". Multi-turn: takes the running
+//  message thread + the CURRENT package, and EITHER answers/chats in text OR
+//  edits the take-off (calls submit_takeoff). Tool is OPTIONAL (auto), so the
+//  model can reply to a question without forcing a (possibly destructive) edit.
+//  opts: { messages:[{role:'user'|'assistant', text}], current:{rows,synopsis},
+//          modelKey, attachments }. Returns { edited, reply, rows?, synopsis?, notes?, cost_usd }.
+// -----------------------------------------------------------------------------
+const CHAT_SYSTEM =
+  "You are the conversational assistant for an estimator reviewing a structural-steel material take-off. " +
+  "You are given the CURRENT package (BOM rows + synopsis) and the running conversation. Decide each turn:\n" +
+  "• If the user ASKS A QUESTION or just chats (e.g. 'what spec did you use for the angles?', 'how many tons?', " +
+  "'why is this galvanized?'), reply in PLAIN TEXT — concise, specific, grounded in the current package. Do NOT call the tool.\n" +
+  "• If the user REQUESTS A CHANGE (edit/add/remove rows, resolve a conflict, remove gaps/conflicts, reconcile against an " +
+  "attached doc, change spec/finish/markup), call submit_takeoff with the COMPLETE revised package (full rows + full synopsis), " +
+  "NOT a diff. Copy every unaffected row/field through UNCHANGED. Obey every catalog rule (exact sub-typed form types, size " +
+  "formats, valid specs). If removing/dismissing gaps or conflicts, return synopsis.gaps/synopsis.conflicts with those items " +
+  "DROPPED (empty [] if all removed); never echo a removed item back. Recompute synopsis.totals. In the tool's top-level `notes`, " +
+  "write ONE short past-tense sentence stating exactly what you changed (shown to the estimator as confirmation).\n" +
+  "Use the prior conversation for context (the user may say 'now also…' or refer to earlier turns). Keep text replies brief.";
+
+async function chatTakeoff(opts) {
+  opts = opts || {};
+  const messages = Array.isArray(opts.messages) ? opts.messages : [];
+  const current = opts.current || {};
+  const modelKey = opts.modelKey || "sonnet";
+  const attachments = opts.attachments;
+  const model = MODELS[modelKey] || MODELS.sonnet;
+  const anthropic = opts.client || new Anthropic();
+
+  // Map the thread to Anthropic turns (text only — current package is injected fresh on the last turn).
+  const msgs = messages.map(function (m) {
+    return { role: m.role === "assistant" ? "assistant" : "user", content: [{ type: "text", text: String(m.text || "") }] };
+  });
+  if (!msgs.length || msgs[msgs.length - 1].role !== "user") msgs.push({ role: "user", content: [{ type: "text", text: "(continue)" }] });
+
+  // Augment the LAST user turn with attachments + the current package context (prepended before the user's text).
+  const extra = [];
+  if (Array.isArray(attachments) && attachments.length) {
+    attachments.forEach(function (a) {
+      if (!a) return;
+      if (a.kind === "image" && a.data) extra.push({ type: "image", source: { type: "base64", media_type: a.media_type || "image/png", data: a.data } });
+      else if (a.kind === "text" && a.text) extra.push({ type: "text", text: "ATTACHED REFERENCE — " + (a.name || "doc") + ":\n" + String(a.text).slice(0, 200000) });
+      else if (a.data) extra.push({ type: "document", source: { type: "base64", media_type: a.media_type || "application/pdf", data: a.data } });
+    });
+  }
+  extra.push({ type: "text", text: "CURRENT TAKE-OFF PACKAGE (JSON):\n" + JSON.stringify({ rows: current.rows || [], synopsis: current.synopsis || null }) + "\n\n(The message that follows is the user's latest turn.)" });
+  const last = msgs[msgs.length - 1];
+  last.content = extra.concat(last.content);
+
+  const resp = await anthropic.messages.create({
+    model: model.id,
+    max_tokens: 16000,
+    system: [
+      { type: "text", text: CHAT_SYSTEM },
+      { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
+    ],
+    tools: [buildTakeoffTool(true)],
+    tool_choice: { type: "auto" },
+    messages: msgs,
+  });
+
+  const cost = Number(costOf(resp.usage, model).toFixed(4));
+  const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
+  const textOut = resp.content.filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n").trim();
+
+  if (toolUse) {
+    const out = toolUse.input || {};
+    out.rows = unwrap(out.rows, []);
+    if (!Array.isArray(out.rows)) out.rows = [];
+    const synopsis = unwrap(out.synopsis, null);
+    return { edited: true, rows: out.rows, synopsis: synopsis, notes: out.notes || "",
+      reply: (out.notes && String(out.notes).trim()) || textOut || "Updated the take-off.",
+      cost_usd: cost, usage: resp.usage, modelId: model.id };
+  }
+  return { edited: false, reply: textOut || "(no reply)", cost_usd: cost, usage: resp.usage, modelId: model.id };
+}
+
+module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
