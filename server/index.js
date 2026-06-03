@@ -51,9 +51,10 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 // AI material take-off — PDFs in, BOM + project synopsis out. Injects this shop's prior
 // corrections (Tier-3 per-manufacturer learning) so the take-off pre-applies their preferences.
 app.post('/api/takeoff', async (req, res) => {
-  let shopLearning = '';
+  let shopLearning = '', universalKnowledge = '';
   try { const mfg = req.body && req.body.manufacturer_id; if (mfg) shopLearning = await fetchShopLearning(mfg); } catch (e) {}
-  return takeoffHandler(req, res, { shopLearning: shopLearning });
+  try { universalKnowledge = await getUniversalKnowledge(); } catch (e) {}
+  return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge });
 });
 // AI take-off revise (3c) — current package + instruction in, revised package out.
 app.post('/api/takeoff/revise', (req, res) => reviseHandler(req, res, {}));
@@ -228,6 +229,68 @@ app.post('/api/takeoff/learn', async (req, res) => {
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('takeoff learn error:', detail);
+    return res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
+// UNIVERSAL knowledge (Tier 1) — approved cross-shop patterns, cached 30 min, injected into every take-off.
+let _ukCache = { text: '', at: 0 };
+async function getUniversalKnowledge() {
+  if (_ukCache.at > 0 && Date.now() - _ukCache.at < 30 * 60 * 1000) return _ukCache.text;
+  const token = await getAccessToken();
+  const base = creatorApiBase();
+  let recs = [];
+  try {
+    const q = await axios.get(base + '/report/Takeoff_Knowledge_Report?criteria=(Status=="approved")&limit=200', { headers: zohoHeaders(token) });
+    recs = (q.data && q.data.data) || [];
+  } catch (e) { return _ukCache.text || ''; }
+  const lines = recs.map(function (r) { return '- ' + String(r.Pattern || '').trim(); }).filter(function (l) { return l.length > 2; });
+  const text = lines.length ? ("LEARNED ESTIMATING KNOWLEDGE (patterns confirmed across multiple fabricators — apply as general guidance):\n" + lines.join('\n')) : '';
+  _ukCache = { text: text, at: Date.now() };
+  return text;
+}
+
+// MINER — aggregate corrections across ALL shops; a (context,choice) backed by >=2 distinct shops
+// becomes a CANDIDATE universal pattern for Mark to approve. Single-shop edges never qualify (firewall).
+app.post('/api/takeoff/mine', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    let recs = [];
+    try {
+      const q = await axios.get(base + '/report/Takeoff_Correction_Report?limit=1000', { headers: zohoHeaders(token) });
+      recs = (q.data && q.data.data) || [];
+    } catch (e) { return res.status(502).json({ ok: false, error: 'could not read corrections', detail: e.response && e.response.data }); }
+    // group: context -> chosen value -> set of distinct manufacturers
+    const groups = {};
+    recs.forEach(function (r) {
+      const ctx = String(r.Context || '').trim(), val = String(r.Human_Value || '').trim(), mfg = String(r.Manufacture_ID || '').trim();
+      if (!ctx || !val || !mfg) return;
+      groups[ctx] = groups[ctx] || {}; groups[ctx][val] = groups[ctx][val] || {}; groups[ctx][val][mfg] = true;
+    });
+    const candidates = [];
+    Object.keys(groups).forEach(function (ctx) {
+      Object.keys(groups[ctx]).forEach(function (val) {
+        const shops = Object.keys(groups[ctx][val]).length;
+        if (shops >= 2) candidates.push({ pattern: 'When "' + ctx + '", fabricators typically choose "' + val + '".', support: shops });
+      });
+    });
+    // refresh: delete prior 'candidate' rows (keep approved/rejected), then write fresh candidates
+    try {
+      const cq = await axios.get(base + '/report/Takeoff_Knowledge_Report?criteria=(Status=="candidate")&limit=200', { headers: zohoHeaders(token) });
+      const olds = (cq.data && cq.data.data) || [];
+      for (const o of olds) { try { await axios.delete(base + '/report/Takeoff_Knowledge_Report/' + o.ID, { headers: zohoHeaders(token) }); } catch (e) {} }
+    } catch (e) {}
+    const now = new Date().toISOString();
+    let written = 0;
+    for (const c of candidates) {
+      const data = { Pattern: c.pattern.slice(0, 2000), Status: 'candidate', Support: c.support, Source: 'miner', Created: now };
+      try { const r = await axios.post(base + '/form/Takeoff_Knowledge', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } }); if (r.data && r.data.code === 3000) written++; } catch (e) {}
+    }
+    return res.json({ ok: true, corrections: recs.length, candidates: candidates.length, written: written });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('takeoff mine error:', detail);
     return res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
   }
 });

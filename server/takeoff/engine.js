@@ -158,7 +158,7 @@ function buildTakeoffTool(includeSynopsis) {
 
 const TAKEOFF_TOOL = buildTakeoffTool(true);
 
-function systemBlocks(includeSynopsis, shopLearning) {
+function systemBlocks(includeSynopsis, shopLearning, universalKnowledge) {
   const base =
     "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
     "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
@@ -192,6 +192,8 @@ function systemBlocks(includeSynopsis, shopLearning) {
     { type: "text", text: base + outputBOM + outputSynopsis + " Then call submit_takeoff. Do not reply in prose." },
     { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
   ];
+  // Universal learned knowledge (Tier 1) — same for all shops → cached.
+  if (universalKnowledge && String(universalKnowledge).trim()) blocks.push({ type: "text", text: String(universalKnowledge), cache_control: { type: "ephemeral" } });
   // Per-shop learning (Tier 3) — injected, NOT cached (varies per manufacturer).
   if (shopLearning && String(shopLearning).trim()) blocks.push({ type: "text", text: String(shopLearning) });
   return blocks;
@@ -223,7 +225,7 @@ async function runTakeoff(opts) {
   const resp = await anthropic.messages.create({
     model: model.id,
     max_tokens: 16000,
-    system: systemBlocks(includeSynopsis, opts.shopLearning),
+    system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge),
     tools: [buildTakeoffTool(includeSynopsis)],
     tool_choice: { type: "tool", name: "submit_takeoff" },
     messages: [{
