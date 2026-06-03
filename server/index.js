@@ -64,9 +64,10 @@ app.post('/api/takeoff/commit', async (req, res) => {
     const token = await getAccessToken();
     const base = creatorApiBase();
 
-    // 1. create the Import_BOM_Form record (no file yet — guarded submission workflow no-ops)
+    // 1. create the Import_BOM_Form record (no file yet — guarded submission workflow no-ops).
+    //    MFG_Client_Form is a lookup the import doesn't use; omit it (the mfg id doesn't match it).
     const createResp = await axios.post(base + '/form/Import_BOM_Form',
-      { data: { Project_ID: project_id, MFG_Client_Form: manufacturer_id || '', BOM_Import_Mode: 'Append' } },
+      { data: { Project_ID: project_id, BOM_Import_Mode: 'Append' } },
       { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     const recId = createResp.data && createResp.data.data && createResp.data.data.ID;
     if (!recId) return res.status(502).json({ ok: false, error: 'create returned no record ID', detail: createResp.data });
