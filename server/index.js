@@ -51,11 +51,33 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 // AI material take-off — PDFs in, BOM + project synopsis out. Injects this shop's prior
 // corrections (Tier-3 per-manufacturer learning) so the take-off pre-applies their preferences.
 app.post('/api/takeoff', async (req, res) => {
-  let shopLearning = '', universalKnowledge = '';
+  let shopLearning = '', universalKnowledge = '', projectContext = '';
   try { const mfg = req.body && req.body.manufacturer_id; if (mfg) shopLearning = await fetchShopLearning(mfg); } catch (e) {}
   try { universalKnowledge = await getUniversalKnowledge(); } catch (e) {}
-  return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge });
+  try { const pid = req.body && req.body.project_id; if (pid) projectContext = await fetchProjectContext(pid); } catch (e) {}
+  return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge, projectContext: projectContext });
 });
+
+// PROJECT CONTEXT — feed the take-off this project's pre-defined Components + Drawings so the AI
+// tags each member to the right component and cites the exact drawing numbers (clean staging match).
+async function fetchProjectContext(projectId) {
+  let comps = [], draws = [];
+  try {
+    const r = await fetchAllZohoPages('/report/All_Project_Components?criteria=(MCP_Customer_Project_Form==' + projectId + ')');
+    comps = r.map(function (x) { return String(x.Project_Component || '').trim(); }).filter(Boolean);
+  } catch (e) {}
+  try {
+    const r = await fetchAllZohoPages('/report/All_Project_Drawing_Details?criteria=(MCP_Customer_Project_Form==' + projectId + ')');
+    draws = r.map(function (x) { return String(x.Drawing_Number || '').trim(); }).filter(Boolean);
+  } catch (e) {}
+  comps = Array.from(new Set(comps));
+  draws = Array.from(new Set(draws));
+  if (!comps.length && !draws.length) return '';
+  let out = "THIS PROJECT'S PRE-DEFINED RECORDS — match the BOM to these EXACT values so it ties to the project cleanly:\n";
+  if (comps.length) out += "\nCOMPONENTS / ASSEMBLIES — assign each member's `component` to the single best-fitting name below (EXACT spelling; empty only if none applies):\n" + comps.map(function (c) { return '- ' + c; }).join('\n') + '\n';
+  if (draws.length) out += "\nDRAWINGS — when a member appears on one of these sheets, set its `source_sheet` to the EXACT drawing number below:\n" + draws.map(function (d) { return '- ' + d; }).join('\n') + '\n';
+  return out;
+}
 // AI take-off revise (3c) — current package + instruction in, revised package out.
 app.post('/api/takeoff/revise', (req, res) => reviseHandler(req, res, {}));
 

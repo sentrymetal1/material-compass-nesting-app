@@ -44,6 +44,7 @@ const ROW_ITEM = {
     quantity:      { type: "number", description: "Number of pieces of this exact size/length." },
     source_sheet:  { type: "string", description: "Sheet number the member was read from, e.g. 'S-201'." },
     member_mark:   { type: "string", description: "Member mark/tag if shown, e.g. 'B-12'. Empty if none." },
+    component:     { type: "string", description: "The project COMPONENT/ASSEMBLY this member belongs to. If a PROJECT COMPONENTS list is provided in context, use the EXACT matching name from it; otherwise infer a short assembly name (e.g. 'Loading Dock Frame', 'Stair S1'). Empty only if none applies." },
     confidence:    { type: "number", description: "0.0–1.0 — your confidence in this row. Be honest; flag guesses low." },
     note:          { type: "string", description: "OPTIONAL one short phrase only (≤100 chars), e.g. 'GAP — verify with spec/PM'. Do NOT write paragraphs here — all detailed analysis goes in `synopsis` or the top-level `notes`, never per-row." },
     galvanized:    { type: "boolean", description: "true if hot-dip galvanized per spec/drawings. Galvanizing is a FINISH: keep material_type as the base steel ('Carbon Steel') so the size resolves — do NOT use a 'Carbon Steel - Galvanized' material type for fabricated shapes." },
@@ -158,7 +159,7 @@ function buildTakeoffTool(includeSynopsis) {
 
 const TAKEOFF_TOOL = buildTakeoffTool(true);
 
-function systemBlocks(includeSynopsis, shopLearning, universalKnowledge) {
+function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, projectContext) {
   const base =
     "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
     "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
@@ -194,6 +195,8 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge) {
   ];
   // Universal learned knowledge (Tier 1) — same for all shops → cached.
   if (universalKnowledge && String(universalKnowledge).trim()) blocks.push({ type: "text", text: String(universalKnowledge), cache_control: { type: "ephemeral" } });
+  // This project's pre-defined components + drawings — per-project, NOT cached.
+  if (projectContext && String(projectContext).trim()) blocks.push({ type: "text", text: String(projectContext) });
   // Per-shop learning (Tier 3) — injected, NOT cached (varies per manufacturer).
   if (shopLearning && String(shopLearning).trim()) blocks.push({ type: "text", text: String(shopLearning) });
   return blocks;
@@ -225,7 +228,7 @@ async function runTakeoff(opts) {
   const resp = await anthropic.messages.create({
     model: model.id,
     max_tokens: 16000,
-    system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge),
+    system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge, opts.projectContext),
     tools: [buildTakeoffTool(includeSynopsis)],
     tool_choice: { type: "tool", name: "submit_takeoff" },
     messages: [{
