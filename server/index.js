@@ -106,7 +106,7 @@ app.post('/api/takeoff/save', async (req, res) => {
     const rowCount = rows.filter(function (r) { return (Number(r.quantity) || 0) > 0; }).length;
     const data = {
       Project_ID: project_id, Package: json, Row_Count: rowCount,
-      Cost_USD: (pkg && pkg.cost_usd) || 0, Updated_At: new Date().toISOString(), Status: 'draft',
+      Cost_USD: Math.round((Number(pkg && pkg.cost_usd) || 0) * 10000) / 10000, Updated_At: new Date().toISOString(), Status: 'draft',
     };
     // upsert: find an existing record for this project
     let existing = null;
