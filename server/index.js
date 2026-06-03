@@ -111,17 +111,19 @@ app.post('/api/takeoff/save', async (req, res) => {
     // upsert: find an existing record for this project
     let existing = null;
     try {
-      const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID==' + project_id + ')&limit=1', { headers: zohoHeaders(token) });
+      const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID=="' + project_id + '")&limit=1', { headers: zohoHeaders(token) });
       existing = q.data && q.data.data && q.data.data[0];
     } catch (e) { /* none yet */ }
-    let recId;
+    let zr;
     if (existing && existing.ID) {
-      await axios.patch(base + '/report/AI_Takeoff_Saved_Report/' + existing.ID, { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-      recId = existing.ID;
+      zr = await axios.patch(base + '/report/AI_Takeoff_Saved_Report/' + existing.ID, { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     } else {
-      const cr = await axios.post(base + '/form/AI_Takeoff_Saved', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-      recId = cr.data && cr.data.data && cr.data.data.ID;
+      zr = await axios.post(base + '/form/AI_Takeoff_Saved', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     }
+    if (zr.data && zr.data.code !== 3000) {
+      return res.status(502).json({ ok: false, error: 'Zoho rejected the save', detail: zr.data });
+    }
+    const recId = (zr.data && zr.data.data && zr.data.data.ID) || (existing && existing.ID) || null;
     return res.json({ ok: true, id: recId });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
@@ -138,7 +140,7 @@ app.get('/api/takeoff/saved/:project_id', async (req, res) => {
     const base = creatorApiBase();
     let rec = null;
     try {
-      const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID==' + project_id + ')&limit=1', { headers: zohoHeaders(token) });
+      const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID=="' + project_id + '")&limit=1', { headers: zohoHeaders(token) });
       rec = q.data && q.data.data && q.data.data[0];
     } catch (e) { /* no records */ }
     if (!rec || !rec.Package) return res.json({ ok: true, found: false });
