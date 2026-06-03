@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
+const FormData = require('form-data');
 const { takeoffHandler, reviseHandler } = require('./takeoff/route');
 
 const app = express();
@@ -51,6 +52,43 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.post('/api/takeoff', (req, res) => takeoffHandler(req, res, {}));
 // AI take-off revise (3c) — current package + instruction in, revised package out.
 app.post('/api/takeoff/revise', (req, res) => reviseHandler(req, res, {}));
+
+// AI take-off COMMIT — write the reviewed BOM CSV into Import_BOM_Form (Zoho) server-side.
+// The widget runs standalone (no Creator SDK context), so the Zoho write happens here using the
+// app's existing OAuth. Flow: create record -> upload CSV file -> set Run_Import (fires the import).
+app.post('/api/takeoff/commit', async (req, res) => {
+  try {
+    const { project_id, manufacturer_id, import_csv } = req.body || {};
+    if (!project_id) return res.status(400).json({ ok: false, error: 'project_id required' });
+    if (!import_csv) return res.status(400).json({ ok: false, error: 'import_csv required' });
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+
+    // 1. create the Import_BOM_Form record (no file yet — guarded submission workflow no-ops)
+    const createResp = await axios.post(base + '/form/Import_BOM_Form',
+      { data: { Project_ID: project_id, MFG_Client_Form: manufacturer_id || '', BOM_Import_Mode: 'Append' } },
+      { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    const recId = createResp.data && createResp.data.data && createResp.data.data.ID;
+    if (!recId) return res.status(502).json({ ok: false, error: 'create returned no record ID', detail: createResp.data });
+
+    // 2. upload the CSV to the BOM_CSV_File field
+    const fd = new FormData();
+    fd.append('file', Buffer.from(import_csv, 'utf8'), { filename: 'takeoff-bom-' + project_id + '.csv', contentType: 'text/csv' });
+    await axios.post(base + '/report/Import_BOM_Form_Report/' + recId + '/BOM_CSV_File/upload', fd,
+      { headers: { ...zohoHeaders(token), ...fd.getHeaders() } });
+
+    // 3. set Run_Import -> the edit fires the import workflow with the file present
+    await axios.patch(base + '/report/Import_BOM_Form_Report/' + recId,
+      { data: { Run_Import: 'true' } },
+      { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+
+    return res.json({ ok: true, import_id: recId });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('takeoff commit error:', detail);
+    return res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
 
 app.get('/api/token-status', async (req, res) => {
   const now = Date.now();
