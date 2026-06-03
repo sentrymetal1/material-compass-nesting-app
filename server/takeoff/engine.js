@@ -158,7 +158,7 @@ function buildTakeoffTool(includeSynopsis) {
 
 const TAKEOFF_TOOL = buildTakeoffTool(true);
 
-function systemBlocks(includeSynopsis) {
+function systemBlocks(includeSynopsis, shopLearning) {
   const base =
     "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
     "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
@@ -188,10 +188,13 @@ function systemBlocks(includeSynopsis) {
       "`conflicts`, `compliance` items, `totals`, and per-section `confidence`. Be specific and cite sheets."
     : " Put any brief ambiguities in the top-level `notes` field.";
 
-  return [
+  const blocks = [
     { type: "text", text: base + outputBOM + outputSynopsis + " Then call submit_takeoff. Do not reply in prose." },
     { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
   ];
+  // Per-shop learning (Tier 3) — injected, NOT cached (varies per manufacturer).
+  if (shopLearning && String(shopLearning).trim()) blocks.push({ type: "text", text: String(shopLearning) });
+  return blocks;
 }
 
 function costOf(usage, model) {
@@ -220,7 +223,7 @@ async function runTakeoff(opts) {
   const resp = await anthropic.messages.create({
     model: model.id,
     max_tokens: 16000,
-    system: systemBlocks(includeSynopsis),
+    system: systemBlocks(includeSynopsis, opts.shopLearning),
     tools: [buildTakeoffTool(includeSynopsis)],
     tool_choice: { type: "tool", name: "submit_takeoff" },
     messages: [{

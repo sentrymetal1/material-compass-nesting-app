@@ -48,8 +48,13 @@ getAccessToken().then(() => console.log('Startup token warm-up successful')).cat
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-// AI material take-off — PDFs in, BOM + project synopsis out. Stateless (no Zoho writes).
-app.post('/api/takeoff', (req, res) => takeoffHandler(req, res, {}));
+// AI material take-off — PDFs in, BOM + project synopsis out. Injects this shop's prior
+// corrections (Tier-3 per-manufacturer learning) so the take-off pre-applies their preferences.
+app.post('/api/takeoff', async (req, res) => {
+  let shopLearning = '';
+  try { const mfg = req.body && req.body.manufacturer_id; if (mfg) shopLearning = await fetchShopLearning(mfg); } catch (e) {}
+  return takeoffHandler(req, res, { shopLearning: shopLearning });
+});
 // AI take-off revise (3c) — current package + instruction in, revised package out.
 app.post('/api/takeoff/revise', (req, res) => reviseHandler(req, res, {}));
 
@@ -159,6 +164,70 @@ app.get('/api/takeoff/saved/:project_id', async (req, res) => {
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('takeoff load error:', detail);
+    return res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
+// LEARNING — build this shop's prior-decisions prompt block (Tier-3). Returns '' if none.
+async function fetchShopLearning(mfg) {
+  const token = await getAccessToken();
+  const base = creatorApiBase();
+  let recs = [];
+  try {
+    const q = await axios.get(base + '/report/Takeoff_Correction_Report?criteria=(Manufacture_ID=="' + mfg + '")&limit=200', { headers: zohoHeaders(token) });
+    recs = (q.data && q.data.data) || [];
+  } catch (e) { return ''; }
+  if (!recs.length) return '';
+  // Tally human choices per decision-context → the shop's prevailing preference.
+  const byCtx = {};
+  recs.forEach(function (r) {
+    const ctx = String(r.Context || '').trim(); const hv = String(r.Human_Value || '').trim();
+    if (!ctx || !hv) return;
+    byCtx[ctx] = byCtx[ctx] || {};
+    byCtx[ctx][hv] = (byCtx[ctx][hv] || 0) + 1;
+  });
+  const lines = [];
+  Object.keys(byCtx).forEach(function (ctx) {
+    const choices = byCtx[ctx]; let best = '', bestN = 0, total = 0;
+    Object.keys(choices).forEach(function (c) { total += choices[c]; if (choices[c] > bestN) { best = c; bestN = choices[c]; } });
+    lines.push('- "' + ctx + '"  ->  this shop chose: "' + best + '"' + (total > 1 ? ' (' + bestN + '/' + total + ')' : ''));
+  });
+  if (!lines.length) return '';
+  return "THIS FABRICATOR'S PAST DECISIONS (apply as standing preferences): when the SAME judgment call " +
+    "appears in this take-off, pre-resolve it to this shop's prior choice and set that decision's " +
+    "ai_recommendation accordingly. A repeated choice is a strong default. Their history:\n" + lines.join('\n');
+}
+
+// CAPTURE — store this shop's corrections (decisions etc.) for future personalization.
+app.post('/api/takeoff/learn', async (req, res) => {
+  try {
+    const { manufacturer_id, project_type } = req.body || {};
+    const corrections = (req.body && req.body.corrections) || [];
+    if (!manufacturer_id) return res.status(400).json({ ok: false, error: 'manufacturer_id required' });
+    if (!Array.isArray(corrections) || !corrections.length) return res.json({ ok: true, stored: 0 });
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    const now = new Date().toISOString();
+    let stored = 0;
+    for (const c of corrections) {
+      const data = {
+        Manufacture_ID: manufacturer_id,
+        Context: String(c.context || '').slice(0, 250),
+        AI_Value: String(c.ai_value || '').slice(0, 250),
+        Human_Value: String(c.human_value || '').slice(0, 250),
+        Project_Type: String(project_type || '').slice(0, 250),
+        Source: String(c.source || 'decision').slice(0, 250),
+        Created: now,
+      };
+      try {
+        const r = await axios.post(base + '/form/Takeoff_Correction', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+        if (r.data && r.data.code === 3000) stored++;
+      } catch (e) { /* skip one bad row */ }
+    }
+    return res.json({ ok: true, stored: stored });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('takeoff learn error:', detail);
     return res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
   }
 });
