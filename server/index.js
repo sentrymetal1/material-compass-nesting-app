@@ -91,6 +91,67 @@ app.post('/api/takeoff/commit', async (req, res) => {
   }
 });
 
+// AI take-off SAVE — persist the take-off package on a per-project Zoho record so it survives
+// the browser, re-opens from any device, and feeds the learning loop. Upsert by Project_ID.
+app.post('/api/takeoff/save', async (req, res) => {
+  try {
+    const { project_id } = req.body || {};
+    const pkg = req.body && req.body.package;
+    if (!project_id) return res.status(400).json({ ok: false, error: 'project_id required' });
+    if (!pkg) return res.status(400).json({ ok: false, error: 'package required' });
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    const json = typeof pkg === 'string' ? pkg : JSON.stringify(pkg);
+    const rows = (pkg && Array.isArray(pkg.rows)) ? pkg.rows : [];
+    const rowCount = rows.filter(function (r) { return (Number(r.quantity) || 0) > 0; }).length;
+    const data = {
+      Project_ID: project_id, Package: json, Row_Count: rowCount,
+      Cost_USD: (pkg && pkg.cost_usd) || 0, Updated_At: new Date().toISOString(), Status: 'draft',
+    };
+    // upsert: find an existing record for this project
+    let existing = null;
+    try {
+      const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID==' + project_id + ')&limit=1', { headers: zohoHeaders(token) });
+      existing = q.data && q.data.data && q.data.data[0];
+    } catch (e) { /* none yet */ }
+    let recId;
+    if (existing && existing.ID) {
+      await axios.patch(base + '/report/AI_Takeoff_Saved_Report/' + existing.ID, { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      recId = existing.ID;
+    } else {
+      const cr = await axios.post(base + '/form/AI_Takeoff_Saved', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      recId = cr.data && cr.data.data && cr.data.data.ID;
+    }
+    return res.json({ ok: true, id: recId });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('takeoff save error:', detail);
+    return res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
+// AI take-off LOAD — fetch the saved package for a project (for re-opening the take-off).
+app.get('/api/takeoff/saved/:project_id', async (req, res) => {
+  try {
+    const project_id = req.params.project_id;
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    let rec = null;
+    try {
+      const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID==' + project_id + ')&limit=1', { headers: zohoHeaders(token) });
+      rec = q.data && q.data.data && q.data.data[0];
+    } catch (e) { /* no records */ }
+    if (!rec || !rec.Package) return res.json({ ok: true, found: false });
+    let pkg;
+    try { pkg = JSON.parse(rec.Package); } catch (e) { return res.json({ ok: true, found: false }); }
+    return res.json({ ok: true, found: true, package: pkg, updated_at: rec.Updated_At || null, id: rec.ID });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('takeoff load error:', detail);
+    return res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
 app.get('/api/token-status', async (req, res) => {
   const now = Date.now();
   const hasToken = !!cachedToken;
