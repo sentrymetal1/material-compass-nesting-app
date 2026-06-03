@@ -271,7 +271,11 @@ const REVISE_SYSTEM =
   "RULES: (1) Change ONLY what the instruction implies; copy every unaffected row and synopsis field " +
   "through UNCHANGED. (2) To resolve a conflict or decision: edit the affected rows (e.g. set " +
   "galvanized=true on the named members, change a spec, add or remove rows) AND remove the resolved item " +
-  "from synopsis.conflicts (or reflect the decision in scope_of_work). (3) Obey every catalog rule from the " +
+  "from synopsis.conflicts (or reflect the decision in scope_of_work). " +
+  "(2b) REMOVE/DISMISS: if the instruction says to remove, dismiss, delete, or ignore specific gaps or conflicts " +
+  "(without changing the BOM), return synopsis.gaps and/or synopsis.conflicts WITH THOSE ITEMS DROPPED — return " +
+  "the full remaining array (an EMPTY array [] if all were removed). NEVER omit the field and NEVER echo a removed " +
+  "item back. (3) Obey every catalog rule from the " +
   "knowledge base (exact sub-typed form types, size formats, valid specs). (4) Recompute synopsis.totals. " +
   "(5) OUTPUT DISCIPLINE: rows as a real JSON array; all analysis in the structured synopsis. " +
   "(6) In the top-level `notes` field, write ONE short past-tense sentence stating EXACTLY what you changed " +
