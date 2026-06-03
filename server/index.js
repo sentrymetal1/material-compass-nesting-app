@@ -124,6 +124,15 @@ app.post('/api/takeoff/save', async (req, res) => {
       return res.status(502).json({ ok: false, error: 'Zoho rejected the save', detail: zr.data });
     }
     const recId = (zr.data && zr.data.data && zr.data.data.ID) || (existing && existing.ID) || null;
+    // best-effort: set the relational lookup so the take-off relates to the project natively.
+    // Done separately so a lookup rejection can never break the (text-keyed) save.
+    if (recId) {
+      try {
+        await axios.patch(base + '/report/AI_Takeoff_Saved_Report/' + recId,
+          { data: { Project_ID_Look_Up: project_id } },
+          { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      } catch (e) { /* lookup is optional */ }
+    }
     return res.json({ ok: true, id: recId });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
