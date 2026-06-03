@@ -286,7 +286,7 @@ app.post('/api/takeoff/mine', async (req, res) => {
       const data = { Pattern: c.pattern.slice(0, 2000), Status: 'candidate', Support: c.support, Source: 'miner', Created: now };
       try { const r = await axios.post(base + '/form/Takeoff_Knowledge', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } }); if (r.data && r.data.code === 3000) written++; } catch (e) {}
     }
-    return res.json({ ok: true, corrections: recs.length, candidates: candidates.length, written: written });
+    return res.json({ ok: true, corrections: recs.length, candidates: candidates.length, written: written, patterns: candidates.map(function (c) { return { pattern: c.pattern, support: c.support }; }) });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('takeoff mine error:', detail);
