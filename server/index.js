@@ -48,13 +48,67 @@ getAccessToken().then(() => console.log('Startup token warm-up successful')).cat
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
+// ── AI take-off PREPAID METER (Phase 0: visual only, no real charges) ────────
+// VISUAL price the customer's banked balance draws down per take-off. This is NOT
+// your Anthropic cost — Anthropic only ever bills the real token usage. Changeable.
+const TAKEOFF_PRICE = { premium: 3, basic: 1.5 };
+const F_TAKEOFF_BALANCE = 'Takeoff_Balance';   // Decimal(2) on Customer_Entry_Form (add + seed e.g. 100)
+function takeoffPrice(tier) { return tier === 'basic' ? TAKEOFF_PRICE.basic : TAKEOFF_PRICE.premium; }
+
+async function getManufacturerRec(mfgId) {
+  const token = await getAccessToken();
+  const resp = await axios.get(`${creatorApiBase()}/report/Customer_Entry_Report?limit=200`, { headers: zohoHeaders(token) });
+  return (resp.data.data || []).find(r => String(r.ID) === String(mfgId)) || null;
+}
+async function getTakeoffBalance(mfgId) {
+  const rec = await getManufacturerRec(mfgId);
+  return rec ? { balance: Number(rec[F_TAKEOFF_BALANCE] || 0), found: true } : { balance: 0, found: false };
+}
+async function deductTakeoffBalance(mfgId, price) {
+  const { balance, found } = await getTakeoffBalance(mfgId);
+  const newBal = Math.max(0, Number((balance - price).toFixed(2)));
+  if (found) {
+    try {
+      const token = await getAccessToken();
+      const patch = {}; patch[F_TAKEOFF_BALANCE] = newBal;
+      const r = await axios.patch(`${creatorApiBase()}/report/Customer_Entry_Report/${mfgId}`, { data: patch }, { headers: zohoHeaders(token) });
+      if (r.data && r.data.code && r.data.code !== 3000) console.error('balance patch non-3000', r.data.code, r.data.message);
+    } catch (e) { console.error('balance write failed (is Takeoff_Balance field added?)', e.message); }
+  }
+  return { balance: newBal, was: balance, found: found };
+}
+
+// Current banked balance + price (widget green-bar display).
+app.get('/api/takeoff/account/:manufacturer_id', async (req, res) => {
+  try {
+    const { balance, found } = await getTakeoffBalance(req.params.manufacturer_id);
+    res.json({ ok: true, balance: Number(balance.toFixed(2)), price: TAKEOFF_PRICE, found: found });
+  } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+
 // AI material take-off — PDFs in, BOM + project synopsis out. Injects this shop's prior
 // corrections (Tier-3 per-manufacturer learning) so the take-off pre-applies their preferences.
 app.post('/api/takeoff', async (req, res) => {
   let shopLearning = '', universalKnowledge = '', projectContext = '';
-  try { const mfg = req.body && req.body.manufacturer_id; if (mfg) shopLearning = await fetchShopLearning(mfg); } catch (e) {}
+  const mfgId = req.body && req.body.manufacturer_id;
+  const tier = (req.body && req.body.tier) || ((req.body && req.body.include_synopsis === false) ? 'basic' : 'premium');
+  try { if (mfgId) shopLearning = await fetchShopLearning(mfgId); } catch (e) {}
   try { universalKnowledge = await getUniversalKnowledge(); } catch (e) {}
   try { const pid = req.body && req.body.project_id; if (pid) projectContext = await fetchProjectContext(pid); } catch (e) {}
+
+  // Phase 0 meter: deduct the visual price after a successful run, attach balance to the response.
+  const origJson = res.json.bind(res);
+  res.json = function (payload) {
+    if (payload && payload.ok && Array.isArray(payload.rows) && payload.rows.length && mfgId) {
+      const price = takeoffPrice(tier);
+      deductTakeoffBalance(mfgId, price)
+        .then(acct => { payload.price = price; payload.balance = acct.balance; origJson(payload); })
+        .catch(e => { console.error('meter err', e); origJson(payload); });
+      return res;
+    }
+    return origJson(payload);
+  };
+
   return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge, projectContext: projectContext });
 });
 
