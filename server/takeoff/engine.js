@@ -275,7 +275,10 @@ const REVISE_SYSTEM =
   "(2b) REMOVE/DISMISS: if the instruction says to remove, dismiss, delete, or ignore specific gaps or conflicts " +
   "(without changing the BOM), return synopsis.gaps and/or synopsis.conflicts WITH THOSE ITEMS DROPPED — return " +
   "the full remaining array (an EMPTY array [] if all were removed). NEVER omit the field and NEVER echo a removed " +
-  "item back. (3) Obey every catalog rule from the " +
+  "item back. (2c) SCOPE OF WORK: to add/edit/remove a scope write-up you MUST actually modify the array in " +
+  "synopsis.scope_of_work (fabricate/buyout/by_others/send_out) and return the FULL scope_of_work object with the change " +
+  "applied (empty [] if a stream is now empty) — NEVER just describe it in notes while leaving scope_of_work unchanged. " +
+  "(3) Obey every catalog rule from the " +
   "knowledge base (exact sub-typed form types, size formats, valid specs). (4) Recompute synopsis.totals. " +
   "(5) OUTPUT DISCIPLINE: rows as a real JSON array; all analysis in the structured synopsis. " +
   "(6) In the top-level `notes` field, write ONE short past-tense sentence stating EXACTLY what you changed " +
@@ -376,7 +379,12 @@ const CHAT_SYSTEM =
   "attached doc, change spec/finish/markup), call submit_takeoff with the COMPLETE revised package (full rows + full synopsis), " +
   "NOT a diff. Copy every unaffected row/field through UNCHANGED. Obey every catalog rule (exact sub-typed form types, size " +
   "formats, valid specs). If removing/dismissing gaps or conflicts, return synopsis.gaps/synopsis.conflicts with those items " +
-  "DROPPED (empty [] if all removed); never echo a removed item back. Recompute synopsis.totals. In the tool's top-level `notes`, " +
+  "DROPPED (empty [] if all removed); never echo a removed item back. " +
+  "SCOPE OF WORK edits: to add/edit/remove a scope write-up, you MUST actually modify the array in " +
+  "synopsis.scope_of_work (fabricate / buyout / by_others / send_out) and return the FULL scope_of_work object with all four " +
+  "arrays — the target item added, edited, or removed (an empty [] if that stream is now empty). NEVER just describe the change " +
+  "in `notes` while passing scope_of_work back unchanged. If the user pasted a screenshot/image, match the quoted text to the " +
+  "exact scope item and remove/edit THAT one. Recompute synopsis.totals. In the tool's top-level `notes`, " +
   "write ONE short past-tense sentence stating exactly what you changed (shown to the estimator as confirmation).\n" +
   "Use the prior conversation for context (the user may say 'now also…' or refer to earlier turns). Keep text replies brief.";
 
