@@ -249,4 +249,15 @@ function registerOutlookRoutes(app, deps) {
   console.log('[outlook] connect routes registered: /connect/outlook/start, /callback, /status');
 }
 
-module.exports = { registerOutlookRoutes, getGraphAccessToken };
+// Echo the effective OAuth config so we can verify which tenant/authority the
+// running process is actually using (debugging the work-vs-personal collision).
+function effectiveConfig() {
+  return {
+    ms_tenant: MS_TENANT,
+    authorize_base: AUTH_BASE,
+    redirect_uri: MS_REDIRECT_URI,
+    client_id_tail: (MS_CLIENT_ID || '').slice(-6),
+  };
+}
+
+module.exports = { registerOutlookRoutes, getGraphAccessToken, effectiveConfig };

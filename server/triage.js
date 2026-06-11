@@ -17,7 +17,7 @@
 const _Anthropic = require('@anthropic-ai/sdk');
 const Anthropic = _Anthropic.default || _Anthropic;   // 0.40.x CJS interop
 const axios = require('axios');
-const { getGraphAccessToken } = require('./outlook');
+const { getGraphAccessToken, effectiveConfig } = require('./outlook');
 
 const EXTRACT_MODEL = 'claude-haiku-4-5-20251001';     // bump to 'claude-sonnet-4-6' if extraction quality lags
 
@@ -366,7 +366,7 @@ function registerTriageRoutes(app, deps) {
       const allMsgs = await axios.get('https://graph.microsoft.com/v1.0/me/messages?$top=10&$select=subject,receivedDateTime,from', { headers: h }).then(r => (r.data.value || []).map(m => ({ subject: m.subject, received: m.receivedDateTime, from: m.from?.emailAddress?.address }))).catch(e => ({ error: e.response?.data || e.message }));
       const inboxMsgs = await axios.get('https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=10&$select=subject,receivedDateTime,from', { headers: h }).then(r => (r.data.value || []).map(m => ({ subject: m.subject, received: m.receivedDateTime, from: m.from?.emailAddress?.address }))).catch(e => ({ error: e.response?.data || e.message }));
 
-      res.json({ ok: true, mailbox: conn.Mailbox_Email, inbox_folder: inbox, folders, me_messages_sample: allMsgs, inbox_messages_sample: inboxMsgs });
+      res.json({ ok: true, oauth_config: effectiveConfig(), mailbox: conn.Mailbox_Email, inbox_folder: inbox, folders, me_messages_sample: allMsgs, inbox_messages_sample: inboxMsgs });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.response?.data || err.message });
     }
