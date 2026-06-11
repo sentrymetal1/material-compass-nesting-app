@@ -351,7 +351,28 @@ function registerTriageRoutes(app, deps) {
     }
   });
 
-  console.log('[triage] poll route registered: GET /api/triage/poll');
+  // Diagnostic: what does Graph actually see in this mailbox?
+  app.get('/api/triage/debug', async (req, res) => {
+    try {
+      const conns = await getConnectedMailboxes(req.query.mailbox);
+      if (!conns.length) return res.json({ ok: false, message: 'No connected mailboxes' });
+      const conn = conns[0];
+      const tok = await getGraphAccessToken(conn.Refresh_Token);
+      const at = tok.access_token;
+      const h = { Authorization: 'Bearer ' + at };
+
+      const inbox = await axios.get('https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=displayName,totalItemCount,unreadItemCount', { headers: h }).then(r => r.data).catch(e => ({ error: e.response?.data || e.message }));
+      const folders = await axios.get('https://graph.microsoft.com/v1.0/me/mailFolders?$top=30&$select=displayName,totalItemCount', { headers: h }).then(r => (r.data.value || []).map(f => ({ name: f.displayName, count: f.totalItemCount }))).catch(e => ({ error: e.response?.data || e.message }));
+      const allMsgs = await axios.get('https://graph.microsoft.com/v1.0/me/messages?$top=10&$select=subject,receivedDateTime,from', { headers: h }).then(r => (r.data.value || []).map(m => ({ subject: m.subject, received: m.receivedDateTime, from: m.from?.emailAddress?.address }))).catch(e => ({ error: e.response?.data || e.message }));
+      const inboxMsgs = await axios.get('https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=10&$select=subject,receivedDateTime,from', { headers: h }).then(r => (r.data.value || []).map(m => ({ subject: m.subject, received: m.receivedDateTime, from: m.from?.emailAddress?.address }))).catch(e => ({ error: e.response?.data || e.message }));
+
+      res.json({ ok: true, mailbox: conn.Mailbox_Email, inbox_folder: inbox, folders, me_messages_sample: allMsgs, inbox_messages_sample: inboxMsgs });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.response?.data || err.message });
+    }
+  });
+
+  console.log('[triage] poll route registered: GET /api/triage/poll (+ /debug)');
 }
 
 module.exports = { registerTriageRoutes };
