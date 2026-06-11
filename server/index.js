@@ -1937,6 +1937,12 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
   }
 });
 
+// ---- Outlook inbox connect (Quote Triage / RFQ intake, Step 2) ----
+// Registers /connect/outlook/start, /callback, /status. MUST be before the
+// catch-all below or the React index.html swallows these routes. Reuses this
+// file's Zoho token helpers so there's no duplicate auth machinery.
+require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
+
 // Catch-all: serve React app
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html')); });
 
