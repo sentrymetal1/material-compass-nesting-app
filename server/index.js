@@ -1942,6 +1942,8 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
 // catch-all below or the React index.html swallows these routes. Reuses this
 // file's Zoho token helpers so there's no duplicate auth machinery.
 require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
+// ---- Quote Triage poller (Step 4): GET /api/triage/poll ----
+require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 
 // Catch-all: serve React app
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html')); });
