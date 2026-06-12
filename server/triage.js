@@ -272,7 +272,12 @@ function registerTriageRoutes(app, deps) {
       mailbox: conn.Mailbox_Email, scanned: 0, prefiltered: 0, extracted: 0,
       written: 0, updated: 0, skipped_dupe: 0, not_rfq: 0, errors: [],
     };
-    const manufactureId = conn.Manufacture?.ID || conn.Manufacture || '';
+    // Zoho returns an unset lookup as an empty object {} (which is truthy!),
+    // so pull .ID explicitly and treat a no-ID object as blank — otherwise we'd
+    // post {} and Zoho rejects the whole row with code 3001 "Invalid column value".
+    const manufactureId = (conn.Manufacture && typeof conn.Manufacture === 'object')
+      ? (conn.Manufacture.ID || '')
+      : (conn.Manufacture || '');
     let accessToken;
     try {
       const tok = await getGraphAccessToken(conn.Refresh_Token);
