@@ -145,6 +145,20 @@ function fmtDateTime(iso) {
   return fmtDate(iso) + ' ' + hh + ':' + mm + ':' + ss;
 }
 
+// Zoho returns a "no records" condition in several shapes depending on whether
+// the report is empty vs the criteria simply matched nothing. ALL of these mean
+// "not found", not a real error — treat them as empty so dedup/lookups proceed.
+//   9220 = "No records exist in this report"
+//   9280 = "No records found matching the given criteria"
+//   3100 = success-but-no-matching-records
+function isNoRecords(e) {
+  const d = e && e.response && e.response.data;
+  const code = d && d.code;
+  if (code === 9220 || code === 9280 || code === 3100) return true;
+  const msg = (d && (d.message || d.description)) || '';
+  return /no records/i.test(msg);
+}
+
 // ---- Route registration ------------------------------------------------------
 function registerTriageRoutes(app, deps) {
   const { getAccessToken, creatorApiBase, zohoHeaders } = deps;
@@ -165,7 +179,7 @@ function registerTriageRoutes(app, deps) {
       if (mailboxFilter) rows = rows.filter(x => (x.Mailbox_Email || '').toLowerCase() === mailboxFilter.toLowerCase());
       return rows;
     } catch (e) {
-      if (e.response && e.response.data && e.response.data.code === 9220) return []; // empty report
+      if (isNoRecords(e)) return [];
       throw e;
     }
   }
@@ -178,7 +192,7 @@ function registerTriageRoutes(app, deps) {
         { headers: zohoHeaders(token) });
       return ((r.data && r.data.data) || []).length > 0;
     } catch (e) {
-      if (e.response && e.response.data && e.response.data.code === 9220) return false;
+      if (isNoRecords(e)) return false;
       throw e;
     }
   }
@@ -194,7 +208,7 @@ function registerTriageRoutes(app, deps) {
       // Prefer a still-open one (not Decline/Archived).
       return rows.find(x => x.Status !== 'Decline' && x.Status !== 'Archived') || rows[0] || null;
     } catch (e) {
-      if (e.response && e.response.data && e.response.data.code === 9220) return null;
+      if (isNoRecords(e)) return null;
       throw e;
     }
   }
