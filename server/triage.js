@@ -130,6 +130,49 @@ async function listMessagesSince(accessToken, sinceIso, maxMessages) {
   }
   return all.slice(0, maxMessages);
 }
+
+// Server-side search of the WHOLE mailbox for bid-like terms. Robust for
+// high-volume inboxes where a newest-N scan never reaches older RFQs — Graph
+// $search ignores volume and returns only matching messages.
+const SEARCH_TERMS = [
+  'invitation to bid', 'addendum', 'bid date', 'request for quote',
+  'request for proposal', 'plans and specs', 'isqft', 'constructconnect',
+  'buildingconnected', 'planhub', 'procore', 'smartbid', 'pipelinesuite',
+];
+async function searchMessages(accessToken, term, maxMessages) {
+  // $search can't combine with $orderby; results are relevance-ranked.
+  let url = 'https://graph.microsoft.com/v1.0/me/messages'
+    + '?$search=' + encodeURIComponent('"' + term + '"')
+    + '&$select=id,internetMessageId,subject,from,receivedDateTime,bodyPreview,hasAttachments,webLink'
+    + '&$top=50';
+  const all = [];
+  let pages = 0;
+  while (url && all.length < maxMessages && pages < 6) {
+    const resp = await axios.get(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    all.push(...((resp.data && resp.data.value) || []));
+    url = resp.data['@odata.nextLink'] || null;
+    pages++;
+  }
+  return all;
+}
+async function searchAllBidMessages(accessToken, sinceIso, maxTotal) {
+  const seen = {};
+  const out = [];
+  for (const term of SEARCH_TERMS) {
+    let msgs = [];
+    try { msgs = await searchMessages(accessToken, term, 150); }
+    catch (e) { continue; }
+    for (const m of msgs) {
+      if (seen[m.id]) continue;
+      if (sinceIso && m.receivedDateTime && m.receivedDateTime < sinceIso) continue;
+      seen[m.id] = 1;
+      out.push(m);
+      if (out.length >= maxTotal) return out;
+    }
+  }
+  return out;
+}
+
 async function fetchMessageText(accessToken, id) {
   // Prefer plain-text body so we don't have to strip HTML.
   const url = 'https://graph.microsoft.com/v1.0/me/messages/' + id + '?$select=subject,body,from,receivedDateTime';
@@ -322,7 +365,21 @@ function registerTriageRoutes(app, deps) {
     try {
       if (opts.days) {
         const sinceIso = new Date(Date.now() - opts.days * 86400000).toISOString();
-        messages = await listMessagesSince(accessToken, sinceIso, opts.maxMessages || 3000);
+        // Primary: search the whole mailbox for bid-like terms within the window
+        // (immune to inbox volume). Fall back to a newest-N scan if search errors.
+        try {
+          messages = await searchAllBidMessages(accessToken, sinceIso, 600);
+        } catch (e) {
+          messages = await listMessagesSince(accessToken, sinceIso, opts.maxMessages || 2000);
+        }
+        // Union in the last ~2 days of mail too — the search index can lag a few
+        // minutes, so brand-new RFQs might not be searchable yet.
+        try {
+          const recent = await listMessagesSince(accessToken, new Date(Date.now() - 2 * 86400000).toISOString(), 300);
+          const seen = {};
+          messages.forEach(m => { seen[m.id] = 1; });
+          recent.forEach(m => { if (!seen[m.id]) { seen[m.id] = 1; messages.push(m); } });
+        } catch (e) { /* non-fatal */ }
       } else {
         messages = await listRecentMessages(accessToken, opts.top);
       }
