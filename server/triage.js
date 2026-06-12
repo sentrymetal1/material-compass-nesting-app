@@ -112,6 +112,24 @@ async function listRecentMessages(accessToken, top) {
   const resp = await axios.get(url, { headers: { Authorization: 'Bearer ' + accessToken } });
   return (resp.data && resp.data.value) || [];
 }
+// Time-window scan: ALL messages received since `sinceIso`, paged via
+// @odata.nextLink. Robust for high-volume inboxes where the newest N messages
+// are mostly marketing and would bury the RFQs. Capped for safety.
+async function listMessagesSince(accessToken, sinceIso, maxMessages) {
+  let url = 'https://graph.microsoft.com/v1.0/me/messages'
+    + '?$select=id,internetMessageId,subject,from,receivedDateTime,bodyPreview,hasAttachments,webLink'
+    + '&$filter=' + encodeURIComponent('receivedDateTime ge ' + sinceIso)
+    + '&$top=50&$orderby=receivedDateTime desc';
+  const all = [];
+  let pages = 0;
+  while (url && all.length < maxMessages && pages < 40) {
+    const resp = await axios.get(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    all.push(...((resp.data && resp.data.value) || []));
+    url = resp.data['@odata.nextLink'] || null;
+    pages++;
+  }
+  return all.slice(0, maxMessages);
+}
 async function fetchMessageText(accessToken, id) {
   // Prefer plain-text body so we don't have to strip HTML.
   const url = 'https://graph.microsoft.com/v1.0/me/messages/' + id + '?$select=subject,body,from,receivedDateTime';
@@ -301,8 +319,14 @@ function registerTriageRoutes(app, deps) {
 
     const anthropic = new Anthropic(); // ANTHROPIC_API_KEY from env
     let messages = [];
-    try { messages = await listRecentMessages(accessToken, opts.top); }
-    catch (e) { summary.errors.push('list: ' + (e.response?.data?.error?.message || e.message)); return summary; }
+    try {
+      if (opts.days) {
+        const sinceIso = new Date(Date.now() - opts.days * 86400000).toISOString();
+        messages = await listMessagesSince(accessToken, sinceIso, opts.maxMessages || 3000);
+      } else {
+        messages = await listRecentMessages(accessToken, opts.top);
+      }
+    } catch (e) { summary.errors.push('list: ' + (e.response?.data?.error?.message || e.message)); return summary; }
 
     summary.scanned = messages.length;
     let newestSeen = conn.Last_Seen_Message || '';
@@ -392,7 +416,12 @@ function registerTriageRoutes(app, deps) {
   // Manual trigger. ?mailbox=<email> to limit; ?top=N to cap messages scanned.
   app.get('/api/triage/poll', async (req, res) => {
     try {
-      const opts = { top: Math.min(parseInt(req.query.top, 10) || 25, 50) };
+      // ?days=N scans the whole time window (robust for noisy inboxes);
+      // otherwise ?top=N scans the N most-recent messages.
+      const days = parseInt(req.query.days, 10);
+      const opts = (days > 0)
+        ? { days: Math.min(days, 90), maxMessages: 3000 }
+        : { top: Math.min(parseInt(req.query.top, 10) || 25, 50) };
       const conns = await getConnectedMailboxes(req.query.mailbox);
       if (!conns.length) return res.json({ ok: true, message: 'No connected mailboxes', results: [] });
       const results = [];
