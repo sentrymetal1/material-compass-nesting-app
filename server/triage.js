@@ -228,6 +228,12 @@ function isNoRecords(e) {
 function registerTriageRoutes(app, deps) {
   const { getAccessToken, creatorApiBase, zohoHeaders } = deps;
 
+  // In-process scan-job state, keyed by manufacturer (single process; resets on
+  // deploy). Lets a long scan run in the background while the UI polls status,
+  // so a big first scan never hits the request-gateway timeout.
+  const scanJobs = {};
+  const jobKey = (req) => (req.query.manufacture || 'all').toString();
+
   function zCriteria(field, value) {
     // Exact-match text criteria, URL-encoded; strip quotes that would break it.
     const safe = String(value == null ? '' : value).replace(/"/g, '');
@@ -479,6 +485,31 @@ function registerTriageRoutes(app, deps) {
       const opts = (days > 0)
         ? { days: Math.min(days, 90), maxMessages: 3000 }
         : { top: Math.min(parseInt(req.query.top, 10) || 25, 50) };
+      const isAsync = req.query.async === '1' || req.query.async === 'true';
+
+      if (isAsync) {
+        const key = jobKey(req);
+        if (scanJobs[key] && scanJobs[key].running) return res.json({ started: false, alreadyRunning: true });
+        scanJobs[key] = { running: true, startedAt: Date.now(), finishedAt: null, results: null, error: null };
+        res.json({ started: true });
+        // Run the scan AFTER responding; Node keeps the async work going.
+        (async () => {
+          try {
+            const conns = await getConnectedMailboxes(req.query.mailbox);
+            const results = [];
+            for (const c of conns) results.push(await pollMailbox(c, opts));
+            scanJobs[key].results = results;
+          } catch (e) {
+            scanJobs[key].error = e.response?.data || e.message;
+            console.error('[triage] async poll error:', e.response?.data || e.message);
+          } finally {
+            scanJobs[key].running = false;
+            scanJobs[key].finishedAt = Date.now();
+          }
+        })();
+        return;
+      }
+
       const conns = await getConnectedMailboxes(req.query.mailbox);
       if (!conns.length) return res.json({ ok: true, message: 'No connected mailboxes', results: [] });
       const results = [];
@@ -488,6 +519,11 @@ function registerTriageRoutes(app, deps) {
       console.error('[triage] poll error:', err.response?.data || err.message);
       res.status(500).json({ ok: false, error: err.response?.data || err.message });
     }
+  });
+
+  // Status of a background scan started with ?async=1.
+  app.get('/api/triage/scan-status', (req, res) => {
+    res.json(scanJobs[jobKey(req)] || { running: false, results: null });
   });
 
   // ---- Triage UI (Step 5) ----

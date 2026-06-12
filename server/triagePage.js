@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-12-3';
+const BUILD_TAG = 'triage-ui-2026-06-12-4';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -186,15 +186,25 @@ function renderTriagePage() {
   function setActiveTab(s){ status=s; var seg=document.getElementById('seg'); Array.prototype.forEach.call(seg.children,function(x){x.classList.toggle('active', x.getAttribute('data-status')===s)}); }
   var overlay=document.getElementById('overlay'), ovCard=document.getElementById('ovCard');
   function ov(title,msg,done){ document.getElementById('ovTitle').textContent=title; document.getElementById('ovMsg').textContent=msg; ovCard.classList.toggle('done',!!done); overlay.classList.add('show'); }
+  function closeOv(btn){ overlay.classList.remove('show'); ovCard.classList.remove('done'); if(btn){ btn.disabled=false; } }
   document.getElementById('scanBtn').addEventListener('click',function(){
     var days=document.getElementById('scanDays').value; var btn=this; btn.disabled=true;
-    ov('Scanning your inbox…','Reading the last '+days+' days of mail and checking each message for quote opportunities. This can take up to a minute — please don\\'t close the page.',false);
-    fetch('/api/triage/poll?days='+encodeURIComponent(days)).then(function(r){return r.json()}).then(function(d){
-      var r=(d.results&&d.results[0])||{}; var found=(r.written||0)+(r.updated||0);
-      var known=(r.skipped_dupe||0)+(r.skipped_project||0);
-      ov('✓ Scan complete','Scanned '+(r.scanned||0)+' messages · '+found+' new opportunit'+(found===1?'y':'ies')+' added'+(known?' · '+known+' already known':'')+'.',true);
-      setTimeout(function(){ overlay.classList.remove('show'); ovCard.classList.remove('done'); btn.disabled=false; setActiveTab('New'); load(); },1500);
-    }).catch(function(e){ ov('Scan failed',String(e),true); setTimeout(function(){overlay.classList.remove('show');ovCard.classList.remove('done');btn.disabled=false;},2800); });
+    var mq = MFG ? ('&manufacture='+encodeURIComponent(MFG)) : '';
+    var sq = MFG ? ('?manufacture='+encodeURIComponent(MFG)) : '';
+    ov('Scanning your inbox…','Searching the last '+days+' days for quote opportunities. A large first scan can take a couple of minutes — you can leave this open.',false);
+    // Start the scan in the background, then poll for completion.
+    fetch('/api/triage/poll?days='+encodeURIComponent(days)+'&async=1'+mq).then(function(r){return r.json()}).then(function(){
+      var iv=setInterval(function(){
+        fetch('/api/triage/scan-status'+sq).then(function(r){return r.json()}).then(function(s){
+          if(s.running){ return; }
+          clearInterval(iv);
+          if(s.error){ ov('Scan failed', (typeof s.error==='string'?s.error:JSON.stringify(s.error)), true); setTimeout(function(){closeOv(btn);},3500); return; }
+          var r=(s.results&&s.results[0])||{}; var found=(r.written||0)+(r.updated||0); var known=(r.skipped_dupe||0)+(r.skipped_project||0);
+          ov('✓ Scan complete','Scanned '+(r.scanned||0)+' messages · '+found+' new opportunit'+(found===1?'y':'ies')+' added'+(known?' · '+known+' already known':'')+'.',true);
+          setTimeout(function(){ closeOv(btn); setActiveTab('New'); load(); },1600);
+        }).catch(function(e){ clearInterval(iv); ov('Scan failed',String(e),true); setTimeout(function(){closeOv(btn);},3500); });
+      }, 3000);
+    }).catch(function(e){ ov('Scan failed',String(e),true); setTimeout(function(){closeOv(btn);},3500); });
   });
 
   load();
