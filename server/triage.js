@@ -206,7 +206,9 @@ function registerTriageRoutes(app, deps) {
         { headers: zohoHeaders(token) });
       const rows = (r.data && r.data.data) || [];
       // Prefer a still-open one (not Decline/Archived).
-      return rows.find(x => x.Status !== 'Decline' && x.Status !== 'Archived') || rows[0] || null;
+      // Only an OPEN opportunity counts as a match — a Declined/Archived one
+      // shouldn't block a fresh re-invitation for the same project.
+      return rows.find(x => x.Status !== 'Decline' && x.Status !== 'Archived') || null;
     } catch (e) {
       if (isNoRecords(e)) return null;
       throw e;
@@ -270,7 +272,7 @@ function registerTriageRoutes(app, deps) {
   async function pollMailbox(conn, opts) {
     const summary = {
       mailbox: conn.Mailbox_Email, scanned: 0, prefiltered: 0, extracted: 0,
-      written: 0, updated: 0, skipped_dupe: 0, not_rfq: 0, errors: [],
+      written: 0, updated: 0, skipped_dupe: 0, skipped_project: 0, not_rfq: 0, errors: [],
     };
     // Zoho returns an unset lookup as an empty object {} (which is truthy!),
     // so pull .ID explicitly and treat a no-ID object as blank — otherwise we'd
@@ -325,17 +327,21 @@ function registerTriageRoutes(app, deps) {
           ...out, attachments, source: fromAddr, webLink: m.webLink, message_id: messageId,
         });
 
-        // Addendum merge: if a still-open opportunity for this project exists, update it.
-        const existing = (out.notification_type === 'addendum')
-          ? await findOpenOpportunityByProject(out.project_name) : null;
-
+        // Project-level dedup: the same project often arrives more than once
+        // (a platform notice + an internal "FW:"). Match an OPEN opportunity by
+        // project name. Addendum -> merge (bump due date); otherwise -> skip.
+        const existing = await findOpenOpportunityByProject(out.project_name);
         if (existing) {
-          await patchOpportunity(existing.ID, {
-            Summary: (out.summary || '') + '\n\n[Addendum ' + (m.receivedDateTime || '') + '] ' + (existing.Summary || ''),
-            Due_Date: fmtDate(out.due_date) || existing.Due_Date,
-            Extracted_JSON: extractedJson,
-          });
-          summary.updated++;
+          if (out.notification_type === 'addendum') {
+            await patchOpportunity(existing.ID, {
+              Summary: '[Addendum ' + (m.receivedDateTime || '') + '] ' + (out.summary || '') + '\n\n' + (existing.Summary || ''),
+              Due_Date: fmtDate(out.due_date) || existing.Due_Date,
+              Extracted_JSON: extractedJson,
+            });
+            summary.updated++;
+          } else {
+            summary.skipped_project++;
+          }
           continue;
         }
 
