@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-12-1';
+const BUILD_TAG = 'triage-ui-2026-06-12-2';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -58,6 +58,17 @@ function renderTriagePage() {
   .btn[disabled]{opacity:.6;cursor:default}
   .state{text-align:center;color:var(--muted);padding:40px;font-size:14px}
   .foot{margin-top:24px;text-align:center;color:#aeb6c0;font-size:11px}
+  .scanbtn{border-color:var(--mc-blue);color:var(--mc-blue)}
+  .scanbtn:hover{background:#eef3fa}
+  select.days{border:1px solid var(--line);border-radius:8px;padding:7px 8px;font-size:13px;background:#fff;color:var(--ink)}
+  .overlay{position:fixed;inset:0;background:rgba(244,246,249,.82);display:none;align-items:center;justify-content:center;z-index:50}
+  .overlay.show{display:flex}
+  .ov-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:28px 34px;text-align:center;box-shadow:0 8px 30px rgba(20,30,40,.14);max-width:380px}
+  .spinner{width:34px;height:34px;border:3px solid #e3e9f2;border-top-color:var(--mc-blue);border-radius:50%;margin:0 auto 16px;animation:spin 1s linear infinite}
+  .ov-card.done .spinner{display:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ov-title{font-weight:700;font-size:15.5px;margin:0 0 6px}
+  .ov-msg{font-size:13px;color:var(--muted);line-height:1.55;margin:0}
 </style></head>
 <body><div class="wrap">
   <div class="head">
@@ -72,12 +83,23 @@ function renderTriagePage() {
       <button data-status="Decline">Declined</button>
     </div>
     <span class="spacer"></span>
+    <select class="days" id="scanDays" title="How far back to scan">
+      <option value="7">last 7 days</option>
+      <option value="30" selected>last 30 days</option>
+      <option value="90">last 90 days</option>
+    </select>
+    <button class="btn scanbtn" id="scanBtn">🔄 Scan inbox</button>
     <input class="search" id="search" placeholder="Search project, location…">
   </div>
   <div id="list"></div>
   <div class="state" id="state">Loading…</div>
   <div class="foot">Material Compass · Quote Triage · ${BUILD_TAG}</div>
 </div>
+<div class="overlay" id="overlay"><div class="ov-card" id="ovCard">
+  <div class="spinner"></div>
+  <p class="ov-title" id="ovTitle">Scanning your inbox…</p>
+  <p class="ov-msg" id="ovMsg">Reading recent mail and checking each message for quote opportunities. This can take up to a minute — please don't close the page.</p>
+</div></div>
 <script>
   console.log('Quote Triage build ${BUILD_TAG}');
   var qs = new URLSearchParams(location.search);
@@ -159,6 +181,21 @@ function renderTriagePage() {
     b.classList.add('active'); status=b.getAttribute('data-status'); load();
   });
   document.getElementById('search').addEventListener('input',render);
+
+  function setActiveTab(s){ status=s; var seg=document.getElementById('seg'); Array.prototype.forEach.call(seg.children,function(x){x.classList.toggle('active', x.getAttribute('data-status')===s)}); }
+  var overlay=document.getElementById('overlay'), ovCard=document.getElementById('ovCard');
+  function ov(title,msg,done){ document.getElementById('ovTitle').textContent=title; document.getElementById('ovMsg').textContent=msg; ovCard.classList.toggle('done',!!done); overlay.classList.add('show'); }
+  document.getElementById('scanBtn').addEventListener('click',function(){
+    var days=document.getElementById('scanDays').value; var btn=this; btn.disabled=true;
+    ov('Scanning your inbox…','Reading the last '+days+' days of mail and checking each message for quote opportunities. This can take up to a minute — please don\\'t close the page.',false);
+    fetch('/api/triage/poll?days='+encodeURIComponent(days)).then(function(r){return r.json()}).then(function(d){
+      var r=(d.results&&d.results[0])||{}; var found=(r.written||0)+(r.updated||0);
+      var known=(r.skipped_dupe||0)+(r.skipped_project||0);
+      ov('✓ Scan complete','Scanned '+(r.scanned||0)+' messages · '+found+' new opportunit'+(found===1?'y':'ies')+' added'+(known?' · '+known+' already known':'')+'.',true);
+      setTimeout(function(){ overlay.classList.remove('show'); ovCard.classList.remove('done'); btn.disabled=false; setActiveTab('New'); load(); },1500);
+    }).catch(function(e){ ov('Scan failed',String(e),true); setTimeout(function(){overlay.classList.remove('show');ovCard.classList.remove('done');btn.disabled=false;},2800); });
+  });
+
   load();
 </script></body></html>`;
 }
