@@ -18,6 +18,7 @@ const _Anthropic = require('@anthropic-ai/sdk');
 const Anthropic = _Anthropic.default || _Anthropic;   // 0.40.x CJS interop
 const axios = require('axios');
 const { getGraphAccessToken, effectiveConfig } = require('./outlook');
+const { renderTriagePage } = require('./triagePage');
 
 const EXTRACT_MODEL = 'claude-haiku-4-5-20251001';     // bump to 'claude-sonnet-4-6' if extraction quality lags
 
@@ -400,6 +401,66 @@ function registerTriageRoutes(app, deps) {
     } catch (err) {
       console.error('[triage] poll error:', err.response?.data || err.message);
       res.status(500).json({ ok: false, error: err.response?.data || err.message });
+    }
+  });
+
+  // ---- Triage UI (Step 5) ----
+  app.get('/triage', (req, res) => res.send(renderTriagePage()));
+
+  function mapOpportunity(row) {
+    let webLink = row.Web_Link || '';
+    let source = '';
+    try {
+      const j = JSON.parse(row.Extracted_JSON || '{}');
+      if (!webLink) webLink = j.webLink || '';
+      source = j.source || row.From_Email || '';
+    } catch (e) { source = row.From_Email || ''; }
+    return {
+      id: row.ID, project: row.Project || '', customer: row.Customer_Name || '',
+      location: row.Location || '', due_date: row.Due_Date || '',
+      confidence: parseFloat(row.Confidence) || 0, from_name: row.From_Name || '',
+      source, summary: row.Summary || '', material_scope: row.Material_Scope || '',
+      received: row.Received_Date || '', web_link: webLink, status: row.Status || '',
+    };
+  }
+
+  // Live opportunities for the triage page, scoped by status (+ manufacturer).
+  app.get('/api/triage/opportunities', async (req, res) => {
+    try {
+      const token = await getAccessToken();
+      const base = creatorApiBase();
+      const status = (req.query.status || 'New').replace(/"/g, '');
+      let crit = '(Status=="' + status + '")';
+      if (req.query.manufacture) crit = '((Status=="' + status + '") && Manufacture==' + req.query.manufacture + ')';
+      const url = base + '/report/' + OPP_REPORT + '?criteria=' + encodeURIComponent(crit) + '&limit=200';
+      let rows = [];
+      try { const r = await axios.get(url, { headers: zohoHeaders(token) }); rows = (r.data && r.data.data) || []; }
+      catch (e) { if (!isNoRecords(e)) throw e; }
+      rows.sort((a, b) => (Date.parse(b.Received_Date) || 0) - (Date.parse(a.Received_Date) || 0));
+      let label = '';
+      const m0 = rows[0] && rows[0].Manufacture;
+      if (m0 && typeof m0 === 'object') label = m0.zc_display_value || m0.display_value || '';
+      res.json({ status, count: rows.length, manufacture_label: label, opportunities: rows.map(mapOpportunity) });
+    } catch (err) {
+      console.error('[triage] opportunities error:', err.response?.data || err.message);
+      res.status(500).json({ error: err.response?.data || err.message, opportunities: [] });
+    }
+  });
+
+  // Quote / Skip decision from the triage page.
+  app.post('/api/triage/decision', async (req, res) => {
+    try {
+      const { id, decision } = req.body || {};
+      if (!id || (decision !== 'quote' && decision !== 'skip')) {
+        return res.status(400).json({ ok: false, error: 'id and decision (quote|skip) required' });
+      }
+      const status = decision === 'quote' ? 'Quoting' : 'Decline';
+      try { await patchOpportunity(id, { Status: status, Decision_Date: fmtDate(new Date().toISOString()) }); }
+      catch (e) { await patchOpportunity(id, { Status: status }); } // retry without date on format reject
+      res.json({ ok: true, id, status });
+    } catch (err) {
+      console.error('[triage] decision error:', err.response?.data || err.message);
+      res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
     }
   });
 
