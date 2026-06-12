@@ -213,24 +213,44 @@ function registerTriageRoutes(app, deps) {
     }
   }
 
-  // Insert with a retry-without-dates fallback (date-format mismatch never drops the row).
+  // Insert, STRICTLY verifying Zoho actually created the record. Zoho returns
+  // HTTP 200 even on field-level failures (non-3000 code, no data.ID), so we
+  // must inspect the body — not just "did it throw". Retry-without-dates on a
+  // value/format error so a date mismatch never blocks the row.
+  async function postOpportunity(token, base, data) {
+    const resp = await axios.post(base + '/form/' + OPP_FORM, { data },
+      { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    return resp.data || {};
+  }
+  function insertResultOf(body, dateDropped) {
+    const id = body?.data?.ID || null;
+    const ok = id && (body.code === undefined || body.code === 3000);
+    return { ok: !!ok, id, dateDropped, code: body.code, message: body.message || (body.data && body.data.message) || null, raw: body };
+  }
   async function insertOpportunity(fields) {
     const token = await getAccessToken();
     const base = creatorApiBase();
+    let body;
     try {
-      const resp = await axios.post(base + '/form/' + OPP_FORM, { data: fields },
-        { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-      return { id: resp.data?.data?.ID || null, dateDropped: false };
+      body = await postOpportunity(token, base, fields);
     } catch (e) {
-      const code = e.response?.data?.code;
-      // 3002 = value/format error (often a date field). Retry without the date fields.
-      const retry = { ...fields };
-      delete retry.Received_Date; delete retry.Due_Date;
-      console.error('[triage] insert failed (code ' + code + '), retrying without dates:', JSON.stringify(e.response?.data || e.message));
-      const resp = await axios.post(base + '/form/' + OPP_FORM, { data: retry },
-        { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-      return { id: resp.data?.data?.ID || null, dateDropped: true };
+      body = e.response?.data || { code: 'HTTP_' + (e.response?.status || '?'), message: e.message };
     }
+    let result = insertResultOf(body, false);
+    if (!result.ok) {
+      console.error('[triage] insert not confirmed:', JSON.stringify(body));
+      // Retry once without the date fields (covers date-format rejections).
+      const retry = { ...fields }; delete retry.Received_Date; delete retry.Due_Date;
+      try {
+        const body2 = await postOpportunity(token, base, retry);
+        result = insertResultOf(body2, true);
+        if (!result.ok) console.error('[triage] insert retry (no dates) still failed:', JSON.stringify(body2));
+      } catch (e2) {
+        const b2 = e2.response?.data || { code: 'HTTP_' + (e2.response?.status || '?'), message: e2.message };
+        result = insertResultOf(b2, true);
+      }
+    }
+    return result;
   }
 
   async function patchOpportunity(id, fields) {
@@ -334,8 +354,12 @@ function registerTriageRoutes(app, deps) {
         if (manufactureId) fields.Manufacture = manufactureId;
 
         const res = await insertOpportunity(fields);
-        summary.written++;
-        if (res.dateDropped) summary.errors.push('dates dropped on ' + (m.subject || messageId) + ' (format mismatch)');
+        if (res.ok) {
+          summary.written++;
+          if (res.dateDropped) summary.errors.push('dates dropped on "' + (m.subject || messageId) + '" (format mismatch)');
+        } else {
+          summary.errors.push('insert FAILED "' + (m.subject || messageId) + '" [code ' + res.code + ']: ' + (res.message || JSON.stringify(res.raw)));
+        }
       } catch (e) {
         summary.errors.push('msg ' + (m.subject || m.id) + ': ' + (e.response?.data?.message || e.response?.data?.error?.message || e.message));
       }
