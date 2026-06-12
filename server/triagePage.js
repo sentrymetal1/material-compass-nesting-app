@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-12-4';
+const BUILD_TAG = 'triage-ui-2026-06-12-5';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -159,7 +159,10 @@ function renderTriagePage() {
     document.getElementById('list').innerHTML='';
     fetch('/api/triage/opportunities?status='+encodeURIComponent(status)+(MFG?'&manufacture='+encodeURIComponent(MFG):''))
       .then(function(r){return r.json()})
-      .then(function(d){ all=d.opportunities||[]; document.getElementById('mfg').textContent=d.manufacture_label||''; render(); })
+      .then(function(d){
+        if(d.quota){ all=[]; document.getElementById('list').innerHTML=''; document.getElementById('count').textContent='—'; var st=document.getElementById('state'); st.style.display='block'; st.textContent='⚠️ '+(d.error||'Zoho API daily limit reached — try again after it resets.'); return; }
+        all=d.opportunities||[]; document.getElementById('mfg').textContent=d.manufacture_label||''; render();
+      })
       .catch(function(e){ document.getElementById('state').textContent='Failed to load: '+e; });
   }
   window.decide=function(btn,decision){
@@ -199,7 +202,9 @@ function renderTriagePage() {
           if(s.running){ return; }
           clearInterval(iv);
           if(s.error){ ov('Scan failed', (typeof s.error==='string'?s.error:JSON.stringify(s.error)), true); setTimeout(function(){closeOv(btn);},3500); return; }
-          var r=(s.results&&s.results[0])||{}; var found=(r.written||0)+(r.updated||0); var known=(r.skipped_dupe||0)+(r.skipped_project||0);
+          var r=(s.results&&s.results[0])||{};
+          if(r.quota || (r.errors&&r.errors.some(function(x){return /quota|daily limit/i.test(x);}))){ ov('Zoho API limit reached','The daily Zoho API quota is used up. It resets at midnight in your Zoho data-center timezone — scan again after that.',true); setTimeout(function(){closeOv(btn);},4000); return; }
+          var found=(r.written||0)+(r.updated||0); var known=(r.skipped_dupe||0)+(r.skipped_project||0);
           ov('✓ Scan complete','Scanned '+(r.scanned||0)+' messages · '+found+' new opportunit'+(found===1?'y':'ies')+' added'+(known?' · '+known+' already known':'')+'.',true);
           setTimeout(function(){ closeOv(btn); setActiveTab('New'); load(); },1600);
         }).catch(function(e){ clearInterval(iv); ov('Scan failed',String(e),true); setTimeout(function(){closeOv(btn);},3500); });

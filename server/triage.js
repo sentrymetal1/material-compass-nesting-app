@@ -224,6 +224,20 @@ function isNoRecords(e) {
   return /no records/i.test(msg);
 }
 
+// Zoho returns HTTP 200 with {code:4000} when the daily Developer API quota is
+// exhausted — and an empty data[] that otherwise reads as "nothing found".
+// Throw a tagged error so callers can surface it instead of silently showing 0.
+function throwIfQuota(resp) {
+  if (resp && resp.data && resp.data.code === 4000) {
+    const err = new Error('Zoho API daily quota exhausted (code 4000)');
+    err.zohoQuota = true;
+    throw err;
+  }
+}
+function isQuotaError(e) {
+  return !!(e && (e.zohoQuota || (e.response && e.response.data && e.response.data.code === 4000)));
+}
+
 // ---- Route registration ------------------------------------------------------
 function registerTriageRoutes(app, deps) {
   const { getAccessToken, creatorApiBase, zohoHeaders } = deps;
@@ -246,13 +260,46 @@ function registerTriageRoutes(app, deps) {
     let path = '/report/' + MC_REPORT + '?criteria=' + zCriteria('Connection_Status', 'Connected') + '&limit=200';
     try {
       const r = await axios.get(base + path, { headers: zohoHeaders(token) });
+      throwIfQuota(r);
       let rows = (r.data && r.data.data) || [];
       if (mailboxFilter) rows = rows.filter(x => (x.Mailbox_Email || '').toLowerCase() === mailboxFilter.toLowerCase());
       return rows;
     } catch (e) {
+      if (isQuotaError(e)) throw e;
       if (isNoRecords(e)) return [];
       throw e;
     }
+  }
+
+  // Preload ALL existing opportunities for a manufacturer in ONE read, so the
+  // scan can dedup in memory instead of 2 Zoho reads per candidate email. Cuts
+  // a re-scan from ~50+ Zoho calls to ~4.  (limit 200 — plenty at current scale.)
+  async function loadExistingOpportunities(manufactureId) {
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    const path = manufactureId
+      ? '/report/' + OPP_REPORT + '?criteria=' + encodeURIComponent('(Manufacture==' + manufactureId + ')') + '&limit=200'
+      : '/report/' + OPP_REPORT + '?limit=200';
+    let rows = [];
+    try {
+      const r = await axios.get(base + path, { headers: zohoHeaders(token) });
+      throwIfQuota(r);
+      rows = (r.data && r.data.data) || [];
+    } catch (e) {
+      if (isQuotaError(e)) throw e;
+      if (!isNoRecords(e)) throw e;
+    }
+    const messageIds = new Set();
+    const openByProject = new Map();
+    for (const row of rows) {
+      if (row.Email_Message_ID) messageIds.add(row.Email_Message_ID);
+      const status = row.Status || '';
+      const proj = (row.Project || '').trim().toLowerCase();
+      if (proj && status !== 'Decline' && status !== 'Archived' && !openByProject.has(proj)) {
+        openByProject.set(proj, { ID: row.ID, Status: status, Summary: row.Summary, Due_Date: row.Due_Date });
+      }
+    }
+    return { messageIds, openByProject };
   }
 
   async function opportunityExistsByMessageId(messageId) {
@@ -394,6 +441,20 @@ function registerTriageRoutes(app, deps) {
     summary.scanned = messages.length;
     let newestSeen = conn.Last_Seen_Message || '';
 
+    // One read of existing opportunities → in-memory dedup for the whole scan.
+    let known;
+    try {
+      known = await loadExistingOpportunities(manufactureId);
+    } catch (e) {
+      if (isQuotaError(e)) {
+        summary.quota = true;
+        summary.errors.push('Zoho API daily quota exhausted — try again after it resets (midnight in your Zoho data-center timezone).');
+        return summary;
+      }
+      summary.errors.push('load existing: ' + (e.response?.data?.message || e.message));
+      return summary;
+    }
+
     for (const m of messages) {
       try {
         const fromAddr = m.from?.emailAddress?.address || '';
@@ -404,7 +465,7 @@ function registerTriageRoutes(app, deps) {
         summary.prefiltered++;
 
         const messageId = m.internetMessageId || m.id;
-        if (await opportunityExistsByMessageId(messageId)) { summary.skipped_dupe++; continue; }
+        if (known.messageIds.has(messageId)) { summary.skipped_dupe++; continue; }
 
         const body = await fetchMessageText(accessToken, m.id);
         const { out } = await extractOpportunity(anthropic, {
@@ -418,15 +479,16 @@ function registerTriageRoutes(app, deps) {
           ...out, attachments, source: fromAddr, webLink: m.webLink, message_id: messageId,
         });
 
-        // Project-level dedup: the same project often arrives more than once
-        // (a platform notice + an internal "FW:"). Match an OPEN opportunity by
-        // project name. Addendum -> merge (bump due date); otherwise -> skip.
-        const existing = await findOpenOpportunityByProject(out.project_name);
-        if (existing) {
+        // Project-level dedup (in memory): the same project often arrives more
+        // than once (a platform notice + an internal "FW:"). Match an OPEN
+        // opportunity by project name. Addendum -> merge; otherwise -> skip.
+        const projKey = (out.project_name || '').trim().toLowerCase();
+        const projMatch = projKey ? known.openByProject.get(projKey) : null;
+        if (projMatch) {
           if (out.notification_type === 'addendum') {
-            await patchOpportunity(existing.ID, {
-              Summary: '[Addendum ' + (m.receivedDateTime || '') + '] ' + (out.summary || '') + '\n\n' + (existing.Summary || ''),
-              Due_Date: fmtDate(out.due_date) || existing.Due_Date,
+            await patchOpportunity(projMatch.ID, {
+              Summary: '[Addendum ' + (m.receivedDateTime || '') + '] ' + (out.summary || '') + '\n\n' + (projMatch.Summary || ''),
+              Due_Date: fmtDate(out.due_date) || projMatch.Due_Date,
               Extracted_JSON: extractedJson,
             });
             summary.updated++;
@@ -458,6 +520,10 @@ function registerTriageRoutes(app, deps) {
         const res = await insertOpportunity(fields);
         if (res.ok) {
           summary.written++;
+          // Keep the in-memory dedup current so a later message in THIS scan
+          // (e.g. the internal FW of the same project) is caught without a read.
+          known.messageIds.add(messageId);
+          if (projKey) known.openByProject.set(projKey, { ID: res.id, Status: 'New', Summary: out.summary || '', Due_Date: fmtDate(out.due_date) });
           if (res.dateDropped) summary.errors.push('dates dropped on "' + (m.subject || messageId) + '" (format mismatch)');
         } else {
           summary.errors.push('insert FAILED "' + (m.subject || messageId) + '" [code ' + res.code + ']: ' + (res.message || JSON.stringify(res.raw)));
@@ -556,8 +622,11 @@ function registerTriageRoutes(app, deps) {
       if (req.query.manufacture) crit = '((Status=="' + status + '") && Manufacture==' + req.query.manufacture + ')';
       const url = base + '/report/' + OPP_REPORT + '?criteria=' + encodeURIComponent(crit) + '&limit=200';
       let rows = [];
-      try { const r = await axios.get(url, { headers: zohoHeaders(token) }); rows = (r.data && r.data.data) || []; }
-      catch (e) { if (!isNoRecords(e)) throw e; }
+      try { const r = await axios.get(url, { headers: zohoHeaders(token) }); throwIfQuota(r); rows = (r.data && r.data.data) || []; }
+      catch (e) {
+        if (isQuotaError(e)) return res.json({ status, count: 0, quota: true, opportunities: [], error: 'Zoho API daily limit reached — resets at midnight (your Zoho data-center timezone).' });
+        if (!isNoRecords(e)) throw e;
+      }
       rows.sort((a, b) => (Date.parse(b.Received_Date) || 0) - (Date.parse(a.Received_Date) || 0));
       let label = '';
       const m0 = rows[0] && rows[0].Manufacture;
