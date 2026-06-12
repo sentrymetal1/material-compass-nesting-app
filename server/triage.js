@@ -59,6 +59,9 @@ const EXTRACT_SYSTEM =
   "- material_scope = ONLY the steel-relevant trades/scope; omit unrelated divisions (concrete, electrical, painting, etc.).\n" +
   "- notification_type = 'addendum' if this is an addendum to an existing bid, 'new' for a first invitation, else 'other'.\n" +
   "- confidence = 0..1 that this is a genuine steel-relevant opportunity.\n" +
+  "- IMPORTANT: if a field cannot be determined from the email content, return an EMPTY STRING (\"\") " +
+  "for it — never 'UNKNOWN', 'N/A', 'TBD', or a guess. Bid-platform notification emails are often sparse " +
+  "(details behind a paid link); leaving fields blank is correct and expected.\n" +
   "Always call submit_opportunity. No prose.";
 
 const EXTRACT_TOOL = {
