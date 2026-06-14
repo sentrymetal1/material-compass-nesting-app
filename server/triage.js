@@ -631,7 +631,15 @@ function registerTriageRoutes(app, deps) {
       let label = '';
       const m0 = rows[0] && rows[0].Manufacture;
       if (m0 && typeof m0 === 'object') label = m0.zc_display_value || m0.display_value || '';
-      res.json({ status, count: rows.length, manufacture_label: label, opportunities: rows.map(mapOpportunity) });
+      let last_synced = '';
+      try {
+        if (req.query.manufacture) {
+          const cr = await axios.get(base + '/report/' + MC_REPORT + '?criteria=' + encodeURIComponent('(Manufacture==' + req.query.manufacture + ')') + '&limit=1', { headers: zohoHeaders(token) });
+          const c0 = cr.data && cr.data.data && cr.data.data[0];
+          if (c0) last_synced = c0.Last_Synced || '';
+        }
+      } catch (e) { /* non-fatal */ }
+      res.json({ status, count: rows.length, manufacture_label: label, last_synced, opportunities: rows.map(mapOpportunity) });
     } catch (err) {
       console.error('[triage] opportunities error:', err.response?.data || err.message);
       res.status(500).json({ error: err.response?.data || err.message, opportunities: [] });
@@ -676,7 +684,39 @@ function registerTriageRoutes(app, deps) {
     }
   });
 
-  console.log('[triage] poll route registered: GET /api/triage/poll (+ /debug)');
+  // ---- Daily auto-scan (in-process, no dependency) ----
+  // Runs every connected mailbox once per day after 06:00 America/New_York.
+  // Cheap now that dedup is in-memory (~4 Zoho calls per re-scan). The manual
+  // Scan button stays available; this just keeps the list fresh on its own.
+  async function runScheduledScan() {
+    try {
+      const conns = await getConnectedMailboxes();
+      for (const c of conns) {
+        try { await pollMailbox(c, { days: 14 }); }
+        catch (e) { console.error('[triage] scheduled scan mailbox error:', e.response?.data || e.message); }
+      }
+      console.log('[triage] scheduled scan complete for ' + conns.length + ' mailbox(es)');
+    } catch (e) {
+      console.error('[triage] scheduled scan error:', e.response?.data || e.message);
+    }
+  }
+  let lastDailyScanDay = null;
+  function dailyCheck() {
+    try {
+      const now = new Date();
+      const etHour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(now));
+      const etDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+      if (etHour >= 6 && lastDailyScanDay !== etDay) {
+        lastDailyScanDay = etDay;
+        console.log('[triage] daily scheduled scan trigger for ' + etDay);
+        runScheduledScan();
+      }
+    } catch (e) { console.error('[triage] dailyCheck error:', e.message); }
+  }
+  setInterval(dailyCheck, 30 * 60 * 1000); // check twice an hour
+  dailyCheck(); // and once on boot
+
+  console.log('[triage] poll route registered: GET /api/triage/poll (+ /debug, daily auto-scan armed)');
 }
 
 module.exports = { registerTriageRoutes };

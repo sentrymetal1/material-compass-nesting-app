@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-12-5';
+const BUILD_TAG = 'triage-ui-2026-06-14-1';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -92,6 +92,7 @@ function renderTriagePage() {
     <button class="btn scanbtn" id="scanBtn">🔄 Scan inbox</button>
     <input class="search" id="search" placeholder="Search project, location…">
   </div>
+  <div id="lastScan" style="font-size:11.5px;color:#9ca3af;margin:-6px 0 12px"></div>
   <div id="list"></div>
   <div class="state" id="state">Loading…</div>
   <div class="foot">Material Compass · Quote Triage · ${BUILD_TAG}</div>
@@ -161,7 +162,11 @@ function renderTriagePage() {
       .then(function(r){return r.json()})
       .then(function(d){
         if(d.quota){ all=[]; document.getElementById('list').innerHTML=''; document.getElementById('count').textContent='—'; var st=document.getElementById('state'); st.style.display='block'; st.textContent='⚠️ '+(d.error||'Zoho API daily limit reached — try again after it resets.'); return; }
-        all=d.opportunities||[]; document.getElementById('mfg').textContent=d.manufacture_label||''; render();
+        all=d.opportunities||[]; document.getElementById('mfg').textContent=d.manufacture_label||'';
+        var ls=document.getElementById('lastScan');
+        if(d.last_synced){ var t=Date.parse(d.last_synced); ls.textContent='🕓 Last scanned '+(isNaN(t)?d.last_synced:new Date(t).toLocaleString())+' · auto-scans daily'; }
+        else { ls.textContent='Auto-scans daily · or hit Scan inbox anytime'; }
+        render();
       })
       .catch(function(e){ document.getElementById('state').textContent='Failed to load: '+e; });
   }
