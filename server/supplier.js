@@ -74,12 +74,38 @@ function registerSupplierRoutes(app, deps) {
     res.json({ ok: true, supplier: req.supplier });
   });
 
+  // Resolve project IDs → human info (quote number, client, status, due date) so
+  // the UI shows "MCP-10081 · Premier Contracting" instead of a raw record ID.
+  // Cached: projects change slowly relative to a dashboard poll.
+  async function getProjectInfo(ids) {
+    const want = new Set((ids || []).map(String).filter(Boolean));
+    if (!want.size) return {};
+    const rows = await cachedLookup('projects-directory', 5 * 60 * 1000, async () => {
+      return fetchAllZohoPages('/report/All_Projects');
+    });
+    const map = {};
+    for (const r of rows) {
+      const id = String(r.ID);
+      if (!want.has(id)) continue;
+      map[id] = {
+        quote_number: r.Project_Quote_Number || '',
+        description: r.Project_Description || '',
+        client: r['MFG_Client_Form.Client_Company_Name'] || '',
+        status: r.Project_Quote_Status || '',
+        due_date: r.Quote_Due_Date || '',
+      };
+    }
+    return map;
+  }
+
   // Dashboard — the supplier's home. v1 returns fitting matches (live). Structural
   // matches + quote statuses get added here next (Phase 1 continued) so the UI has
   // one call for its home screen.
   app.get('/api/supplier/me/dashboard', withSupplier, async (req, res) => {
     try {
       const fittings = await matchFittingsForSupplier(req.supplier.id, deps);
+      const pmap = await getProjectInfo(fittings.matches.map(m => m.project_id));
+      fittings.matches.forEach(m => { m.project = pmap[m.project_id] || null; });
       res.json({
         ok: true,
         supplier: req.supplier,

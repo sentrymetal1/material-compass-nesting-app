@@ -5,7 +5,7 @@ import './supplier.css';
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-v1-2026-06-17';
+const BUILD_TAG = 'supplier-v1-2026-06-17b';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -22,16 +22,22 @@ const TIER = {
 function MatchCard({ m }) {
   const t = TIER[m.match_level] || { label: m.match_level, cls: 'tier-category' };
   const f = m.fitting || {};
-  const spec = [f.type, f.make, f.end, f.connection, f.specification].filter(Boolean).join(' · ');
+  const title = [f.type, f.make].filter(Boolean).join(' — ') || 'Fitting';
+  const detail = [f.end, f.connection, f.specification].filter(Boolean).join(' · ');
+  const p = m.project;
+  const projectLabel = p
+    ? [p.quote_number, p.client].filter(Boolean).join(' · ')
+    : (m.project_name || '');
   return (
     <div className="match-card">
       <div className="match-main">
-        <div className="match-desc">{m.description || spec || 'Fitting'}</div>
-        <div className="match-spec">{spec}</div>
+        <div className="match-desc">{title}</div>
+        <div className="match-spec">{detail}</div>
         <div className="match-meta">
           {m.qty != null && <span className="chip">Qty {m.qty}</span>}
-          {m.project_name && <span className="chip">Project {m.project_name}</span>}
-          {m.quote_id_number && <span className="chip">Quote #{m.quote_id_number}</span>}
+          {projectLabel && <span className="chip">{projectLabel}</span>}
+          {p && p.status && <span className="chip chip-status">{p.status}</span>}
+          {p && p.due_date && <span className="chip">Due {p.due_date}</span>}
         </div>
       </div>
       <div className="match-side">

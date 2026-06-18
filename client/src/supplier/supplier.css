@@ -71,6 +71,7 @@
   font-size: 12px; background: var(--bg); border: 1px solid var(--line);
   border-radius: 999px; padding: 2px 9px; color: var(--ink);
 }
+.chip-status { background: #eef4fb; border-color: #d4e2f3; color: #1f5fb0; font-weight: 600; }
 .match-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .tier { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
 .tier-exact    { background: #e7f6ec; color: #1a7f37; }
