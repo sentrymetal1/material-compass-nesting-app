@@ -90,90 +90,88 @@ function bestMatch(demandAx, stockSets) {
   return null;
 }
 
-function registerFittingMatchRoutes(app, deps) {
-  const { fetchAllZohoPages, cachedLookup, sendZohoAwareError } = deps;
+// All open MFG fitting RFQ lines. Cached briefly — the same demand list is
+// re-scanned for every supplier that polls, so one read serves many requests.
+function fetchFittingDemand(deps) {
+  const { fetchAllZohoPages, cachedLookup } = deps;
+  return cachedLookup('fitting-demand', 60 * 1000, async () => {
+    return fetchAllZohoPages('/report/' + DEMAND_REPORT);
+  });
+}
 
-  // All open MFG fitting RFQ lines. Cached briefly — the same demand list is
-  // re-scanned for every supplier that polls, so one read serves many requests.
-  async function fetchFittingDemand() {
-    return cachedLookup('fitting-demand', 60 * 1000, async () => {
-      return fetchAllZohoPages('/report/' + DEMAND_REPORT);
+// One supplier's STOCKED fitting rows. Not cached per-supplier (kept fresh so a
+// supplier sees new matches right after editing their stock list).
+function fetchSupplierStock(supplierId, deps) {
+  // && encodes as %26%26 in Creator criteria; the choice value is quoted.
+  const criteria =
+    '(Supplier_ID==' + encodeURIComponent(supplierId) +
+    '%26%26Fitting_Stocked_Checkbox=="' + STOCKED_VALUE + '")';
+  return deps.fetchAllZohoPages('/report/' + SUPPLY_REPORT + '?criteria=' + criteria);
+}
+
+// Core matcher — reusable by both the standalone route and the supplier dashboard
+// (no HTTP round-trip). Returns the same shape the route responds with.
+async function matchFittingsForSupplier(supplierId, deps) {
+  const [stockRows, demandRows] = await Promise.all([
+    fetchSupplierStock(supplierId, deps),
+    fetchFittingDemand(deps),
+  ]);
+
+  if (!stockRows.length) {
+    return {
+      ok: true, supplier_id: supplierId, stock_count: 0,
+      demand_count: demandRows.length, match_count: 0, matches: [],
+      note: 'Supplier has no stocked fittings, or the unfiltered stock report ('
+        + SUPPLY_REPORT + ') is missing / has no matching columns.',
+    };
+  }
+
+  const stockSets = indexStock(stockRows);
+  const matches = [];
+
+  for (const d of demandRows) {
+    const ax = axes(d);
+    const tier = bestMatch(ax, stockSets);
+    if (!tier) continue;
+    matches.push({
+      quote_id: lk(d.Quote_ID).id,
+      quote_id_number: d.Quote_ID_Number || null,
+      project_id: lk(d.MCP_Customer_Project_Form).id,
+      project_name: lk(d.MCP_Customer_Project_Form).name,
+      line_item: d.Line_Item || null,
+      qty: d.Quantity != null ? Number(d.Quantity) : null,
+      fitting: {
+        type: ax.type.name,
+        make: ax.make.name,
+        end: ax.end.name,
+        connection: ax.conn.name,
+        specification: ax.spec.name,
+      },
+      description: d.Full_Fitting_Item_Description || d.Fitting_Description_Text || '',
+      match_level: tier.level,
+      score: tier.score,
+      rfq_row_id: String(d.ID),
     });
   }
 
-  // One supplier's STOCKED fitting rows. Not cached per-supplier (kept fresh so a
-  // supplier sees new matches right after editing their stock list).
-  async function fetchSupplierStock(supplierId) {
-    // && encodes as %26%26 in Creator criteria; the choice value is quoted.
-    const criteria =
-      '(Supplier_ID==' + encodeURIComponent(supplierId) +
-      '%26%26Fitting_Stocked_Checkbox=="' + STOCKED_VALUE + '")';
-    return fetchAllZohoPages('/report/' + SUPPLY_REPORT + '?criteria=' + criteria);
-  }
+  matches.sort((a, b) => b.score - a.score); // highest-confidence first
+  return {
+    ok: true, supplier_id: supplierId,
+    stock_count: stockRows.length, demand_count: demandRows.length,
+    match_count: matches.length, matches,
+  };
+}
 
-  // GET /api/supplier/:supplierId/fitting-rfqs
-  // → { ok, supplier_id, stock_count, match_count, matches: [...] }
+function registerFittingMatchRoutes(app, deps) {
+  // GET /api/supplier/:supplierId/fitting-rfqs → scored matches for one supplier.
   app.get('/api/supplier/:supplierId/fitting-rfqs', async (req, res) => {
-    const supplierId = req.params.supplierId;
     try {
-      const [stockRows, demandRows] = await Promise.all([
-        fetchSupplierStock(supplierId),
-        fetchFittingDemand(),
-      ]);
-
-      if (!stockRows.length) {
-        return res.json({
-          ok: true, supplier_id: supplierId, stock_count: 0,
-          match_count: 0, matches: [],
-          note: 'Supplier has no stocked fittings, or the unfiltered stock report ('
-            + SUPPLY_REPORT + ') is missing / has no matching columns.',
-        });
-      }
-
-      const stockSets = indexStock(stockRows);
-      const matches = [];
-
-      for (const d of demandRows) {
-        const ax = axes(d);
-        const tier = bestMatch(ax, stockSets);
-        if (!tier) continue;
-        matches.push({
-          quote_id: lk(d.Quote_ID).id,
-          quote_id_number: d.Quote_ID_Number || null,
-          project_id: lk(d.MCP_Customer_Project_Form).id,
-          project_name: lk(d.MCP_Customer_Project_Form).name,
-          line_item: d.Line_Item || null,
-          qty: d.Quantity != null ? Number(d.Quantity) : null,
-          fitting: {
-            type: ax.type.name,
-            make: ax.make.name,
-            end: ax.end.name,
-            connection: ax.conn.name,
-            specification: ax.spec.name,
-          },
-          description: d.Full_Fitting_Item_Description || d.Fitting_Description_Text || '',
-          match_level: tier.level,
-          score: tier.score,
-          rfq_row_id: String(d.ID),
-        });
-      }
-
-      // Highest-confidence matches first; ties keep Zoho's order.
-      matches.sort((a, b) => b.score - a.score);
-
-      res.json({
-        ok: true,
-        supplier_id: supplierId,
-        stock_count: stockRows.length,
-        demand_count: demandRows.length,
-        match_count: matches.length,
-        matches,
-      });
+      res.json(await matchFittingsForSupplier(req.params.supplierId, deps));
     } catch (err) {
-      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      if (deps.sendZohoAwareError) return deps.sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
     }
   });
 }
 
-module.exports = { registerFittingMatchRoutes };
+module.exports = { registerFittingMatchRoutes, matchFittingsForSupplier };
