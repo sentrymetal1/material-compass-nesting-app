@@ -84,4 +84,5 @@
 }
 .btn-quote:disabled { opacity: .45; cursor: not-allowed; }
 
+.sup-subnote { margin-top: 8px; font-size: 12px; color: #9aa1aa; }
 .sup-footer { text-align: center; color: #b6bcc4; font-size: 11px; padding: 12px; }

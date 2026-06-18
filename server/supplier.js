@@ -9,6 +9,11 @@
 const { matchFittingsForSupplier } = require('./fittingMatch');
 
 const SUPPLIER_REPORT = 'Supplier_Entry_Report';
+
+// OPEN-RFQ gate: a match only surfaces while its project is in one of these
+// Project_Quote_Status values (actively being sourced). Allowlist by design —
+// anything else (Awarded/Not Awarded/Canceled/Postpone/Quoted/blank) is hidden.
+const OPEN_PROJECT_STATUSES = new Set(['Open', 'Project Not Quoted', 'Project Revise']);
 // Account_User_Email is a multi-email field (admin + reps), so we match by
 // "contains", case-insensitive. Supplier_Entry's ID is the value stock rows store
 // in Supplier_ID — so this id flows straight into the fitting matcher.
@@ -105,16 +110,23 @@ function registerSupplierRoutes(app, deps) {
     try {
       const fittings = await matchFittingsForSupplier(req.supplier.id, deps);
       const pmap = await getProjectInfo(fittings.matches.map(m => m.project_id));
-      fittings.matches.forEach(m => { m.project = pmap[m.project_id] || null; });
+      const withProject = fittings.matches.map(m => ({ ...m, project: pmap[m.project_id] || null }));
+
+      // OPEN-RFQ GATE: only show matches whose project is actively being quoted.
+      // Allowlist (not blocklist) so future/blank statuses default to hidden — never
+      // leak an awarded/lost project to a supplier. Confirmed set 2026-06-18.
+      const openFittings = withProject.filter(m => m.project && OPEN_PROJECT_STATUSES.has(m.project.status));
+
       res.json({
         ok: true,
         supplier: req.supplier,
         matches: {
-          fittings: fittings.matches,
+          fittings: openFittings,
           structural: [], // TODO Phase 1: bridge from the existing Zoho structural matcher
         },
         counts: {
-          fitting_matches: fittings.match_count,
+          fitting_matches: openFittings.length,
+          fitting_matches_closed_hidden: withProject.length - openFittings.length,
           fitting_stock: fittings.stock_count,
         },
         quote_statuses: [], // TODO Phase 1: read this supplier's quotes

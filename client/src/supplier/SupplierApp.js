@@ -5,7 +5,7 @@ import './supplier.css';
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-v1-2026-06-17b';
+const BUILD_TAG = 'supplier-v1-2026-06-18';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -126,8 +126,13 @@ export default function SupplierApp() {
               <h2>RFQ matches <span className="muted">— quote requests for fittings you stock</span></h2>
               {fittings.length === 0 ? (
                 <div className="sup-empty">
-                  No matching RFQs right now. New requests appear here automatically as
-                  manufacturers send fitting quotes that match your stock list.
+                  No open RFQs right now. New requests appear here automatically as
+                  manufacturers quote fittings that match your stock list.
+                  {d.counts.fitting_matches_closed_hidden > 0 && (
+                    <div className="sup-subnote">
+                      ({d.counts.fitting_matches_closed_hidden} match{d.counts.fitting_matches_closed_hidden > 1 ? 'es' : ''} hidden — those projects are already awarded or closed.)
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="match-list">
