@@ -37,7 +37,7 @@ function LineRow({ line, draft, onChange }) {
 
   return (
     <tr className={noQuote ? 'q-line q-noquote' : 'q-line'}>
-      <td className="q-ln">{line.line}</td>
+      <td className="q-ln-cell"><span className="q-ln">{line.line}</span></td>
       <td className="q-desc">
         {line.description}
         {line.item_requirements && line.item_requirements.length > 0 && (
@@ -80,6 +80,21 @@ function QuoteCard({ quote, lookups }) {
     return d;
   });
   const setLine = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+
+  // Batch-fill: apply a quote option / lead time / comment to every line at once.
+  const [batch, setBatch] = useState({ quote_option: '', lead_time: '', comments: '' });
+  const setB = patch => setBatch(p => ({ ...p, ...patch }));
+  const applyBatch = () => setDrafts(prev => {
+    const next = { ...prev };
+    quote.lines.forEach(l => {
+      const d = { ...next[l.rfqs_sent_id] };
+      if (batch.quote_option) d.quote_option = batch.quote_option;
+      if (batch.lead_time !== '') d.lead_time = batch.lead_time;
+      if (batch.comments !== '') d.comments = batch.comments;
+      next[l.rfqs_sent_id] = d;
+    });
+    return next;
+  });
 
   // Quote-level header / summary fields (the "more than the quote itself" info).
   const [hdr, setHdr] = useState({
@@ -129,6 +144,16 @@ function QuoteCard({ quote, lookups }) {
       </div>
       {open && (
         <div className="q-body">
+          <div className="q-batch">
+            <span className="q-batch-lbl">⚡ Fill all lines:</span>
+            <select value={batch.quote_option} onChange={e => setB({ quote_option: e.target.value })}>
+              <option value="">Quote option…</option>
+              {QUOTE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+            <input className="q-mini" value={batch.lead_time} onChange={e => setB({ lead_time: e.target.value })} placeholder="Lead time…" />
+            <input className="q-mini" value={batch.comments} onChange={e => setB({ comments: e.target.value })} placeholder="Comments…" />
+            <button className="q-batch-btn" onClick={applyBatch}>Apply to all</button>
+          </div>
           <table className="q-table">
             <thead>
               <tr><th>#</th><th>Item</th><th>Qty</th><th>Weight</th><th>Quote option</th><th>Line total</th><th>Price / lb</th><th>Unit price</th><th>Lead time</th><th>Comments</th></tr>

@@ -89,20 +89,41 @@
 
 /* Quotes view */
 .q-tiles { display: flex; gap: 14px; margin-bottom: 24px; }
-.q-tile { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px 20px; min-width: 120px; text-align: center; }
-.q-tile-open { border-top: 3px solid var(--blue); }
-.q-card { background: #fff; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
-.q-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; cursor: pointer; }
-.q-head:hover { background: #fafbfc; }
+.q-tile { background: #fff; border: 1px solid var(--line); border-top: 3px solid var(--line); border-radius: 12px; padding: 14px 22px; min-width: 132px; text-align: center; transition: box-shadow .15s, transform .15s; }
+.q-tile:hover { box-shadow: 0 4px 14px rgba(31,42,55,.08); transform: translateY(-1px); }
+.q-tile .count-num { font-size: 30px; }
+.q-tile-open { border-top-color: #5F94CE; } .q-tile-open .count-num { color: #1f5fb0; }
+.q-tile-submitted { border-top-color: #e0a020; } .q-tile-submitted .count-num { color: #9a6a12; }
+.q-tile-awarded { border-top-color: #1a7f37; } .q-tile-awarded .count-num { color: #1a7f37; }
+.q-tile-closed { border-top-color: #8a93a0; } .q-tile-closed .count-num { color: #56606e; }
+
+.q-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 14px; overflow: hidden; box-shadow: 0 1px 3px rgba(31,42,55,.05); }
+.q-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 18px; cursor: pointer; background: linear-gradient(180deg, #fbfcfe, #f5f8fc); border-left: 3px solid var(--blue); }
+.q-head:hover { background: linear-gradient(180deg, #f5f9fd, #eef4fb); }
+.q-head strong { font-size: 15px; }
+
+/* batch-fill toolbar */
+.q-batch { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: #eef4fb; border-bottom: 1px solid #dbe6f4; flex-wrap: wrap; }
+.q-batch-lbl { font-size: 12px; font-weight: 700; color: #1f5fb0; }
+.q-batch select, .q-batch input { font-size: 12px; padding: 6px 8px; border: 1px solid #cfddf0; border-radius: 6px; font-family: inherit; background: #fff; }
+.q-batch-btn { font-size: 12px; font-weight: 600; background: var(--blue); color: #fff; border: none; border-radius: 6px; padding: 7px 16px; cursor: pointer; }
+.q-batch-btn:hover { background: #4f83bd; }
 .q-head-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .q-caret { color: var(--muted); font-size: 12px; }
 .q-head-desc { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .q-head-meta { display: flex; gap: 6px; flex-shrink: 0; }
 .q-body { border-top: 1px solid var(--line); padding: 4px 0 0; }
 .q-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.q-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.q-table thead tr { background: #f5f8fb; }
+.q-table th { text-align: left; color: #56606e; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 9px 10px; border-bottom: 2px solid #e3e9f0; white-space: nowrap; }
 .q-table td { padding: 9px 10px; border-bottom: 1px solid #f1f3f5; vertical-align: middle; }
-.q-ln { color: var(--muted); width: 32px; text-align: right; }
+.q-line:nth-child(even) { background: #fbfcfe; }
+.q-line:hover { background: #f1f7ff; }
+.q-table input:focus, .q-table select:focus, .q-grid input:focus, .q-grid select:focus, .q-grid textarea:focus {
+  outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(95,148,206,.18);
+}
+.q-ln-cell { width: 40px; text-align: center; }
+.q-ln { color: #fff; background: var(--blue); width: 24px; height: 24px; line-height: 24px; border-radius: 50%; text-align: center; font-size: 11px; font-weight: 600; display: inline-block; }
 .q-desc { min-width: 360px; line-height: 1.45; }
 .q-num { text-align: right; white-space: nowrap; }
 .q-total { font-weight: 600; }
