@@ -139,7 +139,9 @@ function registerSupplierRoutes(app, deps) {
         quote_option: r.Item_Verification_Status || '',
       });
     }
-    return [...byQuote.values()];
+    const out = [...byQuote.values()];
+    out.forEach(q => q.lines.sort((a, b) => (Number(a.line) || 0) - (Number(b.line) || 0)));
+    return out;
   }
 
   // Supplier-level dropdown data for the quote-submit form (locations, reps, choices).

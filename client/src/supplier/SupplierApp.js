@@ -6,7 +6,7 @@ import QuotesView from './QuotesView';
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-v1-2026-06-19e';
+const BUILD_TAG = 'supplier-v1-2026-06-19f';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -92,7 +92,7 @@ export default function SupplierApp() {
         </div>
       </header>
 
-      <main className="sup-main">
+      <main className={'sup-main' + (view === 'quotes' ? ' sup-main-wide' : '')}>
         {view === 'quotes' ? (
           email ? <QuotesView email={email} />
             : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
