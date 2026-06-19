@@ -116,6 +116,16 @@
 .q-perlb { color: var(--muted); margin-left: 4px; font-size: 12px; }
 .q-noquote { opacity: .5; }
 .q-foot-lbl { text-align: right; font-weight: 600; padding: 12px; }
+.q-summary { padding: 16px; border-top: 1px solid var(--line); background: #fafbfc; }
+.q-summary h4 { margin: 0 0 12px; font-size: 13px; color: var(--ink); }
+.q-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 16px; }
+.q-grid label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 4px; }
+.q-grid-wide { grid-column: span 2; }
+.q-grid input, .q-grid select, .q-grid textarea { font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font-family: inherit; color: var(--ink); }
+.q-totals { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--line); font-size: 13px; }
+.q-tot-lbl { color: var(--muted); margin-right: 6px; }
+.q-tot-grand { font-weight: 700; color: var(--blue); }
+.q-ready { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); margin-right: auto; }
 .q-actions { display: flex; align-items: center; gap: 14px; padding: 14px 16px; }
 .q-hint { font-size: 12px; color: var(--muted); }
 .sup-footer { text-align: center; color: #b6bcc4; font-size: 11px; padding: 12px; }

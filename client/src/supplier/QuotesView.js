@@ -79,12 +79,25 @@ function QuoteCard({ quote }) {
   });
   const setLine = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
 
+  // Quote-level header / summary fields (the "more than the quote itself" info).
+  const [hdr, setHdr] = useState({
+    supplier_quote_number: '', meets_requirements: '', shipping: '', misc: '',
+    valid_days: '', valid_until: '', lead_time: '', notes: '', ready: false,
+  });
+  const setH = patch => setHdr(p => ({ ...p, ...patch }));
+
   const grand = quote.lines.reduce((sum, l) => {
     const dr = drafts[l.rfqs_sent_id] || {};
     if (dr.quote_option === 'No Quote') return sum;
     return sum + (parseFloat(dr.total_price) || 0);
   }, 0);
   const priced = quote.lines.filter(l => parseFloat((drafts[l.rfqs_sent_id] || {}).total_price) > 0).length;
+  const totalWeight = quote.lines.reduce((s, l) => {
+    const dr = drafts[l.rfqs_sent_id] || {};
+    if (dr.quote_option === 'No Quote') return s;
+    return s + (Number(l.qty) || 0) * (Number(l.unit_weight) || 0);
+  }, 0);
+  const totalAmount = grand + (parseFloat(hdr.shipping) || 0) + (parseFloat(hdr.misc) || 0);
 
   return (
     <div className="q-card">
@@ -115,9 +128,53 @@ function QuoteCard({ quote }) {
               <tr><td colSpan="5" className="q-foot-lbl">Grand total ({priced}/{quote.lines.length} priced)</td><td className="q-num q-total">{money(grand)}</td><td colSpan="2"></td></tr>
             </tfoot>
           </table>
+
+          <div className="q-summary">
+            <h4>Quote summary</h4>
+            <div className="q-grid">
+              <label>Your quote #
+                <input value={hdr.supplier_quote_number} onChange={e => setH({ supplier_quote_number: e.target.value })} placeholder="Internal quote number" />
+              </label>
+              <label>Meets MFG requirements
+                <select value={hdr.meets_requirements} onChange={e => setH({ meets_requirements: e.target.value })}>
+                  <option value="">— select —</option>
+                  <option value="YES - Meets All MFG Requirements">Yes</option>
+                  <option value="NO - Does Not Meet All MFG Requirements">No</option>
+                </select>
+              </label>
+              <label>Quote valid (business days)
+                <input type="number" min="0" value={hdr.valid_days} onChange={e => setH({ valid_days: e.target.value })} placeholder="e.g. 30" />
+              </label>
+              <label>Lead time for ship complete
+                <input value={hdr.lead_time} onChange={e => setH({ lead_time: e.target.value })} placeholder="e.g. 2 weeks" />
+              </label>
+              <label>Shipping amount
+                <input type="number" step="0.01" min="0" value={hdr.shipping} onChange={e => setH({ shipping: e.target.value })} placeholder="0.00" />
+              </label>
+              <label>Miscellaneous amount
+                <input type="number" step="0.01" min="0" value={hdr.misc} onChange={e => setH({ misc: e.target.value })} placeholder="0.00" />
+              </label>
+              <label className="q-grid-wide">Notes to buyer
+                <textarea rows="2" value={hdr.notes} onChange={e => setH({ notes: e.target.value })} placeholder="Optional notes for the manufacturer" />
+              </label>
+            </div>
+
+            <div className="q-totals">
+              <div><span className="q-tot-lbl">Material</span> {money(grand)}</div>
+              <div><span className="q-tot-lbl">+ Shipping</span> {money(parseFloat(hdr.shipping) || 0)}</div>
+              <div><span className="q-tot-lbl">+ Misc</span> {money(parseFloat(hdr.misc) || 0)}</div>
+              <div className="q-tot-grand"><span className="q-tot-lbl">Total amount</span> {money(totalAmount)}</div>
+              <div><span className="q-tot-lbl">Total weight</span> {num(totalWeight, 1)} lb</div>
+            </div>
+          </div>
+
           <div className="q-actions">
+            <label className="q-ready">
+              <input type="checkbox" checked={hdr.ready} onChange={e => setH({ ready: e.target.checked })} />
+              Ready for submission
+            </label>
             <button className="btn-quote" disabled title="Submitting is wired in the next step">Submit quote</button>
-            <span className="q-hint">Pricing saves to Zoho once the submit step is wired.</span>
+            <span className="q-hint">Pricing + summary save to Zoho once the submit step is wired.</span>
           </div>
         </div>
       )}
