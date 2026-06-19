@@ -13,12 +13,15 @@ function num(n, dp) {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: dp == null ? 2 : dp });
 }
 
-// One priceable line. Supplier enters $/lb; line total = $/lb × (qty × unit weight).
+// One priceable line. Supplier enters the LINE TOTAL; we back-calculate
+// $/lb (total ÷ total weight) and unit price (total ÷ qty) for the records.
 function LineRow({ line, draft, onChange }) {
-  const totalWeight = (Number(line.qty) || 0) * (Number(line.unit_weight) || 0);
-  const ppl = parseFloat(draft.price_per_lb);
+  const qty = Number(line.qty) || 0;
+  const totalWeight = qty * (Number(line.unit_weight) || 0);
   const noQuote = draft.quote_option === 'No Quote';
-  const lineTotal = !noQuote && ppl > 0 ? ppl * totalWeight : 0;
+  const lineTotal = !noQuote ? (parseFloat(draft.total_price) || 0) : 0;
+  const pricePerLb = totalWeight > 0 ? lineTotal / totalWeight : 0;
+  const unitPrice = qty > 0 ? lineTotal / qty : 0;
   return (
     <tr className={noQuote ? 'q-line q-noquote' : 'q-line'}>
       <td className="q-ln">{line.line}</td>
@@ -28,7 +31,7 @@ function LineRow({ line, draft, onChange }) {
           <div className="q-reqs">{line.item_requirements.map((r, i) => <span key={i} className="q-req">{r}</span>)}</div>
         )}
       </td>
-      <td className="q-num">{num(line.qty, 0)}</td>
+      <td className="q-num">{num(qty, 0)}</td>
       <td className="q-num">{num(totalWeight, 1)} lb</td>
       <td className="q-opt">
         <select value={draft.quote_option || 'Quote As Is'} onChange={e => onChange({ quote_option: e.target.value })}>
@@ -38,14 +41,14 @@ function LineRow({ line, draft, onChange }) {
       <td className="q-price">
         <span className="q-dollar">$</span>
         <input
-          type="number" step="0.00001" min="0" inputMode="decimal"
-          value={draft.price_per_lb} disabled={noQuote}
-          placeholder="0.00000"
-          onChange={e => onChange({ price_per_lb: e.target.value })}
+          type="number" step="0.01" min="0" inputMode="decimal"
+          value={draft.total_price} disabled={noQuote}
+          placeholder="0.00"
+          onChange={e => onChange({ total_price: e.target.value })}
         />
-        <span className="q-perlb">/lb</span>
       </td>
-      <td className="q-num q-total">{noQuote ? '—' : money(lineTotal)}</td>
+      <td className="q-num q-calc">{noQuote || lineTotal <= 0 ? '—' : '$' + num(pricePerLb, 4) + '/lb'}</td>
+      <td className="q-num q-calc">{noQuote || lineTotal <= 0 ? '—' : money(unitPrice) + '/ea'}</td>
     </tr>
   );
 }
@@ -55,7 +58,7 @@ function QuoteCard({ quote }) {
   // drafts keyed by rfqs_sent_id: { price_per_lb, quote_option }
   const [drafts, setDrafts] = useState(() => {
     const d = {};
-    quote.lines.forEach(l => { d[l.rfqs_sent_id] = { price_per_lb: l.price_per_lb || '', quote_option: l.quote_option || 'Quote As Is' }; });
+    quote.lines.forEach(l => { d[l.rfqs_sent_id] = { total_price: l.total_price || '', quote_option: l.quote_option || 'Quote As Is' }; });
     return d;
   });
   const setLine = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -63,10 +66,9 @@ function QuoteCard({ quote }) {
   const grand = quote.lines.reduce((sum, l) => {
     const dr = drafts[l.rfqs_sent_id] || {};
     if (dr.quote_option === 'No Quote') return sum;
-    const ppl = parseFloat(dr.price_per_lb) || 0;
-    return sum + ppl * (Number(l.qty) || 0) * (Number(l.unit_weight) || 0);
+    return sum + (parseFloat(dr.total_price) || 0);
   }, 0);
-  const priced = quote.lines.filter(l => parseFloat((drafts[l.rfqs_sent_id] || {}).price_per_lb) > 0).length;
+  const priced = quote.lines.filter(l => parseFloat((drafts[l.rfqs_sent_id] || {}).total_price) > 0).length;
 
   return (
     <div className="q-card">
@@ -86,7 +88,7 @@ function QuoteCard({ quote }) {
         <div className="q-body">
           <table className="q-table">
             <thead>
-              <tr><th>#</th><th>Item</th><th>Qty</th><th>Weight</th><th>Quote option</th><th>Price / lb</th><th>Line total</th></tr>
+              <tr><th>#</th><th>Item</th><th>Qty</th><th>Weight</th><th>Quote option</th><th>Line total</th><th>Price / lb</th><th>Unit price</th></tr>
             </thead>
             <tbody>
               {quote.lines.map(l => (
@@ -94,7 +96,7 @@ function QuoteCard({ quote }) {
               ))}
             </tbody>
             <tfoot>
-              <tr><td colSpan="6" className="q-foot-lbl">Grand total ({priced}/{quote.lines.length} priced)</td><td className="q-num q-total">{money(grand)}</td></tr>
+              <tr><td colSpan="5" className="q-foot-lbl">Grand total ({priced}/{quote.lines.length} priced)</td><td className="q-num q-total">{money(grand)}</td><td colSpan="2"></td></tr>
             </tfoot>
           </table>
           <div className="q-actions">

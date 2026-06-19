@@ -6,7 +6,7 @@ import QuotesView from './QuotesView';
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-v1-2026-06-19';
+const BUILD_TAG = 'supplier-v1-2026-06-19b';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
