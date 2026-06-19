@@ -142,10 +142,26 @@ function registerSupplierRoutes(app, deps) {
     return [...byQuote.values()];
   }
 
+  // Supplier-level dropdown data for the quote-submit form (locations, reps, choices).
+  async function fetchSupplierLookups(supplierId) {
+    const [loc, rep] = await Promise.all([
+      fetchAllZohoPages('/report/All_Supplier_Locations?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
+      fetchAllZohoPages('/report/All_Supplier_Representatives?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
+    ]);
+    return {
+      locations: loc.map(l => ({ id: String(l.ID), name: l.Name_of_Location || '' })),
+      reps: rep.map(r => ({ id: String(r.ID), name: flatten(r.Name) || r.Email || '' })),
+      quote_requirements: ['MTRs Required', 'AIS - Made & Melted in USA'],
+    };
+  }
+
   // GET /api/supplier/me/rfqs — the supplier's sent RFQs grouped into quotes + tiles.
   app.get('/api/supplier/me/rfqs', withSupplier, async (req, res) => {
     try {
-      const quotes = await fetchSentRfqs(req.supplier.id);
+      const [quotes, lookups] = await Promise.all([
+        fetchSentRfqs(req.supplier.id),
+        fetchSupplierLookups(req.supplier.id),
+      ]);
       // Map the full Quote_Form.Status pipeline into the 4 supplier tiles.
       const tile = s => {
         if (/^Open|Quote Revised/i.test(s)) return 'open';            // not submitted / past due / revised
@@ -156,7 +172,7 @@ function registerSupplierRoutes(app, deps) {
       };
       const tiles = { open: 0, submitted: 0, awarded: 0, closed: 0, other: 0 };
       quotes.forEach(q => { tiles[tile(q.status)]++; });
-      res.json({ ok: true, supplier: req.supplier, tiles, quote_count: quotes.length, quotes });
+      res.json({ ok: true, supplier: req.supplier, tiles, quote_count: quotes.length, quotes, lookups });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });

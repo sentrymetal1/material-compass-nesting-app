@@ -65,16 +65,18 @@ function LineRow({ line, draft, onChange }) {
         <span className="q-perlb">/lb</span>
       </td>
       <td className="q-num q-calc">{noQuote || lineTotal <= 0 ? '—' : money(unitPrice) + '/ea'}</td>
+      <td><input className="q-mini" value={draft.lead_time} disabled={noQuote} placeholder="—" onChange={e => onChange({ lead_time: e.target.value })} /></td>
+      <td><input className="q-mini" value={draft.comments} disabled={noQuote} placeholder="—" onChange={e => onChange({ comments: e.target.value })} /></td>
     </tr>
   );
 }
 
-function QuoteCard({ quote }) {
+function QuoteCard({ quote, lookups }) {
   const [open, setOpen] = useState(false);
-  // drafts keyed by rfqs_sent_id: { price_per_lb, quote_option }
+  // drafts keyed by rfqs_sent_id: { total_price, price_per_lb, quote_option, lead_time, comments }
   const [drafts, setDrafts] = useState(() => {
     const d = {};
-    quote.lines.forEach(l => { d[l.rfqs_sent_id] = { total_price: l.total_price || '', price_per_lb: l.price_per_lb || '', quote_option: l.quote_option || 'Quote As Is' }; });
+    quote.lines.forEach(l => { d[l.rfqs_sent_id] = { total_price: l.total_price || '', price_per_lb: l.price_per_lb || '', quote_option: l.quote_option || 'Quote As Is', lead_time: '', comments: '' }; });
     return d;
   });
   const setLine = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -83,8 +85,20 @@ function QuoteCard({ quote }) {
   const [hdr, setHdr] = useState({
     supplier_quote_number: '', meets_requirements: '', shipping: '', misc: '',
     valid_days: '', valid_until: '', lead_time: '', notes: '', ready: false,
+    location: '', rep: '', requirements: [], attachment_name: '',
   });
   const setH = patch => setHdr(p => ({ ...p, ...patch }));
+  // Auto-fill Valid Until from valid-days (today + N days), but keep it editable.
+  const onValidDays = v => {
+    const n = parseInt(v, 10);
+    let until = hdr.valid_until;
+    if (n > 0) { const dt = new Date(); dt.setDate(dt.getDate() + n); until = dt.toISOString().slice(0, 10); }
+    setH({ valid_days: v, valid_until: until });
+  };
+  const toggleReq = r => setH({ requirements: hdr.requirements.includes(r) ? hdr.requirements.filter(x => x !== r) : [...hdr.requirements, r] });
+  const locations = (lookups && lookups.locations) || [];
+  const reps = (lookups && lookups.reps) || [];
+  const reqChoices = (lookups && lookups.quote_requirements) || [];
 
   const grand = quote.lines.reduce((sum, l) => {
     const dr = drafts[l.rfqs_sent_id] || {};
@@ -117,7 +131,7 @@ function QuoteCard({ quote }) {
         <div className="q-body">
           <table className="q-table">
             <thead>
-              <tr><th>#</th><th>Item</th><th>Qty</th><th>Weight</th><th>Quote option</th><th>Line total</th><th>Price / lb</th><th>Unit price</th></tr>
+              <tr><th>#</th><th>Item</th><th>Qty</th><th>Weight</th><th>Quote option</th><th>Line total</th><th>Price / lb</th><th>Unit price</th><th>Lead time</th><th>Comments</th></tr>
             </thead>
             <tbody>
               {quote.lines.map(l => (
@@ -125,13 +139,25 @@ function QuoteCard({ quote }) {
               ))}
             </tbody>
             <tfoot>
-              <tr><td colSpan="5" className="q-foot-lbl">Grand total ({priced}/{quote.lines.length} priced)</td><td className="q-num q-total">{money(grand)}</td><td colSpan="2"></td></tr>
+              <tr><td colSpan="5" className="q-foot-lbl">Grand total ({priced}/{quote.lines.length} priced)</td><td className="q-num q-total">{money(grand)}</td><td colSpan="4"></td></tr>
             </tfoot>
           </table>
 
           <div className="q-summary">
             <h4>Quote summary</h4>
             <div className="q-grid">
+              <label>Supplier location
+                <select value={hdr.location} onChange={e => setH({ location: e.target.value })}>
+                  <option value="">— select —</option>
+                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              </label>
+              <label>Supplier representative
+                <select value={hdr.rep} onChange={e => setH({ rep: e.target.value })}>
+                  <option value="">— select —</option>
+                  {reps.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </label>
               <label>Your quote #
                 <input value={hdr.supplier_quote_number} onChange={e => setH({ supplier_quote_number: e.target.value })} placeholder="Internal quote number" />
               </label>
@@ -143,7 +169,10 @@ function QuoteCard({ quote }) {
                 </select>
               </label>
               <label>Quote valid (business days)
-                <input type="number" min="0" value={hdr.valid_days} onChange={e => setH({ valid_days: e.target.value })} placeholder="e.g. 30" />
+                <input type="number" min="0" value={hdr.valid_days} onChange={e => onValidDays(e.target.value)} placeholder="e.g. 30" />
+              </label>
+              <label>Valid until
+                <input type="date" value={hdr.valid_until} onChange={e => setH({ valid_until: e.target.value })} />
               </label>
               <label>Lead time for ship complete
                 <input value={hdr.lead_time} onChange={e => setH({ lead_time: e.target.value })} placeholder="e.g. 2 weeks" />
@@ -153,6 +182,16 @@ function QuoteCard({ quote }) {
               </label>
               <label>Miscellaneous amount
                 <input type="number" step="0.01" min="0" value={hdr.misc} onChange={e => setH({ misc: e.target.value })} placeholder="0.00" />
+              </label>
+              <label className="q-grid-wide">Quote requirements
+                <div className="q-checks">
+                  {reqChoices.map(r => (
+                    <label key={r} className="q-check"><input type="checkbox" checked={hdr.requirements.includes(r)} onChange={() => toggleReq(r)} />{r}</label>
+                  ))}
+                </div>
+              </label>
+              <label>Internal quote (attachment)
+                <input type="file" onChange={e => setH({ attachment_name: e.target.files && e.target.files[0] ? e.target.files[0].name : '' })} />
               </label>
               <label className="q-grid-wide">Notes to buyer
                 <textarea rows="2" value={hdr.notes} onChange={e => setH({ notes: e.target.value })} placeholder="Optional notes for the manufacturer" />
@@ -213,7 +252,7 @@ export default function QuotesView({ email }) {
         <h2>Requests for quote <span className="muted">— price the lines you can fill</span></h2>
         {shown.length === 0
           ? <div className="sup-empty">No RFQs to quote right now.</div>
-          : shown.map(q => <QuoteCard key={q.quote_id} quote={q} />)}
+          : shown.map(q => <QuoteCard key={q.quote_id} quote={q} lookups={d.lookups || {}} />)}
       </section>
     </>
   );
