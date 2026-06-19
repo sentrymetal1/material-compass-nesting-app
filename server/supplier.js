@@ -103,6 +103,66 @@ function registerSupplierRoutes(app, deps) {
     return map;
   }
 
+  // SENT RFQs (structural pipeline) — read the real per-line bridge All_RFQs_Sent_Report
+  // scoped to this supplier, grouped into quotes. This is what the MFG actually sent
+  // (vs the fitting matcher, which is potential matches). Read-only; safe.
+  const lkid = v => (v && typeof v === 'object' ? String(v.ID || v.id || '') : (v != null ? String(v) : ''));
+  async function fetchSentRfqs(supplierId) {
+    const rows = await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')');
+    const byQuote = new Map();
+    for (const r of rows) {
+      const qid = lkid(r.Quote_LU) || lkid(r.Quote_LU_ID) || ('q' + (r.Quote_Number || ''));
+      if (!byQuote.has(qid)) {
+        byQuote.set(qid, {
+          quote_id: qid,
+          quote_number: r.Quote_Number || '',
+          quote_description: r.Quote_Description || '',
+          manufacturer: r['Customer_LU.Company_Name'] || flatten(r.Manufacturer) || '',
+          status: r['Quote_LU.Status'] || '',
+          quote_date: r.Quote_Date || r.RFQSent_Timestamp || '',
+          lines: [],
+        });
+      }
+      byQuote.get(qid).lines.push({
+        rfqs_sent_id: String(r.ID),
+        sv_detail_id: lkid(r.Supplier_Verify_Detail),
+        sv_form_id: lkid(r.Supplier_Verify_Form),
+        line: r.Line_Item || '',
+        description: r.Full_Item_Description || r.Description_And_Dimension_Text || '',
+        qty: r.Quantity != null ? Number(r.Quantity) : null,
+        unit_weight: r.Unit_Weight != null ? Number(r.Unit_Weight) : null,
+        item_requirements: Array.isArray(r.Item_Requirements) ? r.Item_Requirements : [],
+        price_per_lb: r.Price_Per_Lb != null && r.Price_Per_Lb !== '' ? Number(r.Price_Per_Lb) : null,
+        unit_price: r.Unit_Price != null && r.Unit_Price !== '' ? Number(r.Unit_Price) : null,
+        total_price: r.Total_Price != null && r.Total_Price !== '' ? Number(r.Total_Price) : null,
+        line_status: r.RFQ_Sent_Status || '',
+        quote_option: r.Item_Verification_Status || '',
+      });
+    }
+    return [...byQuote.values()];
+  }
+
+  // GET /api/supplier/me/rfqs — the supplier's sent RFQs grouped into quotes + tiles.
+  app.get('/api/supplier/me/rfqs', withSupplier, async (req, res) => {
+    try {
+      const quotes = await fetchSentRfqs(req.supplier.id);
+      // Map the full Quote_Form.Status pipeline into the 4 supplier tiles.
+      const tile = s => {
+        if (/^Open|Quote Revised/i.test(s)) return 'open';            // not submitted / past due / revised
+        if (/^Submitted/i.test(s)) return 'submitted';                 // waiting on responses
+        if (/Sourcing|Purchase Order/i.test(s)) return 'awarded';      // post-award / in progress
+        if (/^Closed|Cancel/i.test(s)) return 'closed';
+        return 'other';
+      };
+      const tiles = { open: 0, submitted: 0, awarded: 0, closed: 0, other: 0 };
+      quotes.forEach(q => { tiles[tile(q.status)]++; });
+      res.json({ ok: true, supplier: req.supplier, tiles, quote_count: quotes.length, quotes });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // Dashboard — the supplier's home. v1 returns fitting matches (live). Structural
   // matches + quote statuses get added here next (Phase 1 continued) so the UI has
   // one call for its home screen.
