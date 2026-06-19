@@ -13,15 +13,28 @@ function num(n, dp) {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: dp == null ? 2 : dp });
 }
 
-// One priceable line. Supplier enters the LINE TOTAL; we back-calculate
-// $/lb (total ÷ total weight) and unit price (total ÷ qty) for the records.
+const round = (n, dp) => { const f = Math.pow(10, dp); return Math.round(n * f) / f; };
+
+// One priceable line. Supplier can edit EITHER the Line Total OR Price/lb — each
+// recalculates the other via the line weight. Unit price stays derived (total ÷ qty).
 function LineRow({ line, draft, onChange }) {
   const qty = Number(line.qty) || 0;
   const totalWeight = qty * (Number(line.unit_weight) || 0);
   const noQuote = draft.quote_option === 'No Quote';
   const lineTotal = !noQuote ? (parseFloat(draft.total_price) || 0) : 0;
-  const pricePerLb = totalWeight > 0 ? lineTotal / totalWeight : 0;
   const unitPrice = qty > 0 ? lineTotal / qty : 0;
+
+  const onTotal = v => {
+    const t = parseFloat(v);
+    const ppl = totalWeight > 0 && t > 0 ? round(t / totalWeight, 5) : '';
+    onChange({ total_price: v, price_per_lb: ppl === '' ? '' : String(ppl) });
+  };
+  const onPpl = v => {
+    const p = parseFloat(v);
+    const tot = p > 0 ? round(p * totalWeight, 2) : '';
+    onChange({ price_per_lb: v, total_price: tot === '' ? '' : String(tot) });
+  };
+
   return (
     <tr className={noQuote ? 'q-line q-noquote' : 'q-line'}>
       <td className="q-ln">{line.line}</td>
@@ -40,14 +53,17 @@ function LineRow({ line, draft, onChange }) {
       </td>
       <td className="q-price">
         <span className="q-dollar">$</span>
-        <input
-          type="number" step="0.01" min="0" inputMode="decimal"
-          value={draft.total_price} disabled={noQuote}
-          placeholder="0.00"
-          onChange={e => onChange({ total_price: e.target.value })}
-        />
+        <input type="number" step="0.01" min="0" inputMode="decimal"
+          value={draft.total_price} disabled={noQuote} placeholder="0.00"
+          onChange={e => onTotal(e.target.value)} />
       </td>
-      <td className="q-num q-calc">{noQuote || lineTotal <= 0 ? '—' : '$' + num(pricePerLb, 4) + '/lb'}</td>
+      <td className="q-price">
+        <span className="q-dollar">$</span>
+        <input type="number" step="0.00001" min="0" inputMode="decimal"
+          value={draft.price_per_lb} disabled={noQuote} placeholder="0.00000"
+          onChange={e => onPpl(e.target.value)} />
+        <span className="q-perlb">/lb</span>
+      </td>
       <td className="q-num q-calc">{noQuote || lineTotal <= 0 ? '—' : money(unitPrice) + '/ea'}</td>
     </tr>
   );
@@ -58,7 +74,7 @@ function QuoteCard({ quote }) {
   // drafts keyed by rfqs_sent_id: { price_per_lb, quote_option }
   const [drafts, setDrafts] = useState(() => {
     const d = {};
-    quote.lines.forEach(l => { d[l.rfqs_sent_id] = { total_price: l.total_price || '', quote_option: l.quote_option || 'Quote As Is' }; });
+    quote.lines.forEach(l => { d[l.rfqs_sent_id] = { total_price: l.total_price || '', price_per_lb: l.price_per_lb || '', quote_option: l.quote_option || 'Quote As Is' }; });
     return d;
   });
   const setLine = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
