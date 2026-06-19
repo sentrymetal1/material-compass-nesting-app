@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import './supplier.css';
+import QuotesView from './QuotesView';
 
 // Off-Zoho supplier platform — v1. Embedded in the Zoho portal, which passes the
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-v1-2026-06-18';
+const BUILD_TAG = 'supplier-v1-2026-06-19';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -52,6 +53,7 @@ function MatchCard({ m }) {
 
 export default function SupplierApp() {
   const [email] = useState(getEmail);
+  const [view, setView] = useState('dashboard');
   const [state, setState] = useState({ status: 'loading', data: null, error: null });
 
   const load = useCallback(async () => {
@@ -80,8 +82,8 @@ export default function SupplierApp() {
           <span className="sup-title">Material Compass <em>· Supplier</em></span>
         </div>
         <nav className="sup-nav">
-          <a className="active" href="#dashboard">Dashboard</a>
-          <span className="soon" title="Coming next">Quotes</span>
+          <button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>Dashboard</button>
+          <button className={view === 'quotes' ? 'active' : ''} onClick={() => setView('quotes')}>Quotes</button>
           <span className="soon" title="Coming next">Stock</span>
           <span className="soon" title="Coming next">Profile</span>
         </nav>
@@ -91,6 +93,10 @@ export default function SupplierApp() {
       </header>
 
       <main className="sup-main">
+        {view === 'quotes' ? (
+          email ? <QuotesView email={email} />
+            : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
+        ) : (<>
         {state.status === 'loading' && <div className="sup-msg">Loading your dashboard…</div>}
 
         {state.status === 'no-email' && (
@@ -147,6 +153,7 @@ export default function SupplierApp() {
             </section>
           </>
         )}
+        </>)}
       </main>
 
       <footer className="sup-footer">{BUILD_TAG}</footer>
