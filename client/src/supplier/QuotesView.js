@@ -71,8 +71,9 @@ function LineRow({ line, draft, onChange }) {
   );
 }
 
-function QuoteCard({ quote, lookups }) {
+function QuoteCard({ quote, lookups, email }) {
   const [open, setOpen] = useState(false);
+  const [submitState, setSubmitState] = useState(null); // {status:'saving'|'done'|'error', result, error}
   // drafts keyed by rfqs_sent_id: { total_price, price_per_lb, quote_option, lead_time, comments }
   const [drafts, setDrafts] = useState(() => {
     const d = {};
@@ -127,6 +128,32 @@ function QuoteCard({ quote, lookups }) {
     return s + (Number(l.qty) || 0) * (Number(l.unit_weight) || 0);
   }, 0);
   const totalAmount = grand + (parseFloat(hdr.shipping) || 0) + (parseFloat(hdr.misc) || 0);
+
+  const onSubmit = async () => {
+    setSubmitState({ status: 'saving' });
+    try {
+      const lines = quote.lines.map(l => {
+        const d = drafts[l.rfqs_sent_id] || {};
+        const qty = Number(l.qty) || 0;
+        const total = parseFloat(d.total_price) || 0;
+        return {
+          rfqs_sent_id: l.rfqs_sent_id, sv_detail_id: l.sv_detail_id, line: l.line,
+          quote_option: d.quote_option || 'Quote As Is',
+          total_price: total, price_per_lb: parseFloat(d.price_per_lb) || 0,
+          unit_price: qty > 0 ? total / qty : 0, lead_time: d.lead_time, comments: d.comments,
+        };
+      });
+      const sv_form_id = (quote.lines.find(l => l.sv_form_id) || {}).sv_form_id || '';
+      const r = await fetch('/api/supplier/me/quote-submit?email=' + encodeURIComponent(email), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quote_id: quote.quote_id, sv_form_id, header: hdr, lines }),
+      });
+      const j = await r.json();
+      setSubmitState({ status: 'done', result: j });
+    } catch (e) {
+      setSubmitState({ status: 'error', error: String(e.message || e) });
+    }
+  };
 
   return (
     <div className="q-card">
@@ -237,8 +264,18 @@ function QuoteCard({ quote, lookups }) {
               <input type="checkbox" checked={hdr.ready} onChange={e => setH({ ready: e.target.checked })} />
               Ready for submission
             </label>
-            <button className="btn-quote" disabled title="Submitting is wired in the next step">Submit quote</button>
-            <span className="q-hint">Pricing + summary save to Zoho once the submit step is wired.</span>
+            <button className="btn-quote" disabled={submitState && submitState.status === 'saving'} onClick={onSubmit}>
+              {submitState && submitState.status === 'saving' ? 'Saving…' : 'Submit quote'}
+            </button>
+            {submitState && submitState.status === 'done' && (
+              <span className={'q-result ' + (submitState.result.failed_count ? 'q-result-warn' : 'q-result-ok')}>
+                {submitState.result.failed_count
+                  ? `Saved ${submitState.result.written}/${submitState.result.total} lines — ${submitState.result.failed_count} failed.`
+                  : `Saved ${submitState.result.written} line${submitState.result.written === 1 ? '' : 's'}.`}
+                {submitState.result.options_blocked ? ' Prices saved; full submit pending response-record step.' : ''}
+              </span>
+            )}
+            {submitState && submitState.status === 'error' && <span className="q-result q-result-warn">Error: {submitState.error}</span>}
           </div>
         </div>
       )}
@@ -277,7 +314,7 @@ export default function QuotesView({ email }) {
         <h2>Requests for quote <span className="muted">— price the lines you can fill</span></h2>
         {shown.length === 0
           ? <div className="sup-empty">No RFQs to quote right now.</div>
-          : shown.map(q => <QuoteCard key={q.quote_id} quote={q} lookups={d.lookups || {}} />)}
+          : shown.map(q => <QuoteCard key={q.quote_id} quote={q} lookups={d.lookups || {}} email={email} />)}
       </section>
     </>
   );

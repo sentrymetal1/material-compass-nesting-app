@@ -29,8 +29,23 @@ function flatten(v) {
   return String(v);
 }
 
+const round = (n, dp) => { const f = Math.pow(10, dp); return Math.round((Number(n) || 0) * f) / f; };
+
 function registerSupplierRoutes(app, deps) {
-  const { fetchAllZohoPages, cachedLookup, sendZohoAwareError } = deps;
+  const { fetchAllZohoPages, cachedLookup, sendZohoAwareError, getAccessToken, creatorApiBase, zohoHeaders, axios } = deps;
+
+  // PATCH one Zoho record; returns {ok, code, message}. Surfaces per-record errors
+  // (per the "don't silently drop rows" rule) so a partial submit is visible.
+  async function patchRecord(report, id, data) {
+    const token = await getAccessToken();
+    try {
+      const r = await axios.patch(creatorApiBase() + '/report/' + report + '/' + id, { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      const code = r.data && r.data.code;
+      return { ok: code === 3000 || code == null, code, message: r.data && r.data.message };
+    } catch (e) {
+      return { ok: false, code: e.response && e.response.data && e.response.data.code, message: (e.response && JSON.stringify(e.response.data)) || e.message };
+    }
+  }
 
   // Resolve a login email → supplier record. Cached (the supplier list is small
   // and changes rarely); short TTL so a newly-registered supplier resolves soon.
@@ -175,6 +190,72 @@ function registerSupplierRoutes(app, deps) {
       const tiles = { open: 0, submitted: 0, awarded: 0, closed: 0, other: 0 };
       quotes.forEach(q => { tiles[tile(q.status)]++; });
       res.json({ ok: true, supplier: req.supplier, tiles, quote_count: quotes.length, quotes, lookups });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // POST /api/supplier/me/quote-submit — write a priced quote back to Zoho.
+  // v1 safe write: prices + quote-option to RFQs_Sent (always exists, direct-input);
+  // also Supplier_Verify_Detail + header IF they exist. Per-line results surfaced.
+  app.post('/api/supplier/me/quote-submit', withSupplier, async (req, res) => {
+    try {
+      const { lines = [], header = {}, sv_form_id } = req.body || {};
+      const results = [];
+      let optionsBlocked = 0;
+      for (const ln of lines) {
+        if (!ln.rfqs_sent_id) continue;
+        const noQuote = ln.quote_option === 'No Quote';
+        // 1) PRICES — direct-input, no workflow dependency. This is the core write.
+        const priceData = noQuote
+          ? { Total_Price: 0, Price_Per_Lb: 0, Unit_Price: 0 }
+          : { Total_Price: round(ln.total_price, 2), Price_Per_Lb: round(ln.price_per_lb, 5), Unit_Price: round(ln.unit_price, 5) };
+        const r = await patchRecord('All_RFQs_Sent_Report', ln.rfqs_sent_id, priceData);
+
+        // 2) QUOTE OPTION — best-effort. Triggers an On-Validate sync workflow that
+        // needs the Supplier_Verify_Detail response record to exist; if it doesn't,
+        // this errors (3001) but the prices above still stand. Don't fail the line.
+        let optionOk = null;
+        if (r.ok) {
+          const o = await patchRecord('All_RFQs_Sent_Report', ln.rfqs_sent_id, { Item_Verification_Status: ln.quote_option || 'Quote As Is' });
+          optionOk = o.ok;
+          if (!o.ok) optionsBlocked++;
+        }
+
+        results.push({ rfqs_sent_id: ln.rfqs_sent_id, line: ln.line, ok: r.ok, code: r.code, message: r.ok ? undefined : r.message, option_set: optionOk });
+
+        // 3) mirror prices/option to the response detail line when it already exists
+        if (r.ok && ln.sv_detail_id) {
+          const dd = { SVD_Item_Verification_Status: ln.quote_option || 'Quote As Is' };
+          if (!noQuote) { dd.SVD_Total_Price = round(ln.total_price, 2); dd.SVD_Price_Per_Lb = round(ln.price_per_lb, 5); dd.SVD_Unit_Price = round(ln.unit_price, 5); }
+          await patchRecord('Supplier_Verify_Detail_Report', ln.sv_detail_id, dd);
+        }
+      }
+
+      // Header (response totals/summary) only when the response record exists.
+      let headerResult = null;
+      if (sv_form_id) {
+        const hd = {};
+        if (header.shipping != null && header.shipping !== '') hd.Shipping_Amount = round(header.shipping, 2);
+        if (header.misc != null && header.misc !== '') hd.Miscellaneous_Charges = round(header.misc, 2);
+        if (header.notes) hd.Supplier_Notes_To_Buyer = header.notes;
+        if (header.ready) hd.SV_Radio_For_Submit = 'Ready for submission';
+        if (Object.keys(hd).length) headerResult = await patchRecord('Supplier_Verify_Form_Report', sv_form_id, hd);
+      }
+
+      const written = results.filter(r => r.ok).length;
+      const failed = results.filter(r => !r.ok);
+      res.json({
+        ok: failed.length === 0,
+        written, total: results.length,
+        failed_count: failed.length, failed,
+        options_blocked: optionsBlocked,
+        header: headerResult,
+        note: optionsBlocked
+          ? 'Prices saved, but quote-option/status could not sync because the supplier response record ("Populate Quote Items") does not exist for this quote yet. Replicating that creation step is the next piece.'
+          : null,
+      });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });

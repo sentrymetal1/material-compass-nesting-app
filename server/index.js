@@ -1947,7 +1947,7 @@ require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, 
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
 require('./fittingMatch').registerFittingMatchRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError });
 // ---- Supplier platform (off-Zoho): identity seam + /api/supplier/me, /me/dashboard ----
-require('./supplier').registerSupplierRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError });
+require('./supplier').registerSupplierRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError, getAccessToken, creatorApiBase, zohoHeaders, axios });
 
 // Catch-all: serve React app
 app.get('*', function(req, res) { res.sendFile(path.join(__dirname, '..', 'client', 'build', 'index.html')); });
