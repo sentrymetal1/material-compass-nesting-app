@@ -99,14 +99,15 @@ function fetchFittingDemand(deps) {
   });
 }
 
-// One supplier's STOCKED fitting rows. Not cached per-supplier (kept fresh so a
-// supplier sees new matches right after editing their stock list).
+// One supplier's STOCKED fitting rows. Cached 60s to spare the Zoho API budget
+// (a stock edit shows up within a minute).
 function fetchSupplierStock(supplierId, deps) {
   // && encodes as %26%26 in Creator criteria; the choice value is quoted.
   const criteria =
     '(Supplier_ID==' + encodeURIComponent(supplierId) +
     '%26%26Fitting_Stocked_Checkbox=="' + STOCKED_VALUE + '")';
-  return deps.fetchAllZohoPages('/report/' + SUPPLY_REPORT + '?criteria=' + criteria);
+  return deps.cachedLookup('fitting-stock:' + supplierId, 60 * 1000, () =>
+    deps.fetchAllZohoPages('/report/' + SUPPLY_REPORT + '?criteria=' + criteria));
 }
 
 // Core matcher — reusable by both the standalone route and the supplier dashboard

@@ -123,7 +123,10 @@ function registerSupplierRoutes(app, deps) {
   // (vs the fitting matcher, which is potential matches). Read-only; safe.
   const lkid = v => (v && typeof v === 'object' ? String(v.ID || v.id || '') : (v != null ? String(v) : ''));
   async function fetchSentRfqs(supplierId) {
-    const rows = await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')');
+    // Cache per supplier (60s) so a supplier refreshing the Quotes tab doesn't
+    // re-hit Zoho each time — keeps Developer-API usage low.
+    const rows = await cachedLookup('sent-rfqs:' + supplierId, 60 * 1000, async () =>
+      fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')'));
     const byQuote = new Map();
     for (const r of rows) {
       const qid = lkid(r.Quote_LU) || lkid(r.Quote_LU_ID) || ('q' + (r.Quote_Number || ''));
@@ -161,15 +164,18 @@ function registerSupplierRoutes(app, deps) {
 
   // Supplier-level dropdown data for the quote-submit form (locations, reps, choices).
   async function fetchSupplierLookups(supplierId) {
-    const [loc, rep] = await Promise.all([
-      fetchAllZohoPages('/report/All_Supplier_Locations?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
-      fetchAllZohoPages('/report/All_Supplier_Representatives?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
-    ]);
-    return {
-      locations: loc.map(l => ({ id: String(l.ID), name: l.Name_of_Location || '' })),
-      reps: rep.map(r => ({ id: String(r.ID), name: flatten(r.Name) || r.Email || '' })),
-      quote_requirements: ['MTRs Required', 'AIS - Made & Melted in USA'],
-    };
+    // Locations/reps change rarely — cache 10 min to spare the API budget.
+    return cachedLookup('supplier-lookups:' + supplierId, 10 * 60 * 1000, async () => {
+      const [loc, rep] = await Promise.all([
+        fetchAllZohoPages('/report/All_Supplier_Locations?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
+        fetchAllZohoPages('/report/All_Supplier_Representatives?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
+      ]);
+      return {
+        locations: loc.map(l => ({ id: String(l.ID), name: l.Name_of_Location || '' })),
+        reps: rep.map(r => ({ id: String(r.ID), name: flatten(r.Name) || r.Email || '' })),
+        quote_requirements: ['MTRs Required', 'AIS - Made & Melted in USA'],
+      };
+    });
   }
 
   // GET /api/supplier/me/rfqs — the supplier's sent RFQs grouped into quotes + tiles.
