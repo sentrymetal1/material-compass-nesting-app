@@ -443,7 +443,9 @@ function registerSupplierRoutes(app, deps) {
         },
         locations: (locs || []).map(l => ({ id: String(l.ID), name: l.Name_of_Location || '', phone: l.Phone_Number || '', address: addr(l.Address) })),
         reps: (reps || []).map(r => ({
-          id: String(r.ID), name: flatten(r.Name), position: r.Position || '',
+          id: String(r.ID), name: flatten(r.Name),
+          first: (r.Name && r.Name.first_name) || '', last: (r.Name && r.Name.last_name) || '',
+          position: r.Position || '',
           email: r.Email || '', phone: r.Phone_Number || '', ext: r.Extension || '',
           location: (r.Supplier_Locations && r.Supplier_Locations.zc_display_value) || '',
           location_id: (r.Supplier_Locations && String(r.Supplier_Locations.ID)) || '',
@@ -476,6 +478,103 @@ function registerSupplierRoutes(app, deps) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
     }
+  });
+
+  // ---- Locations & Representatives CRUD (Profile tab) ----
+  function addrObj(b) {
+    const a = {};
+    if (b.street != null) a.address_line_1 = b.street;
+    if (b.city != null) a.district_city = b.city;
+    if (b.state != null) a.state_province = b.state;
+    if (b.zip != null) a.postal_code = b.zip;
+    a.country = b.country || 'United States';
+    return a;
+  }
+  // Ownership guard — only let a supplier mutate its own child rows.
+  async function supplierOwns(report, supplierId, id) {
+    try {
+      const rows = await fetchAllZohoPages('/report/' + report + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')');
+      return (rows || []).some(r => String(r.ID) === String(id));
+    } catch (e) { return false; }
+  }
+  async function addRecord(form, data) {
+    const token = await getAccessToken();
+    try {
+      const r = await axios.post(creatorApiBase() + '/form/' + form, { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      const code = r.data && r.data.code;
+      return { ok: code === 3000, code, id: r.data && r.data.data && r.data.data.ID, message: r.data && r.data.message };
+    } catch (e) {
+      return { ok: false, message: (e.response && JSON.stringify(e.response.data)) || e.message };
+    }
+  }
+  async function deleteRecord(report, id) {
+    const token = await getAccessToken();
+    try {
+      const r = await axios.delete(creatorApiBase() + '/report/' + report + '/' + id, { headers: zohoHeaders(token) });
+      const code = r.data && r.data.code;
+      return { ok: code === 3000 || code == null, code, message: r.data && r.data.message };
+    } catch (e) {
+      return { ok: false, message: (e.response && JSON.stringify(e.response.data)) || e.message };
+    }
+  }
+
+  // Locations
+  app.post('/api/supplier/me/locations', withSupplier, async (req, res) => {
+    const b = req.body || {};
+    const r = await addRecord('Supplier_Locations', {
+      Supplier_Entry_Form: req.supplier.id, Name_of_Location: b.name || '', Phone_Number: b.phone || '', Address: addrObj(b),
+    });
+    if (!r.ok) return res.status(502).json({ ok: false, error: 'add failed', message: r.message });
+    res.json({ ok: true, id: r.id });
+  });
+  app.patch('/api/supplier/me/locations/:id', withSupplier, async (req, res) => {
+    if (!(await supplierOwns('All_Supplier_Locations', req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+    const b = req.body || {}; const data = {};
+    if (b.name != null) data.Name_of_Location = b.name;
+    if (b.phone != null) data.Phone_Number = b.phone;
+    if (b.street != null || b.city != null || b.state != null || b.zip != null || b.country != null) data.Address = addrObj(b);
+    const r = await patchRecord('All_Supplier_Locations', req.params.id, data);
+    if (!r.ok) return res.status(502).json({ ok: false, error: 'update failed', message: r.message });
+    res.json({ ok: true });
+  });
+  app.delete('/api/supplier/me/locations/:id', withSupplier, async (req, res) => {
+    if (!(await supplierOwns('All_Supplier_Locations', req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+    const r = await deleteRecord('All_Supplier_Locations', req.params.id);
+    if (!r.ok) return res.status(502).json({ ok: false, error: 'delete failed', message: r.message });
+    res.json({ ok: true });
+  });
+
+  // Representatives
+  app.post('/api/supplier/me/reps', withSupplier, async (req, res) => {
+    const b = req.body || {};
+    const data = {
+      Supplier_Entry_Form: req.supplier.id, Supplier_Company_Name: req.supplier.company_name || '',
+      Name: { first_name: b.first || '', last_name: b.last || '' },
+      Position: b.position || '', Email: b.email || '', Phone_Number: b.phone || '', Extension: b.ext || '',
+    };
+    if (b.location_id) data.Supplier_Locations = b.location_id;
+    const r = await addRecord('Supplier_Representatives', data);
+    if (!r.ok) return res.status(502).json({ ok: false, error: 'add failed', message: r.message });
+    res.json({ ok: true, id: r.id });
+  });
+  app.patch('/api/supplier/me/reps/:id', withSupplier, async (req, res) => {
+    if (!(await supplierOwns('All_Supplier_Representatives', req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+    const b = req.body || {}; const data = {};
+    if (b.first != null || b.last != null) data.Name = { first_name: b.first || '', last_name: b.last || '' };
+    if (b.position != null) data.Position = b.position;
+    if (b.email != null) data.Email = b.email;
+    if (b.phone != null) data.Phone_Number = b.phone;
+    if (b.ext != null) data.Extension = b.ext;
+    if (b.location_id != null) data.Supplier_Locations = b.location_id;
+    const r = await patchRecord('All_Supplier_Representatives', req.params.id, data);
+    if (!r.ok) return res.status(502).json({ ok: false, error: 'update failed', message: r.message });
+    res.json({ ok: true });
+  });
+  app.delete('/api/supplier/me/reps/:id', withSupplier, async (req, res) => {
+    if (!(await supplierOwns('All_Supplier_Representatives', req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+    const r = await deleteRecord('All_Supplier_Representatives', req.params.id);
+    if (!r.ok) return res.status(502).json({ ok: false, error: 'delete failed', message: r.message });
+    res.json({ ok: true });
   });
 
   // Dashboard — the supplier's home. v1 returns fitting matches (live). Structural

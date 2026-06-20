@@ -183,3 +183,10 @@
 .prof-loc-head { background: #f3f8ff; border-left: 3px solid #5F94CE; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .prof-rep { padding: 10px 16px 10px 28px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .prof-norep { padding: 10px 16px 10px 28px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; font-style: italic; }
+
+/* Profile CRUD */
+.prof-sec-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.prof-actions { display: flex; align-items: center; gap: 12px; }
+.btn-danger { color: #b3261e; }
+.prof-form { padding: 14px 16px; background: #f8fafc; border-top: 1px solid var(--line); }
+.prof-addrep { display: inline-block; margin: 8px 0 10px 28px; }
