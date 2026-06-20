@@ -507,6 +507,21 @@ function registerSupplierRoutes(app, deps) {
       return { ok: false, message: (e.response && JSON.stringify(e.response.data)) || e.message };
     }
   }
+  // Bulk add (v2.1 accepts an array in data, ≤200/call). Returns count actually added.
+  async function bulkAdd(form, rows) {
+    const token = await getAccessToken();
+    let added = 0; const errors = [];
+    for (let i = 0; i < rows.length; i += 200) {
+      const chunk = rows.slice(i, i + 200);
+      try {
+        const r = await axios.post(creatorApiBase() + '/form/' + form, { data: chunk }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+        const result = r.data && r.data.result;
+        if (Array.isArray(result)) added += result.filter(x => x.code === 3000 || x.code === '3000').length;
+        else if (r.data && r.data.code === 3000) added += chunk.length;
+      } catch (e) { errors.push((e.response && JSON.stringify(e.response.data)) || e.message); }
+    }
+    return { added, errors };
+  }
   async function deleteRecord(report, id) {
     const token = await getAccessToken();
     try {
@@ -679,6 +694,36 @@ function registerSupplierRoutes(app, deps) {
       });
       if (!r.ok) return res.status(502).json({ ok: false, error: 'add failed', message: r.message });
       res.json({ ok: true, id: r.id });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // POST /api/supplier/me/stock/fittings/bulk — add every (connection × spec) combo
+  // for the chosen Type/Make/End at once. Dedupes against existing stock.
+  app.post('/api/supplier/me/stock/fittings/bulk', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const b = req.body || {};
+      if (!b.type_id || !b.make_id || !b.end_id) return res.status(400).json({ ok: false, error: 'type, make, and end required' });
+      const connIds = Array.isArray(b.connection_ids) ? b.connection_ids.filter(Boolean) : [];
+      const specIds = Array.isArray(b.spec_ids) ? b.spec_ids.filter(Boolean) : [];
+      if (!connIds.length || !specIds.length) return res.status(400).json({ ok: false, error: 'pick at least one connection and one specification' });
+      const existing = await fitStock(sid);
+      const have = new Set((existing || []).map(r => [
+        String((r.Fitting_Type || {}).ID), String((r.Fitting_Make || {}).ID), String((r.End_Type || {}).ID),
+        String((r.Connection_Type || {}).ID), String((r.Fitting_Specification || {}).ID)].join('|')));
+      const rows = [];
+      for (const c of connIds) for (const s of specIds) {
+        if (have.has([b.type_id, b.make_id, b.end_id, c, s].join('|'))) continue;
+        rows.push({ Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id, End_Type: b.end_id, Connection_Type: c, Fitting_Specification: s, Fitting_Stocked_Checkbox: ['Stocked'] });
+      }
+      const attempted = connIds.length * specIds.length;
+      if (!rows.length) return res.json({ ok: true, added: 0, duplicates: attempted });
+      const result = await bulkAdd('Supplier_Fitting_Stock', rows);
+      if (!result.added && result.errors.length) return res.status(502).json({ ok: false, error: 'add failed', message: result.errors[0] });
+      res.json({ ok: true, added: result.added, attempted, duplicates: attempted - rows.length });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });

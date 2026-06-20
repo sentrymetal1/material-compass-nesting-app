@@ -226,3 +226,11 @@
 .fit-cascade label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .fit-cascade select { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; color: #1f2a37; }
 .fit-cascade select:disabled { background: #f3f4f6; color: #9aa1ab; }
+
+/* Stock: fittings bulk checkboxes */
+.fit-checkblock { margin-top: 14px; }
+.fit-check-lbl { font-size: 13px; font-weight: 600; color: #1f2a37; margin-bottom: 8px; }
+.fit-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px; }
+.fit-check { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; cursor: pointer; }
+.fit-check:hover { background: #f6f8fa; }
+.fit-check.on { background: #f1faf3; border-color: #bfe3c8; }
