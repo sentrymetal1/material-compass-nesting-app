@@ -287,6 +287,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
 
 export default function QuotesView({ email }) {
   const [state, setState] = useState({ status: 'loading', data: null, error: null });
+  const [tab, setTab] = useState('open');
   const load = useCallback(async () => {
     setState(s => ({ ...s, status: 'loading' }));
     try {
@@ -306,29 +307,55 @@ export default function QuotesView({ email }) {
   // quote status, since "Submitted - Waiting Responses" is the manufacturer's sent state and
   // can't tell whether THIS supplier has answered.
   const responded = q => q.lines.some(l => l.quote_option && String(l.quote_option).trim() !== '');
-  // To price = actionable RFQs not yet answered. Submitted = answered & still in review (revisable).
-  const toPrice = d.quotes.filter(q => /^Open|Quote Revised|Submitted/i.test(q.status) && !responded(q));
-  const submitted = d.quotes.filter(q => /^Submitted/i.test(q.status) && responded(q));
+  // Bucket every quote so the tabs and their counts always match the list shown.
+  const bucketOf = q => {
+    const s = q.status || '';
+    if (/Sourcing|Purchase Order/i.test(s)) return 'awarded';
+    if (/^Closed|Cancel/i.test(s)) return 'closed';
+    if (/^Open|Quote Revised|Submitted/i.test(s)) return responded(q) ? 'submitted' : 'open';
+    return null;
+  };
+  const buckets = { open: [], submitted: [], awarded: [], closed: [] };
+  d.quotes.forEach(q => { const b = bucketOf(q); if (b) buckets[b].push(q); });
+
+  const TABS = [['open', 'New / Open'], ['submitted', 'Submitted'], ['awarded', 'Awarded'], ['closed', 'Closed']];
+  const SUBHEAD = {
+    open: 'price the lines you can fill',
+    submitted: 'awaiting the manufacturer; expand to revise',
+    awarded: 'sourcing in progress',
+    closed: 'completed or cancelled',
+  };
+  const list = buckets[tab] || [];
+  const readOnly = tab === 'awarded' || tab === 'closed';
 
   return (
     <>
       <div className="q-tiles">
-        {[['open', 'New / Open'], ['submitted', 'Submitted'], ['awarded', 'Awarded'], ['closed', 'Closed']].map(([k, lbl]) => (
-          <div key={k} className={'q-tile q-tile-' + k}><div className="count-num">{d.tiles[k]}</div><div className="count-lbl">{lbl}</div></div>
+        {TABS.map(([k, lbl]) => (
+          <button key={k} type="button" onClick={() => setTab(k)}
+            className={'q-tile q-tile-' + k + (tab === k ? ' q-tile-active' : '')}>
+            <div className="count-num">{buckets[k].length}</div><div className="count-lbl">{lbl}</div>
+          </button>
         ))}
       </div>
       <section className="sup-section">
-        <h2>Requests for quote <span className="muted">— price the lines you can fill</span></h2>
-        {toPrice.length === 0
-          ? <div className="sup-empty">No RFQs to quote right now.</div>
-          : toPrice.map(q => <QuoteCard key={q.quote_id} quote={q} lookups={d.lookups || {}} email={email} />)}
+        <h2>{TABS.find(t => t[0] === tab)[1]} <span className="muted">— {SUBHEAD[tab]}</span></h2>
+        {list.length === 0
+          ? <div className="sup-empty">Nothing here right now.</div>
+          : list.map(q => readOnly
+            ? (
+              <div key={q.quote_id} className="q-card q-card-ro">
+                <div className="q-head">
+                  <div className="q-head-main"><strong>Quote {q.quote_number}</strong><span className="q-head-desc">{q.quote_description}</span></div>
+                  <div className="q-head-meta">
+                    {q.manufacturer && <span className="chip">{q.manufacturer}</span>}
+                    <span className="chip">{q.lines.length} lines</span>
+                  </div>
+                </div>
+              </div>
+            )
+            : <QuoteCard key={q.quote_id} quote={q} lookups={d.lookups || {}} email={email} revise={tab === 'submitted'} />)}
       </section>
-      {submitted.length > 0 && (
-        <section className="sup-section">
-          <h2>Submitted quotes <span className="muted">— awaiting the manufacturer; expand to revise</span></h2>
-          {submitted.map(q => <QuoteCard key={q.quote_id} quote={q} lookups={d.lookups || {}} email={email} revise />)}
-        </section>
-      )}
     </>
   );
 }
