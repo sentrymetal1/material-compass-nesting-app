@@ -202,65 +202,77 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
-  // POST /api/supplier/me/quote-submit — write a priced quote back to Zoho.
-  // v1 safe write: prices + quote-option to RFQs_Sent (always exists, direct-input);
-  // also Supplier_Verify_Detail + header IF they exist. Per-line results surfaced.
+  // POST /api/supplier/me/quote-submit — submit a priced quote (off-Zoho path).
+  // Adds ONE record to the Supplier_Quote_Submit_Queue form; its On-Create workflow
+  // runs submitSupplierQuote() (create + populate + price) then processSupplierSubmit()
+  // (write-back + MFG email + status). Reuses Railway's existing data-API integration;
+  // 1 add + 1 read-back, sparing the API budget.
   app.post('/api/supplier/me/quote-submit', withSupplier, async (req, res) => {
     try {
-      const { lines = [], header = {}, sv_form_id } = req.body || {};
-      const results = [];
-      let optionsBlocked = 0;
-      for (const ln of lines) {
-        if (!ln.rfqs_sent_id) continue;
-        const noQuote = ln.quote_option === 'No Quote';
-        // 1) PRICES — direct-input, no workflow dependency. This is the core write.
-        const priceData = noQuote
-          ? { Total_Price: 0, Price_Per_Lb: 0, Unit_Price: 0 }
-          : { Total_Price: round(ln.total_price, 2), Price_Per_Lb: round(ln.price_per_lb, 5), Unit_Price: round(ln.unit_price, 5) };
-        const r = await patchRecord('All_RFQs_Sent_Report', ln.rfqs_sent_id, priceData);
+      const { quote_id, header = {}, lines = [] } = req.body || {};
 
-        // 2) QUOTE OPTION — best-effort. Triggers an On-Validate sync workflow that
-        // needs the Supplier_Verify_Detail response record to exist; if it doesn't,
-        // this errors (3001) but the prices above still stand. Don't fail the line.
-        let optionOk = null;
-        if (r.ok) {
-          const o = await patchRecord('All_RFQs_Sent_Report', ln.rfqs_sent_id, { Item_Verification_Status: ln.quote_option || 'Quote As Is' });
-          optionOk = o.ok;
-          if (!o.ok) optionsBlocked++;
-        }
+      // package the priced lines for the Deluge function (it does lines.toJSONList())
+      const queueLines = lines.filter(l => l && l.rfqs_sent_id).map(l => {
+        const noQuote = l.quote_option === 'No Quote';
+        return {
+          rfqs_sent_id: String(l.rfqs_sent_id),
+          quote_option: l.quote_option || 'Quote As Is',
+          total_price: noQuote ? 0 : round(l.total_price, 2),
+          price_per_lb: noQuote ? 0 : round(l.price_per_lb, 5),
+          unit_price: noQuote ? 0 : round(l.unit_price, 5),
+          lead_time: l.lead_time || '',
+          comments: l.comments || '',
+        };
+      });
 
-        results.push({ rfqs_sent_id: ln.rfqs_sent_id, line: ln.line, ok: r.ok, code: r.code, message: r.ok ? undefined : r.message, option_set: optionOk });
+      const data = {
+        Sub_Supplier_ID: String(req.supplier.id),
+        Sub_Quote_ID: String(quote_id || ''),
+        Sub_Quote_No: header.supplier_quote_number || '',
+        Sub_Location_ID: String(header.location || ''),
+        Sub_Rep_ID: String(header.rep || ''),
+        Sub_Meets_Req: header.meets_requirements || '',
+        Sub_Shipping: String(header.shipping || ''),
+        Sub_Misc: String(header.misc || ''),
+        Sub_Notes: header.notes || '',
+        Sub_Ready: header.ready ? 'true' : 'false',
+        Sub_Valid_Days: String(header.valid_days || ''),
+        Sub_Valid_Until: header.valid_until || '',
+        Sub_Lines: JSON.stringify(queueLines),
+      };
 
-        // 3) mirror prices/option to the response detail line when it already exists
-        if (r.ok && ln.sv_detail_id) {
-          const dd = { SVD_Item_Verification_Status: ln.quote_option || 'Quote As Is' };
-          if (!noQuote) { dd.SVD_Total_Price = round(ln.total_price, 2); dd.SVD_Price_Per_Lb = round(ln.price_per_lb, 5); dd.SVD_Unit_Price = round(ln.unit_price, 5); }
-          await patchRecord('Supplier_Verify_Detail_Report', ln.sv_detail_id, dd);
-        }
+      // add the queue record — the form's workflow does the real submit
+      const token = await getAccessToken();
+      let addResp;
+      try {
+        addResp = await axios.post(creatorApiBase() + '/form/Supplier_Quote_Submit_Queue', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      } catch (e) {
+        return res.status(502).json({ ok: false, error: 'Could not reach Supplier_Quote_Submit_Queue. Is the form created?', detail: (e.response && JSON.stringify(e.response.data)) || e.message });
+      }
+      const code = addResp.data && addResp.data.code;
+      if (code !== 3000) {
+        return res.status(502).json({ ok: false, error: 'Queue add rejected', code, message: addResp.data && addResp.data.message });
+      }
+      const rec = addResp.data.data || {};
+      const queueId = rec.ID;
+
+      // read the workflow result back (Sub_SV_Form_ID set => the submit succeeded)
+      let svFormId = rec.Sub_SV_Form_ID || '';
+      let resultText = rec.Sub_Result || '';
+      if (!svFormId && queueId) {
+        try {
+          const rb = await fetchAllZohoPages('/report/Supplier_Quote_Submit_Queue_Report?criteria=(ID==' + queueId + ')');
+          if (rb && rb[0]) { svFormId = rb[0].Sub_SV_Form_ID || ''; resultText = rb[0].Sub_Result || resultText; }
+        } catch (e) {}
       }
 
-      // Header (response totals/summary) only when the response record exists.
-      let headerResult = null;
-      if (sv_form_id) {
-        const hd = {};
-        if (header.shipping != null && header.shipping !== '') hd.Shipping_Amount = round(header.shipping, 2);
-        if (header.misc != null && header.misc !== '') hd.Miscellaneous_Charges = round(header.misc, 2);
-        if (header.notes) hd.Supplier_Notes_To_Buyer = header.notes;
-        if (header.ready) hd.SV_Radio_For_Submit = 'Ready for submission';
-        if (Object.keys(hd).length) headerResult = await patchRecord('Supplier_Verify_Form_Report', sv_form_id, hd);
-      }
-
-      const written = results.filter(r => r.ok).length;
-      const failed = results.filter(r => !r.ok);
       res.json({
-        ok: failed.length === 0,
-        written, total: results.length,
-        failed_count: failed.length, failed,
-        options_blocked: optionsBlocked,
-        header: headerResult,
-        note: optionsBlocked
-          ? 'Prices saved, but quote-option/status could not sync because the supplier response record ("Populate Quote Items") does not exist for this quote yet. Replicating that creation step is the next piece.'
-          : null,
+        ok: !!svFormId,
+        sv_form_id: svFormId,
+        queue_id: queueId,
+        lines: queueLines.length,
+        message: svFormId ? 'Quote submitted.' : (resultText || 'Queued, but no response was created — check the queue form workflow.'),
+        result: resultText || null,
       });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);

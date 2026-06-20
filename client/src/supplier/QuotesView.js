@@ -268,11 +268,10 @@ function QuoteCard({ quote, lookups, email }) {
               {submitState && submitState.status === 'saving' ? 'Saving…' : 'Submit quote'}
             </button>
             {submitState && submitState.status === 'done' && (
-              <span className={'q-result ' + (submitState.result.failed_count ? 'q-result-warn' : 'q-result-ok')}>
-                {submitState.result.failed_count
-                  ? `Saved ${submitState.result.written}/${submitState.result.total} lines — ${submitState.result.failed_count} failed.`
-                  : `Saved ${submitState.result.written} line${submitState.result.written === 1 ? '' : 's'}.`}
-                {submitState.result.options_blocked ? ' Prices saved; full submit pending response-record step.' : ''}
+              <span className={'q-result ' + (submitState.result.ok ? 'q-result-ok' : 'q-result-warn')}>
+                {submitState.result.ok
+                  ? `Quote submitted (${submitState.result.lines} line${submitState.result.lines === 1 ? '' : 's'}).`
+                  : (submitState.result.message || submitState.result.error || 'Submit did not complete.')}
               </span>
             )}
             {submitState && submitState.status === 'error' && <span className="q-result q-result-warn">Error: {submitState.error}</span>}
