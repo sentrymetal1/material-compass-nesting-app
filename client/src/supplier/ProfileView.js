@@ -83,36 +83,49 @@ export default function ProfileView({ email }) {
       </section>
 
       <section className="sup-section">
-        <h2>Locations <span className="muted">— {locations.length}</span></h2>
-        {locations.length === 0 ? <div className="sup-empty">No locations on file.</div> : (
-          <div className="prof-list">
-            {locations.map(l => (
-              <div key={l.id} className="prof-row">
-                <div className="prof-row-main"><strong>{l.name || '—'}</strong><span className="muted">{fmtAddr(l.address)}</span></div>
-                <div className="muted">{l.phone}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="sup-section">
-        <h2>Representatives <span className="muted">— {reps.length}</span></h2>
-        {reps.length === 0 ? <div className="sup-empty">No representatives on file.</div> : (
-          <div className="prof-list">
-            {reps.map(r => (
-              <div key={r.id} className="prof-row">
-                <div className="prof-row-main">
-                  <strong>{r.name || '—'}</strong>
-                  {r.position && <span className="chip">{r.position}</span>}
-                  {r.location && <span className="muted">{r.location}</span>}
+        <h2>Locations &amp; representatives <span className="muted">— {locations.length} location{locations.length === 1 ? '' : 's'}, {reps.length} rep{reps.length === 1 ? '' : 's'}</span></h2>
+        {locations.length === 0 && reps.length === 0 ? <div className="sup-empty">No locations or representatives on file.</div> : (
+          <div className="prof-locgroups">
+            {locations.map(l => {
+              const here = reps.filter(r => r.location_id === l.id);
+              return (
+                <div key={l.id} className="prof-locgroup">
+                  <div className="prof-loc-head">
+                    <div className="prof-row-main"><strong>{l.name || '—'}</strong><span className="muted">{fmtAddr(l.address)}</span></div>
+                    <div className="muted">{l.phone}</div>
+                  </div>
+                  {here.length === 0 ? <div className="prof-norep">No representatives at this location.</div>
+                    : here.map(r => <RepRow key={r.id} r={r} />)}
                 </div>
-                <div className="muted">{[r.email, r.phone + (r.ext ? ' x' + r.ext : '')].filter(s => s && s.trim()).join('  ·  ')}</div>
-              </div>
-            ))}
+              );
+            })}
+            {(() => {
+              const matched = new Set(locations.map(l => l.id));
+              const orphan = reps.filter(r => !r.location_id || !matched.has(r.location_id));
+              if (!orphan.length) return null;
+              return (
+                <div className="prof-locgroup">
+                  <div className="prof-loc-head"><div className="prof-row-main"><strong>Unassigned</strong><span className="muted">no location set</span></div></div>
+                  {orphan.map(r => <RepRow key={r.id} r={r} />)}
+                </div>
+              );
+            })()}
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function RepRow({ r }) {
+  const contact = [r.email, (r.phone || '') + (r.ext ? ' x' + r.ext : '')].filter(s => s && s.trim()).join('  ·  ');
+  return (
+    <div className="prof-rep">
+      <div className="prof-row-main">
+        <strong>{r.name || '—'}</strong>
+        {r.position && <span className="chip">{r.position}</span>}
+      </div>
+      <div className="muted">{contact}</div>
     </div>
   );
 }

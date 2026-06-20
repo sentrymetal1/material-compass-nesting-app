@@ -176,3 +176,10 @@
 .prof-list { display: flex; flex-direction: column; gap: 8px; }
 .prof-row { background: #fff; border: 1px solid var(--line); border-left: 3px solid #5F94CE; border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .prof-row-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Profile: locations with nested reps */
+.prof-locgroups { display: flex; flex-direction: column; gap: 14px; }
+.prof-locgroup { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.prof-loc-head { background: #f3f8ff; border-left: 3px solid #5F94CE; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.prof-rep { padding: 10px 16px 10px 28px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.prof-norep { padding: 10px 16px 10px 28px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; font-style: italic; }

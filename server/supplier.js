@@ -446,6 +446,7 @@ function registerSupplierRoutes(app, deps) {
           id: String(r.ID), name: flatten(r.Name), position: r.Position || '',
           email: r.Email || '', phone: r.Phone_Number || '', ext: r.Extension || '',
           location: (r.Supplier_Locations && r.Supplier_Locations.zc_display_value) || '',
+          location_id: (r.Supplier_Locations && String(r.Supplier_Locations.ID)) || '',
         })),
       });
     } catch (err) {
