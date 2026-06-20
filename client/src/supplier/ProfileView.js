@@ -20,6 +20,7 @@ export default function ProfileView({ email }) {
   const [busy, setBusy] = useState(false);
   const [edit, setEdit] = useState(null); // {kind:'loc'|'rep', id}
   const [add, setAdd] = useState(null);   // {kind:'loc'} | {kind:'rep', location_id}
+  const [confirm, setConfirm] = useState(null); // {kind, id, label, note}
 
   const load = useCallback(async () => {
     setState(s => ({ ...s, status: s.data ? 'ready' : 'loading' }));
@@ -61,10 +62,10 @@ export default function ProfileView({ email }) {
     } catch (e) { window.alert('Error: ' + (e.message || e)); }
     finally { setBusy(false); }
   };
-  const removeIt = (kind, id) => {
-    if (window.confirm('Delete this ' + (kind === 'loc' ? 'location' : 'representative') + '?')) {
-      mut('DELETE', '/' + (kind === 'loc' ? 'locations' : 'reps') + '/' + id);
-    }
+  const removeIt = (kind, id, label, note) => setConfirm({ kind, id, label, note });
+  const doDelete = async () => {
+    const c = confirm; setConfirm(null);
+    if (c) await mut('DELETE', '/' + (c.kind === 'loc' ? 'locations' : 'reps') + '/' + c.id);
   };
 
   if (state.status === 'loading') return <div className="sup-msg">Loading your profile…</div>;
@@ -128,7 +129,7 @@ export default function ProfileView({ email }) {
                   <div className="prof-actions">
                     {l.phone && <span className="muted">{l.phone}</span>}
                     <button className="btn-link" onClick={() => { setEdit({ kind: 'loc', id: l.id }); setAdd(null); }}>Edit</button>
-                    <button className="btn-link btn-danger" onClick={() => removeIt('loc', l.id)}>Delete</button>
+                    <button className="btn-link btn-danger" onClick={() => removeIt('loc', l.id, 'location', here.length ? (here.length + ' representative' + (here.length > 1 ? 's' : '') + ' will become Unassigned.') : '')}>Delete</button>
                   </div>
                 </div>
                 {editingLoc && <LocForm initial={l} busy={busy} onCancel={() => setEdit(null)} onSave={f => mut('PATCH', '/locations/' + l.id, f)} />}
@@ -141,7 +142,7 @@ export default function ProfileView({ email }) {
                       <div className="prof-actions">
                         {contactStr(r) && <span className="muted">{contactStr(r)}</span>}
                         <button className="btn-link" onClick={() => { setEdit({ kind: 'rep', id: r.id }); setAdd(null); }}>Edit</button>
-                        <button className="btn-link btn-danger" onClick={() => removeIt('rep', r.id)}>Delete</button>
+                        <button className="btn-link btn-danger" onClick={() => removeIt('rep', r.id, 'representative')}>Delete</button>
                       </div>
                     </div>
                   ))}
@@ -172,6 +173,19 @@ export default function ProfileView({ email }) {
           )}
         </div>
       </section>
+
+      {confirm && (
+        <div className="sup-modal-overlay" onClick={() => setConfirm(null)}>
+          <div className="sup-modal" onClick={e => e.stopPropagation()}>
+            <div className="sup-modal-msg">Delete this {confirm.label}?</div>
+            {confirm.note && <div className="sup-modal-note">{confirm.note}</div>}
+            <div className="sup-modal-actions">
+              <button className="btn-link" onClick={() => setConfirm(null)}>Cancel</button>
+              <button className="btn-danger-solid" disabled={busy} onClick={doDelete}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

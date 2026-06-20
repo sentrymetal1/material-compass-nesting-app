@@ -190,3 +190,12 @@
 .btn-danger { color: #b3261e; }
 .prof-form { padding: 14px 16px; background: #f8fafc; border-top: 1px solid var(--line); }
 .prof-addrep { display: inline-block; margin: 8px 0 10px 28px; }
+
+/* In-app confirm modal (replaces native confirm) */
+.sup-modal-overlay { position: fixed; inset: 0; background: rgba(31,42,55,.45); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.sup-modal { background: #fff; border-radius: 12px; padding: 22px 24px; max-width: 380px; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+.sup-modal-msg { font-size: 16px; font-weight: 600; color: #1f2a37; }
+.sup-modal-note { margin-top: 8px; font-size: 13px; color: var(--muted); }
+.sup-modal-actions { margin-top: 20px; display: flex; justify-content: flex-end; gap: 12px; align-items: center; }
+.btn-danger-solid { background: #b3261e; color: #fff; border: none; border-radius: 8px; padding: 9px 18px; font-weight: 600; cursor: pointer; }
+.btn-danger-solid:disabled { opacity: .6; cursor: default; }
