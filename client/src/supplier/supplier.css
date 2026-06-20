@@ -166,3 +166,13 @@
 .q-tile-active.q-tile-awarded { background: #f1faf3; }
 .q-tile-active.q-tile-closed { background: #f5f6f8; }
 .q-card-ro .q-head { cursor: default; }
+
+/* Profile tab */
+.prof-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+.prof-readonly { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.prof-readonly > div { font-size: 14px; }
+.prof-lbl { display: inline-block; min-width: 150px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+.prof-mono { font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: pre-line; }
+.prof-list { display: flex; flex-direction: column; gap: 8px; }
+.prof-row { background: #fff; border: 1px solid var(--line); border-left: 3px solid #5F94CE; border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.prof-row-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

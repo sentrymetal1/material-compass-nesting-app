@@ -411,6 +411,72 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
+  // GET /api/supplier/me/profile — company profile + locations + reps for the Profile tab.
+  app.get('/api/supplier/me/profile', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const [supRows, locs, reps] = await Promise.all([
+        cachedLookup('supplier-directory', 5 * 60 * 1000, async () => fetchAllZohoPages('/report/' + SUPPLIER_REPORT)),
+        fetchAllZohoPages('/report/All_Supplier_Locations?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
+        fetchAllZohoPages('/report/All_Supplier_Representatives?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
+      ]);
+      const rec = supRows.find(r => String(r.ID) === sid) || {};
+      const nm = rec.Main_Contact_Name || {};
+      const addr = a => (a && typeof a === 'object') ? a : {};
+      res.json({
+        ok: true,
+        profile: {
+          id: sid,
+          company_name: rec.Company_Name || '',
+          contact_first: nm.first_name || '',
+          contact_last: nm.last_name || '',
+          email: rec.Email || '',
+          phone: rec.Phone_Number || '',
+          fax: rec.Fax || '',
+          website: flatten(rec.Company_Website) || '',
+          account_type: rec.Select_Account_Type || '',
+          material_serviced: rec.Type_Of_Material_Serviced || '',
+          certifications: Array.isArray(rec.Disadvantage) ? rec.Disadvantage : [],
+          address: addr(rec.Address),
+          login_emails: rec.Account_User_Email || '',
+          registered: rec.Registration_Date || '',
+        },
+        locations: (locs || []).map(l => ({ id: String(l.ID), name: l.Name_of_Location || '', phone: l.Phone_Number || '', address: addr(l.Address) })),
+        reps: (reps || []).map(r => ({
+          id: String(r.ID), name: flatten(r.Name), position: r.Position || '',
+          email: r.Email || '', phone: r.Phone_Number || '', ext: r.Extension || '',
+          location: (r.Supplier_Locations && r.Supplier_Locations.zc_display_value) || '',
+        })),
+      });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // PATCH /api/supplier/me/profile — update the company's core profile fields.
+  app.patch('/api/supplier/me/profile', withSupplier, async (req, res) => {
+    try {
+      const b = req.body || {};
+      const data = {};
+      if (b.company_name != null) data.Company_Name = b.company_name;
+      if (b.email != null) data.Email = b.email;
+      if (b.phone != null) data.Phone_Number = b.phone;
+      if (b.fax != null) data.Fax = b.fax;
+      if (b.website != null) data.Company_Website = b.website;
+      if (b.contact_first != null || b.contact_last != null) {
+        data.Main_Contact_Name = { first_name: b.contact_first || '', last_name: b.contact_last || '' };
+      }
+      if (!Object.keys(data).length) return res.status(400).json({ ok: false, error: 'no editable fields supplied' });
+      const result = await patchRecord(SUPPLIER_REPORT, req.supplier.id, data);
+      if (!result.ok) return res.status(502).json({ ok: false, error: 'update rejected', code: result.code, message: result.message });
+      res.json({ ok: true });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // Dashboard — the supplier's home. v1 returns fitting matches (live). Structural
   // matches + quote statuses get added here next (Phase 1 continued) so the UI has
   // one call for its home screen.

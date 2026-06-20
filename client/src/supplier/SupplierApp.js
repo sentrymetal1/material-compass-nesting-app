@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import './supplier.css';
 import QuotesView from './QuotesView';
+import ProfileView from './ProfileView';
 
 // Off-Zoho supplier platform — v1. Embedded in the Zoho portal, which passes the
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
@@ -86,15 +87,18 @@ export default function SupplierApp() {
           <button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>Dashboard</button>
           <button className={view === 'quotes' ? 'active' : ''} onClick={() => setView('quotes')}>Quotes</button>
           <span className="soon" title="Coming next">Stock</span>
-          <span className="soon" title="Coming next">Profile</span>
+          <button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')}>Profile</button>
         </nav>
         <div className="sup-who">
           {d && d.supplier ? d.supplier.company_name : (email || '—')}
         </div>
       </header>
 
-      <main className={'sup-main' + (view === 'quotes' ? ' sup-main-wide' : '')}>
-        {view === 'quotes' ? (
+      <main className={'sup-main' + (view === 'quotes' || view === 'profile' ? ' sup-main-wide' : '')}>
+        {view === 'profile' ? (
+          email ? <ProfileView email={email} />
+            : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
+        ) : view === 'quotes' ? (
           email ? <QuotesView email={email} />
             : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
         ) : (<>
