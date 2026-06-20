@@ -199,3 +199,21 @@
 .sup-modal-actions { margin-top: 20px; display: flex; justify-content: flex-end; gap: 12px; align-items: center; }
 .btn-danger-solid { background: #b3261e; color: #fff; border: none; border-radius: 8px; padding: 9px 18px; font-weight: 600; cursor: pointer; }
 .btn-danger-solid:disabled { opacity: .6; cursor: default; }
+
+/* Stock tab */
+.stock-tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+.stock-tabs button { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px 16px; font: inherit; cursor: pointer; color: #56606e; }
+.stock-tabs button.active { background: #5F94CE; border-color: #5F94CE; color: #fff; }
+.stock-controls { display: flex; gap: 16px; align-items: center; margin-bottom: 14px; }
+.stock-search { flex: 1; max-width: 420px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.stock-only { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #56606e; }
+.stock-group { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+.stock-group-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #f3f8ff; border: none; font: inherit; cursor: pointer; text-align: left; }
+.stock-group-head .muted { margin-left: auto; }
+.stock-caret { color: var(--muted); width: 12px; }
+.stock-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 2px; padding: 8px; }
+.stock-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.stock-row:hover { background: #f6f8fa; }
+.stock-row.stock-on { background: #f1faf3; }
+.stock-mat { font-weight: 600; color: #1f2a37; }
+.stock-spec { color: var(--muted); }

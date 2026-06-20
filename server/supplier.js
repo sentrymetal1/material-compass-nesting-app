@@ -577,6 +577,59 @@ function registerSupplierRoutes(app, deps) {
     res.json({ ok: true });
   });
 
+  // ---- Stock (Structural + Fittings) ----
+  const STRUCT_REPORT = 'Stocked_Material_List';
+  const FIT_STOCK_REPORT = process.env.FITTING_STOCK_REPORT || 'Supplier_Fitting_Stock_All';
+  const isStocked = v => Array.isArray(v) ? v.includes('Stocked') : (v === 'Stocked' || v === true || v === 'true');
+  const structStock = sid => cachedLookup('struct-stock:' + sid, 60 * 1000, () =>
+    fetchAllZohoPages('/report/' + STRUCT_REPORT + '?criteria=(Supplier_ID==' + encodeURIComponent(sid) + ')'));
+  const fitStock = sid => cachedLookup('fit-stock-all:' + sid, 60 * 1000, () =>
+    fetchAllZohoPages('/report/' + FIT_STOCK_REPORT + '?criteria=(Supplier_ID==' + encodeURIComponent(sid) + ')'));
+
+  // GET /api/supplier/me/stock — structural + fittings stock lists for the Stock tab.
+  app.get('/api/supplier/me/stock', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const [struct, fit] = await Promise.all([structStock(sid), fitStock(sid)]);
+      res.json({
+        ok: true,
+        structural: (struct || []).map(r => ({
+          id: String(r.ID),
+          form_type: flatten(r.Form_Type),
+          material_type: flatten(r.Material_Type),
+          spec: r.Type_Detail || flatten(r.Type_Detail_LU) || '',
+          stocked: isStocked(r.Material_Stocked),
+        })),
+        fittings: (fit || []).map(r => ({
+          id: String(r.ID),
+          type: flatten(r.Fitting_Type), make: flatten(r.Fitting_Make),
+          end: flatten(r.End_Type), connection: flatten(r.Connection_Type),
+          spec: flatten(r.Fitting_Specification), stocked: isStocked(r.Fitting_Stocked_Checkbox),
+        })),
+      });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // PATCH /api/supplier/me/stock/structural/:id — toggle a structural item stocked/not.
+  // Ownership verified against the supplier's cached stock list (no extra API call).
+  app.patch('/api/supplier/me/stock/structural/:id', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const rows = await structStock(sid);
+      if (!rows.some(r => String(r.ID) === String(req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+      const stocked = !!(req.body && req.body.stocked);
+      const r = await patchRecord(STRUCT_REPORT, req.params.id, { Material_Stocked: stocked ? ['Stocked'] : [] });
+      if (!r.ok) return res.status(502).json({ ok: false, error: 'update failed', message: r.message });
+      res.json({ ok: true });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // Dashboard — the supplier's home. v1 returns fitting matches (live). Structural
   // matches + quote statuses get added here next (Phase 1 continued) so the UI has
   // one call for its home screen.
