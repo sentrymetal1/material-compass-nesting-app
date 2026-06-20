@@ -630,6 +630,76 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
+  // GET /api/supplier/me/fitting-catalog — the 5 cascade tables (global, cached 1h).
+  // End/Connection carry a type_id (filter by Fitting Type); Spec carries make_id.
+  const lkId = (r, key) => (r[key] && r[key].ID) || r[key + '.ID'] || '';
+  app.get('/api/supplier/me/fitting-catalog', withSupplier, async (req, res) => {
+    try {
+      const cat = await cachedLookup('fitting-catalog', 60 * 60 * 1000, async () => {
+        const [types, makes, ends, conns, specs] = await Promise.all([
+          fetchAllZohoPages('/report/Fitting_Type_Report'),
+          fetchAllZohoPages('/report/Fitting_Make_Report'),
+          fetchAllZohoPages('/report/End_Type_Report'),
+          fetchAllZohoPages('/report/Connection_Type_Report'),
+          fetchAllZohoPages('/report/Fitting_Specification_Report'),
+        ]);
+        return {
+          types: (types || []).map(r => ({ id: String(r.ID), name: r.Fitting_Type || '' })).filter(x => x.name),
+          makes: (makes || []).map(r => ({ id: String(r.ID), name: r.Fitting_Make || '' })).filter(x => x.name),
+          ends: (ends || []).map(r => ({ id: String(r.ID), name: r.End_Type || '', type_id: String(lkId(r, 'Fitting_Type')) })),
+          connections: (conns || []).map(r => ({ id: String(r.ID), name: r.Connection_Type || '', type_id: String(lkId(r, 'Fitting_Type')) })),
+          specs: (specs || []).map(r => ({ id: String(r.ID), name: r.Fitting_Specification || '', make_id: String(lkId(r, 'Fitting_Make')) })),
+        };
+      });
+      res.json({ ok: true, catalog: cat });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // POST /api/supplier/me/stock/fittings — add a stocked fitting (dedupes on the 5 axes).
+  app.post('/api/supplier/me/stock/fittings', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const b = req.body || {};
+      for (const k of ['type_id', 'make_id', 'end_id', 'connection_id', 'spec_id']) {
+        if (!b[k]) return res.status(400).json({ ok: false, error: 'missing ' + k });
+      }
+      const existing = await fitStock(sid);
+      const dup = (existing || []).some(r =>
+        String((r.Fitting_Type || {}).ID) === b.type_id && String((r.Fitting_Make || {}).ID) === b.make_id &&
+        String((r.End_Type || {}).ID) === b.end_id && String((r.Connection_Type || {}).ID) === b.connection_id &&
+        String((r.Fitting_Specification || {}).ID) === b.spec_id);
+      if (dup) return res.json({ ok: true, duplicate: true });
+      const r = await addRecord('Supplier_Fitting_Stock', {
+        Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id,
+        End_Type: b.end_id, Connection_Type: b.connection_id, Fitting_Specification: b.spec_id,
+        Fitting_Stocked_Checkbox: ['Stocked'],
+      });
+      if (!r.ok) return res.status(502).json({ ok: false, error: 'add failed', message: r.message });
+      res.json({ ok: true, id: r.id });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // DELETE /api/supplier/me/stock/fittings/:id — remove a stocked fitting.
+  app.delete('/api/supplier/me/stock/fittings/:id', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const rows = await fitStock(sid);
+      if (!rows.some(r => String(r.ID) === String(req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+      const r = await deleteRecord(FIT_STOCK_REPORT, req.params.id);
+      if (!r.ok) return res.status(502).json({ ok: false, error: 'delete failed', message: r.message });
+      res.json({ ok: true });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // Dashboard — the supplier's home. v1 returns fitting matches (live). Structural
   // matches + quote statuses get added here next (Phase 1 continued) so the UI has
   // one call for its home screen.

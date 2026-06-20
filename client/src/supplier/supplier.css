@@ -217,3 +217,12 @@
 .stock-row.stock-on { background: #f1faf3; }
 .stock-mat { font-weight: 600; color: #1f2a37; }
 .stock-spec { color: var(--muted); }
+
+/* Stock: fittings cascade picker */
+.stock-sub { font-size: 15px; margin: 18px 0 10px; color: #1f2a37; }
+.stock-sub:first-child { margin-top: 0; }
+.fit-add { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 8px; }
+.fit-cascade { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.fit-cascade label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.fit-cascade select { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; color: #1f2a37; }
+.fit-cascade select:disabled { background: #f3f4f6; color: #9aa1ab; }
