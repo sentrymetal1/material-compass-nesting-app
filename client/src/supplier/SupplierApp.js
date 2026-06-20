@@ -70,6 +70,7 @@ export default function SupplierApp() {
   }, [email]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { document.title = 'Material Compass · Supplier'; }, []);
 
   const d = state.data;
   const fittings = (d && d.matches && d.matches.fittings) || [];

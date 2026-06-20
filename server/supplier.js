@@ -147,6 +147,9 @@ function registerSupplierRoutes(app, deps) {
       fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')'));
     const byQuote = new Map();
     for (const r of rows) {
+      // Skip RFQ lines from superseded MFG quote revisions (the revision workflow
+      // flags them MFG_Revision_Cancel_Entry=true) so the supplier only sees current ones.
+      if (r.MFG_Revision_Cancel_Entry === true || r.MFG_Revision_Cancel_Entry === 'true') continue;
       const qid = lkid(r.Quote_LU) || lkid(r.Quote_LU_ID) || ('q' + (r.Quote_Number || ''));
       if (!byQuote.has(qid)) {
         byQuote.set(qid, {
