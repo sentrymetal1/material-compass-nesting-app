@@ -41,6 +41,14 @@ function toZohoDate(iso) {
   return (months[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[3] + ',' + m[1];
 }
 
+// Current datetime in the form's display format, e.g. "Jun 20,2026 10:42:03".
+function zohoNow() {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return months[d.getMonth()] + ' ' + p(d.getDate()) + ',' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
 function registerSupplierRoutes(app, deps) {
   const { fetchAllZohoPages, cachedLookup, sendZohoAwareError, getAccessToken, creatorApiBase, zohoHeaders, axios } = deps;
 
@@ -243,6 +251,16 @@ function registerSupplierRoutes(app, deps) {
       const firstRow = rowById.get(String(lines[0] && lines[0].rfqs_sent_id)) || rawRows[0];
       const mfgId = firstRow ? lkid(firstRow.Customer_LU) : '';
 
+      // MFG_Representative is mandatory on the SV form — resolve one rep for this MFG.
+      let mfgRep = '';
+      if (mfgId) {
+        try {
+          const reps = await cachedLookup('mfg-reps:' + mfgId, 10 * 60 * 1000, async () =>
+            fetchAllZohoPages('/report/All_Company_Representatives?criteria=(Manufacture==' + encodeURIComponent(mfgId) + ')'));
+          if (reps && reps[0]) mfgRep = String(reps[0].ID);
+        } catch (e) { /* leave blank; addRecord will surface the mandatory error */ }
+      }
+
       const detailRows = [];
       let missing = 0;
       for (const l of lines) {
@@ -278,29 +296,30 @@ function registerSupplierRoutes(app, deps) {
           Line_Item: r.Line_Item || '',
           Reference_Quote_Number: svQuoteNum,
           SVD_Quantity: r.Quantity != null ? r.Quantity : '',
-          SVD_Total_Length: r.Total_Length != null ? r.Total_Length : '',
-          SVD_Unit_Weight: uw,
-          SVD_Calc_Weight: tw,
+          SVD_Total_Length: r.Total_Length != null ? round(Number(r.Total_Length) || 0, 4) : '',
+          SVD_Unit_Weight: round(uw, 2),
+          SVD_Calc_Weight: round(tw, 2),
           Item_Requirements: itemReq,
-          // pricing
+          // pricing — match each field's configured precision (else "maximum digits")
           SVD_Item_Verification_Status: opt,
-          SVD_Price_Per_Lb: ppl,
-          SVD_Unit_Price: up,
-          SVD_Total_Price: tp,
+          SVD_Price_Per_Lb: round(ppl, 3),
+          SVD_Unit_Price: round(up, 3),
+          SVD_Total_Price: round(tp, 2),
           SVD_Price_Per_Lb_Counter: (opt === 'Quote As Is' && tp > 0) ? 1 : 0,
           SVD_Supplier_Comments: cmt,
-          // PDF snapshot fields (feed the reference document)
+          // PDF snapshot fields (feed the reference document). These are tight number
+          // fields (~6 digits) — round to 2 places so larger amounts fit, like the widget.
           PDF_Quote_Option: opt,
           PDF_Item_Description_and_Measurement: desc,
           PDF_Item_Description_and_Measurement_Multi_Line: reqStr ? (desc + '\n' + reqStr) : desc,
           PDF_Item_Requirements: itemReq,
           PDF_Quantity: r.Quantity != null ? r.Quantity : '',
-          PDF_Unit_Weight: uw,
-          PDF_Total_Weight: tw,
+          PDF_Unit_Weight: round(uw, 2),
+          PDF_Total_Weight: round(tw, 2),
           PDF_Weight_Multi_Line: 'Unit WT ' + num(uw, 2) + '\nTotal WT ' + num(tw, 2),
-          PDF_Price_Per_LB: ppl,
-          PDF_Unit_Amount: up,
-          PDF_Total_Amount: tp,
+          PDF_Price_Per_LB: round(ppl, 2),
+          PDF_Unit_Amount: round(up, 2),
+          PDF_Total_Amount: round(tp, 2),
           PDF_Price_Multi_Line: noQuote ? 'No Quote' : ('Per Lb ' + money(ppl) + '\nUnit Price ' + money(up)),
           PDF_Lead_Time: leadTxt,
           PDF_Supplier_Comments: cmt,
@@ -318,6 +337,8 @@ function registerSupplierRoutes(app, deps) {
         SV_Supplier_Entry_Form: supplierId,
         SV_Quote_Form: String(quote_id),
         MANUFACTURER: mfgId,
+        MFG_Representative: mfgRep,
+        SV_TimeStamp: zohoNow(),
         Supplier_Locations: header.location ? String(header.location) : '',
         Supplier_Representatives: header.rep ? String(header.rep) : '',
         Auto_Number_or_Quote_Number_Selection: svQuoteNum.startsWith('AUTO-') ? 'Use Auto Number for Quote Number' : 'Input Internal Quote Number',
