@@ -50,7 +50,8 @@ function zohoNow() {
 }
 
 function registerSupplierRoutes(app, deps) {
-  const { fetchAllZohoPages, cachedLookup, sendZohoAwareError, getAccessToken, creatorApiBase, zohoHeaders, axios } = deps;
+  const { fetchAllZohoPages, cachedLookup, cacheBust, sendZohoAwareError, getAccessToken, creatorApiBase, zohoHeaders, axios } = deps;
+  const bust = k => { if (typeof cacheBust === 'function') cacheBust(k); };
 
   // PATCH one Zoho record; returns {ok, code, message}. Surfaces per-record errors
   // (per the "don't silently drop rows" rule) so a partial submit is visible.
@@ -622,6 +623,8 @@ function registerSupplierRoutes(app, deps) {
           type: flatten(r.Fitting_Type), make: flatten(r.Fitting_Make),
           end: flatten(r.End_Type), connection: flatten(r.Connection_Type),
           spec: flatten(r.Fitting_Specification), stocked: isStocked(r.Fitting_Stocked_Checkbox),
+          type_id: lkid(r.Fitting_Type), make_id: lkid(r.Fitting_Make), end_id: lkid(r.End_Type),
+          connection_id: lkid(r.Connection_Type), spec_id: lkid(r.Fitting_Specification),
         })),
       });
     } catch (err) {
@@ -640,6 +643,7 @@ function registerSupplierRoutes(app, deps) {
       const stocked = !!(req.body && req.body.stocked);
       const r = await patchRecord(STRUCT_REPORT, req.params.id, { Material_Stocked: stocked ? ['Stocked'] : [] });
       if (!r.ok) return res.status(502).json({ ok: false, error: 'update failed', message: r.message });
+      bust('struct-stock:' + sid);
       res.json({ ok: true });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
@@ -695,6 +699,7 @@ function registerSupplierRoutes(app, deps) {
         Fitting_Stocked_Checkbox: ['Stocked'], Timestamp: zohoNow(),
       });
       if (!r.ok) return res.status(502).json({ ok: false, error: 'add failed', message: r.message });
+      bust('fit-stock-all:' + sid); bust('fitting-stock:' + sid);
       res.json({ ok: true, id: r.id });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
@@ -725,7 +730,39 @@ function registerSupplierRoutes(app, deps) {
       if (!rows.length) return res.json({ ok: true, added: 0, duplicates: attempted });
       const result = await bulkAdd('Supplier_Fitting_Stock', rows);
       if (!result.added && result.errors.length) return res.status(502).json({ ok: false, error: 'add failed', message: result.errors[0] });
+      bust('fit-stock-all:' + sid); bust('fitting-stock:' + sid);
       res.json({ ok: true, added: result.added, attempted, duplicates: attempted - rows.length });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // PUT /api/supplier/me/stock/fittings/group — sync one Type/Make/End group's stock to
+  // the chosen connections × specs (adds new combos, removes deselected ones).
+  app.put('/api/supplier/me/stock/fittings/group', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const b = req.body || {};
+      if (!b.type_id || !b.make_id || !b.end_id) return res.status(400).json({ ok: false, error: 'type, make, and end required' });
+      const connIds = Array.isArray(b.connection_ids) ? b.connection_ids.filter(Boolean) : [];
+      const specIds = Array.isArray(b.spec_ids) ? b.spec_ids.filter(Boolean) : [];
+      const all = await fitStock(sid);
+      const inGroup = (all || []).filter(r =>
+        String((r.Fitting_Type || {}).ID) === b.type_id && String((r.Fitting_Make || {}).ID) === b.make_id && String((r.End_Type || {}).ID) === b.end_id);
+      const existing = new Map(); // conn|spec -> row id
+      for (const r of inGroup) existing.set(String((r.Connection_Type || {}).ID) + '|' + String((r.Fitting_Specification || {}).ID), String(r.ID));
+      const desired = new Set();
+      for (const c of connIds) for (const s of specIds) desired.add(c + '|' + s);
+      const toAdd = [];
+      for (const key of desired) if (!existing.has(key)) { const [c, s] = key.split('|'); toAdd.push({ Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id, End_Type: b.end_id, Connection_Type: c, Fitting_Specification: s, Fitting_Stocked_Checkbox: ['Stocked'], Timestamp: zohoNow() }); }
+      const toDelete = [];
+      for (const [key, id] of existing) if (!desired.has(key)) toDelete.push(id);
+      let added = 0, removed = 0;
+      if (toAdd.length) { const r = await bulkAdd('Supplier_Fitting_Stock', toAdd); added = r.added; }
+      for (const id of toDelete) { const r = await deleteRecord(FIT_STOCK_REPORT, id); if (r.ok) removed++; }
+      bust('fit-stock-all:' + sid); bust('fitting-stock:' + sid);
+      res.json({ ok: true, added, removed });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
@@ -740,6 +777,7 @@ function registerSupplierRoutes(app, deps) {
       if (!rows.some(r => String(r.ID) === String(req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
       const r = await deleteRecord(FIT_STOCK_REPORT, req.params.id);
       if (!r.ok) return res.status(502).json({ ok: false, error: 'delete failed', message: r.message });
+      bust('fit-stock-all:' + sid); bust('fitting-stock:' + sid);
       res.json({ ok: true });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);

@@ -2,8 +2,9 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 
 // Supplier Stock tab.
 //  Structural: searchable, grouped (by Form Type) toggle list -> Stocked_Material_List.
-//  Fittings: cascade add-picker (Type->End->Connection, Make->Spec) + stocked list
-//    grouped by type with remove -> Supplier_Fitting_Stock. Feeds dashboard matches.
+//  Fittings: add a Type/Make/End group, then check the Connections × Specs you stock.
+//    Existing groups show as an accordion you can expand and edit in place. Each save
+//    syncs that group (adds new combos, removes deselected) -> Supplier_Fitting_Stock.
 export default function StockView({ email }) {
   const [state, setState] = useState({ status: 'loading', data: null, error: null });
   const [tab, setTab] = useState('structural');
@@ -13,7 +14,8 @@ export default function StockView({ email }) {
   const [saving, setSaving] = useState({});
   // fittings
   const [catalog, setCatalog] = useState(null);
-  const [pick, setPick] = useState({ type_id: '', make_id: '', end_id: '', connection_ids: [], spec_ids: [] });
+  const [addPick, setAddPick] = useState({ type_id: '', make_id: '', end_id: '' });
+  const [openFit, setOpenFit] = useState(null); // expanded existing group key
   const [fitMsg, setFitMsg] = useState('');
   const [fitBusy, setFitBusy] = useState(false);
 
@@ -28,15 +30,10 @@ export default function StockView({ email }) {
   }, [email]);
   useEffect(() => { load(); }, [load]);
 
-  // lazy-load the fitting catalog the first time the Fittings tab is opened
   useEffect(() => {
     if (tab !== 'fittings' || catalog) return;
     (async () => {
-      try {
-        const r = await fetch('/api/supplier/me/fitting-catalog?email=' + encodeURIComponent(email));
-        const j = await r.json();
-        if (j.ok) setCatalog(j.catalog);
-      } catch (e) { /* picker just stays empty */ }
+      try { const r = await fetch('/api/supplier/me/fitting-catalog?email=' + encodeURIComponent(email)); const j = await r.json(); if (j.ok) setCatalog(j.catalog); } catch (e) {}
     })();
   }, [tab, catalog, email]);
 
@@ -61,9 +58,7 @@ export default function StockView({ email }) {
     setSaving(s => ({ ...s, [it.id]: true }));
     setState(s => ({ ...s, data: { ...s.data, structural: s.data.structural.map(x => x.id === it.id ? { ...x, stocked: next } : x) } }));
     try {
-      const r = await fetch('/api/supplier/me/stock/structural/' + it.id + '?email=' + encodeURIComponent(email), {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stocked: next }),
-      });
+      const r = await fetch('/api/supplier/me/stock/structural/' + it.id + '?email=' + encodeURIComponent(email), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stocked: next }) });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.message || j.error || ('HTTP ' + r.status));
     } catch (e) {
@@ -72,47 +67,35 @@ export default function StockView({ email }) {
     } finally { setSaving(s => { const n = { ...s }; delete n[it.id]; return n; }); }
   };
 
-  // fittings cascade options
-  const ends = useMemo(() => catalog ? catalog.ends.filter(e => e.type_id === pick.type_id) : [], [catalog, pick.type_id]);
-  const conns = useMemo(() => catalog ? catalog.connections.filter(c => c.type_id === pick.type_id) : [], [catalog, pick.type_id]);
-  const specs = useMemo(() => catalog ? catalog.specs.filter(s => s.make_id === pick.make_id) : [], [catalog, pick.make_id]);
-  const setP = patch => setPick(p => ({ ...p, ...patch }));
-  const toggleIn = (key, id) => setPick(p => ({ ...p, [key]: p[key].includes(id) ? p[key].filter(x => x !== id) : [...p[key], id] }));
-  const comboCount = pick.connection_ids.length * pick.spec_ids.length;
-  const canAdd = pick.type_id && pick.make_id && pick.end_id && comboCount > 0;
-
-  const addFitting = async () => {
-    setFitBusy(true); setFitMsg('');
-    try {
-      const r = await fetch('/api/supplier/me/stock/fittings/bulk?email=' + encodeURIComponent(email), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type_id: pick.type_id, make_id: pick.make_id, end_id: pick.end_id, connection_ids: pick.connection_ids, spec_ids: pick.spec_ids }),
-      });
-      const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j.message || j.error || ('HTTP ' + r.status));
-      setFitMsg('Added ' + j.added + (j.duplicates ? ' (' + j.duplicates + ' already stocked)' : '') + '.');
-      setPick(p => ({ ...p, connection_ids: [], spec_ids: [] }));
-      await load();
-    } catch (e) { window.alert('Could not add: ' + (e.message || e)); }
-    finally { setFitBusy(false); }
-  };
-  const removeFitting = async (id) => {
-    setFitBusy(true);
-    try {
-      const r = await fetch('/api/supplier/me/stock/fittings/' + id + '?email=' + encodeURIComponent(email), { method: 'DELETE' });
-      const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j.message || j.error || ('HTTP ' + r.status));
-      await load();
-    } catch (e) { window.alert('Could not remove: ' + (e.message || e)); }
-    finally { setFitBusy(false); }
-  };
-
+  // existing fitting groups, keyed type|make|end, collecting the stocked conn/spec ids
   const fitStocked = fittings.filter(f => f.stocked);
   const fitGroups = useMemo(() => {
     const g = {};
-    for (const f of fitStocked) (g[f.type || '—'] = g[f.type || '—'] || []).push(f);
-    return g;
+    for (const f of fitStocked) {
+      const key = f.type_id + '|' + f.make_id + '|' + f.end_id;
+      if (!g[key]) g[key] = { key, type_id: f.type_id, make_id: f.make_id, end_id: f.end_id, type: f.type, make: f.make, end: f.end, conns: new Set(), specs: new Set(), count: 0 };
+      g[key].conns.add(f.connection_id); g[key].specs.add(f.spec_id); g[key].count++;
+    }
+    return Object.values(g).sort((a, b) => (a.type + a.make + a.end).localeCompare(b.type + b.make + b.end));
   }, [fitStocked]);
+
+  const saveGroup = async (type_id, make_id, end_id, connection_ids, spec_ids, isNew) => {
+    setFitBusy(true); setFitMsg('');
+    try {
+      const r = await fetch('/api/supplier/me/stock/fittings/group?email=' + encodeURIComponent(email), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_id, make_id, end_id, connection_ids, spec_ids }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.message || j.error || ('HTTP ' + r.status));
+      setFitMsg('Saved — ' + j.added + ' added, ' + j.removed + ' removed.');
+      if (isNew) setAddPick({ type_id: '', make_id: '', end_id: '' });
+      setOpenFit(null);
+      await load();
+    } catch (e) { window.alert('Could not save: ' + (e.message || e)); }
+    finally { setFitBusy(false); }
+  };
+
+  const addEnds = useMemo(() => catalog ? catalog.ends.filter(e => e.type_id === addPick.type_id) : [], [catalog, addPick.type_id]);
 
   if (state.status === 'loading') return <div className="sup-msg">Loading your stock…</div>;
   if (state.status === 'error') return <div className="sup-msg sup-msg-error">Couldn’t load stock: {state.error} <button className="btn-link" onClick={load}>Retry</button></div>;
@@ -153,86 +136,85 @@ export default function StockView({ email }) {
         </section>
       ) : (
         <section className="sup-section">
-          <h3 className="stock-sub">Add a fitting you stock</h3>
+          <h3 className="stock-sub">Add a fitting group</h3>
           {!catalog ? <div className="sup-msg">Loading catalog…</div> : (
             <div className="fit-add">
               <div className="fit-cascade">
                 <label>Fitting type
-                  <select value={pick.type_id} onChange={e => setP({ type_id: e.target.value, end_id: '', connection_ids: [] })}>
-                    <option value="">— select —</option>
-                    {catalog.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  <select value={addPick.type_id} onChange={e => setAddPick({ type_id: e.target.value, make_id: addPick.make_id, end_id: '' })}>
+                    <option value="">— select —</option>{catalog.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
                 </label>
                 <label>Make / material
-                  <select value={pick.make_id} onChange={e => setP({ make_id: e.target.value, spec_ids: [] })}>
-                    <option value="">— select —</option>
-                    {catalog.makes.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  <select value={addPick.make_id} onChange={e => setAddPick({ ...addPick, make_id: e.target.value })}>
+                    <option value="">— select —</option>{catalog.makes.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                   </select>
                 </label>
                 <label>End type
-                  <select value={pick.end_id} disabled={!pick.type_id} onChange={e => setP({ end_id: e.target.value })}>
-                    <option value="">{pick.type_id ? '— select —' : 'pick a type first'}</option>
-                    {ends.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  <select value={addPick.end_id} disabled={!addPick.type_id} onChange={e => setAddPick({ ...addPick, end_id: e.target.value })}>
+                    <option value="">{addPick.type_id ? '— select —' : 'pick a type first'}</option>{addEnds.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                   </select>
                 </label>
               </div>
-
-              {pick.type_id && (
-                <div className="fit-checkblock">
-                  <div className="fit-check-lbl">Connections <span className="muted">(check all you stock)</span></div>
-                  <div className="fit-checks">
-                    {conns.length === 0 ? <span className="muted">none for this type</span> : conns.map(o => (
-                      <label key={o.id} className={'fit-check' + (pick.connection_ids.includes(o.id) ? ' on' : '')}>
-                        <input type="checkbox" checked={pick.connection_ids.includes(o.id)} onChange={() => toggleIn('connection_ids', o.id)} />{o.name}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+              {addPick.type_id && addPick.make_id && addPick.end_id && (
+                <FittingGroupEditor catalog={catalog} type_id={addPick.type_id} make_id={addPick.make_id} end_id={addPick.end_id}
+                  busy={fitBusy} onSave={(c, s) => saveGroup(addPick.type_id, addPick.make_id, addPick.end_id, c, s, true)} />
               )}
-
-              {pick.make_id && (
-                <div className="fit-checkblock">
-                  <div className="fit-check-lbl">Specifications <span className="muted">(check all you stock)</span></div>
-                  <div className="fit-checks">
-                    {specs.length === 0 ? <span className="muted">none for this make</span> : specs.map(o => (
-                      <label key={o.id} className={'fit-check' + (pick.spec_ids.includes(o.id) ? ' on' : '')}>
-                        <input type="checkbox" checked={pick.spec_ids.includes(o.id)} onChange={() => toggleIn('spec_ids', o.id)} />{o.name}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="q-actions">
-                <button className="btn-quote" disabled={!canAdd || fitBusy} onClick={addFitting}>
-                  {fitBusy ? 'Adding…' : (comboCount > 0 ? 'Add ' + comboCount + ' to stock' : 'Add to stock')}
-                </button>
-                {fitMsg && <span className="q-result q-result-ok">{fitMsg}</span>}
-              </div>
+              {fitMsg && <div className="q-result q-result-ok" style={{ marginTop: 8 }}>{fitMsg}</div>}
             </div>
           )}
 
-          <h3 className="stock-sub">Fittings you stock <span className="muted">— {fitStocked.length}</span></h3>
-          {fitStocked.length === 0 ? <div className="sup-empty">No stocked fittings yet — add one above.</div> : (
-            Object.keys(fitGroups).sort().map(type => (
-              <div key={type} className="stock-group">
-                <div className="stock-group-head" style={{ cursor: 'default' }}><strong>{type}</strong><span className="muted">{fitGroups[type].length}</span></div>
-                <div className="prof-list" style={{ padding: 8 }}>
-                  {fitGroups[type].map(f => (
-                    <div key={f.id} className="prof-row">
-                      <div className="prof-row-main">
-                        <strong>{f.make}</strong>
-                        <span className="muted">{[f.end, f.connection, f.spec].filter(Boolean).join(' · ')}</span>
-                      </div>
-                      <button className="btn-link btn-danger" disabled={fitBusy} onClick={() => removeFitting(f.id)}>Remove</button>
-                    </div>
-                  ))}
-                </div>
+          <h3 className="stock-sub">Fittings you stock <span className="muted">— {fitStocked.length} across {fitGroups.length} group{fitGroups.length === 1 ? '' : 's'}</span></h3>
+          {fitGroups.length === 0 ? <div className="sup-empty">No stocked fittings yet — add a group above.</div> : fitGroups.map(g => {
+            const open = openFit === g.key;
+            return (
+              <div key={g.key} className="stock-group">
+                <button className="stock-group-head" onClick={() => setOpenFit(open ? null : g.key)}>
+                  <span className="stock-caret">{open ? '▾' : '▸'}</span>
+                  <strong>{g.type}</strong><span className="muted">{g.make} · {g.end}</span>
+                  <span className="muted" style={{ marginLeft: 'auto' }}>{g.count} item{g.count === 1 ? '' : 's'}</span>
+                </button>
+                {open && catalog && (
+                  <div style={{ padding: '12px 16px' }}>
+                    <FittingGroupEditor catalog={catalog} type_id={g.type_id} make_id={g.make_id} end_id={g.end_id}
+                      initConns={[...g.conns]} initSpecs={[...g.specs]} busy={fitBusy}
+                      onSave={(c, s) => saveGroup(g.type_id, g.make_id, g.end_id, c, s, false)} />
+                  </div>
+                )}
               </div>
-            ))
-          )}
+            );
+          })}
         </section>
       )}
+    </div>
+  );
+}
+
+function FittingGroupEditor({ catalog, type_id, make_id, end_id, initConns, initSpecs, onSave, busy }) {
+  const [conns, setConns] = useState(initConns || []);
+  const [specs, setSpecs] = useState(initSpecs || []);
+  const connOpts = catalog.connections.filter(c => c.type_id === type_id);
+  const specOpts = catalog.specs.filter(s => s.make_id === make_id);
+  const tog = (arr, set, id) => set(arr.includes(id) ? arr.filter(x => x !== id) : [...arr, id]);
+  const count = conns.length * specs.length;
+  return (
+    <div>
+      <div className="fit-check-lbl">Connections <span className="muted">(check all you stock)</span></div>
+      <div className="fit-checks">
+        {connOpts.length === 0 ? <span className="muted">none for this type</span> : connOpts.map(o => (
+          <label key={o.id} className={'fit-check' + (conns.includes(o.id) ? ' on' : '')}><input type="checkbox" checked={conns.includes(o.id)} onChange={() => tog(conns, setConns, o.id)} />{o.name}</label>
+        ))}
+      </div>
+      <div className="fit-check-lbl" style={{ marginTop: 12 }}>Specifications <span className="muted">(check all you stock)</span></div>
+      <div className="fit-checks">
+        {specOpts.length === 0 ? <span className="muted">none for this make</span> : specOpts.map(o => (
+          <label key={o.id} className={'fit-check' + (specs.includes(o.id) ? ' on' : '')}><input type="checkbox" checked={specs.includes(o.id)} onChange={() => tog(specs, setSpecs, o.id)} />{o.name}</label>
+        ))}
+      </div>
+      <div className="q-actions">
+        <button className="btn-quote" disabled={busy} onClick={() => onSave(conns, specs)}>{busy ? 'Saving…' : 'Save (' + count + ' item' + (count === 1 ? '' : 's') + ')'}</button>
+        {count === 0 && <span className="muted">unchecking everything will clear this group</span>}
+      </div>
     </div>
   );
 }
