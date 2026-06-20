@@ -31,6 +31,16 @@ function flatten(v) {
 
 const round = (n, dp) => { const f = Math.pow(10, dp); return Math.round((Number(n) || 0) * f) / f; };
 
+// Zoho date fields want the form's display format (MMM dd,yyyy, e.g. "Jul 30,2026").
+// The browser date input sends ISO "2026-07-30"; convert, or pass through if unexpected.
+function toZohoDate(iso) {
+  if (!iso) return '';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(iso);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return (months[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[3] + ',' + m[1];
+}
+
 function registerSupplierRoutes(app, deps) {
   const { fetchAllZohoPages, cachedLookup, sendZohoAwareError, getAccessToken, creatorApiBase, zohoHeaders, axios } = deps;
 
@@ -203,76 +213,149 @@ function registerSupplierRoutes(app, deps) {
   });
 
   // POST /api/supplier/me/quote-submit — submit a priced quote (off-Zoho path).
-  // Adds ONE record to the Supplier_Quote_Submit_Queue form; its On-Create workflow
-  // runs submitSupplierQuote() (create + populate + price) then processSupplierSubmit()
-  // (write-back + MFG email + status). Reuses Railway's existing data-API integration;
-  // 1 add + 1 read-back, sparing the API budget.
+  // Creates ONE Supplier_Verify_Form record with its Supplier_Verify_Detail rows passed
+  // as a nested subform array — the exact mechanism the native "Submit Quote" widget uses
+  // (a standalone Deluge function can't build that subform; the addRecord API can). The
+  // SV form's own "Successful form submission" workflow then fires and does the RFQs_Sent
+  // write-back, the MFG email, and the dashboard status — same path as a human submit.
   app.post('/api/supplier/me/quote-submit', withSupplier, async (req, res) => {
     try {
       const { quote_id, header = {}, lines = [] } = req.body || {};
+      const supplierId = String(req.supplier.id);
+      if (!quote_id) return res.status(400).json({ ok: false, error: 'quote_id required' });
+      if (!lines.length) return res.status(400).json({ ok: false, error: 'no priced lines' });
 
-      // package the priced lines for the Deluge function (it does lines.toJSONList())
-      const queueLines = lines.filter(l => l && l.rfqs_sent_id).map(l => {
+      // supplier quote number (their input) or an auto placeholder
+      let svQuoteNum = (header.supplier_quote_number || '').trim();
+      if (!svQuoteNum) svQuoteNum = 'AUTO-' + quote_id;
+
+      // Pull the authoritative RFQs_Sent rows for this supplier and index by ID — we build
+      // the subform from these (not from client-sent data) so lookups/weights are correct.
+      const rawRows = await cachedLookup('sent-rfqs-raw:' + supplierId, 30 * 1000, async () =>
+        fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')'));
+      const rowById = new Map(rawRows.map(r => [String(r.ID), r]));
+
+      // money/format helpers for the PDF snapshot strings the reference doc reads
+      const money = n => '$' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+      const num = (n, d = 2) => (Math.round((Number(n) || 0) * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d);
+
+      // derive manufacturer from any row (Customer_LU = the MFG on RFQs_Sent)
+      const firstRow = rowById.get(String(lines[0] && lines[0].rfqs_sent_id)) || rawRows[0];
+      const mfgId = firstRow ? lkid(firstRow.Customer_LU) : '';
+
+      const detailRows = [];
+      let missing = 0;
+      for (const l of lines) {
+        const r = rowById.get(String(l.rfqs_sent_id));
+        if (!r) { missing++; continue; }
         const noQuote = l.quote_option === 'No Quote';
-        return {
-          rfqs_sent_id: String(l.rfqs_sent_id),
-          quote_option: l.quote_option || 'Quote As Is',
-          total_price: noQuote ? 0 : round(l.total_price, 2),
-          price_per_lb: noQuote ? 0 : round(l.price_per_lb, 5),
-          unit_price: noQuote ? 0 : round(l.unit_price, 5),
-          lead_time: l.lead_time || '',
-          comments: l.comments || '',
-        };
-      });
+        const opt = l.quote_option || 'Quote As Is';
+        const ppl = noQuote ? 0 : Number(l.price_per_lb) || 0;
+        const up = noQuote ? 0 : Number(l.unit_price) || 0;
+        const tp = noQuote ? 0 : Number(l.total_price) || 0;
+        const cmt = l.comments || '';
+        const desc = r.Description_And_Dimension_Text || r.Full_Item_Description || '';
+        const itemReq = Array.isArray(r.Item_Requirements) ? r.Item_Requirements : [];
+        const reqStr = itemReq.join(', ');
+        const uw = Number(r.Unit_Weight) || 0;
+        const tw = Number(r.CalcWeight) || 0;
+        const leadTxt = l.lead_time || '';
 
+        detailRows.push({
+          // links back to the source RFQ line + master records
+          SVD_RFQs_Sent: String(r.ID),
+          RFQ_Sent_ID_Number: String(r.ID),
+          SVD_Supplier_LU: lkid(r.Supplier_LU),
+          SVD_Customer_LU: lkid(r.Customer_LU),
+          SVD_Quote_LU: lkid(r.Quote_LU),
+          SVD_Jeffs_Calcs_LU: lkid(r.Jeffs_Calcs_LU),
+          SVD_Project_ID: lkid(r.MCP_Customer_Project_Form),
+          SVD_Form_Types: lkid(r.Form_Type),
+          SVD_Material_Types: lkid(r.Material_Type),
+          SVD_Material_Form_Detail: lkid(r.Material_Form_Detail),
+          // descriptive + dimensional snapshot
+          SVD_Material_Description: desc,
+          Line_Item: r.Line_Item || '',
+          Reference_Quote_Number: svQuoteNum,
+          SVD_Quantity: r.Quantity != null ? r.Quantity : '',
+          SVD_Total_Length: r.Total_Length != null ? r.Total_Length : '',
+          SVD_Unit_Weight: uw,
+          SVD_Calc_Weight: tw,
+          Item_Requirements: itemReq,
+          // pricing
+          SVD_Item_Verification_Status: opt,
+          SVD_Price_Per_Lb: ppl,
+          SVD_Unit_Price: up,
+          SVD_Total_Price: tp,
+          SVD_Price_Per_Lb_Counter: (opt === 'Quote As Is' && tp > 0) ? 1 : 0,
+          SVD_Supplier_Comments: cmt,
+          // PDF snapshot fields (feed the reference document)
+          PDF_Quote_Option: opt,
+          PDF_Item_Description_and_Measurement: desc,
+          PDF_Item_Description_and_Measurement_Multi_Line: reqStr ? (desc + '\n' + reqStr) : desc,
+          PDF_Item_Requirements: itemReq,
+          PDF_Quantity: r.Quantity != null ? r.Quantity : '',
+          PDF_Unit_Weight: uw,
+          PDF_Total_Weight: tw,
+          PDF_Weight_Multi_Line: 'Unit WT ' + num(uw, 2) + '\nTotal WT ' + num(tw, 2),
+          PDF_Price_Per_LB: ppl,
+          PDF_Unit_Amount: up,
+          PDF_Total_Amount: tp,
+          PDF_Price_Multi_Line: noQuote ? 'No Quote' : ('Per Lb ' + money(ppl) + '\nUnit Price ' + money(up)),
+          PDF_Lead_Time: leadTxt,
+          PDF_Supplier_Comments: cmt,
+        });
+      }
+
+      if (!detailRows.length) {
+        return res.status(400).json({ ok: false, error: 'none of the submitted lines matched current RFQ rows', missing });
+      }
+
+      // header — supplier inputs + derived lookups. Totals/status/derived fields are
+      // computed by the SV form workflow (as on a native submit), so we don't set them.
+      const validDays = Number(header.valid_days) || 0;
       const data = {
-        Sub_Supplier_ID: String(req.supplier.id),
-        Sub_Quote_ID: String(quote_id || ''),
-        Sub_Quote_No: header.supplier_quote_number || '',
-        Sub_Location_ID: String(header.location || ''),
-        Sub_Rep_ID: String(header.rep || ''),
-        Sub_Meets_Req: header.meets_requirements || '',
-        Sub_Shipping: String(header.shipping || ''),
-        Sub_Misc: String(header.misc || ''),
-        Sub_Notes: header.notes || '',
-        Sub_Ready: header.ready ? 'true' : 'false',
-        Sub_Valid_Days: String(header.valid_days || ''),
-        Sub_Valid_Until: header.valid_until || '',
-        Sub_Lines: JSON.stringify(queueLines),
+        SV_Supplier_Entry_Form: supplierId,
+        SV_Quote_Form: String(quote_id),
+        MANUFACTURER: mfgId,
+        Supplier_Locations: header.location ? String(header.location) : '',
+        Supplier_Representatives: header.rep ? String(header.rep) : '',
+        Auto_Number_or_Quote_Number_Selection: svQuoteNum.startsWith('AUTO-') ? 'Use Auto Number for Quote Number' : 'Input Internal Quote Number',
+        REFERENCE_QUOTE_NUMBER: svQuoteNum,
+        Supplier_Quote_Meets_MFG_Requirements: header.meets_requirements || '',
+        Quote_Is_Valid_For: validDays ? (validDays + (validDays === 1 ? ' Day' : ' Days')) : '',
+        Valid_Until_Date: toZohoDate(header.valid_until),
+        SV_Radio_For_Submit: header.ready ? 'Ready for submission' : 'Not ready for submit',
+        Shipping_Amount: header.shipping != null ? String(header.shipping) : '0',
+        Miscellaneous_Charges: header.misc != null ? String(header.misc) : '0',
+        Supplier_Notes_To_Buyer: header.notes || '',
+        Supplier_Verify_Detail_Subform: detailRows,
       };
+      // Drop empty optional scalars — sending '' to a lookup/date/choice field can be
+      // rejected. The subform array and required header fields always carry a value.
+      for (const k of Object.keys(data)) {
+        if (k !== 'Supplier_Verify_Detail_Subform' && (data[k] === '' || data[k] == null)) delete data[k];
+      }
 
-      // add the queue record — the form's workflow does the real submit
       const token = await getAccessToken();
       let addResp;
       try {
-        addResp = await axios.post(creatorApiBase() + '/form/Supplier_Quote_Submit_Queue', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+        addResp = await axios.post(creatorApiBase() + '/form/Supplier_Verify_Form', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
       } catch (e) {
-        return res.status(502).json({ ok: false, error: 'Could not reach Supplier_Quote_Submit_Queue. Is the form created?', detail: (e.response && JSON.stringify(e.response.data)) || e.message });
+        return res.status(502).json({ ok: false, error: 'Supplier_Verify_Form addRecord failed', detail: (e.response && JSON.stringify(e.response.data)) || e.message });
       }
       const code = addResp.data && addResp.data.code;
       if (code !== 3000) {
-        return res.status(502).json({ ok: false, error: 'Queue add rejected', code, message: addResp.data && addResp.data.message });
+        return res.status(502).json({ ok: false, error: 'addRecord rejected', code, message: addResp.data && addResp.data.message, detail: addResp.data });
       }
-      const rec = addResp.data.data || {};
-      const queueId = rec.ID;
-
-      // read the workflow result back (Sub_SV_Form_ID set => the submit succeeded)
-      let svFormId = rec.Sub_SV_Form_ID || '';
-      let resultText = rec.Sub_Result || '';
-      if (!svFormId && queueId) {
-        try {
-          const rb = await fetchAllZohoPages('/report/Supplier_Quote_Submit_Queue_Report?criteria=(ID==' + queueId + ')');
-          if (rb && rb[0]) { svFormId = rb[0].Sub_SV_Form_ID || ''; resultText = rb[0].Sub_Result || resultText; }
-        } catch (e) {}
-      }
+      const svFormId = (addResp.data.data && addResp.data.data.ID) || '';
 
       res.json({
-        ok: !!svFormId,
+        ok: true,
         sv_form_id: svFormId,
-        queue_id: queueId,
-        lines: queueLines.length,
-        message: svFormId ? 'Quote submitted.' : (resultText || 'Queued, but no response was created — check the queue form workflow.'),
-        result: resultText || null,
+        lines: detailRows.length,
+        skipped: missing,
+        message: 'Quote submitted (SV record ' + svFormId + ', ' + detailRows.length + ' lines). The SV workflow handles email + write-back.',
       });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
