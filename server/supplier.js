@@ -515,9 +515,11 @@ function registerSupplierRoutes(app, deps) {
       const chunk = rows.slice(i, i + 200);
       try {
         const r = await axios.post(creatorApiBase() + '/form/' + form, { data: chunk }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-        const result = r.data && r.data.result;
-        if (Array.isArray(result)) added += result.filter(x => x.code === 3000 || x.code === '3000').length;
-        else if (r.data && r.data.code === 3000) added += chunk.length;
+        const result = (r.data && (r.data.result || r.data.data));
+        if (Array.isArray(result)) {
+          added += result.filter(x => !x.code || x.code === 3000 || x.code === '3000').length;
+          result.filter(x => x.code && x.code !== 3000 && x.code !== '3000').forEach(x => errors.push(JSON.stringify(x.error || x)));
+        } else added += chunk.length; // 2xx with no per-row breakdown → treat as added
       } catch (e) { errors.push((e.response && JSON.stringify(e.response.data)) || e.message); }
     }
     return { added, errors };
@@ -537,7 +539,7 @@ function registerSupplierRoutes(app, deps) {
   app.post('/api/supplier/me/locations', withSupplier, async (req, res) => {
     const b = req.body || {};
     const r = await addRecord('Supplier_Locations', {
-      Supplier_Entry_Form: req.supplier.id, Name_of_Location: b.name || '', Phone_Number: b.phone || '', Address: addrObj(b),
+      Supplier_Entry_Form: req.supplier.id, Name_of_Location: b.name || '', Phone_Number: b.phone || '', Address: addrObj(b), Timestamp: zohoNow(),
     });
     if (!r.ok) return res.status(502).json({ ok: false, error: 'add failed', message: r.message });
     res.json({ ok: true, id: r.id });
@@ -565,7 +567,7 @@ function registerSupplierRoutes(app, deps) {
     const data = {
       Supplier_Entry_Form: req.supplier.id, Supplier_Company_Name: req.supplier.company_name || '',
       Name: { first_name: b.first || '', last_name: b.last || '' },
-      Position: b.position || '', Email: b.email || '', Phone_Number: b.phone || '', Extension: b.ext || '',
+      Position: b.position || '', Email: b.email || '', Phone_Number: b.phone || '', Extension: b.ext || '', Timestamp: zohoNow(),
     };
     if (b.location_id) data.Supplier_Locations = b.location_id;
     const r = await addRecord('Supplier_Representatives', data);
@@ -690,7 +692,7 @@ function registerSupplierRoutes(app, deps) {
       const r = await addRecord('Supplier_Fitting_Stock', {
         Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id,
         End_Type: b.end_id, Connection_Type: b.connection_id, Fitting_Specification: b.spec_id,
-        Fitting_Stocked_Checkbox: ['Stocked'],
+        Fitting_Stocked_Checkbox: ['Stocked'], Timestamp: zohoNow(),
       });
       if (!r.ok) return res.status(502).json({ ok: false, error: 'add failed', message: r.message });
       res.json({ ok: true, id: r.id });
@@ -717,7 +719,7 @@ function registerSupplierRoutes(app, deps) {
       const rows = [];
       for (const c of connIds) for (const s of specIds) {
         if (have.has([b.type_id, b.make_id, b.end_id, c, s].join('|'))) continue;
-        rows.push({ Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id, End_Type: b.end_id, Connection_Type: c, Fitting_Specification: s, Fitting_Stocked_Checkbox: ['Stocked'] });
+        rows.push({ Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id, End_Type: b.end_id, Connection_Type: c, Fitting_Specification: s, Fitting_Stocked_Checkbox: ['Stocked'], Timestamp: zohoNow() });
       }
       const attempted = connIds.length * specIds.length;
       if (!rows.length) return res.json({ ok: true, added: 0, duplicates: attempted });
