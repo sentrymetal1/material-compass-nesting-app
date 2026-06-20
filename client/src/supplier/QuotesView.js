@@ -299,8 +299,12 @@ export default function QuotesView({ email }) {
   if (state.status === 'error') return <div className="sup-msg sup-msg-error">Couldn’t load RFQs: {state.error} <button className="btn-link" onClick={load}>Retry</button></div>;
 
   const d = state.data;
-  const openQuotes = d.quotes.filter(q => /^Open|Quote Revised|Submitted/i.test(q.status));
-  const shown = openQuotes.length ? openQuotes : d.quotes;
+  // "To price" = actionable RFQs this supplier hasn't responded to yet. Detect a
+  // response per-line (Item_Verification_Status, set on submit) — NOT the MFG-side
+  // quote status, since "Submitted - Waiting Responses" is the manufacturer's sent
+  // state and can't tell whether THIS supplier has answered.
+  const responded = q => q.lines.some(l => l.quote_option && String(l.quote_option).trim() !== '');
+  const shown = d.quotes.filter(q => /^Open|Quote Revised|Submitted/i.test(q.status) && !responded(q));
 
   return (
     <>
