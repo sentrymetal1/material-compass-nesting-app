@@ -71,7 +71,7 @@ function LineRow({ line, draft, onChange }) {
   );
 }
 
-function QuoteCard({ quote, lookups, email }) {
+function QuoteCard({ quote, lookups, email, revise }) {
   const [open, setOpen] = useState(false);
   const [submitState, setSubmitState] = useState(null); // {status:'saving'|'done'|'error', result, error}
   // drafts keyed by rfqs_sent_id: { total_price, price_per_lb, quote_option, lead_time, comments }
@@ -259,13 +259,16 @@ function QuoteCard({ quote, lookups, email }) {
             </div>
           </div>
 
+          {revise && (
+            <div className="q-revise-note">Re-pricing creates a new revision — your current quote will be marked <strong>Revised</strong> and replaced by this one.</div>
+          )}
           <div className="q-actions">
             <label className="q-ready">
               <input type="checkbox" checked={hdr.ready} onChange={e => setH({ ready: e.target.checked })} />
               Ready for submission
             </label>
             <button className="btn-quote" disabled={submitState && submitState.status === 'saving'} onClick={onSubmit}>
-              {submitState && submitState.status === 'saving' ? 'Saving…' : 'Submit quote'}
+              {submitState && submitState.status === 'saving' ? 'Saving…' : (revise ? 'Submit revision' : 'Submit quote')}
             </button>
             {submitState && submitState.status === 'done' && (
               <span className={'q-result ' + (submitState.result.ok ? 'q-result-ok' : 'q-result-warn')}>
@@ -299,12 +302,13 @@ export default function QuotesView({ email }) {
   if (state.status === 'error') return <div className="sup-msg sup-msg-error">Couldn’t load RFQs: {state.error} <button className="btn-link" onClick={load}>Retry</button></div>;
 
   const d = state.data;
-  // "To price" = actionable RFQs this supplier hasn't responded to yet. Detect a
-  // response per-line (Item_Verification_Status, set on submit) — NOT the MFG-side
-  // quote status, since "Submitted - Waiting Responses" is the manufacturer's sent
-  // state and can't tell whether THIS supplier has answered.
+  // Detect a response per-line (Item_Verification_Status, set on submit) — NOT the MFG-side
+  // quote status, since "Submitted - Waiting Responses" is the manufacturer's sent state and
+  // can't tell whether THIS supplier has answered.
   const responded = q => q.lines.some(l => l.quote_option && String(l.quote_option).trim() !== '');
-  const shown = d.quotes.filter(q => /^Open|Quote Revised|Submitted/i.test(q.status) && !responded(q));
+  // To price = actionable RFQs not yet answered. Submitted = answered & still in review (revisable).
+  const toPrice = d.quotes.filter(q => /^Open|Quote Revised|Submitted/i.test(q.status) && !responded(q));
+  const submitted = d.quotes.filter(q => /^Submitted/i.test(q.status) && responded(q));
 
   return (
     <>
@@ -315,10 +319,16 @@ export default function QuotesView({ email }) {
       </div>
       <section className="sup-section">
         <h2>Requests for quote <span className="muted">— price the lines you can fill</span></h2>
-        {shown.length === 0
+        {toPrice.length === 0
           ? <div className="sup-empty">No RFQs to quote right now.</div>
-          : shown.map(q => <QuoteCard key={q.quote_id} quote={q} lookups={d.lookups || {}} email={email} />)}
+          : toPrice.map(q => <QuoteCard key={q.quote_id} quote={q} lookups={d.lookups || {}} email={email} />)}
       </section>
+      {submitted.length > 0 && (
+        <section className="sup-section">
+          <h2>Submitted quotes <span className="muted">— awaiting the manufacturer; expand to revise</span></h2>
+          {submitted.map(q => <QuoteCard key={q.quote_id} quote={q} lookups={d.lookups || {}} email={email} revise />)}
+        </section>
+      )}
     </>
   );
 }

@@ -265,6 +265,17 @@ function registerSupplierRoutes(app, deps) {
         } catch (e) { /* leave blank; addRecord will surface the mandatory error */ }
       }
 
+      // Revision supersede: if this supplier already has an ACTIVE quote for this MFG quote,
+      // this submit replaces it. Capture the prior(s) so we can mark them "Revised" and link
+      // the new SV back via Original_Supplier_Quote. (RFQs_Sent doesn't carry the SV link, so
+      // we look it up on the SV report.)
+      let priorSvIds = [];
+      try {
+        const priors = await fetchAllZohoPages('/report/All_Supplier_Verify_Form_Report?criteria=(SV_Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ' && SV_Quote_Form==' + encodeURIComponent(quote_id) + ')');
+        priorSvIds = (priors || []).filter(p => p.SV_Status === 'Submitted - Waiting Responses').map(p => String(p.ID));
+      } catch (e) { /* non-fatal — revision link is best-effort */ }
+      const priorSvId = priorSvIds.length ? priorSvIds.slice().sort().reverse()[0] : '';
+
       const detailRows = [];
       let missing = 0;
       for (const l of lines) {
@@ -354,6 +365,7 @@ function registerSupplierRoutes(app, deps) {
         Shipping_Amount: header.shipping != null ? String(header.shipping) : '0',
         Miscellaneous_Charges: header.misc != null ? String(header.misc) : '0',
         Supplier_Notes_To_Buyer: header.notes || '',
+        Original_Supplier_Quote: priorSvId,
         Supplier_Verify_Detail_Subform: detailRows,
       };
       // Drop empty optional scalars — sending '' to a lookup/date/choice field can be
@@ -375,12 +387,23 @@ function registerSupplierRoutes(app, deps) {
       }
       const svFormId = (addResp.data.data && addResp.data.data.ID) || '';
 
+      // Supersede prior active quotes for this supplier+MFG-quote → "Revised".
+      let superseded = 0;
+      for (const pid of priorSvIds) {
+        try {
+          await axios.patch(creatorApiBase() + '/report/All_Supplier_Verify_Form_Report/' + pid, { data: { SV_Status: 'Revised' } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+          superseded++;
+        } catch (e) { /* non-fatal */ }
+      }
+
       res.json({
         ok: true,
         sv_form_id: svFormId,
         lines: detailRows.length,
         skipped: missing,
-        message: 'Quote submitted (SV record ' + svFormId + ', ' + detailRows.length + ' lines). The SV workflow handles email + write-back.',
+        revised_prior: superseded,
+        message: 'Quote submitted (SV record ' + svFormId + ', ' + detailRows.length + ' lines'
+          + (superseded ? ', superseded ' + superseded + ' prior' : '') + '). The SV workflow handles email + write-back.',
       });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
