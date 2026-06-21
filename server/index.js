@@ -1266,12 +1266,18 @@ function haversine(lat1, lng1, lat2, lng2) {
 }
 
 function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCaps, distanceMi, radius, quoteCount, checkedCaps }) {
+  const norm = v => String(v == null ? '' : v).trim().toLowerCase();
+  const lid  = f => (f && typeof f === 'object') ? String(f.ID || f.id || '') : String(f == null ? '' : f);
+  const lname = f => (f && typeof f === 'object') ? String(f.zc_display_value || f.display_value || f.Form_Type || f.Material_Type || f.Type_Detail || f.value || '') : String(f == null ? '' : f);
+  // a search value matches a lookup field if it equals the field's ID OR its display name
+  // (handles the widget sending either ids or names).
+  const axisEq = (search, field) => { const s = norm(search); return s !== '' && (s === norm(lid(field)) || s === norm(lname(field))); };
+  const isStk = s => Array.isArray(s.Material_Stocked) ? s.Material_Stocked.includes('Stocked') : (s.Material_Stocked === 'Stocked' || s.Material_Stocked === true);
+  const stocked = (supplierStock || []).filter(isStk);
   let stockScore = 0;
   if (mfgShape || mfgMaterial || mfgSpec) {
-    const fullKey = `${mfgShape}|${mfgMaterial}|${mfgSpec}`;
-    const catKey  = `${mfgShape}|${mfgMaterial}`;
-    const hasExact = supplierStock.some(s => `${s.Form_Type?.ID||s.Form_Type}|${s.Material_Type?.ID||s.Material_Type}|${s.Type_Detail_LU?.ID||s.Type_Detail_LU}` === fullKey);
-    const hasCat   = supplierStock.some(s => `${s.Form_Type?.ID||s.Form_Type}|${s.Material_Type?.ID||s.Material_Type}` === catKey);
+    const hasExact = stocked.some(s => axisEq(mfgShape, s.Form_Type) && axisEq(mfgMaterial, s.Material_Type) && axisEq(mfgSpec, s.Type_Detail_LU));
+    const hasCat   = stocked.some(s => axisEq(mfgShape, s.Form_Type) && axisEq(mfgMaterial, s.Material_Type));
     stockScore = hasExact ? 1.0 : hasCat ? 0.5 : 0;
   }
   const supCapNames = supplierCaps.map(c => (c.Supplier_Process?.Capabilities || '').toLowerCase()).filter(Boolean);
