@@ -1394,18 +1394,21 @@ app.get('/api/match-suggestions', async (req, res) => {
       const distanceMi = haversine(mfgGeo.lat, mfgGeo.lng, supGeo.lat, supGeo.lng);
       if (distanceMi > parseFloat(radius)) return null;
 
+      // Stock fetch via fetchAllZohoPages (cursor pagination). The previous raw
+      // `&limit=1000` was REJECTED by Zoho v2.1 (code 2945 MORE_THAN_MAX_LENGTH,
+      // max 200/page) and the .catch swallowed it → empty stock for every supplier
+      // → 0% stock match in both modes. fetchAllZohoPages pages at 200 correctly.
       const stockReport = mode === 'fittings'
-        ? `Supplier_Fitting_Stock_All?criteria=(Supplier_ID==${sup.ID})&limit=1000`
-        : `Stocked_Material_List?criteria=(Supplier_ID==${sup.ID})&limit=1000`;
-      const [stockResp, capResp] = await Promise.all([
-        axios.get(`${base}/report/${stockReport}`, { headers: hdrs }).catch(() => ({ data: { data: [] } })),
+        ? `Supplier_Fitting_Stock_All?criteria=(Supplier_ID==${sup.ID})`
+        : `Stocked_Material_List?criteria=(Supplier_ID==${sup.ID})`;
+      const [supplierStock, capResp] = await Promise.all([
+        fetchAllZohoPages(`/report/${stockReport}`).catch(() => []),
         axios.get(
           `${base}/report/Capabilities_Processes_Per_Supplier_Report?criteria=(Supplier_Entry_Form==${sup.ID})&limit=200`,
           { headers: hdrs }
         ).catch(() => ({ data: { data: [] } }))
       ]);
 
-      const supplierStock = stockResp.data.data || [];
       const supplierCaps  = capResp.data.data  || [];
 
       return { sup, distanceMi, supplierStock, supplierCaps };
