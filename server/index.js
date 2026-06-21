@@ -2002,30 +2002,6 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
 // catch-all below or the React index.html swallows these routes. Reuses this
 // file's Zoho token helpers so there's no duplicate auth machinery.
 require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
-// ---- TEMP diagnostic #2: locate fitting RFQ-sent + response forms. REMOVE after use. ----
-app.get('/api/_diag/fitting-rfq-forms', async (req, res) => {
-  const probes = [
-    'Supplier_Alter_Detail_Report', 'All_Supplier_Alter_Detail_Report',
-    'Supplier_Alter_Form_Detail_Report', 'All_Supplier_Alter_Form_Detail_Report',
-    'Supplier_Alter_Detail_Subform_Report', 'All_Supplier_Alter_Detail_Subform_Report',
-    'SA_Detail_Report', 'All_SA_Detail_Report', 'Supplier_Alter_Detail_Subform',
-  ];
-  const out = {};
-  await Promise.all(probes.map(async p => {
-    try {
-      const r = await fetchAllZohoPages('/report/' + p);
-      out[p] = { exists: true, count: r.length, keys: Object.keys(r[0] || {}).sort(), sample: r[0] || null };
-    } catch (e) { out[p] = { exists: false, status: (e.response && e.response.status) || String(e.message).slice(0, 40) }; }
-  }));
-  // dump representative samples for shape/choice discovery
-  const dump = {};
-  for (const rep of ['RFQs_Sent_Fittings_Report', 'All_Supplier_Alter_Form_Report']) {
-    try { const r = await fetchAllZohoPages('/report/' + rep); dump[rep] = r.find(x => x.Line_Item_Fitting && x.Line_Item_Fitting !== '0') || r[0] || null; }
-    catch (e) { dump[rep] = { err: String(e.message).slice(0, 40) }; }
-  }
-  res.json({ ok: true, probes: out, samples: dump });
-});
-
 // ---- Quote Triage poller (Step 4): GET /api/triage/poll ----
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
