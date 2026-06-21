@@ -234,3 +234,9 @@
 .fit-check { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; cursor: pointer; }
 .fit-check:hover { background: #f6f8fa; }
 .fit-check.on { background: #f1faf3; border-color: #bfe3c8; }
+
+/* Dashboard: structural matches grouped by quote */
+.match-groups { display: flex; flex-direction: column; gap: 10px; }
+.match-group { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; }
+.match-group-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 13px 16px; background: #f3f8ff; border: none; font: inherit; cursor: pointer; text-align: left; }
+.match-group .match-list { padding: 8px; gap: 8px; }

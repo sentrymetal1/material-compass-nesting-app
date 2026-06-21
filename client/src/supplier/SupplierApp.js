@@ -22,7 +22,7 @@ const TIER = {
   category: { label: 'Category match', cls: 'tier-category' },
 };
 
-function MatchCard({ m }) {
+function MatchCard({ m, grouped }) {
   const t = TIER[m.match_level] || { label: m.match_level, cls: 'tier-category' };
   let title, detail;
   if (m.material) {
@@ -47,9 +47,9 @@ function MatchCard({ m }) {
         <div className="match-spec">{detail}</div>
         <div className="match-meta">
           {m.qty != null && <span className="chip">Qty {m.qty}</span>}
-          {projectLabel && <span className="chip">{projectLabel}</span>}
-          {p && p.status && <span className="chip chip-status">{p.status}</span>}
-          {p && p.due_date && <span className="chip">Due {p.due_date}</span>}
+          {!grouped && projectLabel && <span className="chip">{projectLabel}</span>}
+          {!grouped && p && p.status && <span className="chip chip-status">{p.status}</span>}
+          {!grouped && p && p.due_date && <span className="chip">Due {p.due_date}</span>}
         </div>
       </div>
       <div className="match-side">
@@ -66,6 +66,7 @@ export default function SupplierApp() {
   const [email] = useState(getEmail);
   const [view, setView] = useState('dashboard');
   const [state, setState] = useState({ status: 'loading', data: null, error: null });
+  const [openQuotes, setOpenQuotes] = useState({});
 
   const load = useCallback(async () => {
     if (!email) { setState({ status: 'no-email', data: null, error: null }); return; }
@@ -86,6 +87,12 @@ export default function SupplierApp() {
   const d = state.data;
   const fittings = (d && d.matches && d.matches.fittings) || [];
   const structural = (d && d.matches && d.matches.structural) || [];
+  // Group structural matches by quote number so one job's many lines collapse together.
+  const structGroups = Object.values(structural.reduce((acc, m) => {
+    const key = m.quote_id_number || m.quote_id || m.project_id || '—';
+    (acc[key] = acc[key] || { key, quote: m.quote_id_number, project: m.project, project_name: m.project_name, items: [] }).items.push(m);
+    return acc;
+  }, {}));
 
   return (
     <div className="sup-app">
@@ -187,8 +194,24 @@ export default function SupplierApp() {
                   )}
                 </div>
               ) : (
-                <div className="match-list">
-                  {structural.map(m => <MatchCard key={m.rfq_row_id} m={m} />)}
+                <div className="match-groups">
+                  {structGroups.map(g => {
+                    const open = openQuotes[g.key];
+                    const p = g.project;
+                    return (
+                      <div key={g.key} className="match-group">
+                        <button className="match-group-head" onClick={() => setOpenQuotes(o => ({ ...o, [g.key]: !o[g.key] }))}>
+                          <span className="stock-caret">{open ? '▾' : '▸'}</span>
+                          <strong>{g.quote || g.project_name || 'Quote'}</strong>
+                          {p && p.client && <span className="muted">{p.client}</span>}
+                          {p && p.status && <span className="chip chip-status">{p.status}</span>}
+                          {p && p.due_date && <span className="muted">Due {p.due_date}</span>}
+                          <span className="muted" style={{ marginLeft: 'auto' }}>{g.items.length} item{g.items.length === 1 ? '' : 's'}</span>
+                        </button>
+                        {open && <div className="match-list">{g.items.map(m => <MatchCard key={m.rfq_row_id} m={m} grouped />)}</div>}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </section>
