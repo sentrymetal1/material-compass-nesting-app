@@ -525,6 +525,19 @@ function registerSupplierRoutes(app, deps) {
     }
     return { added, errors };
   }
+  // Bulk delete by criteria — one call instead of N per-id deletes (saves API budget).
+  async function deleteByCriteria(report, criteria) {
+    const token = await getAccessToken();
+    try {
+      const r = await axios.delete(creatorApiBase() + '/report/' + report + '?criteria=' + criteria, { headers: zohoHeaders(token) });
+      return { ok: true, code: r.data && r.data.code, message: r.data && r.data.message };
+    } catch (e) {
+      const code = e.response && e.response.data && e.response.data.code;
+      // 3100 = no records matched the criteria; that's fine for a sync.
+      if (code === 3100) return { ok: true, code };
+      return { ok: false, code, message: (e.response && JSON.stringify(e.response.data)) || e.message };
+    }
+  }
   async function deleteRecord(report, id) {
     const token = await getAccessToken();
     try {
@@ -747,22 +760,20 @@ function registerSupplierRoutes(app, deps) {
       if (!b.type_id || !b.make_id || !b.end_id) return res.status(400).json({ ok: false, error: 'type, make, and end required' });
       const connIds = Array.isArray(b.connection_ids) ? b.connection_ids.filter(Boolean) : [];
       const specIds = Array.isArray(b.spec_ids) ? b.spec_ids.filter(Boolean) : [];
-      const all = await fitStock(sid);
-      const inGroup = (all || []).filter(r =>
-        String((r.Fitting_Type || {}).ID) === b.type_id && String((r.Fitting_Make || {}).ID) === b.make_id && String((r.End_Type || {}).ID) === b.end_id);
-      const existing = new Map(); // conn|spec -> row id
-      for (const r of inGroup) existing.set(String((r.Connection_Type || {}).ID) + '|' + String((r.Fitting_Specification || {}).ID), String(r.ID));
-      const desired = new Set();
-      for (const c of connIds) for (const s of specIds) desired.add(c + '|' + s);
-      const toAdd = [];
-      for (const key of desired) if (!existing.has(key)) { const [c, s] = key.split('|'); toAdd.push({ Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id, End_Type: b.end_id, Connection_Type: c, Fitting_Specification: s, Fitting_Stocked_Checkbox: ['Stocked'], Timestamp: zohoNow() }); }
-      const toDelete = [];
-      for (const [key, id] of existing) if (!desired.has(key)) toDelete.push(id);
-      let added = 0, removed = 0;
-      if (toAdd.length) { const r = await bulkAdd('Supplier_Fitting_Stock', toAdd); added = r.added; }
-      for (const id of toDelete) { const r = await deleteRecord(FIT_STOCK_REPORT, id); if (r.ok) removed++; }
+      // Clear the whole group in ONE delete call, then re-add the desired cross-product.
+      // Keeps a group save to ~2 API calls regardless of size (per-combo deletes blew the
+      // daily Developer-API quota). Supplier_ID in the criteria scopes it to this supplier.
+      const crit = '(Supplier_ID==' + sid + '%26%26Fitting_Type==' + b.type_id + '%26%26Fitting_Make==' + b.make_id + '%26%26End_Type==' + b.end_id + ')';
+      const del = await deleteByCriteria(FIT_STOCK_REPORT, crit);
+      if (!del.ok) return res.status(502).json({ ok: false, error: 'sync failed (clear)', message: del.message });
+      let added = 0;
+      if (connIds.length && specIds.length) {
+        const rows = [];
+        for (const c of connIds) for (const s of specIds) rows.push({ Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id, End_Type: b.end_id, Connection_Type: c, Fitting_Specification: s, Fitting_Stocked_Checkbox: ['Stocked'], Timestamp: zohoNow() });
+        const r = await bulkAdd('Supplier_Fitting_Stock', rows); added = r.added;
+      }
       bust('fit-stock-all:' + sid); bust('fitting-stock:' + sid);
-      res.json({ ok: true, added, removed });
+      res.json({ ok: true, added });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });

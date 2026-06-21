@@ -87,7 +87,7 @@ export default function StockView({ email }) {
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.message || j.error || ('HTTP ' + r.status));
-      setFitMsg('Saved — ' + j.added + ' added, ' + j.removed + ' removed.');
+      setFitMsg('Saved.');
       if (isNew) setAddPick({ type_id: '', make_id: '', end_id: '' });
       setOpenFit(null);
       await load();
