@@ -167,6 +167,20 @@
 .q-tile-active.q-tile-closed { background: #f5f6f8; }
 .q-card-ro .q-head { cursor: default; }
 
+/* Fitting RFQs tab */
+.q-view-head { margin-bottom: 14px; }
+.q-view-head h1 { font-size: 20px; margin: 0 0 2px; }
+.q-list { display: block; }
+.q-desc-inline { font-style: italic; }
+.q-foot { display: flex; align-items: center; gap: 16px; padding: 12px 18px 16px; border-top: 1px dashed var(--line); }
+.q-foot .q-total { font-size: 14px; }
+.q-foot .q-total strong { color: var(--blue); }
+.q-foot .btn-quote { margin-left: auto; }
+.q-foot .btn-quote:disabled { opacity: .6; cursor: default; }
+.q-msg { font-size: 12px; font-weight: 600; }
+.q-msg-ok { color: #1d8a52; }
+.q-msg-err { color: #c0392b; }
+
 /* Profile tab */
 .prof-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
 .prof-readonly { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); display: grid; gap: 8px; }

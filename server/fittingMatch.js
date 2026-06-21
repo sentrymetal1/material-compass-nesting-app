@@ -136,10 +136,10 @@ async function matchFittingsForSupplier(supplierId, deps) {
     if (!tier) continue;
     matches.push({
       quote_id: lk(d.Quote_ID).id,
-      quote_id_number: d.Quote_ID_Number || null,
+      quote_id_number: lk(d.Quote_ID).name || null,   // demand has Quote_ID (lookup), not Quote_ID_Number
       project_id: lk(d.MCP_Customer_Project_Form).id,
       project_name: lk(d.MCP_Customer_Project_Form).name,
-      line_item: d.Line_Item || null,
+      line_item: d.Line_Item_Fitting || null,          // real column is Line_Item_Fitting
       qty: d.Quantity != null ? Number(d.Quantity) : null,
       fitting: {
         type: ax.type.name,

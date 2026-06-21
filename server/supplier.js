@@ -186,6 +186,117 @@ function registerSupplierRoutes(app, deps) {
     return out;
   }
 
+  // FITTING RFQs sent to this supplier (PUSH model — the bridge RFQs_Sent_Fittings,
+  // fitting twin of All_RFQs_Sent). One row per supplier × fitting line; the supplier
+  // prices each line directly on its bridge row (no separate response form). Grouped
+  // into quotes for the UI. Read-only here; the price PATCH is a separate endpoint.
+  const FIT_RFQ_REPORT = process.env.FITTING_RFQ_REPORT || 'RFQs_Sent_Fittings_Report';
+  async function fetchSentFittingRfqs(supplierId) {
+    const rows = await cachedLookup('fit-rfqs:' + supplierId, 60 * 1000, async () =>
+      fetchAllZohoPages('/report/' + FIT_RFQ_REPORT + '?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')'));
+    const byQuote = new Map();
+    for (const r of rows) {
+      // only the supplier's current/active sent lines
+      if (r.Latest_Item_for_Supplier === false || r.Latest_Item_for_Supplier === 'false') continue;
+      const qid = lkid(r.Quote_LU) || ('q' + (r.Quote_Number || ''));
+      if (!byQuote.has(qid)) {
+        byQuote.set(qid, {
+          quote_id: qid,
+          quote_number: r.Quote_Number || '',
+          quote_description: r.Quote_Description || '',
+          manufacturer: r['Customer_LU.Company_Name'] || r.Customer_Name || '',
+          quote_date: r.Quote_Date || r.Quote_Timestamp || '',
+          status: r.RFQ_Fitting_Sent_Status || '',
+          lines: [],
+        });
+      }
+      const type = flatten(r.Fitting_Type), make = flatten(r.Fitting_Make);
+      const end = flatten(r.End_Type), conn = flatten(r.Connection_Type), spec = flatten(r.Fitting_Specification);
+      const size = r.Dim1_Drop_Down || '', sched = r.Dim2_Drop_Down || '';
+      byQuote.get(qid).lines.push({
+        rfq_row_id: String(r.ID),
+        demand_line_id: lkid(r.Fittings_Quote_Subform),
+        line: r.Line_Item_Fitting || '',
+        fitting: { type, make, end, connection: conn, specification: spec },
+        size, schedule: sched,
+        description: [type, make].filter(Boolean).join(' — ') + (end || conn || spec ? '  ·  ' + [end, conn, spec].filter(Boolean).join(' · ') : '') + (size ? '  ·  ' + size + (sched ? ' (' + sched + ')' : '') : ''),
+        qty: r.Quantity != null && r.Quantity !== '' ? Number(r.Quantity) : null,
+        // response (may be blank until the supplier prices it). Defensive reads —
+        // these fields are being added; absent = undefined → null.
+        quote_option: r.Item_Verification_Status || '',
+        unit_price: r.Unit_Price != null && r.Unit_Price !== '' ? Number(r.Unit_Price) : null,
+        total_price: r.Total_Price != null && r.Total_Price !== '' ? Number(r.Total_Price) : null,
+        lead_time: r.Supplier_Lead_Time || '',
+        comments: r.Supplier_Comments || '',
+      });
+    }
+    const out = [...byQuote.values()];
+    out.forEach(q => q.lines.sort((a, b) => (Number(a.line) || 0) - (Number(b.line) || 0)));
+    return out;
+  }
+
+  // GET /api/supplier/me/fitting-rfqs — fitting RFQs the MFG sent this supplier,
+  // grouped into quotes with per-line response state. (Distinct from the PULL matcher
+  // at /api/supplier/:id/fitting-rfqs, which scores stock vs all open demand.)
+  app.get('/api/supplier/me/fitting-rfqs', withSupplier, async (req, res) => {
+    try {
+      const quotes = await fetchSentFittingRfqs(req.supplier.id);
+      const lineCount = quotes.reduce((n, q) => n + q.lines.length, 0);
+      const respondedCount = quotes.reduce((n, q) => n + q.lines.filter(l => l.quote_option).length, 0);
+      res.json({ ok: true, supplier: req.supplier, quote_count: quotes.length, line_count: lineCount, responded_count: respondedCount, quotes });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // POST /api/supplier/me/fitting-rfqs/submit — price fitting RFQ lines. Writes the
+  // response directly onto each RFQs_Sent_Fittings bridge row (the "bridge = response"
+  // model, no Supplier_Alter_Form). Per-each pricing: total = unit × qty (server is
+  // authoritative on qty, read from the bridge row). Ownership is verified against the
+  // supplier's own cached bridge rows before any write.
+  app.post('/api/supplier/me/fitting-rfqs/submit', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const lines = (req.body && req.body.lines) || [];
+      if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ ok: false, error: 'no lines to submit' });
+
+      // Index the supplier's own bridge rows for ownership + qty (no extra API call).
+      const quotes = await fetchSentFittingRfqs(sid);
+      const mine = new Map();
+      quotes.forEach(q => q.lines.forEach(l => mine.set(String(l.rfq_row_id), l)));
+
+      const results = [];
+      for (const l of lines) {
+        const id = String(l.rfq_row_id || '');
+        const row = mine.get(id);
+        if (!row) { results.push({ rfq_row_id: id, ok: false, error: 'not an open RFQ for this supplier' }); continue; }
+        const noQuote = l.quote_option === 'No Quote';
+        const opt = l.quote_option || 'Quote As Is';
+        const qty = row.qty != null ? row.qty : 0;
+        const unit = noQuote ? 0 : round(Number(l.unit_price) || 0, 3);
+        const total = noQuote ? 0 : round(unit * qty, 2);
+        const data = {
+          Item_Verification_Status: opt,
+          Unit_Price: unit,
+          Total_Price: total,
+          Supplier_Lead_Time: l.lead_time || '',
+          Supplier_Comments: l.comments || '',
+          Responded_Timestamp: zohoNow(),
+        };
+        const r = await patchRecord(FIT_RFQ_REPORT, id, data);
+        results.push({ rfq_row_id: id, ok: r.ok, code: r.code, message: r.ok ? undefined : r.message, unit_price: unit, total_price: total });
+      }
+      bust('fit-rfqs:' + sid);
+      const saved = results.filter(r => r.ok).length;
+      const failed = results.filter(r => !r.ok);
+      res.json({ ok: failed.length === 0, saved, failed: failed.length, results });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // Supplier-level dropdown data for the quote-submit form (locations, reps, choices).
   async function fetchSupplierLookups(supplierId) {
     // Locations/reps change rarely — cache 10 min to spare the API budget.
