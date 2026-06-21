@@ -2002,6 +2002,24 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
 // catch-all below or the React index.html swallows these routes. Reuses this
 // file's Zoho token helpers so there's no duplicate auth machinery.
 require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
+// ---- TEMP diagnostic #2: locate fitting RFQ-sent + response forms. REMOVE after use. ----
+app.get('/api/_diag/fitting-rfq-forms', async (req, res) => {
+  const probes = [
+    'RFQs_Sent_Fittings_Report', 'All_RFQs_Sent_Fittings_Report', 'RFQs_Sent_Fittings',
+    'All_RFQs_Sent_Fittings', 'Supplier_Alter_Form_Report', 'All_Supplier_Alter_Form_Report',
+    'Supplier_ALTER_FORM_Report', 'Supplier_Alter_Form', 'All_Supplier_Alter_Report',
+    'Supplier_Fitting_Verify_Form_Report', 'All_Supplier_Fitting_Verify_Form_Report',
+  ];
+  const out = {};
+  await Promise.all(probes.map(async p => {
+    try {
+      const r = await fetchAllZohoPages('/report/' + p);
+      out[p] = { exists: true, count: r.length, keys: Object.keys(r[0] || {}).sort(), sample: r[0] || null };
+    } catch (e) { out[p] = { exists: false, status: (e.response && e.response.status) || String(e.message).slice(0, 40) }; }
+  }));
+  res.json({ ok: true, probes: out });
+});
+
 // ---- Quote Triage poller (Step 4): GET /api/triage/poll ----
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
