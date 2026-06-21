@@ -1312,6 +1312,35 @@ function scoreMatch({ mode, supplierStock, supplierFitStock, mfgShape, mfgMateri
   };
 }
 
+// Public fitting catalog for the Match Hub widget (MFG-side, no supplier auth).
+// Returns the 5 cascade tables; shares the 'fitting-catalog' cache key with the
+// supplier endpoint so a warm cache costs zero extra Zoho calls.
+app.get('/api/fitting-catalog', async (req, res) => {
+  const lkId = (r, key) => (r[key] && r[key].ID) || r[key + '.ID'] || '';
+  try {
+    const cat = await cachedLookup('fitting-catalog', 60 * 60 * 1000, async () => {
+      const [types, makes, ends, conns, specs] = await Promise.all([
+        fetchAllZohoPages('/report/Fitting_Type_Report'),
+        fetchAllZohoPages('/report/Fitting_Make_Report'),
+        fetchAllZohoPages('/report/End_Type_Report'),
+        fetchAllZohoPages('/report/Connection_Type_Report'),
+        fetchAllZohoPages('/report/Fitting_Specification_Report'),
+      ]);
+      return {
+        types: (types || []).map(r => ({ id: String(r.ID), name: r.Fitting_Type || '' })).filter(x => x.name),
+        makes: (makes || []).map(r => ({ id: String(r.ID), name: r.Fitting_Make || '' })).filter(x => x.name),
+        ends: (ends || []).map(r => ({ id: String(r.ID), name: r.End_Type || '', type_id: String(lkId(r, 'Fitting_Type')) })),
+        connections: (conns || []).map(r => ({ id: String(r.ID), name: r.Connection_Type || '', type_id: String(lkId(r, 'Fitting_Type')) })),
+        specs: (specs || []).map(r => ({ id: String(r.ID), name: r.Fitting_Specification || '', make_id: String(lkId(r, 'Fitting_Make')) })),
+      };
+    });
+    res.json({ ok: true, catalog: cat });
+  } catch (err) {
+    console.error('Fitting catalog error:', err.response?.data || err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/api/match-suggestions', async (req, res) => {
   const { mfg_id, radius = 150, shape = '', material = '', spec = '', caps = '' } = req.query;
   const mode = req.query.mode === 'fittings' ? 'fittings' : 'structural';
