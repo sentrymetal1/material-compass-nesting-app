@@ -235,10 +235,10 @@ function registerSupplierRoutes(app, deps) {
     return out;
   }
 
-  // GET /api/supplier/me/fitting-rfqs — fitting RFQs the MFG sent this supplier,
+  // GET /api/supplier/me/sent-fitting-rfqs — fitting RFQs the MFG sent this supplier,
   // grouped into quotes with per-line response state. (Distinct from the PULL matcher
   // at /api/supplier/:id/fitting-rfqs, which scores stock vs all open demand.)
-  app.get('/api/supplier/me/fitting-rfqs', withSupplier, async (req, res) => {
+  app.get('/api/supplier/me/sent-fitting-rfqs', withSupplier, async (req, res) => {
     try {
       const quotes = await fetchSentFittingRfqs(req.supplier.id);
       const lineCount = quotes.reduce((n, q) => n + q.lines.length, 0);
@@ -250,12 +250,12 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
-  // POST /api/supplier/me/fitting-rfqs/submit — price fitting RFQ lines. Writes the
+  // POST /api/supplier/me/sent-fitting-rfqs/submit — price fitting RFQ lines. Writes the
   // response directly onto each RFQs_Sent_Fittings bridge row (the "bridge = response"
   // model, no Supplier_Alter_Form). Per-each pricing: total = unit × qty (server is
   // authoritative on qty, read from the bridge row). Ownership is verified against the
   // supplier's own cached bridge rows before any write.
-  app.post('/api/supplier/me/fitting-rfqs/submit', withSupplier, async (req, res) => {
+  app.post('/api/supplier/me/sent-fitting-rfqs/submit', withSupplier, async (req, res) => {
     try {
       const sid = String(req.supplier.id);
       const lines = (req.body && req.body.lines) || [];

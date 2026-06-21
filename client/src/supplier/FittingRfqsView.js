@@ -87,7 +87,7 @@ function QuoteCard({ quote, email, onSaved }) {
           comments: dr.comments || '',
         };
       });
-      const r = await fetch('/api/supplier/me/fitting-rfqs/submit?email=' + encodeURIComponent(email), {
+      const r = await fetch('/api/supplier/me/sent-fitting-rfqs/submit?email=' + encodeURIComponent(email), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }),
       });
       const j = await r.json();
@@ -147,7 +147,7 @@ export default function FittingRfqsView({ email }) {
   const load = useCallback(async () => {
     setState(s => ({ ...s, status: 'loading' }));
     try {
-      const r = await fetch('/api/supplier/me/fitting-rfqs?email=' + encodeURIComponent(email));
+      const r = await fetch('/api/supplier/me/sent-fitting-rfqs?email=' + encodeURIComponent(email));
       const j = await r.json();
       if (!r.ok || !j.ok) { setState({ status: 'error', data: null, error: j.error || ('HTTP ' + r.status) }); return; }
       setState({ status: 'ready', data: j, error: null });
