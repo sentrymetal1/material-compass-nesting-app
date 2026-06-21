@@ -1265,20 +1265,32 @@ function haversine(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCaps, distanceMi, radius, quoteCount, checkedCaps }) {
+function scoreMatch({ mode, supplierStock, supplierFitStock, mfgShape, mfgMaterial, mfgSpec, ftType, ftMake, ftEnd, ftConn, ftSpec, supplierCaps, distanceMi, radius, quoteCount, checkedCaps }) {
   const norm = v => String(v == null ? '' : v).trim().toLowerCase();
   const lid  = f => (f && typeof f === 'object') ? String(f.ID || f.id || '') : String(f == null ? '' : f);
-  const lname = f => (f && typeof f === 'object') ? String(f.zc_display_value || f.display_value || f.Form_Type || f.Material_Type || f.Type_Detail || f.value || '') : String(f == null ? '' : f);
-  // a search value matches a lookup field if it equals the field's ID OR its display name
-  // (handles the widget sending either ids or names).
-  const axisEq = (search, field) => { const s = norm(search); return s !== '' && (s === norm(lid(field)) || s === norm(lname(field))); };
-  const isStk = s => Array.isArray(s.Material_Stocked) ? s.Material_Stocked.includes('Stocked') : (s.Material_Stocked === 'Stocked' || s.Material_Stocked === true);
-  const stocked = (supplierStock || []).filter(isStk);
+  const lname = f => (f && typeof f === 'object') ? String(f.zc_display_value || f.display_value || f.Form_Type || f.Material_Type || f.Type_Detail || f.Fitting_Type || f.Fitting_Make || f.End_Type || f.Connection_Type || f.Fitting_Specification || f.value || '') : String(f == null ? '' : f);
+  // search value matches a lookup field if it equals the field's ID OR display name;
+  // an empty search axis is a wildcard (don't filter on it).
+  const eqW = (search, field) => { const s = norm(search); return s === '' || s === norm(lid(field)) || s === norm(lname(field)); };
+  const provided = (...vals) => vals.some(v => norm(v) !== '');
+
   let stockScore = 0;
-  if (mfgShape || mfgMaterial || mfgSpec) {
-    const hasExact = stocked.some(s => axisEq(mfgShape, s.Form_Type) && axisEq(mfgMaterial, s.Material_Type) && axisEq(mfgSpec, s.Type_Detail_LU));
-    const hasCat   = stocked.some(s => axisEq(mfgShape, s.Form_Type) && axisEq(mfgMaterial, s.Material_Type));
-    stockScore = hasExact ? 1.0 : hasCat ? 0.5 : 0;
+  if (mode === 'fittings') {
+    const isStkF = s => Array.isArray(s.Fitting_Stocked_Checkbox) ? s.Fitting_Stocked_Checkbox.includes('Stocked') : (s.Fitting_Stocked_Checkbox === 'Stocked' || s.Fitting_Stocked_Checkbox === true);
+    const stocked = (supplierFitStock || []).filter(isStkF);
+    if (provided(ftType, ftMake, ftEnd, ftConn, ftSpec)) {
+      const exact = stocked.some(s => eqW(ftType, s.Fitting_Type) && eqW(ftMake, s.Fitting_Make) && eqW(ftEnd, s.End_Type) && eqW(ftConn, s.Connection_Type) && eqW(ftSpec, s.Fitting_Specification));
+      const cat   = stocked.some(s => eqW(ftType, s.Fitting_Type) && eqW(ftMake, s.Fitting_Make));
+      stockScore = exact ? 1.0 : cat ? 0.5 : 0;
+    }
+  } else {
+    const isStk = s => Array.isArray(s.Material_Stocked) ? s.Material_Stocked.includes('Stocked') : (s.Material_Stocked === 'Stocked' || s.Material_Stocked === true);
+    const stocked = (supplierStock || []).filter(isStk);
+    if (provided(mfgShape, mfgMaterial, mfgSpec)) {
+      const exact = stocked.some(s => eqW(mfgShape, s.Form_Type) && eqW(mfgMaterial, s.Material_Type) && eqW(mfgSpec, s.Type_Detail_LU));
+      const cat   = stocked.some(s => eqW(mfgShape, s.Form_Type) && eqW(mfgMaterial, s.Material_Type));
+      stockScore = exact ? 1.0 : cat ? 0.5 : 0;
+    }
   }
   const supCapNames = supplierCaps.map(c => (c.Supplier_Process?.Capabilities || '').toLowerCase()).filter(Boolean);
   let capScore = 0;
@@ -1302,6 +1314,8 @@ function scoreMatch({ supplierStock, mfgShape, mfgMaterial, mfgSpec, supplierCap
 
 app.get('/api/match-suggestions', async (req, res) => {
   const { mfg_id, radius = 150, shape = '', material = '', spec = '', caps = '' } = req.query;
+  const mode = req.query.mode === 'fittings' ? 'fittings' : 'structural';
+  const ft_type = req.query.ft_type || '', ft_make = req.query.ft_make || '', ft_end = req.query.ft_end || '', ft_conn = req.query.ft_conn || '', ft_spec = req.query.ft_spec || '';
   const checkedCaps = caps ? caps.split(',').map(c => c.trim().toLowerCase()).filter(Boolean) : [];
   if (!mfg_id) return res.status(400).json({ error: 'mfg_id required' });
   try {
@@ -1351,11 +1365,11 @@ app.get('/api/match-suggestions', async (req, res) => {
       const distanceMi = haversine(mfgGeo.lat, mfgGeo.lng, supGeo.lat, supGeo.lng);
       if (distanceMi > parseFloat(radius)) return null;
 
+      const stockReport = mode === 'fittings'
+        ? `Supplier_Fitting_Stock_All?criteria=(Supplier_ID==${sup.ID})&limit=1000`
+        : `Stocked_Material_List?criteria=(Supplier_ID==${sup.ID})&limit=1000`;
       const [stockResp, capResp] = await Promise.all([
-        axios.get(
-          `${base}/report/Stocked_Material_List?criteria=(Supplier_ID==${sup.ID})&limit=500`,
-          { headers: hdrs }
-        ).catch(() => ({ data: { data: [] } })),
+        axios.get(`${base}/report/${stockReport}`, { headers: hdrs }).catch(() => ({ data: { data: [] } })),
         axios.get(
           `${base}/report/Capabilities_Processes_Per_Supplier_Report?criteria=(Supplier_Entry_Form==${sup.ID})&limit=200`,
           { headers: hdrs }
@@ -1373,10 +1387,13 @@ app.get('/api/match-suggestions', async (req, res) => {
     const results = inRadius.map(({ sup, distanceMi, supplierStock, supplierCaps }) => {
       const supCapNames = supplierCaps.map(c => (c.Supplier_Process?.Capabilities || '').toLowerCase()).filter(Boolean);
       const score = scoreMatch({
-        supplierStock,
+        mode,
+        supplierStock:    mode === 'structural' ? supplierStock : [],
+        supplierFitStock: mode === 'fittings' ? supplierStock : [],
         mfgShape:     shape,
         mfgMaterial:  material,
         mfgSpec:      spec,
+        ftType: ft_type, ftMake: ft_make, ftEnd: ft_end, ftConn: ft_conn, ftSpec: ft_spec,
         supplierCaps,
         distanceMi,
         radius:       parseFloat(radius),
@@ -1405,7 +1422,8 @@ app.get('/api/match-suggestions', async (req, res) => {
     res.json({
       mfg_id,
       radius,
-      searchCriteria: { shape, material, spec },
+      mode,
+      searchCriteria: { mode, shape, material, spec, ft_type, ft_make, ft_end, ft_conn, ft_spec },
       count: filtered.length,
       results: filtered
     });
