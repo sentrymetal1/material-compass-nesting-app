@@ -88,11 +88,16 @@ export default function SupplierApp() {
   const fittings = (d && d.matches && d.matches.fittings) || [];
   const structural = (d && d.matches && d.matches.structural) || [];
   // Group structural matches by quote number so one job's many lines collapse together.
+  const itemNo = m => {
+    const fromDesc = (String(m.description || '').match(/Item No\s+(\d+)/i) || [])[1];
+    return fromDesc ? Number(fromDesc) : (Number(m.line_item) || 1e9);
+  };
   const structGroups = Object.values(structural.reduce((acc, m) => {
     const key = m.quote_id_number || m.quote_id || m.project_id || '—';
     (acc[key] = acc[key] || { key, quote: m.quote_id_number, project: m.project, project_name: m.project_name, items: [] }).items.push(m);
     return acc;
   }, {}));
+  structGroups.forEach(g => g.items.sort((a, b) => itemNo(a) - itemNo(b)));
 
   return (
     <div className="sup-app">
