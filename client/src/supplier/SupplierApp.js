@@ -26,9 +26,11 @@ function MatchCard({ m }) {
   const t = TIER[m.match_level] || { label: m.match_level, cls: 'tier-category' };
   let title, detail;
   if (m.material) {
+    // RFQs_Sent returns lookups as IDs, so prefer the readable description line.
     const x = m.material;
-    title = [x.form, x.material].filter(Boolean).join(' — ') || 'Material';
-    detail = x.spec || '';
+    const names = [x.form, x.material, x.spec].filter(s => s && !/^\d{10,}$/.test(String(s)));
+    title = m.description || names.join(' · ') || 'Material';
+    detail = m.description ? '' : (x.spec || '');
   } else {
     const f = m.fitting || {};
     title = [f.type, f.make].filter(Boolean).join(' — ') || 'Fitting';
