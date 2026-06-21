@@ -32,8 +32,15 @@ function indexStock(rows) { const sets = TIERS.map(() => new Set()); for (const 
 function bestMatch(ax, sets) { for (let i = 0; i < TIERS.length; i++) { const k = tierKey(ax, TIERS[i].keys); if (k && sets[i].has(k)) return TIERS[i]; } return null; }
 const isStocked = v => Array.isArray(v) ? v.includes('Stocked') : (v === 'Stocked' || v === true || v === 'true');
 
-const fetchDemand = deps => deps.cachedLookup('structural-demand', 60 * 1000, () =>
-  deps.fetchAllZohoPages('/report/' + DEMAND_REPORT + '?criteria=' + DEMAND_CRITERIA));
+const fetchDemand = deps => deps.cachedLookup('structural-demand', 60 * 1000, async () => {
+  try {
+    return await deps.fetchAllZohoPages('/report/' + DEMAND_REPORT + '?criteria=' + DEMAND_CRITERIA);
+  } catch (e) {
+    // If the quoted/space criteria is rejected, fall back to the latest-lines filter
+    // (we re-filter to "In Process" in JS below either way).
+    return await deps.fetchAllZohoPages('/report/' + DEMAND_REPORT + '?criteria=(Latest_Item_for_Supplier==true)');
+  }
+});
 const fetchStock = (sid, deps) => deps.cachedLookup('struct-stock-match:' + sid, 60 * 1000, () =>
   deps.fetchAllZohoPages('/report/' + SUPPLY_REPORT + '?criteria=(Supplier_ID==' + encodeURIComponent(sid) + ')'));
 
@@ -47,6 +54,7 @@ async function matchStructuralForSupplier(supplierId, deps) {
   const seen = new Set();
   const matches = [];
   for (const d of (demand || [])) {
+    if (String(d.RFQ_Sent_Status || '') !== 'In Process') continue; // active sourcing only
     const ax = demandAxes(d);
     const tier = bestMatch(ax, sets);
     if (!tier) continue;
