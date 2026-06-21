@@ -192,6 +192,7 @@ function registerSupplierRoutes(app, deps) {
   // into quotes for the UI. Read-only here; the price PATCH is a separate endpoint.
   const FIT_RFQ_REPORT = process.env.FITTING_RFQ_REPORT || 'RFQs_Sent_Fittings_Report';
   async function fetchSentFittingRfqs(supplierId) {
+    // fetchAllZohoPages returns [] on an empty criteria result (Zoho 9280), so no guard here.
     const rows = await cachedLookup('fit-rfqs:' + supplierId, 60 * 1000, async () =>
       fetchAllZohoPages('/report/' + FIT_RFQ_REPORT + '?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')'));
     const byQuote = new Map();

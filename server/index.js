@@ -528,6 +528,10 @@ async function fetchAllZohoPages(reportPath) {
     try {
       resp = await axios.get(url, { headers });
     } catch (err) {
+      // Zoho v2.1 returns HTTP 400 / code 9280 ("No records found matching the given
+      // criteria") for an EMPTY criteria result instead of []. That's not an error —
+      // return whatever we've collected (typically []) so callers don't have to guard.
+      if (err.response?.status === 400 && err.response.data?.code === 9280) break;
       console.error('[bom-lookups] Zoho HTTP error:', url, '→', err.response?.status, JSON.stringify(err.response?.data || err.message));
       throw err;
     }
@@ -2002,21 +2006,6 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
 // catch-all below or the React index.html swallows these routes. Reuses this
 // file's Zoho token helpers so there's no duplicate auth machinery.
 require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
-// ---- TEMP diag #3: run the exact bridge query, surface the real error. REMOVE after. ----
-app.get('/api/_diag/bridge-query', async (req, res) => {
-  const sid = req.query.sid || '4111484000000994005'; // Mark Supply Center default
-  const tries = [
-    'RFQs_Sent_Fittings_Report?criteria=(Supplier_LU==' + sid + ')',
-    'RFQs_Sent_Fittings_Report',
-  ];
-  const out = {};
-  for (const t of tries) {
-    try { const r = await fetchAllZohoPages('/report/' + t); out[t] = { ok: true, count: r.length }; }
-    catch (e) { out[t] = { ok: false, status: e.response?.status, zoho: e.response?.data, msg: String(e.message).slice(0, 120) }; }
-  }
-  res.json({ sid, out });
-});
-
 // ---- Quote Triage poller (Step 4): GET /api/triage/poll ----
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
