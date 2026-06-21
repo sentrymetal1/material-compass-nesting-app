@@ -797,6 +797,77 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
+  // GET /api/supplier/me/quote-detail?quote_id=X — the FULL quote (all lines, all
+  // suppliers) with each line's coverage for THIS supplier: sent-to-me, stock match,
+  // and whether it's been quoted. Lets the dashboard show "you covered what you could"
+  // including the lines the MFG didn't send you (not-a-match).
+  app.get('/api/supplier/me/quote-detail', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const quoteId = String(req.query.quote_id || '');
+      if (!quoteId) return res.status(400).json({ ok: false, error: 'quote_id required' });
+      const [rows, stockAll] = await Promise.all([
+        cachedLookup('quote-detail:' + quoteId, 60 * 1000, () =>
+          fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Quote_LU==' + encodeURIComponent(quoteId) + ')')),
+        structStock(sid),
+      ]);
+      // stock match sets from the supplier's stocked structural rows
+      const exact = new Set(), strong = new Set();
+      for (const r of (stockAll || [])) {
+        if (!isStocked(r.Material_Stocked)) continue;
+        const f = lkid(r.Form_Type), m = lkid(r.Material_Type), s = lkid(r.Type_Detail_LU);
+        if (f && m && s) exact.add(f + '|' + m + '|' + s);
+        if (f && m) strong.add(f + '|' + m);
+      }
+      const matchOf = (f, m, s) => (f && m && s && exact.has(f + '|' + m + '|' + s)) ? 'exact' : ((f && m && strong.has(f + '|' + m)) ? 'strong' : null);
+
+      // group all rows by line (same line sent to N suppliers = N rows)
+      const byLine = new Map();
+      for (const r of (rows || [])) {
+        const ln = String(r.Line_Item || ('row-' + r.ID));
+        if (!byLine.has(ln)) byLine.set(ln, []);
+        byLine.get(ln).push(r);
+      }
+      const lines = [];
+      for (const group of byLine.values()) {
+        const any = group[0];
+        const mine = group.find(r => lkid(r.Supplier_LU) === sid);
+        const f = lkid(any.Form_Type), mt = lkid(any.Material_Type), sp = lkid(any.Material_Form_Detail);
+        const responded = mine ? (!!(mine.Item_Verification_Status && String(mine.Item_Verification_Status).trim()) || (mine.Price_Per_Lb != null && String(mine.Price_Per_Lb).trim() !== '' && Number(mine.Price_Per_Lb) > 0)) : false;
+        lines.push({
+          line_item: any.Line_Item || '',
+          description: any.Description_And_Dimension_Text || any.Full_Item_Description || '',
+          qty: any.Quantity != null ? Number(any.Quantity) : null,
+          sent_to_me: !!mine,
+          stock_match: matchOf(f, mt, sp), // 'exact' | 'strong' | null
+          responded,
+          my_row_id: mine ? String(mine.ID) : null,
+        });
+      }
+      lines.sort((a, b) => (Number(a.line_item) || 0) - (Number(b.line_item) || 0));
+      const meta = rows && rows[0] ? rows[0] : {};
+      res.json({
+        ok: true,
+        quote: {
+          quote_id: quoteId,
+          quote_number: meta.Quote_Reference_Number || meta.Quote_Number || '',
+          project: flatten(meta.MCP_Customer_Project_Form) || '',
+          client: (meta.MFG_Client_Form && meta.MFG_Client_Form.Client_Company_Name) || flatten(meta.Customer_LU) || '',
+        },
+        counts: {
+          total: lines.length,
+          sent_to_me: lines.filter(l => l.sent_to_me).length,
+          matched: lines.filter(l => l.sent_to_me && l.stock_match).length,
+          quoted: lines.filter(l => l.responded).length,
+        },
+        lines,
+      });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // Dashboard — the supplier's home. v1 returns fitting matches (live). Structural
   // matches + quote statuses get added here next (Phase 1 continued) so the UI has
   // one call for its home screen.

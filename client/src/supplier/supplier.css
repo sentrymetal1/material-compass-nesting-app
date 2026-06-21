@@ -246,3 +246,24 @@
 .match-group-toggle { flex: 1; display: flex; align-items: center; gap: 10px; padding: 13px 16px; background: none; border: none; font: inherit; cursor: pointer; text-align: left; }
 .match-group-quote { margin: 0 12px; flex-shrink: 0; }
 .match-group-head { padding: 0; gap: 0; cursor: default; }
+
+/* Quote coverage detail */
+.qd-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.qd-head { margin-bottom: 18px; }
+.qd-head h1 { margin: 0 0 4px; font-size: 24px; }
+.qd-counts { display: flex; gap: 20px; margin-top: 12px; font-size: 14px; color: #56606e; }
+.qd-counts strong { color: #1f2a37; font-size: 16px; }
+.qd-lines { display: flex; flex-direction: column; gap: 6px; }
+.qd-line { display: flex; justify-content: space-between; align-items: center; gap: 14px; background: #fff; border: 1px solid var(--line); border-left: 3px solid #5F94CE; border-radius: 8px; padding: 11px 16px; }
+.qd-line.qd-inactive { opacity: .55; border-left-color: #c4cad2; background: #fafbfc; }
+.qd-line-main { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.qd-ln { font-weight: 700; color: #5F94CE; flex-shrink: 0; }
+.qd-desc { color: #1f2a37; }
+.qd-line-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.cov-badge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+.cov-exact { background: #e7f6ec; color: #1a7f37; }
+.cov-match { background: #eaf2fb; color: #1f5fb0; }
+.cov-nostock { background: #fff4e0; color: #9a6a12; }
+.cov-na { background: #f0f1f3; color: #717a86; }
+.cov-quoted { background: #e7f6ec !important; color: #1a7f37 !important; }
+.cov-pending { background: #fff4e0 !important; color: #9a6a12 !important; }

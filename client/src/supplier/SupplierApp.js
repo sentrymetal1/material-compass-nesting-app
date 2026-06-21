@@ -3,6 +3,7 @@ import './supplier.css';
 import QuotesView from './QuotesView';
 import ProfileView from './ProfileView';
 import StockView from './StockView';
+import QuoteDetailView from './QuoteDetailView';
 
 // Off-Zoho supplier platform — v1. Embedded in the Zoho portal, which passes the
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
@@ -54,7 +55,7 @@ function MatchCard({ m, grouped, onQuote }) {
       </div>
       <div className="match-side">
         <span className={'tier ' + t.cls}>{t.label}</span>
-        <button className="btn-quote" type="button" onClick={onQuote} disabled={!onQuote} title={onQuote ? 'Open this in the Quotes tab' : ''}>
+        <button className="btn-quote" type="button" onClick={() => onQuote && onQuote(m.quote_id)} disabled={!onQuote} title={onQuote ? 'Open the full quote' : ''}>
           Quote
         </button>
       </div>
@@ -67,6 +68,8 @@ export default function SupplierApp() {
   const [view, setView] = useState('dashboard');
   const [state, setState] = useState({ status: 'loading', data: null, error: null });
   const [openQuotes, setOpenQuotes] = useState({});
+  const [detailQuote, setDetailQuote] = useState(null);
+  const openDetail = (quoteId) => { if (quoteId) { setDetailQuote(quoteId); setView('quote-detail'); } };
 
   const load = useCallback(async () => {
     if (!email) { setState({ status: 'no-email', data: null, error: null }); return; }
@@ -117,8 +120,12 @@ export default function SupplierApp() {
         </div>
       </header>
 
-      <main className={'sup-main' + (view === 'quotes' || view === 'profile' || view === 'stock' ? ' sup-main-wide' : '')}>
-        {view === 'stock' ? (
+      <main className={'sup-main' + (view === 'quotes' || view === 'profile' || view === 'stock' || view === 'quote-detail' ? ' sup-main-wide' : '')}>
+        {view === 'quote-detail' ? (
+          email && detailQuote
+            ? <QuoteDetailView email={email} quoteId={detailQuote} onBack={() => setView('dashboard')} onGoToQuotes={() => setView('quotes')} />
+            : <div className="sup-msg sup-msg-warn">No quote selected.</div>
+        ) : view === 'stock' ? (
           email ? <StockView email={email} />
             : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
         ) : view === 'profile' ? (
@@ -214,9 +221,9 @@ export default function SupplierApp() {
                             {p && p.due_date && <span className="muted">Due {p.due_date}</span>}
                             <span className="muted" style={{ marginLeft: 'auto' }}>{g.items.length} item{g.items.length === 1 ? '' : 's'}</span>
                           </button>
-                          <button className="btn-quote match-group-quote" onClick={() => setView('quotes')}>Quote project</button>
+                          <button className="btn-quote match-group-quote" onClick={() => openDetail(g.items[0] && g.items[0].quote_id)}>Quote project</button>
                         </div>
-                        {open && <div className="match-list">{g.items.map(m => <MatchCard key={m.rfq_row_id} m={m} grouped onQuote={() => setView('quotes')} />)}</div>}
+                        {open && <div className="match-list">{g.items.map(m => <MatchCard key={m.rfq_row_id} m={m} grouped onQuote={openDetail} />)}</div>}
                       </div>
                     );
                   })}
