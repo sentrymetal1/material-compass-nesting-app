@@ -24,9 +24,16 @@ const TIER = {
 
 function MatchCard({ m }) {
   const t = TIER[m.match_level] || { label: m.match_level, cls: 'tier-category' };
-  const f = m.fitting || {};
-  const title = [f.type, f.make].filter(Boolean).join(' — ') || 'Fitting';
-  const detail = [f.end, f.connection, f.specification].filter(Boolean).join(' · ');
+  let title, detail;
+  if (m.material) {
+    const x = m.material;
+    title = [x.form, x.material].filter(Boolean).join(' — ') || 'Material';
+    detail = x.spec || '';
+  } else {
+    const f = m.fitting || {};
+    title = [f.type, f.make].filter(Boolean).join(' — ') || 'Fitting';
+    detail = [f.end, f.connection, f.specification].filter(Boolean).join(' · ');
+  }
   const p = m.project;
   const projectLabel = p
     ? [p.quote_number, p.client].filter(Boolean).join(' · ')
@@ -76,6 +83,7 @@ export default function SupplierApp() {
 
   const d = state.data;
   const fittings = (d && d.matches && d.matches.fittings) || [];
+  const structural = (d && d.matches && d.matches.structural) || [];
 
   return (
     <div className="sup-app">
@@ -134,6 +142,14 @@ export default function SupplierApp() {
                   <div className="count-num">{d.counts.fitting_stock}</div>
                   <div className="count-lbl">Fittings you stock</div>
                 </div>
+                <div className="count-card">
+                  <div className="count-num">{d.counts.structural_matches != null ? d.counts.structural_matches : 0}</div>
+                  <div className="count-lbl">Structural RFQ matches</div>
+                </div>
+                <div className="count-card">
+                  <div className="count-num">{d.counts.structural_stock != null ? d.counts.structural_stock : 0}</div>
+                  <div className="count-lbl">Structural items you stock</div>
+                </div>
               </div>
             </div>
 
@@ -156,9 +172,23 @@ export default function SupplierApp() {
               )}
             </section>
 
-            <section className="sup-section sup-section-soon">
-              <h2>Structural, pipe &amp; plate matches <span className="muted">— coming next</span></h2>
-              <div className="sup-empty">These will join this dashboard in the next phase.</div>
+            <section className="sup-section">
+              <h2>Structural matches <span className="muted">— sourcing requests for material you stock</span></h2>
+              {structural.length === 0 ? (
+                <div className="sup-empty">
+                  No open structural requests right now. They appear here automatically as
+                  manufacturers source material that matches your structural stock list.
+                  {d.counts.structural_matches_closed_hidden > 0 && (
+                    <div className="sup-subnote">
+                      ({d.counts.structural_matches_closed_hidden} match{d.counts.structural_matches_closed_hidden > 1 ? 'es' : ''} hidden — those projects are already awarded or closed.)
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="match-list">
+                  {structural.map(m => <MatchCard key={m.rfq_row_id} m={m} />)}
+                </div>
+              )}
             </section>
           </>
         )}

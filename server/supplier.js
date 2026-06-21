@@ -7,6 +7,7 @@
 // change; no route or screen does.
 
 const { matchFittingsForSupplier } = require('./fittingMatch');
+const { matchStructuralForSupplier } = require('./structuralMatch');
 
 const SUPPLIER_REPORT = 'Supplier_Entry_Report';
 
@@ -801,26 +802,36 @@ function registerSupplierRoutes(app, deps) {
   // one call for its home screen.
   app.get('/api/supplier/me/dashboard', withSupplier, async (req, res) => {
     try {
-      const fittings = await matchFittingsForSupplier(req.supplier.id, deps);
-      const pmap = await getProjectInfo(fittings.matches.map(m => m.project_id));
-      const withProject = fittings.matches.map(m => ({ ...m, project: pmap[m.project_id] || null }));
+      const [fittings, structural] = await Promise.all([
+        matchFittingsForSupplier(req.supplier.id, deps),
+        matchStructuralForSupplier(req.supplier.id, deps),
+      ]);
+      // Resolve every matched project once (cached) for the open-RFQ gate + display.
+      const pmap = await getProjectInfo([...fittings.matches, ...structural.matches].map(m => m.project_id));
+      const withProj = arr => arr.map(m => ({ ...m, project: pmap[m.project_id] || null }));
 
       // OPEN-RFQ GATE: only show matches whose project is actively being quoted.
       // Allowlist (not blocklist) so future/blank statuses default to hidden — never
       // leak an awarded/lost project to a supplier. Confirmed set 2026-06-18.
-      const openFittings = withProject.filter(m => m.project && OPEN_PROJECT_STATUSES.has(m.project.status));
+      const fAll = withProj(fittings.matches);
+      const sAll = withProj(structural.matches);
+      const openFittings = fAll.filter(m => m.project && OPEN_PROJECT_STATUSES.has(m.project.status));
+      const openStructural = sAll.filter(m => m.project && OPEN_PROJECT_STATUSES.has(m.project.status));
 
       res.json({
         ok: true,
         supplier: req.supplier,
         matches: {
           fittings: openFittings,
-          structural: [], // TODO Phase 1: bridge from the existing Zoho structural matcher
+          structural: openStructural,
         },
         counts: {
           fitting_matches: openFittings.length,
-          fitting_matches_closed_hidden: withProject.length - openFittings.length,
+          fitting_matches_closed_hidden: fAll.length - openFittings.length,
           fitting_stock: fittings.stock_count,
+          structural_matches: openStructural.length,
+          structural_matches_closed_hidden: sAll.length - openStructural.length,
+          structural_stock: structural.stock_count,
         },
         quote_statuses: [], // TODO Phase 1: read this supplier's quotes
       });
