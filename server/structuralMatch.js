@@ -12,8 +12,6 @@
 
 const DEMAND_REPORT = 'All_RFQs_Sent_Report';
 const SUPPLY_REPORT = 'Stocked_Material_List';
-// In Process + latest version; %26%26 = && and %20 = space inside the quoted value.
-const DEMAND_CRITERIA = '(RFQ_Sent_Status=="In%20Process"%26%26Latest_Item_for_Supplier==true)';
 
 const TIERS = [
   { level: 'exact',  score: 100, keys: ['form', 'mat', 'spec'] },
@@ -32,20 +30,23 @@ function indexStock(rows) { const sets = TIERS.map(() => new Set()); for (const 
 function bestMatch(ax, sets) { for (let i = 0; i < TIERS.length; i++) { const k = tierKey(ax, TIERS[i].keys); if (k && sets[i].has(k)) return TIERS[i]; } return null; }
 const isStocked = v => Array.isArray(v) ? v.includes('Stocked') : (v === 'Stocked' || v === true || v === 'true');
 
-const fetchDemand = deps => deps.cachedLookup('structural-demand', 60 * 1000, async () => {
+// Option A: only lines the manufacturer SENT to this supplier (so every match is
+// quotable). Per-supplier cache; %26%26 = && and %20 = space in the quoted value.
+const fetchDemand = (sid, deps) => deps.cachedLookup('structural-demand:' + sid, 60 * 1000, async () => {
+  const sup = encodeURIComponent(sid);
   try {
-    return await deps.fetchAllZohoPages('/report/' + DEMAND_REPORT + '?criteria=' + DEMAND_CRITERIA);
+    return await deps.fetchAllZohoPages('/report/' + DEMAND_REPORT + '?criteria=(Supplier_LU==' + sup + '%26%26RFQ_Sent_Status=="In%20Process"%26%26Latest_Item_for_Supplier==true)');
   } catch (e) {
-    // If the quoted/space criteria is rejected, fall back to the latest-lines filter
+    // Fall back to the supplier's latest lines if the quoted/space criteria is rejected
     // (we re-filter to "In Process" in JS below either way).
-    return await deps.fetchAllZohoPages('/report/' + DEMAND_REPORT + '?criteria=(Latest_Item_for_Supplier==true)');
+    return await deps.fetchAllZohoPages('/report/' + DEMAND_REPORT + '?criteria=(Supplier_LU==' + sup + '%26%26Latest_Item_for_Supplier==true)');
   }
 });
 const fetchStock = (sid, deps) => deps.cachedLookup('struct-stock-match:' + sid, 60 * 1000, () =>
   deps.fetchAllZohoPages('/report/' + SUPPLY_REPORT + '?criteria=(Supplier_ID==' + encodeURIComponent(sid) + ')'));
 
 async function matchStructuralForSupplier(supplierId, deps) {
-  const [stockAll, demand] = await Promise.all([fetchStock(supplierId, deps), fetchDemand(deps)]);
+  const [stockAll, demand] = await Promise.all([fetchStock(supplierId, deps), fetchDemand(supplierId, deps)]);
   const stock = (stockAll || []).filter(r => isStocked(r.Material_Stocked));
   if (!stock.length) {
     return { ok: true, supplier_id: supplierId, stock_count: 0, demand_count: (demand || []).length, match_count: 0, matches: [] };

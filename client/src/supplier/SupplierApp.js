@@ -22,7 +22,7 @@ const TIER = {
   category: { label: 'Category match', cls: 'tier-category' },
 };
 
-function MatchCard({ m, grouped }) {
+function MatchCard({ m, grouped, onQuote }) {
   const t = TIER[m.match_level] || { label: m.match_level, cls: 'tier-category' };
   let title, detail;
   if (m.material) {
@@ -54,7 +54,7 @@ function MatchCard({ m, grouped }) {
       </div>
       <div className="match-side">
         <span className={'tier ' + t.cls}>{t.label}</span>
-        <button className="btn-quote" type="button" disabled title="Quoting flow — coming in the next phase">
+        <button className="btn-quote" type="button" onClick={onQuote} disabled={!onQuote} title={onQuote ? 'Open this in the Quotes tab' : ''}>
           Quote
         </button>
       </div>
@@ -181,7 +181,7 @@ export default function SupplierApp() {
                 </div>
               ) : (
                 <div className="match-list">
-                  {fittings.map(m => <MatchCard key={m.rfq_row_id} m={m} />)}
+                  {fittings.map(m => <MatchCard key={m.rfq_row_id} m={m} onQuote={() => setView('quotes')} />)}
                 </div>
               )}
             </section>
@@ -205,15 +205,18 @@ export default function SupplierApp() {
                     const p = g.project;
                     return (
                       <div key={g.key} className="match-group">
-                        <button className="match-group-head" onClick={() => setOpenQuotes(o => ({ ...o, [g.key]: !o[g.key] }))}>
-                          <span className="stock-caret">{open ? '▾' : '▸'}</span>
-                          <strong>{g.quote || g.project_name || 'Quote'}</strong>
-                          {p && p.client && <span className="muted">{p.client}</span>}
-                          {p && p.status && <span className="chip chip-status">{p.status}</span>}
-                          {p && p.due_date && <span className="muted">Due {p.due_date}</span>}
-                          <span className="muted" style={{ marginLeft: 'auto' }}>{g.items.length} item{g.items.length === 1 ? '' : 's'}</span>
-                        </button>
-                        {open && <div className="match-list">{g.items.map(m => <MatchCard key={m.rfq_row_id} m={m} grouped />)}</div>}
+                        <div className="match-group-head">
+                          <button className="match-group-toggle" onClick={() => setOpenQuotes(o => ({ ...o, [g.key]: !o[g.key] }))}>
+                            <span className="stock-caret">{open ? '▾' : '▸'}</span>
+                            <strong>{g.quote || g.project_name || 'Quote'}</strong>
+                            {p && p.client && <span className="muted">{p.client}</span>}
+                            {p && p.status && <span className="chip chip-status">{p.status}</span>}
+                            {p && p.due_date && <span className="muted">Due {p.due_date}</span>}
+                            <span className="muted" style={{ marginLeft: 'auto' }}>{g.items.length} item{g.items.length === 1 ? '' : 's'}</span>
+                          </button>
+                          <button className="btn-quote match-group-quote" onClick={() => setView('quotes')}>Quote project</button>
+                        </div>
+                        {open && <div className="match-list">{g.items.map(m => <MatchCard key={m.rfq_row_id} m={m} grouped onQuote={() => setView('quotes')} />)}</div>}
                       </div>
                     );
                   })}
