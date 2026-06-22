@@ -2006,6 +2006,24 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
 // catch-all below or the React index.html swallows these routes. Reuses this
 // file's Zoho token helpers so there's no duplicate auth machinery.
 require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
+// ---- TEMP diag #4: recent fitting bridge rows + fittings-only stock probe. REMOVE after. ----
+app.get('/api/_diag/bridge-recent', async (req, res) => {
+  try {
+    const rows = await fetchAllZohoPages('/report/RFQs_Sent_Fittings_Report');
+    const recent = rows
+      .sort((a, b) => Number(b.ID) - Number(a.ID))
+      .slice(0, 12)
+      .map(r => ({
+        id: r.ID, quote: r.Quote_Number, supplier: r.Supplier_Name,
+        supplier_lu: (r.Supplier_LU && r.Supplier_LU.ID) || r.Supplier_LU || '',
+        type: (r.Fitting_Type && r.Fitting_Type.zc_display_value) || '',
+        make: (r.Fitting_Make && r.Fitting_Make.zc_display_value) || '',
+        qty: r.Quantity, sent: r.RFQ_Fitting_Sent_Status, ts: r.Quote_Timestamp, added: r.Added_User,
+      }));
+    res.json({ ok: true, total: rows.length, recent });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message, zoho: e.response && e.response.data }); }
+});
+
 // ---- Quote Triage poller (Step 4): GET /api/triage/poll ----
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
