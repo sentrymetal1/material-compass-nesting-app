@@ -290,7 +290,12 @@ function registerTriageRoutes(app, deps) {
   async function getConnectedMailboxes(mailboxFilter) {
     const token = await getAccessToken();
     const base = creatorApiBase();
-    let path = '/report/' + MC_REPORT + '?criteria=' + zCriteria('Connection_Status', 'Connected') + '&limit=200';
+    // Include 'Error' connections too, so a transient failure (which flips a
+    // mailbox to 'Error') self-heals on the next scan instead of permanently
+    // dropping it from rotation. pollMailbox sets it back to 'Connected' on a
+    // successful run, or re-flags 'Error' if the token genuinely fails.
+    const crit = encodeURIComponent('((Connection_Status=="Connected") || (Connection_Status=="Error"))');
+    let path = '/report/' + MC_REPORT + '?criteria=' + crit + '&limit=200';
     try {
       const r = await axios.get(base + path, { headers: zohoHeaders(token) });
       throwIfQuota(r);
@@ -708,50 +713,6 @@ function registerTriageRoutes(app, deps) {
     } catch (err) {
       console.error('[triage] decision error:', err.response?.data || err.message);
       res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
-    }
-  });
-
-  // TEMP diag: list ALL Mail_Connection rows with their Connection_Status (no
-  // "Connected" filter), to see why getConnectedMailboxes returns empty. Also
-  // reports whether a durable Last_Synced field exists/has a value.
-  app.get('/api/triage/debug-status', async (req, res) => {
-    try {
-      const token = await getAccessToken();
-      const base = creatorApiBase();
-      const r = await axios.get(base + '/report/' + MC_REPORT + '?limit=50', { headers: zohoHeaders(token) });
-      const rows = (r.data && r.data.data) || [];
-      const wantRestore = req.query.restore === '1';
-      const out = [];
-      for (const row of rows) {
-        let lastSynced = '<<not a report column>>';
-        try {
-          const sr = await axios.get(base + '/report/' + MC_REPORT + '/' + row.ID, { headers: zohoHeaders(token) });
-          const full = (sr.data && sr.data.data) || {};
-          lastSynced = Object.prototype.hasOwnProperty.call(full, 'Last_Synced') ? (full.Last_Synced || '<<empty>>') : '<<field does not exist>>';
-        } catch (e) { lastSynced = 'err: ' + (e.response?.data?.code || e.message); }
-        // Is the stored Microsoft refresh token still usable?
-        let tokenOk = false, tokenErr = null, restored = false;
-        try {
-          const tk = await getGraphAccessToken(row.Refresh_Token);
-          tokenOk = !!(tk && tk.access_token);
-          if (tokenOk && wantRestore && row.Connection_Status !== 'Connected') {
-            await updateConnection(row.ID, { Connection_Status: 'Connected' });
-            restored = true;
-          }
-        } catch (e) { tokenErr = e.response?.data?.error_description || e.message; }
-        out.push({
-          id: row.ID,
-          mailbox: row.Mailbox_Email,
-          connection_status: restored ? 'Connected (restored)' : row.Connection_Status,
-          connected_on: row.Connected_On,
-          last_synced_field: lastSynced,
-          token_ok: tokenOk,
-          token_error: tokenErr,
-        });
-      }
-      res.json({ ok: true, count: rows.length, build: 'triage-2026-06-24-4', restore_requested: wantRestore, connections: out });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.response?.data || err.message });
     }
   });
 
