@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-25-3';
+const BUILD_TAG = 'triage-ui-2026-06-25-4';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -248,6 +248,15 @@ function renderTriagePage() {
     try{ if(navigator.clipboard){ navigator.clipboard.writeText(t); return true; } }catch(e){}
     return false;
   }
+  // Quote_Due_Date is a DATE-TIME field expecting "MMM dd,yyyy HH:mm:ss"
+  // (e.g. "Jun 24,2026 00:00:00"). The opportunity stores a date only, so we
+  // reformat + append midnight; passing a date-only value fails validation.
+  var MON3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function fmtDueForField(d){
+    var t=Date.parse(d); if(isNaN(t)) return '';
+    var x=new Date(t);
+    return MON3[x.getMonth()]+' '+String(x.getDate()).padStart(2,'0')+','+x.getFullYear()+' 00:00:00';
+  }
   function prefRow(label,target,value){
     var has = value!=null && String(value).trim()!=='';
     var v = has ? esc(value) : '— not in the email';
@@ -269,7 +278,7 @@ function renderTriagePage() {
     if(o.summary && o.summary.trim()) rows+=prefRow('Summary','(reference)',o.summary);
     document.getElementById('pmBody').innerHTML=rows;
     var qp='?description='+encodeURIComponent(o.project||'');
-    if(o.due_date) qp+='&due='+encodeURIComponent(o.due_date);
+    var dueField=fmtDueForField(o.due_date); if(dueField) qp+='&due='+encodeURIComponent(dueField);
     if(MFG) qp+='&manufacture='+encodeURIComponent(MFG);
     var ob=document.getElementById('pmOpen'); ob.setAttribute('data-url',PORTAL_NEW_PROJECT+qp); ob.textContent='Open new project form →';
     document.getElementById('pmodal').classList.add('show');
