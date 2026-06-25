@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-24-1';
+const BUILD_TAG = 'triage-ui-2026-06-24-2';
 
 function renderTriagePage() {
   return `<!doctype html>

@@ -269,6 +269,18 @@ function registerTriageRoutes(app, deps) {
   const scanJobs = {};
   const jobKey = (req) => (req.query.manufacture || 'all').toString();
 
+  // In-process "last scan finished" timestamps, keyed by manufacturer id (+ a
+  // global). Resets on deploy, but gives the UI a real last-scanned time the
+  // moment any scan completes — independent of whether the Mail_Connection form
+  // has a durable Last_Synced field. The Zoho field (when present) takes
+  // precedence in the opportunities endpoint; this is the fallback.
+  const lastScanAt = {};
+  function markScanned(manufactureId) {
+    const iso = new Date().toISOString();
+    lastScanAt[manufactureId || 'all'] = iso;
+    lastScanAt.__any = iso;
+  }
+
   function zCriteria(field, value) {
     // Exact-match text criteria, URL-encoded; strip quotes that would break it.
     const safe = String(value == null ? '' : value).replace(/"/g, '');
@@ -554,6 +566,10 @@ function registerTriageRoutes(app, deps) {
       }
     }
 
+    // Record the scan time in-process first (always works), then persist to
+    // Zoho. Last_Synced only sticks if that field exists on the Mail_Connection
+    // form; if not, Zoho silently ignores it and the in-process value covers us.
+    markScanned(manufactureId);
     await updateConnection(conn.ID, {
       Last_Synced: new Date().toISOString(),
       Last_Seen_Message: newestSeen,
@@ -652,9 +668,10 @@ function registerTriageRoutes(app, deps) {
       let label = '';
       const m0 = rows[0] && rows[0].Manufacture;
       if (m0 && typeof m0 === 'object') label = m0.zc_display_value || m0.display_value || '';
-      // Last scan time = most recent Last_Synced across the relevant connected
-      // mailbox(es). Resolve it even when no manufacture filter is passed (the
-      // page often loads without one), so the UI timestamp isn't blank.
+      // Last scan time. Prefer a durable Last_Synced from Zoho, read via the
+      // SINGLE-RECORD endpoint (returns every form field, dodging the report-
+      // column trap that hid it before). If the form has no Last_Synced field
+      // yet, fall back to the in-process timestamp set when a scan completes.
       let last_synced = '';
       try {
         const mcPath = req.query.manufacture
@@ -662,10 +679,14 @@ function registerTriageRoutes(app, deps) {
           : '/report/' + MC_REPORT + '?limit=20';
         const cr = await axios.get(base + mcPath, { headers: zohoHeaders(token) });
         const conns = (cr.data && cr.data.data) || [];
-        for (const c of conns) {
-          if (c.Last_Synced && (!last_synced || Date.parse(c.Last_Synced) > Date.parse(last_synced))) last_synced = c.Last_Synced;
+        const conn = conns.find(c => (c.Connection_Status || '') === 'Connected') || conns[0];
+        if (conn && conn.ID) {
+          const sr = await axios.get(base + '/report/' + MC_REPORT + '/' + conn.ID, { headers: zohoHeaders(token) });
+          const full = (sr.data && sr.data.data) || {};
+          last_synced = full.Last_Synced || '';
         }
       } catch (e) { /* non-fatal */ }
+      if (!last_synced) last_synced = lastScanAt[req.query.manufacture || 'all'] || lastScanAt.__any || '';
       res.json({ status, count: rows.length, manufacture_label: label, last_synced, opportunities: rows.map(mapOpportunity) });
     } catch (err) {
       console.error('[triage] opportunities error:', err.response?.data || err.message);
@@ -706,41 +727,6 @@ function registerTriageRoutes(app, deps) {
       const inboxMsgs = await axios.get('https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=10&$select=subject,receivedDateTime,from', { headers: h }).then(r => (r.data.value || []).map(m => ({ subject: m.subject, received: m.receivedDateTime, from: m.from?.emailAddress?.address }))).catch(e => ({ error: e.response?.data || e.message }));
 
       res.json({ ok: true, oauth_config: effectiveConfig(), mailbox: conn.Mailbox_Email, inbox_folder: inbox, folders, me_messages_sample: allMsgs, inbox_messages_sample: inboxMsgs });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.response?.data || err.message });
-    }
-  });
-
-  // TEMP diag: inspect Mail_Connection rows two ways (report-list vs single-
-  // record) to find why Last_Synced reads blank. Remove after diagnosis.
-  app.get('/api/triage/debug-conn', async (req, res) => {
-    try {
-      const token = await getAccessToken();
-      const base = creatorApiBase();
-      const mcPath = req.query.manufacture
-        ? '/report/' + MC_REPORT + '?criteria=' + encodeURIComponent('(Manufacture==' + req.query.manufacture + ')') + '&limit=10'
-        : '/report/' + MC_REPORT + '?limit=10';
-      const listResp = await axios.get(base + mcPath, { headers: zohoHeaders(token) });
-      const listRows = (listResp.data && listResp.data.data) || [];
-      const out = [];
-      for (const row of listRows) {
-        let single = null;
-        try {
-          const sr = await axios.get(base + '/report/' + MC_REPORT + '/' + row.ID, { headers: zohoHeaders(token) });
-          single = (sr.data && sr.data.data) || null;
-        } catch (e) { single = { error: e.response?.data || e.message }; }
-        const syncish = (obj) => obj && !obj.error ? Object.keys(obj).filter(k => /sync|last|seen/i.test(k)).reduce((a, k) => (a[k] = obj[k], a), {}) : obj;
-        const dateish = (obj) => obj && !obj.error ? Object.keys(obj).filter(k => /time|date|modif|added|sync|last|seen|scan/i.test(k)).reduce((a, k) => (a[k] = obj[k], a), {}) : obj;
-        out.push({
-          id: row.ID,
-          mailbox: row.Mailbox_Email,
-          list_keys: Object.keys(row),
-          single_keys: single && !single.error ? Object.keys(single) : single,
-          single_date_fields: dateish(single),
-          single_sync_fields: syncish(single),
-        });
-      }
-      res.json({ ok: true, count: listRows.length, connections: out });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.response?.data || err.message });
     }
