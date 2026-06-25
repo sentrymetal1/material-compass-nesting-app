@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-25-1';
+const BUILD_TAG = 'triage-ui-2026-06-25-2';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -74,6 +74,26 @@ function renderTriagePage() {
   .laststamp{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:20px;padding:5px 12px;margin:-4px 0 14px}
   .laststamp b{color:var(--ink);font-weight:600}
   .laststamp .ago{color:var(--good);font-weight:600}
+  .pmodal-overlay{position:fixed;inset:0;background:rgba(20,30,40,.45);display:none;align-items:flex-start;justify-content:center;z-index:60;padding:32px 16px;overflow:auto}
+  .pmodal-overlay.show{display:flex}
+  .pmodal{background:#fff;border-radius:14px;box-shadow:0 12px 40px rgba(20,30,40,.22);max-width:560px;width:100%;overflow:hidden}
+  .pmodal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:18px 20px 12px;border-bottom:1px solid var(--line)}
+  .pmodal-head h3{margin:0;font-size:17px}
+  .pmodal-sub{margin:4px 0 0;font-size:12.5px;color:var(--muted);line-height:1.45}
+  .pmodal-x{border:0;background:transparent;font-size:18px;color:var(--muted);cursor:pointer;line-height:1;padding:2px 4px}
+  .pmodal-body{padding:8px 20px;max-height:60vh;overflow:auto}
+  .pref-row{padding:11px 0;border-bottom:1px solid #f0f2f5}
+  .pref-row:last-child{border-bottom:0}
+  .pref-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px}
+  .pref-label{font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink)}
+  .pref-target{font-size:11px;font-weight:500;color:var(--mc-blue);text-transform:none;letter-spacing:0}
+  .pref-line{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+  .pref-val{font-size:13.5px;color:#2b3640;line-height:1.45;white-space:pre-wrap;word-break:break-word;flex:1}
+  .pref-val.blank{color:#9aa4af;font-style:italic}
+  .pref-copy{flex:none;border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 10px;font-size:12px;font-weight:600;color:var(--mc-blue);cursor:pointer}
+  .pref-copy:hover{background:#eef3fa}
+  .pref-copy.done{color:var(--good);border-color:#bfe3c8;background:#f0faf2}
+  .pmodal-foot{display:flex;gap:10px;align-items:center;padding:14px 20px;border-top:1px solid var(--line);background:#fafbfc}
 </style></head>
 <body><div class="wrap">
   <div class="head">
@@ -106,6 +126,18 @@ function renderTriagePage() {
   <div class="spinner"></div>
   <p class="ov-title" id="ovTitle">Scanning your inbox…</p>
   <p class="ov-msg" id="ovMsg">Reading recent mail and checking each message for quote opportunities. This can take up to a minute — please don't close the page.</p>
+</div></div>
+<div class="pmodal-overlay" id="pmodal"><div class="pmodal">
+  <div class="pmodal-head">
+    <div><h3 id="pmTitle">Create Project</h3>
+    <p class="pmodal-sub">Open the form, then copy each value into the matching field. Keep this open to reference.</p></div>
+    <button class="pmodal-x" id="pmClose" title="Close">✕</button>
+  </div>
+  <div class="pmodal-body" id="pmBody"></div>
+  <div class="pmodal-foot">
+    <button class="btn project" id="pmOpen">Open new project form →</button>
+    <button class="btn" id="pmCloseBtn">Close</button>
+  </div>
 </div></div>
 <script>
   console.log('Quote Triage build ${BUILD_TAG}');
@@ -204,19 +236,58 @@ function renderTriagePage() {
       })
       .catch(function(e){ alert('Failed: '+e); });
   };
-  // Open a pre-filled NEW project on the Project_Dashboard page (same param
-  // pattern as a normal project link). 'description' maps to the Project
-  // Description field; Manufacture/labor/PO auto-fill via the form's OnLoad.
-  // The project isn't created until Mark reviews and hits SUBMIT NEW PROJECT.
+  // Create Project: open a reference panel with the extracted fields (each
+  // mapped to the project-form field it populates + a Copy button), plus a
+  // button to open the pre-filled NEW project on the Project_Dashboard page.
+  // 'description' maps to Project Description; Manufacture/labor/PO auto-fill
+  // via the form OnLoad. Nothing is created until Mark hits SUBMIT NEW PROJECT.
   var PORTAL_NEW_PROJECT='https://customer.materialcompassportal.com/#Page:Project_Dashboard';
+  function copyText(t){
+    t = (t==null?'':String(t));
+    try{ var ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.top='-1000px'; document.body.appendChild(ta); ta.focus(); ta.select(); var ok=document.execCommand('copy'); document.body.removeChild(ta); if(ok) return true; }catch(e){}
+    try{ if(navigator.clipboard){ navigator.clipboard.writeText(t); return true; } }catch(e){}
+    return false;
+  }
+  function prefRow(label,target,value){
+    var has = value!=null && String(value).trim()!=='';
+    var v = has ? esc(value) : '— not in the email';
+    var copyBtn = has ? '<button class="pref-copy" data-v="'+esc(value)+'">Copy</button>' : '';
+    return '<div class="pref-row"><div class="pref-top"><span class="pref-label">'+esc(label)+'</span><span class="pref-target">'+esc(target)+'</span></div>'
+      + '<div class="pref-line"><span class="pref-val'+(has?'':' blank')+'">'+v+'</span>'+copyBtn+'</div></div>';
+  }
   window.createProject=function(btn){
     var c=btn.closest('.card'); var id=c.getAttribute('data-id');
     var o=null; for(var i=0;i<all.length;i++){ if(String(all[i].id)===String(id)){ o=all[i]; break; } }
     if(!o){ alert('Could not find this opportunity to create a project.'); return; }
+    document.getElementById('pmTitle').textContent='Create Project — '+(o.project||'untitled');
+    var rows='';
+    rows+=prefRow('Project name','→ Project Description (pre-filled)',o.project);
+    rows+=prefRow('Client / GC','→ CLIENT (pick or add)',o.customer);
+    rows+=prefRow('Bid due date','→ Quote Due Date',o.due_date);
+    if(o.location && o.location.trim()) rows+=prefRow('Location','(reference)',o.location);
+    if(o.material_scope && o.material_scope.trim()) rows+=prefRow('Material scope','→ Scope of Work tab',o.material_scope);
+    if(o.summary && o.summary.trim()) rows+=prefRow('Summary','(reference)',o.summary);
+    document.getElementById('pmBody').innerHTML=rows;
     var qp='?description='+encodeURIComponent(o.project||'');
     if(MFG) qp+='&manufacture='+encodeURIComponent(MFG);
-    window.open(PORTAL_NEW_PROJECT+qp,'_blank');
+    var ob=document.getElementById('pmOpen'); ob.setAttribute('data-url',PORTAL_NEW_PROJECT+qp); ob.textContent='Open new project form →';
+    document.getElementById('pmodal').classList.add('show');
   };
+  (function(){
+    var pm=document.getElementById('pmodal');
+    function closePm(){ pm.classList.remove('show'); }
+    document.getElementById('pmClose').addEventListener('click',closePm);
+    document.getElementById('pmCloseBtn').addEventListener('click',closePm);
+    pm.addEventListener('click',function(e){ if(e.target===pm) closePm(); });
+    document.getElementById('pmOpen').addEventListener('click',function(){
+      var u=this.getAttribute('data-url'); if(u) window.open(u,'_blank');
+      this.textContent='✓ Form opened — copy values across';
+    });
+    document.getElementById('pmBody').addEventListener('click',function(e){
+      var b=e.target.closest('.pref-copy'); if(!b) return;
+      if(copyText(b.getAttribute('data-v'))){ var t=b.textContent; b.textContent='✓ Copied'; b.classList.add('done'); setTimeout(function(){ b.textContent=t; b.classList.remove('done'); },1400); }
+    });
+  })();
   document.getElementById('seg').addEventListener('click',function(e){
     var b=e.target.closest('button'); if(!b)return;
     Array.prototype.forEach.call(this.children,function(x){x.classList.remove('active')});
