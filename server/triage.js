@@ -730,14 +730,13 @@ function registerTriageRoutes(app, deps) {
           single = (sr.data && sr.data.data) || null;
         } catch (e) { single = { error: e.response?.data || e.message }; }
         const syncish = (obj) => obj && !obj.error ? Object.keys(obj).filter(k => /sync|last|seen/i.test(k)).reduce((a, k) => (a[k] = obj[k], a), {}) : obj;
+        const dateish = (obj) => obj && !obj.error ? Object.keys(obj).filter(k => /time|date|modif|added|sync|last|seen|scan/i.test(k)).reduce((a, k) => (a[k] = obj[k], a), {}) : obj;
         out.push({
           id: row.ID,
           mailbox: row.Mailbox_Email,
-          list_has_Last_Synced: Object.prototype.hasOwnProperty.call(row, 'Last_Synced'),
-          list_Last_Synced: row.Last_Synced,
-          list_sync_fields: syncish(row),
-          single_has_Last_Synced: single && !single.error ? Object.prototype.hasOwnProperty.call(single, 'Last_Synced') : null,
-          single_Last_Synced: single && !single.error ? single.Last_Synced : single,
+          list_keys: Object.keys(row),
+          single_keys: single && !single.error ? Object.keys(single) : single,
+          single_date_fields: dateish(single),
           single_sync_fields: syncish(single),
         });
       }
