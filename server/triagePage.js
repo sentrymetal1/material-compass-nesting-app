@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-24-4';
+const BUILD_TAG = 'triage-ui-2026-06-25-1';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -53,6 +53,8 @@ function renderTriagePage() {
   .btn:hover{background:#f0f3f7}
   .btn.quote{background:var(--mc-blue);border-color:var(--mc-blue);color:#fff}
   .btn.quote:hover{background:var(--mc-blue-dark)}
+  .btn.project{background:var(--good);border-color:var(--good);color:#fff}
+  .btn.project:hover{background:#166a2e}
   .btn.skip:hover{background:#fdecea;border-color:#f1c4bd;color:var(--soon)}
   .btn.link{margin-left:auto;border:0;background:transparent;color:var(--mc-blue);text-decoration:none}
   .btn[disabled]{opacity:.6;cursor:default}
@@ -154,6 +156,9 @@ function renderTriagePage() {
           + '<button class="btn quote" onclick="decide(this,\\'quote\\')">✓ Quote</button>'
           + '<button class="btn skip" onclick="decide(this,\\'skip\\')">✗ Skip</button>'
           + link + '</div>'
+        : status==='Quoting' ? '<div class="actions">'
+          + '<button class="btn project" onclick="createProject(this)">＋ Create Project</button>'
+          + link + '</div>'
         : '<div class="actions">'+link+'</div>')
       + '</div>';
   }
@@ -198,6 +203,19 @@ function renderTriagePage() {
         setTimeout(render,260);
       })
       .catch(function(e){ alert('Failed: '+e); });
+  };
+  // Open a pre-filled NEW project on the Project_Dashboard page (same param
+  // pattern as a normal project link). 'description' maps to the Project
+  // Description field; Manufacture/labor/PO auto-fill via the form's OnLoad.
+  // The project isn't created until Mark reviews and hits SUBMIT NEW PROJECT.
+  var PORTAL_NEW_PROJECT='https://customer.materialcompassportal.com/#Page:Project_Dashboard';
+  window.createProject=function(btn){
+    var c=btn.closest('.card'); var id=c.getAttribute('data-id');
+    var o=null; for(var i=0;i<all.length;i++){ if(String(all[i].id)===String(id)){ o=all[i]; break; } }
+    if(!o){ alert('Could not find this opportunity to create a project.'); return; }
+    var qp='?description='+encodeURIComponent(o.project||'');
+    if(MFG) qp+='&manufacture='+encodeURIComponent(MFG);
+    window.open(PORTAL_NEW_PROJECT+qp,'_blank');
   };
   document.getElementById('seg').addEventListener('click',function(e){
     var b=e.target.closest('button'); if(!b)return;
