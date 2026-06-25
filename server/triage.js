@@ -711,6 +711,42 @@ function registerTriageRoutes(app, deps) {
     }
   });
 
+  // TEMP diag: inspect Mail_Connection rows two ways (report-list vs single-
+  // record) to find why Last_Synced reads blank. Remove after diagnosis.
+  app.get('/api/triage/debug-conn', async (req, res) => {
+    try {
+      const token = await getAccessToken();
+      const base = creatorApiBase();
+      const mcPath = req.query.manufacture
+        ? '/report/' + MC_REPORT + '?criteria=' + encodeURIComponent('(Manufacture==' + req.query.manufacture + ')') + '&limit=10'
+        : '/report/' + MC_REPORT + '?limit=10';
+      const listResp = await axios.get(base + mcPath, { headers: zohoHeaders(token) });
+      const listRows = (listResp.data && listResp.data.data) || [];
+      const out = [];
+      for (const row of listRows) {
+        let single = null;
+        try {
+          const sr = await axios.get(base + '/report/' + MC_REPORT + '/' + row.ID, { headers: zohoHeaders(token) });
+          single = (sr.data && sr.data.data) || null;
+        } catch (e) { single = { error: e.response?.data || e.message }; }
+        const syncish = (obj) => obj && !obj.error ? Object.keys(obj).filter(k => /sync|last|seen/i.test(k)).reduce((a, k) => (a[k] = obj[k], a), {}) : obj;
+        out.push({
+          id: row.ID,
+          mailbox: row.Mailbox_Email,
+          list_has_Last_Synced: Object.prototype.hasOwnProperty.call(row, 'Last_Synced'),
+          list_Last_Synced: row.Last_Synced,
+          list_sync_fields: syncish(row),
+          single_has_Last_Synced: single && !single.error ? Object.prototype.hasOwnProperty.call(single, 'Last_Synced') : null,
+          single_Last_Synced: single && !single.error ? single.Last_Synced : single,
+          single_sync_fields: syncish(single),
+        });
+      }
+      res.json({ ok: true, count: listRows.length, connections: out });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.response?.data || err.message });
+    }
+  });
+
   // ---- Daily auto-scan (in-process, no dependency) ----
   // Runs every connected mailbox once per day after 06:00 America/New_York.
   // Cheap now that dedup is in-memory (~4 Zoho calls per re-scan). The manual
