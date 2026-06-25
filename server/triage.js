@@ -18,7 +18,7 @@ const _Anthropic = require('@anthropic-ai/sdk');
 const Anthropic = _Anthropic.default || _Anthropic;   // 0.40.x CJS interop
 const axios = require('axios');
 const { getGraphAccessToken, effectiveConfig } = require('./outlook');
-const { renderTriagePage } = require('./triagePage');
+const { renderTriagePage, renderOpportunityDetail } = require('./triagePage');
 
 const EXTRACT_MODEL = 'claude-haiku-4-5-20251001';     // bump to 'claude-sonnet-4-6' if extraction quality lags
 
@@ -636,6 +636,24 @@ function registerTriageRoutes(app, deps) {
 
   // ---- Triage UI (Step 5) ----
   app.get('/triage', (req, res) => res.send(renderTriagePage()));
+
+  // Standalone RFQ detail page (linked from the project's "View source RFQ").
+  // Reads the single Quote_Opportunity record (all fields, incl Extracted_JSON).
+  app.get('/triage/opportunity/:id', async (req, res) => {
+    try {
+      const token = await getAccessToken();
+      const base = creatorApiBase();
+      let row = null;
+      try {
+        const r = await axios.get(base + '/report/' + OPP_REPORT + '/' + req.params.id, { headers: zohoHeaders(token) });
+        row = (r.data && r.data.data) || null;
+      } catch (e) { if (!isNoRecords(e)) throw e; }
+      res.status(row ? 200 : 404).send(renderOpportunityDetail(row));
+    } catch (err) {
+      console.error('[triage] opportunity detail error:', err.response?.data || err.message);
+      res.status(500).send('<p style="font-family:system-ui;padding:40px">Failed to load RFQ detail.</p>');
+    }
+  });
 
   function mapOpportunity(row) {
     let webLink = row.Web_Link || '';

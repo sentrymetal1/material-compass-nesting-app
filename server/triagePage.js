@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-25-4';
+const BUILD_TAG = 'triage-ui-2026-06-25-5';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -279,6 +279,7 @@ function renderTriagePage() {
     document.getElementById('pmBody').innerHTML=rows;
     var qp='?description='+encodeURIComponent(o.project||'');
     var dueField=fmtDueForField(o.due_date); if(dueField) qp+='&due='+encodeURIComponent(dueField);
+    if(o.id) qp+='&quote_id='+encodeURIComponent(o.id);
     if(MFG) qp+='&manufacture='+encodeURIComponent(MFG);
     var ob=document.getElementById('pmOpen'); ob.setAttribute('data-url',PORTAL_NEW_PROJECT+qp); ob.textContent='Open new project form →';
     document.getElementById('pmodal').classList.add('show');
@@ -335,4 +336,49 @@ function renderTriagePage() {
 </script></body></html>`;
 }
 
-module.exports = { renderTriagePage, BUILD_TAG };
+// Standalone RFQ detail page — the richer source-of-record for one opportunity,
+// linked to from the project ("View source RFQ"). Shows the full summary, full
+// scope, contact, attachments, and the original-email link.
+function renderOpportunityDetail(row){
+  var esc=function(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])})};
+  if(!row){ return '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:48px;color:#23303b;background:#f4f6f9">RFQ opportunity not found.</body>'; }
+  var j={}; try{ j=JSON.parse(row.Extracted_JSON||'{}'); }catch(e){}
+  var atts=(j.attachments||[]);
+  var webLink=row.Web_Link||j.webLink||'';
+  var pct=Math.round((parseFloat(row.Confidence)||0)*100);
+  var scope=row.Material_Scope||j.material_scope||'';
+  var scopeHtml = scope.trim() ? '<ul>'+scope.split(/[;|]/).map(function(s){s=s.trim();return s?'<li>'+esc(s)+'</li>':'';}).join('')+'</ul>' : '<p class="blank">Not specified in the email.</p>';
+  var attHtml = atts.length ? '<ul>'+atts.map(function(a){return '<li>📎 '+esc(a)+'</li>';}).join('')+'</ul>' : '<p class="blank">No attachments.</p>';
+  function meta(label,val){ var has=val!=null&&String(val).trim()!==''; return '<div class="m"><div class="ml">'+esc(label)+'</div><div class="mv'+(has?'':' blank')+'">'+(has?esc(val):'—')+'</div></div>'; }
+  var fromVal=(row.From_Name||'')+(row.From_Email?' <'+row.From_Email+'>':'');
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+    +'<title>RFQ — '+esc(row.Project||'')+'</title><style>'
+    +'body{margin:0;font-family:system-ui,"Segoe UI",Arial,sans-serif;background:#f4f6f9;color:#23303b}'
+    +'.wrap{max-width:820px;margin:0 auto;padding:22px 18px 60px}'
+    +'.hd{background:#5F94CE;color:#fff;border-radius:12px;padding:16px 20px;margin-bottom:16px}'
+    +'.hd h1{margin:0;font-size:19px;line-height:1.25}.hd .st{font-size:12.5px;opacity:.95;margin-top:5px}'
+    +'.card{background:#fff;border:1px solid #e6e9ee;border-radius:12px;padding:15px 20px;margin-bottom:14px}'
+    +'.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 24px}'
+    +'.m .ml{font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#6b7785}'
+    +'.m .mv{font-size:14px;margin-top:2px;word-break:break-word}.m .mv.blank,.blank{color:#9aa4af;font-style:italic}'
+    +'h3{font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:#6b7785;margin:0 0 8px}'
+    +'.sum{font-size:14px;line-height:1.6;white-space:pre-wrap;margin:0}'
+    +'ul{margin:0;padding-left:20px}li{font-size:13.5px;line-height:1.7}p.blank{margin:0;font-size:13.5px}'
+    +'.btn{display:inline-block;background:#5F94CE;color:#fff;text-decoration:none;border-radius:8px;padding:10px 18px;font-size:13.5px;font-weight:600}'
+    +'</style></head><body><div class="wrap">'
+    +'<div class="hd"><h1>'+esc(row.Project||'(untitled project)')+'</h1>'
+    +'<div class="st">RFQ source detail · Status: '+esc(row.Status||'')+' · Confidence '+pct+'%</div></div>'
+    +'<div class="card"><div class="grid">'
+    +meta('Customer / GC',row.Customer_Name)+meta('Location',row.Location)
+    +meta('Bid due',row.Due_Date)+meta('Received',row.Received_Date)
+    +meta('From',fromVal)+meta('Source inbox',row.Source_inbox)
+    +'</div></div>'
+    +'<div class="card"><h3>Subject</h3><p class="sum">'+esc(row.Subject_field||'—')+'</p></div>'
+    +'<div class="card"><h3>Summary</h3><p class="sum">'+esc(row.Summary||j.summary||'—')+'</p></div>'
+    +'<div class="card"><h3>Material scope</h3>'+scopeHtml+'</div>'
+    +'<div class="card"><h3>Attachments</h3>'+attHtml+'</div>'
+    +(webLink?'<a class="btn" href="'+esc(webLink)+'" target="_blank">📧 Open original email →</a>':'')
+    +'</div></body></html>';
+}
+
+module.exports = { renderTriagePage, renderOpportunityDetail, BUILD_TAG };
