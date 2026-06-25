@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-14-1';
+const BUILD_TAG = 'triage-ui-2026-06-24-1';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -69,6 +69,9 @@ function renderTriagePage() {
   @keyframes spin{to{transform:rotate(360deg)}}
   .ov-title{font-weight:700;font-size:15.5px;margin:0 0 6px}
   .ov-msg{font-size:13px;color:var(--muted);line-height:1.55;margin:0}
+  .laststamp{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:20px;padding:5px 12px;margin:-4px 0 14px}
+  .laststamp b{color:var(--ink);font-weight:600}
+  .laststamp .ago{color:var(--good);font-weight:600}
 </style></head>
 <body><div class="wrap">
   <div class="head">
@@ -92,7 +95,7 @@ function renderTriagePage() {
     <button class="btn scanbtn" id="scanBtn">🔄 Scan inbox</button>
     <input class="search" id="search" placeholder="Search project, location…">
   </div>
-  <div id="lastScan" style="font-size:11.5px;color:#9ca3af;margin:-6px 0 12px"></div>
+  <div id="lastScan" class="laststamp"></div>
   <div id="list"></div>
   <div class="state" id="state">Loading…</div>
   <div class="foot">Material Compass · Quote Triage · ${BUILD_TAG}</div>
@@ -109,6 +112,14 @@ function renderTriagePage() {
   var status = 'New';
   var all = [];
   var esc = function(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])})};
+  function timeAgo(t){
+    var s=Math.max(0,(Date.now()-t)/1000);
+    if(s<60) return 'just now';
+    var m=Math.floor(s/60); if(m<60) return m+(m===1?' min ago':' mins ago');
+    var h=Math.floor(m/60); if(h<24) return h+(h===1?' hour ago':' hours ago');
+    var d=Math.floor(h/24); if(d<30) return d+(d===1?' day ago':' days ago');
+    return new Date(t).toLocaleDateString();
+  }
 
   function confColor(c){ c=Number(c)||0; if(c>=.75)return'var(--good)'; if(c>=.4)return'var(--warn)'; return'#8a97a6'; }
   function accent(c){ return confColor(c); }
@@ -164,8 +175,12 @@ function renderTriagePage() {
         if(d.quota){ all=[]; document.getElementById('list').innerHTML=''; document.getElementById('count').textContent='—'; var st=document.getElementById('state'); st.style.display='block'; st.textContent='⚠️ '+(d.error||'Zoho API daily limit reached — try again after it resets.'); return; }
         all=d.opportunities||[]; document.getElementById('mfg').textContent=d.manufacture_label||'';
         var ls=document.getElementById('lastScan');
-        if(d.last_synced){ var t=Date.parse(d.last_synced); ls.textContent='🕓 Last scanned '+(isNaN(t)?d.last_synced:new Date(t).toLocaleString())+' · auto-scans daily'; }
-        else { ls.textContent='Auto-scans daily · or hit Scan inbox anytime'; }
+        if(d.last_synced){
+          var t=Date.parse(d.last_synced);
+          if(isNaN(t)){ ls.innerHTML='🕓 Last updated <b>'+esc(d.last_synced)+'</b>'; }
+          else { ls.innerHTML='🕓 Last updated <span class="ago">'+timeAgo(t)+'</span> · <b>'+new Date(t).toLocaleString()+'</b> · auto-scans daily'; }
+        }
+        else { ls.innerHTML='🕓 Auto-scans daily · or hit <b>Scan inbox</b> anytime'; }
         render();
       })
       .catch(function(e){ document.getElementById('state').textContent='Failed to load: '+e; });

@@ -44,6 +44,27 @@ function looksLikeBid(subject, fromAddr, preview) {
   return BID_SIGNALS.some(s => hay.indexOf(s) >= 0);
 }
 
+// ---- Project-name normalization for Layer-2 dedup ----------------------------
+// The same project often arrives twice (a bid-platform notice + an internal
+// "FW:") with slightly different spelling of the name. Exact match misses those,
+// so we collapse to a canonical key: lowercase, expand a few SAFE construction
+// abbreviations, strip punctuation, and squeeze whitespace. Kept deliberately
+// conservative — we don't fuzzy-match by edit distance (that risks merging two
+// genuinely different bids, e.g. "Building A" vs "Building B", which would drop
+// a real opportunity). Only formatting/abbreviation noise is normalized away.
+function normalizeProjectKey(name) {
+  let s = (name || '').toLowerCase().trim();
+  if (!s) return '';
+  s = s.replace(/&/g, ' and ');
+  // expand a small set of unambiguous abbreviations seen in bid project names
+  s = s.replace(/\b(ph|phs)\b/g, 'phase')
+       .replace(/\bbldg\b/g, 'building')
+       .replace(/\b(reno|renov)\b/g, 'renovation');
+  // drop punctuation, collapse whitespace -> "Ph 5.1" and "Phase 5.1" converge
+  s = s.replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+  return s;
+}
+
 // ---- Claude extraction -------------------------------------------------------
 const EXTRACT_SYSTEM =
   "You are a quote-triage assistant for a STRUCTURAL & MISCELLANEOUS STEEL FABRICATOR (Sentry Metal). " +
@@ -294,7 +315,7 @@ function registerTriageRoutes(app, deps) {
     for (const row of rows) {
       if (row.Email_Message_ID) messageIds.add(row.Email_Message_ID);
       const status = row.Status || '';
-      const proj = (row.Project || '').trim().toLowerCase();
+      const proj = normalizeProjectKey(row.Project);
       if (proj && status !== 'Decline' && status !== 'Archived' && !openByProject.has(proj)) {
         openByProject.set(proj, { ID: row.ID, Status: status, Summary: row.Summary, Due_Date: row.Due_Date });
       }
@@ -482,7 +503,7 @@ function registerTriageRoutes(app, deps) {
         // Project-level dedup (in memory): the same project often arrives more
         // than once (a platform notice + an internal "FW:"). Match an OPEN
         // opportunity by project name. Addendum -> merge; otherwise -> skip.
-        const projKey = (out.project_name || '').trim().toLowerCase();
+        const projKey = normalizeProjectKey(out.project_name);
         const projMatch = projKey ? known.openByProject.get(projKey) : null;
         if (projMatch) {
           if (out.notification_type === 'addendum') {
@@ -631,12 +652,18 @@ function registerTriageRoutes(app, deps) {
       let label = '';
       const m0 = rows[0] && rows[0].Manufacture;
       if (m0 && typeof m0 === 'object') label = m0.zc_display_value || m0.display_value || '';
+      // Last scan time = most recent Last_Synced across the relevant connected
+      // mailbox(es). Resolve it even when no manufacture filter is passed (the
+      // page often loads without one), so the UI timestamp isn't blank.
       let last_synced = '';
       try {
-        if (req.query.manufacture) {
-          const cr = await axios.get(base + '/report/' + MC_REPORT + '?criteria=' + encodeURIComponent('(Manufacture==' + req.query.manufacture + ')') + '&limit=1', { headers: zohoHeaders(token) });
-          const c0 = cr.data && cr.data.data && cr.data.data[0];
-          if (c0) last_synced = c0.Last_Synced || '';
+        const mcPath = req.query.manufacture
+          ? '/report/' + MC_REPORT + '?criteria=' + encodeURIComponent('(Manufacture==' + req.query.manufacture + ')') + '&limit=10'
+          : '/report/' + MC_REPORT + '?limit=20';
+        const cr = await axios.get(base + mcPath, { headers: zohoHeaders(token) });
+        const conns = (cr.data && cr.data.data) || [];
+        for (const c of conns) {
+          if (c.Last_Synced && (!last_synced || Date.parse(c.Last_Synced) > Date.parse(last_synced))) last_synced = c.Last_Synced;
         }
       } catch (e) { /* non-fatal */ }
       res.json({ status, count: rows.length, manufacture_label: label, last_synced, opportunities: rows.map(mapOpportunity) });
