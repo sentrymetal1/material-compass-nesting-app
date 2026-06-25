@@ -711,6 +711,37 @@ function registerTriageRoutes(app, deps) {
     }
   });
 
+  // TEMP diag: list ALL Mail_Connection rows with their Connection_Status (no
+  // "Connected" filter), to see why getConnectedMailboxes returns empty. Also
+  // reports whether a durable Last_Synced field exists/has a value.
+  app.get('/api/triage/debug-status', async (req, res) => {
+    try {
+      const token = await getAccessToken();
+      const base = creatorApiBase();
+      const r = await axios.get(base + '/report/' + MC_REPORT + '?limit=50', { headers: zohoHeaders(token) });
+      const rows = (r.data && r.data.data) || [];
+      const out = [];
+      for (const row of rows) {
+        let lastSynced = '<<not a report column>>';
+        try {
+          const sr = await axios.get(base + '/report/' + MC_REPORT + '/' + row.ID, { headers: zohoHeaders(token) });
+          const full = (sr.data && sr.data.data) || {};
+          lastSynced = Object.prototype.hasOwnProperty.call(full, 'Last_Synced') ? (full.Last_Synced || '<<empty>>') : '<<field does not exist>>';
+        } catch (e) { lastSynced = 'err: ' + (e.response?.data?.code || e.message); }
+        out.push({
+          id: row.ID,
+          mailbox: row.Mailbox_Email,
+          connection_status: row.Connection_Status,
+          connected_on: row.Connected_On,
+          last_synced_field: lastSynced,
+        });
+      }
+      res.json({ ok: true, count: rows.length, build: 'triage-2026-06-24-3', connections: out });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.response?.data || err.message });
+    }
+  });
+
   // Diagnostic: what does Graph actually see in this mailbox?
   app.get('/api/triage/debug', async (req, res) => {
     try {
