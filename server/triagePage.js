@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-25-7';
+const BUILD_TAG = 'triage-ui-2026-06-25-8';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -89,9 +89,10 @@ function renderTriagePage() {
     </div>
     <span class="spacer"></span>
     <select class="days" id="scanDays" title="How far back to scan">
+      <option value="3" selected>last 3 days</option>
       <option value="7">last 7 days</option>
       <option value="14">last 14 days</option>
-      <option value="30" selected>last 30 days</option>
+      <option value="30">last 30 days</option>
       <option value="90">last 90 days</option>
     </select>
     <button class="btn scanbtn" id="scanBtn">🔄 Scan inbox</button>
