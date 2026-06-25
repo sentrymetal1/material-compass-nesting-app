@@ -76,14 +76,33 @@ function normClientName(s) {
   if (!x) return '';
   x = x.replace(/&/g, ' and ');
   x = x.replace(/[^a-z0-9]+/g, ' ').trim();
-  x = x.replace(/\s+(incorporated|inc|llc|llp|ltd|corp)\s*$/, '').trim();
+  x = x.replace(/\bcompany\b/g, 'co');                                   // Company == Co.
+  x = x.replace(/\s+(incorporated|inc|llc|llp|ltd|corp|corporation)\s*$/, '').trim();
   return x.replace(/\s+/g, ' ');
 }
+function isTokenPrefix(a, b) { // true if word-array a is a leading prefix of b
+  if (a.length > b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+// Match a GC name to a client record id. Exact normalized match first; then a
+// word-PREFIX match so a short client ("Resetarits") matches a longer GC name
+// ("Resetarits Construction") and vice versa. UNIQUE match only — if two
+// clients could match, return blank (Mark: a wrong client is worse than none).
 function matchClientId(map, customerName) {
   const nk = normClientName(customerName);
   if (!nk || !map) return '';
-  const ids = map[nk];
-  return (ids && ids.length === 1) ? ids[0] : ''; // unique match only
+  if (map[nk]) return map[nk].length === 1 ? map[nk][0] : '';
+  const oppTokens = nk.split(' ');
+  const ids = new Set();
+  for (const ck of Object.keys(map)) {
+    if (ck.length < 4) continue; // skip ultra-short keys to avoid false hits
+    const cTokens = ck.split(' ');
+    if (isTokenPrefix(cTokens, oppTokens) || isTokenPrefix(oppTokens, cTokens)) {
+      for (const id of map[ck]) ids.add(id);
+    }
+  }
+  return ids.size === 1 ? Array.from(ids)[0] : '';
 }
 
 // ---- Claude extraction -------------------------------------------------------
@@ -684,25 +703,6 @@ function registerTriageRoutes(app, deps) {
   // Status of a background scan started with ?async=1.
   app.get('/api/triage/scan-status', (req, res) => {
     res.json(scanJobs[jobKey(req)] || { running: false, results: null });
-  });
-
-  // TEMP diag: dump client names + normalized keys so we can tune GC matching
-  // to how names are actually stored. ?q= filters by substring. Remove after.
-  app.get('/api/triage/debug-clients', async (req, res) => {
-    try {
-      const map = await getClientMap(req.query.manufacture);
-      const token = await getAccessToken();
-      const base = creatorApiBase();
-      const path = req.query.manufacture
-        ? '/report/' + CLIENT_REPORT + '?criteria=' + encodeURIComponent('(Manufacturer==' + req.query.manufacture + ')') + '&limit=500'
-        : '/report/' + CLIENT_REPORT + '?limit=500';
-      const r = await axios.get(base + path, { headers: zohoHeaders(token) });
-      let rows = (r.data && r.data.data) || [];
-      const q = (req.query.q || '').toLowerCase();
-      const out = rows.map(x => ({ id: x.ID, name: x.Client_Company_Name, norm: normClientName(x.Client_Company_Name) }))
-        .filter(x => !q || (x.name || '').toLowerCase().indexOf(q) >= 0);
-      res.json({ count: rows.length, shown: out.length, clients: out });
-    } catch (err) { res.status(500).json({ error: err.response?.data || err.message }); }
   });
 
   // ---- Triage UI (Step 5) ----
