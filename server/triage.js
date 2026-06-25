@@ -686,6 +686,25 @@ function registerTriageRoutes(app, deps) {
     res.json(scanJobs[jobKey(req)] || { running: false, results: null });
   });
 
+  // TEMP diag: dump client names + normalized keys so we can tune GC matching
+  // to how names are actually stored. ?q= filters by substring. Remove after.
+  app.get('/api/triage/debug-clients', async (req, res) => {
+    try {
+      const map = await getClientMap(req.query.manufacture);
+      const token = await getAccessToken();
+      const base = creatorApiBase();
+      const path = req.query.manufacture
+        ? '/report/' + CLIENT_REPORT + '?criteria=' + encodeURIComponent('(Manufacturer==' + req.query.manufacture + ')') + '&limit=500'
+        : '/report/' + CLIENT_REPORT + '?limit=500';
+      const r = await axios.get(base + path, { headers: zohoHeaders(token) });
+      let rows = (r.data && r.data.data) || [];
+      const q = (req.query.q || '').toLowerCase();
+      const out = rows.map(x => ({ id: x.ID, name: x.Client_Company_Name, norm: normClientName(x.Client_Company_Name) }))
+        .filter(x => !q || (x.name || '').toLowerCase().indexOf(q) >= 0);
+      res.json({ count: rows.length, shown: out.length, clients: out });
+    } catch (err) { res.status(500).json({ error: err.response?.data || err.message }); }
+  });
+
   // ---- Triage UI (Step 5) ----
   app.get('/triage', (req, res) => res.send(renderTriagePage()));
 
