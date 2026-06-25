@@ -25,6 +25,7 @@ const EXTRACT_MODEL = 'claude-haiku-4-5-20251001';     // bump to 'claude-sonnet
 const OPP_FORM   = 'Quote_Opportunity';
 const OPP_REPORT = 'Quote_Opportunity_Report';         // confirm this report link name in Zoho
 const MC_REPORT  = 'Mail_Connection_Report';
+const CLIENT_REPORT = 'MFG_Client_Form_Report';        // client list; scope by Manufacturer==<mfg id>
 
 // ---- Cheap pre-filter --------------------------------------------------------
 // Only emails that smell like a bid invite reach Claude. Keeps cost down and
@@ -63,6 +64,26 @@ function normalizeProjectKey(name) {
   // drop punctuation, collapse whitespace -> "Ph 5.1" and "Phase 5.1" converge
   s = s.replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
   return s;
+}
+
+// ---- Client-name normalization for GC -> MFG_Client_Form matching ----------
+// Canonicalize a company name so "Resetarits Construction" matches
+// "Resetarits Construction, Inc.": lowercase, &->and, strip punctuation, drop a
+// trailing legal suffix. Conservative — only a UNIQUE normalized match is used
+// (ambiguous/none -> leave the client blank, per Mark: wrong client is worse).
+function normClientName(s) {
+  let x = (s || '').toLowerCase().trim();
+  if (!x) return '';
+  x = x.replace(/&/g, ' and ');
+  x = x.replace(/[^a-z0-9]+/g, ' ').trim();
+  x = x.replace(/\s+(incorporated|inc|llc|llp|ltd|corp)\s*$/, '').trim();
+  return x.replace(/\s+/g, ' ');
+}
+function matchClientId(map, customerName) {
+  const nk = normClientName(customerName);
+  if (!nk || !map) return '';
+  const ids = map[nk];
+  return (ids && ids.length === 1) ? ids[0] : ''; // unique match only
 }
 
 // ---- Claude extraction -------------------------------------------------------
@@ -285,6 +306,37 @@ function registerTriageRoutes(app, deps) {
     // Exact-match text criteria, URL-encoded; strip quotes that would break it.
     const safe = String(value == null ? '' : value).replace(/"/g, '');
     return encodeURIComponent('(' + field + '=="' + safe + '")');
+  }
+
+  // Cached map of normalized client name -> [record ids] for a manufacturer,
+  // so GC-name matching costs one Zoho read per 10 min (not per opportunity).
+  const _clientMapCache = {};
+  async function getClientMap(manufactureId) {
+    const key = manufactureId || 'all';
+    const hit = _clientMapCache[key];
+    if (hit && (Date.now() - hit.at) < 10 * 60 * 1000) return hit.map;
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    const path = manufactureId
+      ? '/report/' + CLIENT_REPORT + '?criteria=' + encodeURIComponent('(Manufacturer==' + manufactureId + ')') + '&limit=500'
+      : '/report/' + CLIENT_REPORT + '?limit=500';
+    let rows = [];
+    try {
+      const r = await axios.get(base + path, { headers: zohoHeaders(token) });
+      throwIfQuota(r);
+      rows = (r.data && r.data.data) || [];
+    } catch (e) {
+      if (isQuotaError(e)) throw e;
+      if (!isNoRecords(e)) throw e;
+    }
+    const map = {};
+    for (const row of rows) {
+      const nk = normClientName(row.Client_Company_Name);
+      if (!nk) continue;
+      (map[nk] = map[nk] || []).push(row.ID);
+    }
+    _clientMapCache[key] = { at: Date.now(), map };
+    return map;
   }
 
   async function getConnectedMailboxes(mailboxFilter) {
@@ -710,7 +762,12 @@ function registerTriageRoutes(app, deps) {
         }
       } catch (e) { /* non-fatal */ }
       if (!last_synced) last_synced = lastScanAt[req.query.manufacture || 'all'] || lastScanAt.__any || '';
-      res.json({ status, count: rows.length, manufacture_label: label, last_synced, opportunities: rows.map(mapOpportunity) });
+      // Match each opportunity's GC name to a client record so the Create
+      // Project button can pre-fill the Client lookup. Cached; non-fatal.
+      let clientMap = {};
+      try { clientMap = await getClientMap(req.query.manufacture); } catch (e) { /* skip matching */ }
+      const opportunities = rows.map(mapOpportunity).map(o => { o.client_id = matchClientId(clientMap, o.customer); return o; });
+      res.json({ status, count: rows.length, manufacture_label: label, last_synced, opportunities });
     } catch (err) {
       console.error('[triage] opportunities error:', err.response?.data || err.message);
       res.status(500).json({ error: err.response?.data || err.message, opportunities: [] });

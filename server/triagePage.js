@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-25-5';
+const BUILD_TAG = 'triage-ui-2026-06-25-6';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -271,7 +271,7 @@ function renderTriagePage() {
     document.getElementById('pmTitle').textContent='Create Project — '+(o.project||'untitled');
     var rows='';
     rows+=prefRow('Project name','→ Project Description (pre-filled)',o.project);
-    rows+=prefRow('Client / GC','→ CLIENT (pick or add)',o.customer);
+    rows+=prefRow('Client / GC', o.client_id?'→ CLIENT (auto-selected ✓)':'→ CLIENT (pick or add)', o.customer);
     rows+=prefRow('Bid due date','→ Quote Due Date',o.due_date);
     if(o.location && o.location.trim()) rows+=prefRow('Location','(reference)',o.location);
     if(o.material_scope && o.material_scope.trim()) rows+=prefRow('Material scope','→ Scope of Work tab',o.material_scope);
@@ -280,6 +280,7 @@ function renderTriagePage() {
     var qp='?description='+encodeURIComponent(o.project||'');
     var dueField=fmtDueForField(o.due_date); if(dueField) qp+='&due='+encodeURIComponent(dueField);
     if(o.id) qp+='&quote_id='+encodeURIComponent(o.id);
+    if(o.client_id) qp+='&client_id='+encodeURIComponent(o.client_id);
     if(MFG) qp+='&manufacture='+encodeURIComponent(MFG);
     var ob=document.getElementById('pmOpen'); ob.setAttribute('data-url',PORTAL_NEW_PROJECT+qp); ob.textContent='Open new project form →';
     document.getElementById('pmodal').classList.add('show');
