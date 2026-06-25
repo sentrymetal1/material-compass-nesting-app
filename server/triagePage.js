@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-25-2';
+const BUILD_TAG = 'triage-ui-2026-06-25-3';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -269,6 +269,7 @@ function renderTriagePage() {
     if(o.summary && o.summary.trim()) rows+=prefRow('Summary','(reference)',o.summary);
     document.getElementById('pmBody').innerHTML=rows;
     var qp='?description='+encodeURIComponent(o.project||'');
+    if(o.due_date) qp+='&due='+encodeURIComponent(o.due_date);
     if(MFG) qp+='&manufacture='+encodeURIComponent(MFG);
     var ob=document.getElementById('pmOpen'); ob.setAttribute('data-url',PORTAL_NEW_PROJECT+qp); ob.textContent='Open new project form →';
     document.getElementById('pmodal').classList.add('show');
