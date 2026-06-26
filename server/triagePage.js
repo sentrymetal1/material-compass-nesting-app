@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-25-8';
+const BUILD_TAG = 'triage-ui-2026-06-26-1';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -89,7 +89,8 @@ function renderTriagePage() {
     </div>
     <span class="spacer"></span>
     <select class="days" id="scanDays" title="How far back to scan">
-      <option value="3" selected>last 3 days</option>
+      <option value="since" selected>since last scan</option>
+      <option value="3">last 3 days</option>
       <option value="7">last 7 days</option>
       <option value="14">last 14 days</option>
       <option value="30">last 30 days</option>
@@ -114,6 +115,7 @@ function renderTriagePage() {
   var MFG = qs.get('manufacture') || '';
   var status = 'New';
   var all = [];
+  var lastSyncedIso = '';   // raw ISO of the last scan, for "since last scan" mode
   var esc = function(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])})};
   function timeAgo(t){
     var s=Math.max(0,(Date.now()-t)/1000);
@@ -180,6 +182,7 @@ function renderTriagePage() {
       .then(function(d){
         if(d.quota){ all=[]; document.getElementById('list').innerHTML=''; document.getElementById('count').textContent='—'; var st=document.getElementById('state'); st.style.display='block'; st.textContent='⚠️ '+(d.error||'Zoho API daily limit reached — try again after it resets.'); return; }
         all=d.opportunities||[]; document.getElementById('mfg').textContent=d.manufacture_label||'';
+        lastSyncedIso = d.last_synced || '';
         var ls=document.getElementById('lastScan');
         if(d.last_synced){
           var t=Date.parse(d.last_synced);
@@ -242,12 +245,21 @@ function renderTriagePage() {
   function ov(title,msg,done){ document.getElementById('ovTitle').textContent=title; document.getElementById('ovMsg').textContent=msg; ovCard.classList.toggle('done',!!done); overlay.classList.add('show'); }
   function closeOv(btn){ overlay.classList.remove('show'); ovCard.classList.remove('done'); if(btn){ btn.disabled=false; } }
   document.getElementById('scanBtn').addEventListener('click',function(){
-    var days=document.getElementById('scanDays').value; var btn=this; btn.disabled=true;
+    var sel=document.getElementById('scanDays').value; var btn=this; btn.disabled=true;
     var mq = MFG ? ('&manufacture='+encodeURIComponent(MFG)) : '';
     var sq = MFG ? ('?manufacture='+encodeURIComponent(MFG)) : '';
-    ov('Scanning your inbox…','Searching the last '+days+' days for quote opportunities. A large first scan can take a couple of minutes — you can leave this open.',false);
+    var scanParam, scanMsg;
+    if(sel==='since' && lastSyncedIso){
+      scanParam='sinceIso='+encodeURIComponent(lastSyncedIso);
+      scanMsg='Checking for new mail since the last scan';
+    } else {
+      var days = (sel==='since') ? '3' : sel;   // never scanned yet -> default to 3 days
+      scanParam='days='+encodeURIComponent(days);
+      scanMsg='Searching the last '+days+' days for quote opportunities';
+    }
+    ov('Scanning your inbox…', scanMsg+'. A large scan can take a couple of minutes — you can leave this open.',false);
     // Start the scan in the background, then poll for completion.
-    fetch('/api/triage/poll?days='+encodeURIComponent(days)+'&async=1'+mq).then(function(r){return r.json()}).then(function(){
+    fetch('/api/triage/poll?'+scanParam+'&async=1'+mq).then(function(r){return r.json()}).then(function(){
       var iv=setInterval(function(){
         fetch('/api/triage/scan-status'+sq).then(function(r){return r.json()}).then(function(s){
           if(s.running){ return; }

@@ -525,8 +525,10 @@ function registerTriageRoutes(app, deps) {
     const anthropic = new Anthropic(); // ANTHROPIC_API_KEY from env
     let messages = [];
     try {
-      if (opts.days) {
-        const sinceIso = new Date(Date.now() - opts.days * 86400000).toISOString();
+      if (opts.days || opts.sinceIso) {
+        // Explicit sinceIso ("since last scan", incremental) wins; else compute
+        // the window from days. The 2-day recent union below still applies.
+        const sinceIso = opts.sinceIso || new Date(Date.now() - opts.days * 86400000).toISOString();
         // Primary: search the whole mailbox for bid-like terms within the window
         // (immune to inbox volume). Fall back to a newest-N scan if search errors.
         try {
@@ -658,12 +660,16 @@ function registerTriageRoutes(app, deps) {
   // Manual trigger. ?mailbox=<email> to limit; ?top=N to cap messages scanned.
   app.get('/api/triage/poll', async (req, res) => {
     try {
-      // ?days=N scans the whole time window (robust for noisy inboxes);
-      // otherwise ?top=N scans the N most-recent messages.
+      // ?sinceIso=<ISO> scans only mail since that time ("since last scan",
+      // incremental); ?days=N scans the whole N-day window; otherwise ?top=N
+      // scans the N most-recent messages.
+      const sinceIso = (req.query.sinceIso || '').trim();
       const days = parseInt(req.query.days, 10);
-      const opts = (days > 0)
-        ? { days: Math.min(days, 90), maxMessages: 3000 }
-        : { top: Math.min(parseInt(req.query.top, 10) || 25, 50) };
+      const opts = sinceIso
+        ? { sinceIso, maxMessages: 3000 }
+        : (days > 0)
+          ? { days: Math.min(days, 90), maxMessages: 3000 }
+          : { top: Math.min(parseInt(req.query.top, 10) || 25, 50) };
       const isAsync = req.query.async === '1' || req.query.async === 'true';
 
       if (isAsync) {
