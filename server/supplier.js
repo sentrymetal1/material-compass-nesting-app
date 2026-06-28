@@ -203,7 +203,8 @@ function registerSupplierRoutes(app, deps) {
       if (!byQuote.has(qid)) {
         byQuote.set(qid, {
           quote_id: qid,
-          quote_number: r.Quote_Number || '',
+          quote_number: r.Quote_Reference_Number || r.Quote_Number || '',
+          internal_quote_number: r.Quote_Number || '',
           quote_description: r.Quote_Description || '',
           manufacturer: r['Customer_LU.Company_Name'] || r.Customer_Name || '',
           quote_date: r.Quote_Date || r.Quote_Timestamp || '',

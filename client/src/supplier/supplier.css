@@ -138,6 +138,8 @@
 .q-perlb { color: var(--muted); margin-left: 4px; font-size: 12px; }
 .q-noquote { opacity: .5; }
 .q-foot-lbl { text-align: right; font-weight: 600; padding: 12px; }
+.q-section-label { padding: 12px 12px 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.q-section-label .muted { text-transform: none; font-weight: 500; letter-spacing: 0; }
 .q-mini { width: 100px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; font-family: inherit; font-size: 12px; }
 .q-mini:disabled { background: #f4f5f6; }
 .q-checks { display: flex; flex-wrap: wrap; gap: 12px; padding-top: 4px; }

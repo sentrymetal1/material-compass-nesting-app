@@ -4,13 +4,12 @@ import QuotesView from './QuotesView';
 import ProfileView from './ProfileView';
 import StockView from './StockView';
 import QuoteDetailView from './QuoteDetailView';
-import FittingRfqsView from './FittingRfqsView';
 
 // Off-Zoho supplier platform — v1. Embedded in the Zoho portal, which passes the
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-2026-06-21b-fitting-rfqs';
+const BUILD_TAG = 'supplier-2026-06-28a-unified-quotes';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -113,7 +112,6 @@ export default function SupplierApp() {
         <nav className="sup-nav">
           <button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>Dashboard</button>
           <button className={view === 'quotes' ? 'active' : ''} onClick={() => setView('quotes')}>Quotes</button>
-          <button className={view === 'fitting-rfqs' ? 'active' : ''} onClick={() => setView('fitting-rfqs')}>Fitting RFQs</button>
           <button className={view === 'stock' ? 'active' : ''} onClick={() => setView('stock')}>Stock</button>
           <button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')}>Profile</button>
         </nav>
@@ -122,11 +120,8 @@ export default function SupplierApp() {
         </div>
       </header>
 
-      <main className={'sup-main' + (view === 'quotes' || view === 'profile' || view === 'stock' || view === 'quote-detail' || view === 'fitting-rfqs' ? ' sup-main-wide' : '')}>
-        {view === 'fitting-rfqs' ? (
-          email ? <FittingRfqsView email={email} />
-            : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
-        ) : view === 'quote-detail' ? (
+      <main className={'sup-main' + (view === 'quotes' || view === 'profile' || view === 'stock' || view === 'quote-detail' ? ' sup-main-wide' : '')}>
+        {view === 'quote-detail' ? (
           email && detailQuote
             ? <QuoteDetailView email={email} quoteId={detailQuote} onBack={() => setView('dashboard')} onGoToQuotes={() => setView('quotes')} />
             : <div className="sup-msg sup-msg-warn">No quote selected.</div>
