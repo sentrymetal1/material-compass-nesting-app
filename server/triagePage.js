@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-06-26-1';
+const BUILD_TAG = 'triage-ui-2026-07-08-1';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -62,6 +62,9 @@ function renderTriagePage() {
   .foot{margin-top:24px;text-align:center;color:#aeb6c0;font-size:11px}
   .scanbtn{border-color:var(--mc-blue);color:var(--mc-blue)}
   .scanbtn:hover{background:#eef3fa}
+  .headright{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+  .connectbtn{text-decoration:none;border-color:var(--mc-blue);color:var(--mc-blue)}
+  .connectbtn:hover{background:#eef3fa}
   select.days{border:1px solid var(--line);border-radius:8px;padding:7px 8px;font-size:13px;background:#fff;color:var(--ink)}
   .overlay{position:fixed;inset:0;background:rgba(244,246,249,.82);display:none;align-items:center;justify-content:center;z-index:50}
   .overlay.show{display:flex}
@@ -78,7 +81,10 @@ function renderTriagePage() {
 <body><div class="wrap">
   <div class="head">
     <div class="title"><h1>Quote Triage</h1><span class="count" id="count">…</span></div>
-    <div class="mfg" id="mfg"></div>
+    <div class="headright">
+      <span class="mfg" id="mfg"></span>
+      <a id="connectBtn" class="btn connectbtn" target="_blank" rel="noopener" title="Connect an Outlook / Microsoft 365 mailbox so its quote requests appear here">✉️ Connect inbox</a>
+    </div>
   </div>
   <div class="sub">Potential quotes pulled from your inbox. Decide <b>Quote</b> or <b>Skip</b> on each.</div>
   <div class="toolbar">
@@ -115,6 +121,10 @@ function renderTriagePage() {
   var MFG = qs.get('manufacture') || '';
   var status = 'New';
   var all = [];
+  // Connect Inbox → the delegated-OAuth start route (same Railway origin).
+  // Pass the manufacturer so the new Mail_Connection row is scoped to it.
+  // Opens in a new tab: Microsoft's login refuses to render inside the Zoho iframe.
+  document.getElementById('connectBtn').href = '/connect/outlook/start' + (MFG ? ('?manufacture=' + encodeURIComponent(MFG)) : '');
   var lastSyncedIso = '';   // raw ISO of the last scan, for "since last scan" mode
   var esc = function(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])})};
   function timeAgo(t){
