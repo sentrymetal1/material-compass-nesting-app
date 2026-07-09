@@ -18,6 +18,13 @@ function getUserFromURL() {
   return params.get('User') || params.get('user') || '';
 }
 
+// Where to send the window back to after a successful save (the project page).
+// The launcher passes this URL-encoded; URLSearchParams.get decodes it once.
+function getReturnUrlFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('return_url') || params.get('returnUrl') || '';
+}
+
 // Display the local part of an email (before @) for the recall panel
 function emailLocalPart(email) {
   if (!email) return '';
@@ -604,6 +611,8 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
 
 export default function App() {
   const [projectId, setProjectId] = useState(getProjectIdFromURL());
+  const returnUrl = getReturnUrlFromURL();
+  const [canReturnToProject, setCanReturnToProject] = useState(false);
   const [manufactureId] = useState(getManufactureIdFromURL());
   const [userEmail] = useState(getUserFromURL());
   const isStandalone = !projectId && !!manufactureId;
@@ -1162,6 +1171,9 @@ export default function App() {
         failMsg = ` — WARNING: ${failures.length} of ${attempted} row(s) were REJECTED and not saved${codes.length ? ` (Zoho code ${codes.join(', ')})` : ''}: ${names}.${firstMsg ? ` [Zoho says: ${firstMsg}]` : ''}`;
       }
       const prefix = failures.length > 0 ? 'Error' : '';
+      // Full success → offer to return to the project page (a fresh reload there
+      // makes the just-inserted rows survive the next "Update To Save Totals").
+      if (failures.length === 0) setCanReturnToProject(true);
       setPurchaseStatus(`${prefix}${prefix ? ': ' : ''}Saved ${data.items_saved}/${attempted} line items to project.${failMsg} Refreshing...`);
       // Wait 2s for Zoho to finish writing before re-fetching
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -2578,6 +2590,14 @@ export default function App() {
                     {purchaseStatus}
                   </div>
                 )}
+                {canReturnToProject && returnUrl && (
+                  <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button onClick={() => { window.location.href = returnUrl; }} className="btn btn-primary">
+                      Done — Return to Project
+                    </button>
+                    <span className="hint">Reloads the project fresh so the saved rows survive your next Update.</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -2659,7 +2679,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.5 — fix duplicate rows (reliable delete) + bulk insert</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.6 — same-window return to project after save</span></footer>
     </div>
   );
 }
