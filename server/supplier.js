@@ -52,6 +52,18 @@ function toZohoDate(iso) {
   return (months[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[3] + ',' + m[1];
 }
 
+// Valid_Until_Date has "Allowed Days = Mon-Fri" — a weekend value is rejected with
+// "Choose only available days", failing the whole addRecord. Roll a Sat/Sun ISO date
+// forward to the next Monday so the quote's validity never lands on a non-allowed day.
+function nextBusinessDayIso(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
 // Current datetime in the form's display format, e.g. "Jun 20,2026 10:42:03".
 function zohoNow() {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -501,7 +513,7 @@ function registerSupplierRoutes(app, deps) {
         REFERENCE_QUOTE_NUMBER: svQuoteNum,
         Supplier_Quote_Meets_MFG_Requirements: header.meets_requirements || '',
         Quote_Is_Valid_For: validDays ? (validDays + (validDays === 1 ? ' Day' : ' Days')) : '',
-        Valid_Until_Date: toZohoDate(header.valid_until),
+        Valid_Until_Date: toZohoDate(nextBusinessDayIso(header.valid_until)),
         SV_Radio_For_Submit: header.ready ? 'Ready for submission' : 'Not ready for submit',
         Shipping_Amount: header.shipping != null ? String(header.shipping) : '0',
         Miscellaneous_Charges: header.misc != null ? String(header.misc) : '0',
