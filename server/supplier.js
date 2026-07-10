@@ -11,8 +11,9 @@ const { matchStructuralForSupplier } = require('./structuralMatch');
 
 const SUPPLIER_REPORT = 'Supplier_Entry_Report';
 
-// Lead-time choices — must mirror the Zoho Lead_Time_For_Ship_Complete / SVD_Lead_Time
-// dropdown EXACTLY (a choice field blanks any non-matching value). "1 Day", then "N Days".
+// Lead-time choices — must mirror the Zoho Lead_Time_For_Ship_Complete (header) dropdown
+// EXACTLY (a choice field blanks any non-matching value). "1 Day", then "N Days".
+// (Per-line SVD_Lead_Time is a separate NUMERIC "in weeks" field, handled below.)
 // Extend this list if the Zoho field carries options beyond 14 days.
 const LEAD_TIME_CHOICES = ['1 Day'].concat(
   Array.from({ length: 13 }, (_, i) => (i + 2) + ' Days'));
@@ -320,7 +321,7 @@ function registerSupplierRoutes(app, deps) {
         locations: loc.map(l => ({ id: String(l.ID), name: l.Name_of_Location || '' })),
         reps: rep.map(r => ({ id: String(r.ID), name: flatten(r.Name) || r.Email || '' })),
         quote_requirements: ['MTRs Required', 'AIS - Made & Melted in USA'],
-        // Must match the Zoho Lead_Time_For_Ship_Complete / SVD_Lead_Time choice list EXACTLY
+        // Must match the Zoho Lead_Time_For_Ship_Complete (header) choice list EXACTLY
         // (a choice field silently blanks any value that isn't an allowed option). Extend here
         // if the Zoho field has more options than are listed.
         lead_time_choices: LEAD_TIME_CHOICES,
@@ -421,10 +422,10 @@ function registerSupplierRoutes(app, deps) {
         const uw = Number(r.Unit_Weight) || 0;
         const tw = Number(r.CalcWeight) || 0;
         const leadTxt = l.lead_time || '';
-        // SVD_Lead_Time is a Zoho CHOICE field — coerce anything not in the allowed list
-        // (blank, or legacy free text like "1 Week") to a valid option so the native
-        // write-back doesn't leave RFQs_Sent.Lead_Time blank (which fails the MFG close-out).
-        const svLead = LEAD_TIME_CHOICES.includes(leadTxt) ? leadTxt : LEAD_TIME_FALLBACK;
+        // SVD_Lead_Time is the NUMERIC "Lead Time (in weeks)" field (not a choice) — convert the
+        // supplier's "N Days" pick to whole weeks; omit when none so we never send a non-number.
+        const leadDays = parseInt(leadTxt, 10);
+        const svLeadWeeks = (Number.isFinite(leadDays) && leadDays > 0) ? Math.ceil(leadDays / 7) : null;
 
         detailRows.push({
           // links back to the source RFQ line + master records
@@ -453,7 +454,7 @@ function registerSupplierRoutes(app, deps) {
           SVD_Unit_Price: round(up, 3),
           SVD_Total_Price: round(tp, 2),
           SVD_Price_Per_Lb_Counter: (opt === 'Quote As Is' && tp > 0) ? 1 : 0,
-          SVD_Lead_Time: svLead,
+          ...(svLeadWeeks != null ? { SVD_Lead_Time: svLeadWeeks } : {}),
           SVD_Supplier_Comments: cmt,
           // PDF snapshot fields (feed the reference document). These are tight number
           // fields (~6 digits) — round to 2 places so larger amounts fit, like the widget.
