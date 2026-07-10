@@ -200,7 +200,11 @@ function QuoteCard({ quote, lookups, email, revise }) {
   const onValidDays = v => {
     const n = parseInt(v, 10);
     let until = hdr.valid_until;
-    if (n > 0) { const dt = new Date(); dt.setDate(dt.getDate() + n); until = dt.toISOString().slice(0, 10); }
+    if (n > 0) {
+      const dt = new Date(); dt.setDate(dt.getDate() + n);
+      while (dt.getDay() === 0 || dt.getDay() === 6) dt.setDate(dt.getDate() + 1); // Valid Until allows Mon-Fri only
+      until = dt.toISOString().slice(0, 10);
+    }
     setH({ valid_days: v, valid_until: until });
   };
   const toggleReq = r => setH({ requirements: hdr.requirements.includes(r) ? hdr.requirements.filter(x => x !== r) : [...hdr.requirements, r] });
