@@ -7,6 +7,19 @@ import React, { useEffect, useState, useCallback } from 'react';
 // (PATCHes the bridge rows). Merged client-side so neither proven backend path changes.
 const QUOTE_OPTIONS = ['Quote As Is', 'No Quote', 'Alter Material or Form Detail', 'Alter Quantity', 'Alter Length'];
 const FITTING_OPTIONS = ['Quote As Is', 'No Quote'];
+// Lead time must be a valid Zoho choice ("N Days") — free text silently blanks the field.
+// The server sends the authoritative list via lookups.lead_time_choices; this is the fallback.
+const LEAD_TIME_FALLBACK_LIST = ['1 Day'].concat(Array.from({ length: 13 }, (_, i) => (i + 2) + ' Days'));
+
+// A lead-time <select> reused by the line rows, batch-fill, and header.
+function LeadTimeSelect({ value, disabled, choices, className, blankLabel, onChange }) {
+  return (
+    <select className={className} value={value || ''} disabled={disabled} onChange={e => onChange(e.target.value)}>
+      <option value="">{blankLabel || '—'}</option>
+      {(choices && choices.length ? choices : LEAD_TIME_FALLBACK_LIST).map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+}
 
 function money(n) {
   if (n == null || isNaN(n)) return '—';
@@ -56,7 +69,7 @@ function mergeQuotes(structuralQuotes, fittingQuotes) {
 
 // One structural line — supplier edits EITHER Line Total OR Price/lb (each recalcs the
 // other via line weight); unit price stays derived (total ÷ qty).
-function LineRow({ line, draft, onChange }) {
+function LineRow({ line, draft, onChange, leadChoices }) {
   const qty = Number(line.qty) || 0;
   const totalWeight = qty * (Number(line.unit_weight) || 0);
   const noQuote = draft.quote_option === 'No Quote';
@@ -104,14 +117,14 @@ function LineRow({ line, draft, onChange }) {
         <span className="q-perlb">/lb</span>
       </td>
       <td className="q-num q-calc">{noQuote || lineTotal <= 0 ? '—' : money(unitPrice) + '/ea'}</td>
-      <td><input className="q-mini" value={draft.lead_time} disabled={noQuote} placeholder="—" onChange={e => onChange({ lead_time: e.target.value })} /></td>
+      <td><LeadTimeSelect className="q-mini" value={draft.lead_time} disabled={noQuote} choices={leadChoices} onChange={v => onChange({ lead_time: v })} /></td>
       <td><input className="q-mini" value={draft.comments} disabled={noQuote} placeholder="—" onChange={e => onChange({ comments: e.target.value })} /></td>
     </tr>
   );
 }
 
 // One fitting line — priced PER-EACH (total = unit × qty).
-function FittingLineRow({ line, draft, onChange }) {
+function FittingLineRow({ line, draft, onChange, leadChoices }) {
   const qty = Number(line.qty) || 0;
   const noQuote = draft.quote_option === 'No Quote';
   const unit = !noQuote ? (parseFloat(draft.unit_price) || 0) : 0;
@@ -134,7 +147,7 @@ function FittingLineRow({ line, draft, onChange }) {
         <span className="q-perlb">/ea</span>
       </td>
       <td className="q-num q-calc">{noQuote || unit <= 0 ? '—' : money(total)}</td>
-      <td><input className="q-mini" value={draft.lead_time} disabled={noQuote} placeholder="—" onChange={e => onChange({ lead_time: e.target.value })} /></td>
+      <td><LeadTimeSelect className="q-mini" value={draft.lead_time} disabled={noQuote} choices={leadChoices} onChange={v => onChange({ lead_time: v })} /></td>
       <td><input className="q-mini" value={draft.comments} disabled={noQuote} placeholder="—" onChange={e => onChange({ comments: e.target.value })} /></td>
     </tr>
   );
@@ -194,6 +207,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
   const locations = (lookups && lookups.locations) || [];
   const reps = (lookups && lookups.reps) || [];
   const reqChoices = (lookups && lookups.quote_requirements) || [];
+  const leadChoices = (lookups && lookups.lead_time_choices) || LEAD_TIME_FALLBACK_LIST;
 
   const structGrand = quote.structural_lines.reduce((sum, l) => {
     const dr = drafts[l.rfqs_sent_id] || {};
@@ -305,7 +319,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
                   <option value="">Quote option…</option>
                   {QUOTE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
-                <input className="q-mini" value={batch.lead_time} onChange={e => setB({ lead_time: e.target.value })} placeholder="Lead time…" />
+                <LeadTimeSelect className="q-mini" value={batch.lead_time} choices={leadChoices} blankLabel="Lead time…" onChange={v => setB({ lead_time: v })} />
                 <input className="q-mini" value={batch.comments} onChange={e => setB({ comments: e.target.value })} placeholder="Comments…" />
                 <button className="q-batch-btn" onClick={applyBatch}>Apply to all</button>
               </div>
@@ -315,7 +329,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
                 </thead>
                 <tbody>
                   {quote.structural_lines.map(l => (
-                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} />
+                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} />
                   ))}
                 </tbody>
                 <tfoot>
@@ -334,7 +348,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
                 </thead>
                 <tbody>
                   {quote.fitting_lines.map(l => (
-                    <FittingLineRow key={l.rfq_row_id} line={l} draft={fitDrafts[l.rfq_row_id]} onChange={p => setFit(l.rfq_row_id, p)} />
+                    <FittingLineRow key={l.rfq_row_id} line={l} draft={fitDrafts[l.rfq_row_id]} onChange={p => setFit(l.rfq_row_id, p)} leadChoices={leadChoices} />
                   ))}
                 </tbody>
                 <tfoot>
@@ -377,7 +391,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
                   <input type="date" value={hdr.valid_until} onChange={e => setH({ valid_until: e.target.value })} />
                 </label>
                 <label>Lead time for ship complete
-                  <input value={hdr.lead_time} onChange={e => setH({ lead_time: e.target.value })} placeholder="e.g. 2 weeks" />
+                  <LeadTimeSelect value={hdr.lead_time} choices={leadChoices} blankLabel="— select —" onChange={v => setH({ lead_time: v })} />
                 </label>
                 <label>Shipping amount
                   <input type="number" step="0.01" min="0" value={hdr.shipping} onChange={e => setH({ shipping: e.target.value })} placeholder="0.00" />

@@ -11,6 +11,15 @@ const { matchStructuralForSupplier } = require('./structuralMatch');
 
 const SUPPLIER_REPORT = 'Supplier_Entry_Report';
 
+// Lead-time choices — must mirror the Zoho Lead_Time_For_Ship_Complete / SVD_Lead_Time
+// dropdown EXACTLY (a choice field blanks any non-matching value). "1 Day", then "N Days".
+// Extend this list if the Zoho field carries options beyond 14 days.
+const LEAD_TIME_CHOICES = ['1 Day'].concat(
+  Array.from({ length: 13 }, (_, i) => (i + 2) + ' Days'));
+// Fallback lead time written when a supplier leaves it blank, so the MFG close-out's
+// mandatory Lead Time never sees an empty value. Must be one of LEAD_TIME_CHOICES.
+const LEAD_TIME_FALLBACK = '7 Days';
+
 // OPEN-RFQ gate: a match only surfaces while its project is in one of these
 // Project_Quote_Status values (actively being sourced). Allowlist by design —
 // anything else (Awarded/Not Awarded/Canceled/Postpone/Quoted/blank) is hidden.
@@ -311,6 +320,10 @@ function registerSupplierRoutes(app, deps) {
         locations: loc.map(l => ({ id: String(l.ID), name: l.Name_of_Location || '' })),
         reps: rep.map(r => ({ id: String(r.ID), name: flatten(r.Name) || r.Email || '' })),
         quote_requirements: ['MTRs Required', 'AIS - Made & Melted in USA'],
+        // Must match the Zoho Lead_Time_For_Ship_Complete / SVD_Lead_Time choice list EXACTLY
+        // (a choice field silently blanks any value that isn't an allowed option). Extend here
+        // if the Zoho field has more options than are listed.
+        lead_time_choices: LEAD_TIME_CHOICES,
       };
     });
   }
@@ -408,6 +421,10 @@ function registerSupplierRoutes(app, deps) {
         const uw = Number(r.Unit_Weight) || 0;
         const tw = Number(r.CalcWeight) || 0;
         const leadTxt = l.lead_time || '';
+        // SVD_Lead_Time is a Zoho CHOICE field — coerce anything not in the allowed list
+        // (blank, or legacy free text like "1 Week") to a valid option so the native
+        // write-back doesn't leave RFQs_Sent.Lead_Time blank (which fails the MFG close-out).
+        const svLead = LEAD_TIME_CHOICES.includes(leadTxt) ? leadTxt : LEAD_TIME_FALLBACK;
 
         detailRows.push({
           // links back to the source RFQ line + master records
@@ -436,6 +453,7 @@ function registerSupplierRoutes(app, deps) {
           SVD_Unit_Price: round(up, 3),
           SVD_Total_Price: round(tp, 2),
           SVD_Price_Per_Lb_Counter: (opt === 'Quote As Is' && tp > 0) ? 1 : 0,
+          SVD_Lead_Time: svLead,
           SVD_Supplier_Comments: cmt,
           // PDF snapshot fields (feed the reference document). These are tight number
           // fields (~6 digits) — round to 2 places so larger amounts fit, like the widget.
@@ -463,9 +481,16 @@ function registerSupplierRoutes(app, deps) {
       // header — supplier inputs + derived lookups. Totals/status/derived fields are
       // computed by the SV form workflow (as on a native submit), so we don't set them.
       const validDays = Number(header.valid_days) || 0;
+      // Header lead time (Lead_Time_For_Ship_Complete, a CHOICE field): use the supplier's
+      // header value if valid, else the first valid per-line value, else the fallback.
+      const hdrLeadRaw = (header.lead_time || '').trim();
+      const firstLineLead = (lines.find(x => LEAD_TIME_CHOICES.includes((x.lead_time || '').trim())) || {}).lead_time;
+      const headerLead = LEAD_TIME_CHOICES.includes(hdrLeadRaw) ? hdrLeadRaw : (firstLineLead || LEAD_TIME_FALLBACK);
       const data = {
         SV_Supplier_Entry_Form: supplierId,
         SV_Quote_Form: String(quote_id),
+        Quote_LU: String(quote_id),          // native workflow keys the assignment link-back + report dot-walks off this
+        Lead_Time_For_Ship_Complete: headerLead,
         MANUFACTURER: mfgId,
         MFG_Representative: mfgRep,
         SV_TimeStamp: zohoNow(),
