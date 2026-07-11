@@ -196,7 +196,11 @@ function QuoteCard({ quote, lookups, email, revise }) {
   const [hdr, setHdr] = useState({
     supplier_quote_number: '', meets_requirements: '', shipping: '', misc: '',
     valid_days: '', valid_until: '', lead_time: '', notes: '', ready: false,
-    location: '', rep: '', requirements: [], attachment_name: '',
+    location: '', rep: '',
+    // Prepopulate the supplier's requirements from the MFG's quote requirements (they're
+    // confirming the manufacturer's requirements). Backend supplies quote.mfg_requirements.
+    requirements: Array.isArray(quote.mfg_requirements) ? quote.mfg_requirements : [],
+    attachment_name: '',
   });
   const setH = patch => setHdr(p => ({ ...p, ...patch }));
   const onValidDays = v => {
