@@ -25,6 +25,14 @@ const LEAD_TIME_FALLBACK = '7 Days';
 // Mirror the Zoho choice list (the API doesn't strictly enforce it, but keep values clean).
 const QUOTE_VALID_CHOICES = [1, 2, 3, 4, 5, 15, 30, 45];
 
+// Quote_Requirements_Selection (header multi-select) — the MFG's requirements the supplier
+// confirms. Mirror the Zoho choice list exactly (alphabetical, as the field is configured).
+const QUOTE_REQUIREMENTS_CHOICES = [
+  'AIS - Made & Melted in USA', 'API Q1', 'API Q2', 'ASME', 'DFARS 252.225-7009',
+  'ISO 14000', 'ISO 14001', 'ISO 17025', 'ISO 22000', 'ISO 45001', 'ISO 50001',
+  'ISO 9000', 'ISO 9001', 'MIL-STD-129', 'MTRs Required',
+];
+
 // OPEN-RFQ gate: a match only surfaces while its project is in one of these
 // Project_Quote_Status values (actively being sourced). Allowlist by design —
 // anything else (Awarded/Not Awarded/Canceled/Postpone/Quoted/blank) is hidden.
@@ -188,6 +196,10 @@ function registerSupplierRoutes(app, deps) {
           manufacturer: r['Customer_LU.Company_Name'] || flatten(r.Manufacturer) || '',
           status: r['Quote_LU.Status'] || '',
           quote_date: r.Quote_Date || r.RFQSent_Timestamp || '',
+          // MFG's quote requirements — prepopulates the supplier's Quote_Requirements_Selection.
+          // TODO: source once the Quote_Form requirements field is exposed on this report
+          // (add a dot-walk column Quote_LU.<field>); reads as [] until then.
+          mfg_requirements: Array.isArray(r['Quote_LU.Quote_Requirements_Selection']) ? r['Quote_LU.Quote_Requirements_Selection'] : [],
           lines: [],
         });
       }
@@ -336,7 +348,7 @@ function registerSupplierRoutes(app, deps) {
       return {
         locations: loc.map(l => ({ id: String(l.ID), name: l.Name_of_Location || '' })),
         reps: rep.map(r => ({ id: String(r.ID), name: flatten(r.Name) || r.Email || '' })),
-        quote_requirements: ['MTRs Required', 'AIS - Made & Melted in USA'],
+        quote_requirements: QUOTE_REQUIREMENTS_CHOICES,
         // Must match the Zoho Lead_Time_For_Ship_Complete (header) choice list EXACTLY
         // (a choice field silently blanks any value that isn't an allowed option). Extend here
         // if the Zoho field has more options than are listed.
@@ -523,6 +535,7 @@ function registerSupplierRoutes(app, deps) {
         Shipping_Amount: header.shipping != null ? String(header.shipping) : '0',
         Miscellaneous_Charges: header.misc != null ? String(header.misc) : '0',
         Supplier_Notes_To_Buyer: header.notes || '',
+        Quote_Requirements_Selection: Array.isArray(header.requirements) ? header.requirements : [],
         Original_Supplier_Quote: priorSvId,
         Supplier_Verify_Detail_Subform: detailRows,
       };
