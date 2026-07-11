@@ -10,6 +10,8 @@ const FITTING_OPTIONS = ['Quote As Is', 'No Quote'];
 // Lead time must be a valid Zoho choice ("N Days") — free text silently blanks the field.
 // The server sends the authoritative list via lookups.lead_time_choices; this is the fallback.
 const LEAD_TIME_FALLBACK_LIST = ['1 Day'].concat(Array.from({ length: 13 }, (_, i) => (i + 2) + ' Days'));
+// Quote valid (business days) — mirrors Zoho Quote_Is_Valid_For; server sends lookups.quote_valid_choices.
+const QUOTE_VALID_FALLBACK = [1, 2, 3, 4, 5, 15, 30, 45];
 
 // A lead-time <select> reused by the line rows, batch-fill, and header.
 function LeadTimeSelect({ value, disabled, choices, className, blankLabel, onChange }) {
@@ -212,6 +214,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
   const reps = (lookups && lookups.reps) || [];
   const reqChoices = (lookups && lookups.quote_requirements) || [];
   const leadChoices = (lookups && lookups.lead_time_choices) || LEAD_TIME_FALLBACK_LIST;
+  const quoteValidChoices = (lookups && lookups.quote_valid_choices) || QUOTE_VALID_FALLBACK;
 
   const structGrand = quote.structural_lines.reduce((sum, l) => {
     const dr = drafts[l.rfqs_sent_id] || {};
@@ -389,7 +392,10 @@ function QuoteCard({ quote, lookups, email, revise }) {
                   </select>
                 </label>
                 <label>Quote valid (business days)
-                  <input type="number" min="0" value={hdr.valid_days} onChange={e => onValidDays(e.target.value)} placeholder="e.g. 30" />
+                  <select value={hdr.valid_days} onChange={e => onValidDays(e.target.value)}>
+                    <option value="">— select —</option>
+                    {quoteValidChoices.map(n => <option key={n} value={n}>{n} {n === 1 ? 'day' : 'days'}</option>)}
+                  </select>
                 </label>
                 <label>Valid until
                   <input type="date" value={hdr.valid_until} onChange={e => setH({ valid_until: e.target.value })} />

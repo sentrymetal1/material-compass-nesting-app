@@ -21,6 +21,10 @@ const LEAD_TIME_CHOICES = ['1 Day'].concat(
 // mandatory Lead Time never sees an empty value. Must be one of LEAD_TIME_CHOICES.
 const LEAD_TIME_FALLBACK = '7 Days';
 
+// Quote_Is_Valid_For (header) — business days the quote stays valid; drives valid_until.
+// Mirror the Zoho choice list (the API doesn't strictly enforce it, but keep values clean).
+const QUOTE_VALID_CHOICES = [1, 2, 3, 4, 5, 15, 30, 45];
+
 // OPEN-RFQ gate: a match only surfaces while its project is in one of these
 // Project_Quote_Status values (actively being sourced). Allowlist by design —
 // anything else (Awarded/Not Awarded/Canceled/Postpone/Quoted/blank) is hidden.
@@ -337,6 +341,7 @@ function registerSupplierRoutes(app, deps) {
         // (a choice field silently blanks any value that isn't an allowed option). Extend here
         // if the Zoho field has more options than are listed.
         lead_time_choices: LEAD_TIME_CHOICES,
+        quote_valid_choices: QUOTE_VALID_CHOICES,
       };
     });
   }
