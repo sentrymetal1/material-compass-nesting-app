@@ -498,7 +498,9 @@ function registerSupplierRoutes(app, deps) {
           PDF_Unit_Amount: round(up, 2),
           PDF_Total_Amount: round(tp, 2),
           PDF_Price_Multi_Line: noQuote ? 'No Quote' : ('Per Lb ' + money(ppl) + '\nUnit Price ' + money(up)),
-          PDF_Lead_Time: leadTxt,
+          // PDF_Lead_Time is a CHOICE field (rejects "5 Days"/numbers) — leave blank; the lead
+          // time is carried on the header (Lead_Time_For_Ship_Complete) + SVD_Lead_Time (weeks).
+          PDF_Lead_Time: '',
           PDF_Supplier_Comments: cmt,
         });
       }
