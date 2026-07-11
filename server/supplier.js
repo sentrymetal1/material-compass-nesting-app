@@ -196,10 +196,9 @@ function registerSupplierRoutes(app, deps) {
           manufacturer: r['Customer_LU.Company_Name'] || flatten(r.Manufacturer) || '',
           status: r['Quote_LU.Status'] || '',
           quote_date: r.Quote_Date || r.RFQSent_Timestamp || '',
-          // MFG's quote requirements — prepopulates the supplier's Quote_Requirements_Selection.
-          // TODO: source once the Quote_Form requirements field is exposed on this report
-          // (add a dot-walk column Quote_LU.<field>); reads as [] until then.
-          mfg_requirements: Array.isArray(r['Quote_LU.Quote_Requirements_Selection']) ? r['Quote_LU.Quote_Requirements_Selection'] : [],
+          // MFG's quote requirements (Quote_Form.Quote_Requirements, dot-walked via Quote_LU on
+          // this report) — prepopulates the supplier's Quote_Requirements_Selection.
+          mfg_requirements: Array.isArray(r['Quote_LU.Quote_Requirements']) ? r['Quote_LU.Quote_Requirements'] : [],
           lines: [],
         });
       }
