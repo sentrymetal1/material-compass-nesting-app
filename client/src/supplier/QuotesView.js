@@ -216,7 +216,9 @@ function QuoteCard({ quote, lookups, email, revise }) {
   const toggleReq = r => setH({ requirements: hdr.requirements.includes(r) ? hdr.requirements.filter(x => x !== r) : [...hdr.requirements, r] });
   const locations = (lookups && lookups.locations) || [];
   const reps = (lookups && lookups.reps) || [];
-  const reqChoices = (lookups && lookups.quote_requirements) || [];
+  // Only show the requirements the MFG actually requested for THIS quote (not the full
+  // 15-option catalog). The supplier confirms which of those they meet.
+  const mfgReqs = Array.isArray(quote.mfg_requirements) ? quote.mfg_requirements : [];
   const leadChoices = (lookups && lookups.lead_time_choices) || LEAD_TIME_FALLBACK_LIST;
   const quoteValidChoices = (lookups && lookups.quote_valid_choices) || QUOTE_VALID_FALLBACK;
 
@@ -414,11 +416,15 @@ function QuoteCard({ quote, lookups, email, revise }) {
                   <input type="number" step="0.01" min="0" value={hdr.misc} onChange={e => setH({ misc: e.target.value })} placeholder="0.00" />
                 </label>
                 <label className="q-grid-wide">Quote requirements
-                  <div className="q-checks">
-                    {reqChoices.map(r => (
-                      <label key={r} className="q-check"><input type="checkbox" checked={hdr.requirements.includes(r)} onChange={() => toggleReq(r)} />{r}</label>
-                    ))}
-                  </div>
+                  {mfgReqs.length > 0 ? (
+                    <div className="q-checks">
+                      {mfgReqs.map(r => (
+                        <label key={r} className="q-check"><input type="checkbox" checked={hdr.requirements.includes(r)} onChange={() => toggleReq(r)} />{r}</label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="q-reqs-none">No specific requirements requested by the manufacturer.</div>
+                  )}
                 </label>
                 <label>Internal quote (attachment)
                   <input type="file" onChange={e => setH({ attachment_name: e.target.files && e.target.files[0] ? e.target.files[0].name : '' })} />

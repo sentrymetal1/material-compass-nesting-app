@@ -435,6 +435,8 @@ function registerSupplierRoutes(app, deps) {
 
       const detailRows = [];
       let missing = 0;
+      let sumMaterial = 0;  // Σ line total price — feeds the header material/grand totals
+      let sumWeight = 0;    // Σ line calc weight — feeds Response_Total_Weight
       for (const l of lines) {
         const r = rowById.get(String(l.rfqs_sent_id));
         if (!r) { missing++; continue; }
@@ -449,6 +451,8 @@ function registerSupplierRoutes(app, deps) {
         const reqStr = itemReq.join(', ');
         const uw = Number(r.Unit_Weight) || 0;
         const tw = Number(r.CalcWeight) || 0;
+        sumMaterial += tp;
+        if (!noQuote) sumWeight += tw;
         const leadTxt = l.lead_time || '';
         // SVD_Lead_Time is the NUMERIC "Lead Time (in weeks)" field (not a choice) — convert the
         // supplier's "N Days" pick to whole weeks; omit when none so we never send a non-number.
@@ -509,9 +513,13 @@ function registerSupplierRoutes(app, deps) {
         return res.status(400).json({ ok: false, error: 'none of the submitted lines matched current RFQ rows', missing });
       }
 
-      // header — supplier inputs + derived lookups. Totals/status/derived fields are
-      // computed by the SV form workflow (as on a native submit), so we don't set them.
+      // header — supplier inputs + derived lookups. The SV form workflow computes header
+      // totals but never STORES them on the API-add path, so the report columns (Total Amount
+      // of Quote / Total Weight Quoted) land blank — set them explicitly here from the line sums.
       const validDays = Number(header.valid_days) || 0;
+      const shipAmt = Number(header.shipping) || 0;
+      const miscAmt = Number(header.misc) || 0;
+      const grandTotal = sumMaterial + shipAmt + miscAmt;  // material + shipping + misc
       // Header lead time (Lead_Time_For_Ship_Complete, a CHOICE field): use the supplier's
       // header value if valid, else the first valid per-line value, else the fallback.
       const hdrLeadRaw = (header.lead_time || '').trim();
@@ -536,6 +544,12 @@ function registerSupplierRoutes(app, deps) {
         Shipping_Amount: header.shipping != null ? String(header.shipping) : '0',
         Miscellaneous_Charges: header.misc != null ? String(header.misc) : '0',
         Supplier_Notes_To_Buyer: header.notes || '',
+        // header rollups — set explicitly (workflow computes but doesn't store on API-add)
+        Total_Material_Amount_Currency: round(sumMaterial, 2),
+        Response_Total_Material_Price: round(sumMaterial, 2),
+        Response_Total_Price: round(grandTotal, 2),
+        Total_Amount_Currency: round(grandTotal, 2),
+        Response_Total_Weight: round(sumWeight, 2),
         Quote_Requirements_Selection: Array.isArray(header.requirements) ? header.requirements : [],
         Original_Supplier_Quote: priorSvId,
         Supplier_Verify_Detail_Subform: detailRows,
