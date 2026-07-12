@@ -407,11 +407,13 @@ function registerSupplierRoutes(app, deps) {
   app.get('/api/supplier/me/rfq-file-debug', withSupplier, async (req, res) => {
     try {
       const rows = await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(req.supplier.id) + ')');
-      const first = (rows && rows[0]) || {};
-      const fileKeys = Object.keys(first).filter(k => /file|attach|upload/i.test(k));
+      // Find a row that actually has files/notes populated (later revisions), not just row 0.
+      const scoreRow = row => Object.keys(row).filter(k => /file|attach|upload|note|requirement/i.test(k) && row[k] != null && row[k] !== '' && (!Array.isArray(row[k]) || row[k].length)).length;
+      const first = (rows || []).slice().sort((a, b) => scoreRow(b) - scoreRow(a))[0] || {};
+      const wantKeys = Object.keys(first).filter(k => /file|attach|upload|note|requirement/i.test(k));
       const sample = {};
-      fileKeys.forEach(k => { sample[k] = first[k]; });
-      res.json({ ok: true, supplier: req.supplier.id, row_count: rows.length, file_keys: fileKeys, sample, all_keys: Object.keys(first) });
+      wantKeys.forEach(k => { sample[k] = first[k]; });
+      res.json({ ok: true, supplier: req.supplier.id, row_count: rows.length, matched_keys: wantKeys, sample, all_keys: Object.keys(first) });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
