@@ -59,6 +59,9 @@ function flatten(v) {
 }
 
 const round = (n, dp) => { const f = Math.pow(10, dp); return Math.round((Number(n) || 0) * f) / f; };
+// Strip a leading "Item No N" (/ "Item Number N" / "Item #N") prefix from a line
+// description — it's redundant on the line records (the row already shows the line #).
+const stripItemNo = s => String(s || '').replace(/^\s*item\s*(?:no\.?|number|#)\s*\d+\s*[-–—:.)]*\s*/i, '').trim();
 
 // Zoho date fields want the form's display format (MMM dd,yyyy, e.g. "Jul 30,2026").
 // The browser date input sends ISO "2026-07-30"; convert, or pass through if unexpected.
@@ -213,7 +216,7 @@ function registerSupplierRoutes(app, deps) {
         sv_detail_id: lkid(r.Supplier_Verify_Detail),
         sv_form_id: lkid(r.Supplier_Verify_Form),
         line: r.Line_Item || '',
-        description: r.Full_Item_Description || r.Description_And_Dimension_Text || '',
+        description: stripItemNo(r.Full_Item_Description || r.Description_And_Dimension_Text || ''),
         qty: r.Quantity != null ? Number(r.Quantity) : null,
         unit_weight: r.Unit_Weight != null ? Number(r.Unit_Weight) : null,
         item_requirements: Array.isArray(r.Item_Requirements) ? r.Item_Requirements : [],
@@ -452,7 +455,7 @@ function registerSupplierRoutes(app, deps) {
         const ppl = noQuote ? 0 : Number(l.price_per_lb) || 0;
         const up = noQuote ? 0 : Number(l.unit_price) || 0;
         const tp = noQuote ? 0 : Number(l.total_price) || 0;
-        const desc = r.Description_And_Dimension_Text || r.Full_Item_Description || '';
+        const desc = stripItemNo(r.Description_And_Dimension_Text || r.Full_Item_Description || '');
         const itemReq = Array.isArray(r.Item_Requirements) ? r.Item_Requirements : [];   // MFG's per-line requirement
         // Supplier may edit item requirements (pre-filled with the MFG's set). If they changed
         // it, write the supplier's selection AND note the change in the line comments.
@@ -1034,7 +1037,7 @@ function registerSupplierRoutes(app, deps) {
         const responded = mine ? (!!(mine.Item_Verification_Status && String(mine.Item_Verification_Status).trim()) || (mine.Price_Per_Lb != null && String(mine.Price_Per_Lb).trim() !== '' && Number(mine.Price_Per_Lb) > 0)) : false;
         lines.push({
           line_item: any.Line_Item || '',
-          description: any.Description_And_Dimension_Text || any.Full_Item_Description || '',
+          description: stripItemNo(any.Description_And_Dimension_Text || any.Full_Item_Description || ''),
           qty: any.Quantity != null ? Number(any.Quantity) : null,
           sent_to_me: !!mine,
           stock_match: matchOf(f, mt, sp), // 'exact' | 'strong' | null
