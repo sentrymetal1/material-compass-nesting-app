@@ -213,6 +213,30 @@ function registerSupplierRoutes(app, deps) {
     });
   }
 
+  // MFG per-line "Supplier Notes" live on Jeffs_Calcs (Jeffs_Calcs_Report), joined to a line by
+  // quote + line number. Not reliably exposed on the RFQ report, so fetch them scoped to the
+  // supplier's quotes. Best-effort; cached 5 min per supplier.
+  async function fetchQuoteNotes(supplierId, quoteIds) {
+    const ids = [...new Set((quoteIds || []).filter(Boolean).map(String))];
+    if (!ids.length) return {};
+    return cachedLookup('jeffs-notes:' + supplierId, 5 * 60 * 1000, async () => {
+      const map = {};
+      const CHUNK = 20;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const crit = '(' + ids.slice(i, i + CHUNK).map(id => 'Quote_Form==' + id).join(' || ') + ')';
+        let rows = [];
+        try { rows = await fetchAllZohoPages('/report/Jeffs_Calcs_Report?criteria=' + encodeURIComponent(crit)); } catch (e) { rows = []; }
+        for (const jc of rows) {
+          const note = asStr(jc.Supplier_Notes);
+          if (!note) continue;
+          const qid = lkid(jc.Quote_Form), ln = String(jc.Quote_Line_Item || '');
+          if (qid && ln) map[qid + '|' + ln] = note;
+        }
+      }
+      return map;
+    });
+  }
+
   async function fetchSentRfqs(supplierId) {
     // Cache per supplier (60s) so a supplier refreshing the Quotes tab doesn't
     // re-hit Zoho each time — keeps Developer-API usage low.
@@ -264,6 +288,11 @@ function registerSupplierRoutes(app, deps) {
       const fileMap = await fetchQuoteFiles();
       out.forEach(q => { q.files = fileMap[String(q.quote_id)] || []; });
     } catch (e) { out.forEach(q => { if (!q.files) q.files = []; }); }
+    // Attach the MFG's per-line Supplier Notes from Jeffs_Calcs (best-effort).
+    try {
+      const notesMap = await fetchQuoteNotes(supplierId, out.map(q => q.quote_id));
+      out.forEach(q => q.lines.forEach(l => { if (!l.mfg_note) l.mfg_note = notesMap[q.quote_id + '|' + String(l.line)] || ''; }));
+    } catch (e) { /* keep whatever mfg_note the row already had */ }
     return out;
   }
 
