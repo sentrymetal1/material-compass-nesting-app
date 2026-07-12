@@ -66,6 +66,10 @@ const stripItemNo = s => String(s || '').replace(/^\s*item\s*(?:no\.?|number|#)\
 const asArr = v => Array.isArray(v) ? v.filter(Boolean) : (v == null || v === '' ? [] : String(v).split(',').map(s => s.trim()).filter(Boolean));
 // Coerce a possibly-object/array field to a trimmed string.
 const asStr = v => (v == null ? '' : (typeof v === 'string' ? v : (Array.isArray(v) ? v.join(', ') : String(v.display_value || v.value || v)))).trim();
+// The MFG's per-line "Supplier Notes" arrives under a dot-walked key (Jeffs_Calcs_LU.Supplier_Notes)
+// whose exact name varies — find whichever key holds "supplier notes" (but NOT the supplier's own
+// "Supplier Comments"), so we don't depend on the precise link name.
+const pickNote = row => { const k = Object.keys(row).find(kk => /supplier[_ ]?notes/i.test(kk) && !/comment/i.test(kk)); return k ? asStr(row[k]) : ''; };
 
 // Zoho date fields want the form's display format (MMM dd,yyyy, e.g. "Jul 30,2026").
 // The browser date input sends ISO "2026-07-30"; convert, or pass through if unexpected.
@@ -225,7 +229,7 @@ function registerSupplierRoutes(app, deps) {
         unit_weight: r.Unit_Weight != null ? Number(r.Unit_Weight) : null,
         item_requirements: asArr(r.Item_Requirements),
         // MFG's per-line note to the supplier ("Supplier Notes" col = Jeffs_Calcs_LU.Supplier_Notes).
-        mfg_note: asStr(r['Jeffs_Calcs_LU.Supplier_Notes'] != null ? r['Jeffs_Calcs_LU.Supplier_Notes'] : r.Supplier_Notes),
+        mfg_note: pickNote(r),
         price_per_lb: r.Price_Per_Lb != null && r.Price_Per_Lb !== '' ? Number(r.Price_Per_Lb) : null,
         unit_price: r.Unit_Price != null && r.Unit_Price !== '' ? Number(r.Unit_Price) : null,
         total_price: r.Total_Price != null && r.Total_Price !== '' ? Number(r.Total_Price) : null,
