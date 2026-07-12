@@ -424,17 +424,8 @@ function QuoteCard({ quote, lookups, email, revise }) {
 
               <div className="q-req-row">
                 <div className="q-req-panel">
-                  <div className="q-req-panel-head">MFG Requirements <span className="q-req-note">— set by the manufacturer</span></div>
-                  <div className="q-req-panel-body">
-                    <div className="q-req-panel-reqs">
-                      {mfgReqs.length > 0 ? (
-                        <div className="q-req-pills">
-                          {mfgReqs.map(r => <span key={r} className="q-req-pill">{r}</span>)}
-                        </div>
-                      ) : (
-                        <div className="q-reqs-none">No specific requirements requested by the manufacturer.</div>
-                      )}
-                    </div>
+                  <div className="q-req-panel-top">
+                    <span className="q-req-panel-head">MFG REQUIREMENTS <span className="q-req-note">— set by the manufacturer</span></span>
                     <div className="q-req-panel-meets">
                       <span className="q-meets-lbl">Does your quote meet these?<span className="req-star">*</span></span>
                       <div className="q-seg">
@@ -447,13 +438,23 @@ function QuoteCard({ quote, lookups, email, revise }) {
                       </div>
                     </div>
                   </div>
+                  <div className="q-req-panel-reqs">
+                    {mfgReqs.length > 0 ? (
+                      <div className="q-req-pills">
+                        {mfgReqs.map(r => <span key={r} className="q-req-pill">{r}</span>)}
+                      </div>
+                    ) : (
+                      <div className="q-reqs-none">No specific requirements requested by the manufacturer.</div>
+                    )}
+                  </div>
                 </div>
-                <label className="q-attach">Internal quote (attachment)
+                <label className="q-attach">
+                  <span className="q-attach-lbl">Internal quote (attachment)</span>
                   <input type="file" onChange={e => setH({ attachment_name: e.target.files && e.target.files[0] ? e.target.files[0].name : '' })} />
                 </label>
               </div>
 
-              <div className="q-grid q-grid-4">
+              <div className="q-grid q-grid-8">
                 <label>Supplier location<span className="req-star">*</span>
                   <select value={hdr.location} onChange={e => setH({ location: e.target.value })}>
                     <option value="">— select —</option>
