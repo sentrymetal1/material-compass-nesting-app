@@ -151,6 +151,16 @@
 .q-reqs-none { font-size: 12px; color: var(--muted); padding-top: 4px; font-style: italic; }
 .req-star { color: #c0392b; margin-left: 2px; }
 .q-missing { font-size: 12px; color: #9a6a12; }
+/* Standout panel grouping the MFG requirements with the supplier's "meets" confirmation */
+.q-req-panel { margin-bottom: 14px; border: 1px solid #bcd6f2; border-left: 4px solid var(--blue); border-radius: 8px; background: #eff6ff; padding: 12px 14px; }
+.q-req-panel-head { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--blue); margin-bottom: 8px; }
+.q-req-panel-body { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.q-req-panel-reqs { flex: 1 1 320px; }
+.q-req-panel-meets { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); min-width: 260px; }
+.q-req-panel-meets select { font-size: 13px; padding: 7px 8px; border: 1px solid #9cc0e8; border-radius: 6px; font-family: inherit; color: var(--ink); font-weight: 600; background: #fff; }
+/* Currency input (shipping / misc) — $ prefix + right-aligned value */
+.q-money-in { display: flex; align-items: center; gap: 4px; }
+.q-money-in input { flex: 1; text-align: right; }
 .q-summary { padding: 16px; border-top: 1px solid var(--line); background: #fafbfc; }
 .q-summary h4 { margin: 0 0 12px; font-size: 13px; color: var(--ink); }
 .q-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 16px; }

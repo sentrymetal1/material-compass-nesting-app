@@ -32,6 +32,8 @@ function num(n, dp) {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: dp == null ? 2 : dp });
 }
 const round = (n, dp) => { const f = Math.pow(10, dp); return Math.round(n * f) / f; };
+// Format a currency input to 2 decimals on blur ("" stays "" so 'required' still catches blanks).
+const fmtMoney2 = v => { const n = parseFloat(v); return isNaN(n) ? '' : n.toFixed(2); };
 
 // Merge the two pipelines into one quote list keyed by quote_id (= Quote_LU).
 function mergeQuotes(structuralQuotes, fittingQuotes) {
@@ -394,6 +396,29 @@ function QuoteCard({ quote, lookups, email, revise }) {
           {hasStruct && (
             <div className="q-summary">
               <h4>Quote summary</h4>
+
+              <div className="q-req-panel">
+                <div className="q-req-panel-head">MFG Requirements <span className="q-req-note">— set by the manufacturer</span></div>
+                <div className="q-req-panel-body">
+                  <div className="q-req-panel-reqs">
+                    {mfgReqs.length > 0 ? (
+                      <div className="q-req-pills">
+                        {mfgReqs.map(r => <span key={r} className="q-req-pill">{r}</span>)}
+                      </div>
+                    ) : (
+                      <div className="q-reqs-none">No specific requirements requested by the manufacturer.</div>
+                    )}
+                  </div>
+                  <label className="q-req-panel-meets">Does your quote meet these?<span className="req-star">*</span>
+                    <select value={hdr.meets_requirements} onChange={e => setH({ meets_requirements: e.target.value })}>
+                      <option value="">— select —</option>
+                      <option value="YES - Meets All MFG Requirements">Yes — meets all MFG requirements</option>
+                      <option value="NO - Does Not Meet All MFG Requirements">No — does not meet all</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
               <div className="q-grid">
                 <label>Supplier location<span className="req-star">*</span>
                   <select value={hdr.location} onChange={e => setH({ location: e.target.value })}>
@@ -410,13 +435,6 @@ function QuoteCard({ quote, lookups, email, revise }) {
                 <label>Your quote #<span className="req-star">*</span>
                   <input value={hdr.supplier_quote_number} onChange={e => setH({ supplier_quote_number: e.target.value })} placeholder="Internal quote number" />
                 </label>
-                <label>Meets MFG requirements<span className="req-star">*</span>
-                  <select value={hdr.meets_requirements} onChange={e => setH({ meets_requirements: e.target.value })}>
-                    <option value="">— select —</option>
-                    <option value="YES - Meets All MFG Requirements">Yes</option>
-                    <option value="NO - Does Not Meet All MFG Requirements">No</option>
-                  </select>
-                </label>
                 <label>Quote valid (business days)<span className="req-star">*</span>
                   <select value={hdr.valid_days} onChange={e => onValidDays(e.target.value)}>
                     <option value="">— select —</option>
@@ -430,19 +448,20 @@ function QuoteCard({ quote, lookups, email, revise }) {
                   <LeadTimeSelect value={hdr.lead_time} choices={leadChoices} blankLabel="— select —" onChange={v => setH({ lead_time: v })} />
                 </label>
                 <label>Shipping amount<span className="req-star">*</span>
-                  <input type="number" step="0.01" min="0" value={hdr.shipping} onChange={e => setH({ shipping: e.target.value })} placeholder="0.00" />
+                  <div className="q-money-in">
+                    <span className="q-dollar">$</span>
+                    <input type="text" inputMode="decimal" value={hdr.shipping} placeholder="0.00"
+                      onChange={e => setH({ shipping: e.target.value })}
+                      onBlur={e => setH({ shipping: fmtMoney2(e.target.value) })} />
+                  </div>
                 </label>
                 <label>Miscellaneous amount<span className="req-star">*</span>
-                  <input type="number" step="0.01" min="0" value={hdr.misc} onChange={e => setH({ misc: e.target.value })} placeholder="0.00" />
-                </label>
-                <label className="q-grid-wide">Quote requirements <span className="q-req-note">— set by the manufacturer</span>
-                  {mfgReqs.length > 0 ? (
-                    <div className="q-req-pills">
-                      {mfgReqs.map(r => <span key={r} className="q-req-pill">{r}</span>)}
-                    </div>
-                  ) : (
-                    <div className="q-reqs-none">No specific requirements requested by the manufacturer.</div>
-                  )}
+                  <div className="q-money-in">
+                    <span className="q-dollar">$</span>
+                    <input type="text" inputMode="decimal" value={hdr.misc} placeholder="0.00"
+                      onChange={e => setH({ misc: e.target.value })}
+                      onBlur={e => setH({ misc: fmtMoney2(e.target.value) })} />
+                  </div>
                 </label>
                 <label>Internal quote (attachment)
                   <input type="file" onChange={e => setH({ attachment_name: e.target.files && e.target.files[0] ? e.target.files[0].name : '' })} />
