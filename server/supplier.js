@@ -197,7 +197,7 @@ function registerSupplierRoutes(app, deps) {
   // Quote-level reference files (Quote_Form.File_upload, exposed on the All_Quotes report as
   // an array of download-path strings). Map quote record ID → [{name, filepath}]. Cached 5 min.
   async function fetchQuoteFiles() {
-    return cachedLookup('quote-files', 5 * 60 * 1000, async () => {
+    return cachedLookup('quote-files', 30 * 60 * 1000, async () => {
       const rows = await fetchAllZohoPages('/report/All_Quotes');
       const map = {};
       for (const q of rows) {
@@ -221,7 +221,7 @@ function registerSupplierRoutes(app, deps) {
     // Zoho reject the whole OR criteria, blanking valid quotes batched with it.
     const ids = [...new Set((quoteIds || []).map(String).filter(id => /^\d+$/.test(id)))];
     if (!ids.length) return {};
-    return cachedLookup('jeffs-notes:' + supplierId, 5 * 60 * 1000, async () => {
+    return cachedLookup('jeffs-notes:' + supplierId, 30 * 60 * 1000, async () => {
       const map = {};
       const CHUNK = 20;
       for (let i = 0; i < ids.length; i += CHUNK) {
@@ -242,7 +242,7 @@ function registerSupplierRoutes(app, deps) {
   async function fetchSentRfqs(supplierId) {
     // Cache per supplier (60s) so a supplier refreshing the Quotes tab doesn't
     // re-hit Zoho each time — keeps Developer-API usage low.
-    const rows = await cachedLookup('sent-rfqs:' + supplierId, 60 * 1000, async () =>
+    const rows = await cachedLookup('sent-rfqs:' + supplierId, 3 * 60 * 1000, async () =>
       fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')'));
     const byQuote = new Map();
     for (const r of rows) {
