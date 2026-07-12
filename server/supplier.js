@@ -460,22 +460,18 @@ function registerSupplierRoutes(app, deps) {
   // Remove once the files feature ships.
   app.get('/api/supplier/me/rfq-file-debug', withSupplier, async (req, res) => {
     try {
-      const rows = await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(req.supplier.id) + ')');
-      // Probe the two source reports (few records each) to capture field keys + file shape.
-      const score = row => Object.keys(row).filter(k => /file|upload|note|requirement/i.test(k) && row[k] && (!Array.isArray(row[k]) || row[k].length)).length;
-      const probe = async report => {
-        const token = await getAccessToken();
-        const resp = await axios.get(creatorApiBase() + '/report/' + report + '?limit=8', { headers: zohoHeaders(token) });
-        const prows = (resp.data && resp.data.data) || [];
-        const row = prows.slice().sort((a, b) => score(b) - score(a))[0] || {};
-        const sample = {};
-        Object.keys(row).filter(k => /file|upload|note|requirement|quote|jeff|id/i.test(k)).forEach(k => { sample[k] = row[k]; });
-        return { count: prows.length, keys: Object.keys(row), sample };
-      };
-      const out = { ok: true, rfqs_row_count: rows.length };
-      for (const rpt of ['Jeffs_Calcs_Report', 'All_Quotes']) {
-        try { out[rpt] = await probe(rpt); } catch (e) { out[rpt] = { error: String((e.response && e.response.status) + ' ' + (e.message || e)) }; }
-      }
+      const qid = String(req.query.qid || '4111484000005821060');
+      const out = { ok: true, qid };
+      // 1) does the Quote_Form criteria match Jeffs_Calcs rows, and what are the note/line values?
+      try {
+        const rows = await fetchAllZohoPages('/report/Jeffs_Calcs_Report?criteria=' + encodeURIComponent('(Quote_Form==' + qid + ')'));
+        out.by_quote = { count: rows.length, rows: rows.slice(0, 8).map(r => ({ id: r.ID, quote: lkid(r.Quote_Form), line: r.Quote_Line_Item, note: r.Supplier_Notes })) };
+      } catch (e) { out.by_quote_error = String((e.response && e.response.status) + ' ' + (e.message || e)); }
+      // 2) what quote_ids does fetchSentRfqs actually produce for this supplier (join key check)?
+      try {
+        const qs = await fetchSentRfqs(req.supplier.id);
+        out.rfq_quotes = qs.slice(0, 8).map(q => ({ quote_id: q.quote_id, number: q.quote_number, lines: q.lines.map(l => ({ line: l.line, note: l.mfg_note })) }));
+      } catch (e) { out.rfq_quotes_error = String(e.message || e); }
       res.json(out);
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
