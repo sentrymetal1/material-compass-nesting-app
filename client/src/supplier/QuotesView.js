@@ -120,6 +120,7 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices }) {
       <td className="q-ln-cell"><span className="q-ln">{line.line}</span></td>
       <td className="q-desc">
         {line.description}
+        {line.mfg_note && <div className="q-mfgnote"><span className="q-mfgnote-lbl">MFG note:</span> {line.mfg_note}</div>}
         <div className="q-ireq-lbl">Item requirements <span className="muted">(MFG — editable)</span></div>
         <ItemReqEditor value={draft.item_requirements} options={itemReqChoices} onChange={reqs => onChange({ item_requirements: reqs })} />
       </td>

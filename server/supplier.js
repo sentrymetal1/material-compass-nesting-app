@@ -62,6 +62,10 @@ const round = (n, dp) => { const f = Math.pow(10, dp); return Math.round((Number
 // Strip a leading "Item No N" (/ "Item Number N" / "Item #N") prefix from a line
 // description — it's redundant on the line records (the row already shows the line #).
 const stripItemNo = s => String(s || '').replace(/^\s*item\s*(?:no\.?|number|#)\s*\d+\s*[-–—:.)]*\s*/i, '').trim();
+// Coerce a Zoho multi-select (array) OR comma-string into a clean string array.
+const asArr = v => Array.isArray(v) ? v.filter(Boolean) : (v == null || v === '' ? [] : String(v).split(',').map(s => s.trim()).filter(Boolean));
+// Coerce a possibly-object/array field to a trimmed string.
+const asStr = v => (v == null ? '' : (typeof v === 'string' ? v : (Array.isArray(v) ? v.join(', ') : String(v.display_value || v.value || v)))).trim();
 
 // Zoho date fields want the form's display format (MMM dd,yyyy, e.g. "Jul 30,2026").
 // The browser date input sends ISO "2026-07-30"; convert, or pass through if unexpected.
@@ -219,7 +223,9 @@ function registerSupplierRoutes(app, deps) {
         description: stripItemNo(r.Full_Item_Description || r.Description_And_Dimension_Text || ''),
         qty: r.Quantity != null ? Number(r.Quantity) : null,
         unit_weight: r.Unit_Weight != null ? Number(r.Unit_Weight) : null,
-        item_requirements: Array.isArray(r.Item_Requirements) ? r.Item_Requirements : [],
+        item_requirements: asArr(r.Item_Requirements),
+        // MFG's per-line note to the supplier ("Supplier Notes" col = Jeffs_Calcs_LU.Supplier_Notes).
+        mfg_note: asStr(r['Jeffs_Calcs_LU.Supplier_Notes'] != null ? r['Jeffs_Calcs_LU.Supplier_Notes'] : r.Supplier_Notes),
         price_per_lb: r.Price_Per_Lb != null && r.Price_Per_Lb !== '' ? Number(r.Price_Per_Lb) : null,
         unit_price: r.Unit_Price != null && r.Unit_Price !== '' ? Number(r.Unit_Price) : null,
         total_price: r.Total_Price != null && r.Total_Price !== '' ? Number(r.Total_Price) : null,
