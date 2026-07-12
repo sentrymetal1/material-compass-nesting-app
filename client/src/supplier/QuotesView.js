@@ -409,13 +409,17 @@ function QuoteCard({ quote, lookups, email, revise }) {
                       <div className="q-reqs-none">No specific requirements requested by the manufacturer.</div>
                     )}
                   </div>
-                  <label className="q-req-panel-meets">Does your quote meet these?<span className="req-star">*</span>
-                    <select value={hdr.meets_requirements} onChange={e => setH({ meets_requirements: e.target.value })}>
-                      <option value="">— select —</option>
-                      <option value="YES - Meets All MFG Requirements">Yes — meets all MFG requirements</option>
-                      <option value="NO - Does Not Meet All MFG Requirements">No — does not meet all</option>
-                    </select>
-                  </label>
+                  <div className="q-req-panel-meets">
+                    <span className="q-meets-lbl">Does your quote meet these?<span className="req-star">*</span></span>
+                    <div className="q-seg">
+                      <button type="button"
+                        className={'q-seg-btn' + (hdr.meets_requirements === 'YES - Meets All MFG Requirements' ? ' q-seg-on q-seg-yes' : '')}
+                        onClick={() => setH({ meets_requirements: 'YES - Meets All MFG Requirements' })}>Yes — meets all</button>
+                      <button type="button"
+                        className={'q-seg-btn' + (hdr.meets_requirements === 'NO - Does Not Meet All MFG Requirements' ? ' q-seg-on q-seg-no' : '')}
+                        onClick={() => setH({ meets_requirements: 'NO - Does Not Meet All MFG Requirements' })}>No — does not meet all</button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
