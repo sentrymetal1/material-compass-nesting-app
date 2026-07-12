@@ -371,6 +371,16 @@ function QuoteCard({ quote, lookups, email, revise }) {
       </div>
       {open && (
         <div className="q-body">
+          {quote.files && quote.files.length > 0 && (
+            <div className="q-files">
+              <span className="q-files-lbl">📎 Manufacturer reference files:</span>
+              {quote.files.map((f, i) => (
+                <a key={i} className="q-file" target="_blank" rel="noreferrer"
+                  href={'/api/supplier/me/quote-file?record=' + encodeURIComponent(quote.quote_id) + '&filepath=' + encodeURIComponent(f.filepath) + '&email=' + encodeURIComponent(email)}>{f.name}</a>
+              ))}
+              <span className="q-files-note">review all files before quoting</span>
+            </div>
+          )}
           {hasStruct && (
             <>
               {hasFit && <div className="q-section-label">Structural / Pipe</div>}

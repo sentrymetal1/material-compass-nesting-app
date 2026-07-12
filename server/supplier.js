@@ -193,6 +193,26 @@ function registerSupplierRoutes(app, deps) {
   // scoped to this supplier, grouped into quotes. This is what the MFG actually sent
   // (vs the fitting matcher, which is potential matches). Read-only; safe.
   const lkid = v => (v && typeof v === 'object' ? String(v.ID || v.id || '') : (v != null ? String(v) : ''));
+
+  // Quote-level reference files (Quote_Form.File_upload, exposed on the All_Quotes report as
+  // an array of download-path strings). Map quote record ID → [{name, filepath}]. Cached 5 min.
+  async function fetchQuoteFiles() {
+    return cachedLookup('quote-files', 5 * 60 * 1000, async () => {
+      const rows = await fetchAllZohoPages('/report/All_Quotes');
+      const map = {};
+      for (const q of rows) {
+        const arr = Array.isArray(q.File_upload) ? q.File_upload : [];
+        const files = arr.map(u => {
+          const m = /[?&]filepath=([^&]+)/.exec(String(u));
+          const fp = m ? decodeURIComponent(m[1]) : '';
+          return fp ? { name: fp.replace(/^\d+_+/, ''), filepath: fp } : null;
+        }).filter(Boolean);
+        if (files.length) map[String(q.ID)] = files;
+      }
+      return map;
+    });
+  }
+
   async function fetchSentRfqs(supplierId) {
     // Cache per supplier (60s) so a supplier refreshing the Quotes tab doesn't
     // re-hit Zoho each time — keeps Developer-API usage low.
@@ -239,6 +259,11 @@ function registerSupplierRoutes(app, deps) {
     }
     const out = [...byQuote.values()];
     out.forEach(q => q.lines.sort((a, b) => (Number(a.line) || 0) - (Number(b.line) || 0)));
+    // Attach the manufacturer's quote-level reference files (best-effort; never block the list).
+    try {
+      const fileMap = await fetchQuoteFiles();
+      out.forEach(q => { q.files = fileMap[String(q.quote_id)] || []; });
+    } catch (e) { out.forEach(q => { if (!q.files) q.files = []; }); }
     return out;
   }
 
@@ -426,6 +451,25 @@ function registerSupplierRoutes(app, deps) {
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // GET /api/supplier/me/quote-file — stream a manufacturer reference file (Quote_Form.File_upload)
+  // from Zoho using the server's token, so the supplier can download it without Zoho auth.
+  app.get('/api/supplier/me/quote-file', withSupplier, async (req, res) => {
+    try {
+      const record = String(req.query.record || '').replace(/[^0-9]/g, '');
+      const filepath = String(req.query.filepath || '');
+      if (!record || !filepath) return res.status(400).send('record and filepath required');
+      const token = await getAccessToken();
+      const url = creatorApiBase() + '/report/All_Quotes/' + record + '/File_upload/download?filepath=' + encodeURIComponent(filepath);
+      const zr = await axios.get(url, { headers: zohoHeaders(token), responseType: 'stream' });
+      const name = filepath.replace(/^\d+_+/, '').replace(/"/g, '');
+      res.setHeader('Content-Disposition', 'inline; filename="' + name + '"');
+      if (zr.headers['content-type']) res.setHeader('Content-Type', zr.headers['content-type']);
+      zr.data.pipe(res);
+    } catch (err) {
+      res.status(502).send('file fetch failed: ' + String((err.response && err.response.status) || '') + ' ' + String((err && err.message) || err));
     }
   });
 
