@@ -407,13 +407,22 @@ function registerSupplierRoutes(app, deps) {
   app.get('/api/supplier/me/rfq-file-debug', withSupplier, async (req, res) => {
     try {
       const rows = await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(req.supplier.id) + ')');
-      // Find a row that actually has files/notes populated (later revisions), not just row 0.
-      const scoreRow = row => Object.keys(row).filter(k => /file|attach|upload|note|requirement/i.test(k) && row[k] != null && row[k] !== '' && (!Array.isArray(row[k]) || row[k].length)).length;
-      const first = (rows || []).slice().sort((a, b) => scoreRow(b) - scoreRow(a))[0] || {};
-      const wantKeys = Object.keys(first).filter(k => /file|attach|upload|note|requirement/i.test(k));
-      const sample = {};
-      wantKeys.forEach(k => { sample[k] = first[k]; });
-      res.json({ ok: true, supplier: req.supplier.id, row_count: rows.length, matched_keys: wantKeys, sample, all_keys: Object.keys(first) });
+      // Probe the two source reports (few records each) to capture field keys + file shape.
+      const score = row => Object.keys(row).filter(k => /file|upload|note|requirement/i.test(k) && row[k] && (!Array.isArray(row[k]) || row[k].length)).length;
+      const probe = async report => {
+        const token = await getAccessToken();
+        const resp = await axios.get(creatorApiBase + '/report/' + report + '?max_records=8', { headers: zohoHeaders(token) });
+        const prows = (resp.data && resp.data.data) || [];
+        const row = prows.slice().sort((a, b) => score(b) - score(a))[0] || {};
+        const sample = {};
+        Object.keys(row).filter(k => /file|upload|note|requirement|quote|jeff|id/i.test(k)).forEach(k => { sample[k] = row[k]; });
+        return { count: prows.length, keys: Object.keys(row), sample };
+      };
+      const out = { ok: true, rfqs_row_count: rows.length };
+      for (const rpt of ['Jeffs_Calcs_Report', 'All_Quotes']) {
+        try { out[rpt] = await probe(rpt); } catch (e) { out[rpt] = { error: String((e.response && e.response.status) + ' ' + (e.message || e)) }; }
+      }
+      res.json(out);
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
