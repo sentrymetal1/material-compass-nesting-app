@@ -457,30 +457,6 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
-  // TEMP diagnostic — capture the raw shape of the Quote file field so the reference-files
-  // download proxy can be built to match. Hit /api/supplier/me/rfq-file-debug?email=<supplier>.
-  // Remove once the files feature ships.
-  app.get('/api/supplier/me/rfq-file-debug', withSupplier, async (req, res) => {
-    try {
-      const qid = String(req.query.qid || '4111484000005821060');
-      const out = { ok: true, qid };
-      // 1) does the Quote_Form criteria match Jeffs_Calcs rows, and what are the note/line values?
-      try {
-        const rows = await fetchAllZohoPages('/report/Jeffs_Calcs_Report?criteria=' + encodeURIComponent('(Quote_Form==' + qid + ')'));
-        out.by_quote = { count: rows.length, rows: rows.slice(0, 8).map(r => ({ id: r.ID, quote: lkid(r.Quote_Form), line: r.Quote_Line_Item, note: r.Supplier_Notes })) };
-      } catch (e) { out.by_quote_error = String((e.response && e.response.status) + ' ' + (e.message || e)); }
-      // 2) what quote_ids does fetchSentRfqs actually produce for this supplier (join key check)?
-      try {
-        const qs = await fetchSentRfqs(req.supplier.id);
-        out.rfq_quotes = qs.slice(0, 8).map(q => ({ quote_id: q.quote_id, number: q.quote_number, lines: q.lines.map(l => ({ line: l.line, note: l.mfg_note })) }));
-      } catch (e) { out.rfq_quotes_error = String(e.message || e); }
-      res.json(out);
-    } catch (err) {
-      if (sendZohoAwareError) return sendZohoAwareError(res, err);
-      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
-    }
-  });
-
   // GET /api/supplier/me/quote-file — stream a manufacturer reference file (Quote_Form.File_upload)
   // from Zoho using the server's token, so the supplier can download it without Zoho auth.
   app.get('/api/supplier/me/quote-file', withSupplier, async (req, res) => {
