@@ -213,7 +213,6 @@ function QuoteCard({ quote, lookups, email, revise }) {
     }
     setH({ valid_days: v, valid_until: until });
   };
-  const toggleReq = r => setH({ requirements: hdr.requirements.includes(r) ? hdr.requirements.filter(x => x !== r) : [...hdr.requirements, r] });
   const locations = (lookups && lookups.locations) || [];
   const reps = (lookups && lookups.reps) || [];
   // Only show the requirements the MFG actually requested for THIS quote (not the full
@@ -245,7 +244,28 @@ function QuoteCard({ quote, lookups, email, revise }) {
   }, 0);
   const totalAmount = grand + (parseFloat(hdr.shipping) || 0) + (parseFloat(hdr.misc) || 0);
 
+  // Quote-summary fields the supplier MUST complete before submitting (structural quotes).
+  // Attachment + Notes stay optional. Shipping/Misc are required but "0" is a valid entry.
+  const REQUIRED_FIELDS = [
+    ['location', 'Supplier location'],
+    ['rep', 'Supplier representative'],
+    ['supplier_quote_number', 'Your quote #'],
+    ['meets_requirements', 'Meets MFG requirements'],
+    ['valid_days', 'Quote valid (business days)'],
+    ['valid_until', 'Valid until'],
+    ['lead_time', 'Lead time for ship complete'],
+    ['shipping', 'Shipping amount'],
+    ['misc', 'Miscellaneous amount'],
+  ];
+  const missingFields = hasStruct
+    ? REQUIRED_FIELDS.filter(([k]) => String(hdr[k] == null ? '' : hdr[k]).trim() === '').map(([, lbl]) => lbl)
+    : [];
+
   const onSubmit = async () => {
+    if (missingFields.length) {
+      setSubmitState({ status: 'error', error: 'Please complete all required fields: ' + missingFields.join(', ') + '.' });
+      return;
+    }
     setSubmitState({ status: 'saving' });
     try {
       let structResult = null, fitResult = null;
@@ -375,52 +395,50 @@ function QuoteCard({ quote, lookups, email, revise }) {
             <div className="q-summary">
               <h4>Quote summary</h4>
               <div className="q-grid">
-                <label>Supplier location
+                <label>Supplier location<span className="req-star">*</span>
                   <select value={hdr.location} onChange={e => setH({ location: e.target.value })}>
                     <option value="">— select —</option>
                     {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </select>
                 </label>
-                <label>Supplier representative
+                <label>Supplier representative<span className="req-star">*</span>
                   <select value={hdr.rep} onChange={e => setH({ rep: e.target.value })}>
                     <option value="">— select —</option>
                     {reps.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
                 </label>
-                <label>Your quote #
+                <label>Your quote #<span className="req-star">*</span>
                   <input value={hdr.supplier_quote_number} onChange={e => setH({ supplier_quote_number: e.target.value })} placeholder="Internal quote number" />
                 </label>
-                <label>Meets MFG requirements
+                <label>Meets MFG requirements<span className="req-star">*</span>
                   <select value={hdr.meets_requirements} onChange={e => setH({ meets_requirements: e.target.value })}>
                     <option value="">— select —</option>
                     <option value="YES - Meets All MFG Requirements">Yes</option>
                     <option value="NO - Does Not Meet All MFG Requirements">No</option>
                   </select>
                 </label>
-                <label>Quote valid (business days)
+                <label>Quote valid (business days)<span className="req-star">*</span>
                   <select value={hdr.valid_days} onChange={e => onValidDays(e.target.value)}>
                     <option value="">— select —</option>
                     {quoteValidChoices.map(n => <option key={n} value={n}>{n} {n === 1 ? 'day' : 'days'}</option>)}
                   </select>
                 </label>
-                <label>Valid until
+                <label>Valid until<span className="req-star">*</span>
                   <input type="date" value={hdr.valid_until} onChange={e => setH({ valid_until: e.target.value })} />
                 </label>
-                <label>Lead time for ship complete
+                <label>Lead time for ship complete<span className="req-star">*</span>
                   <LeadTimeSelect value={hdr.lead_time} choices={leadChoices} blankLabel="— select —" onChange={v => setH({ lead_time: v })} />
                 </label>
-                <label>Shipping amount
+                <label>Shipping amount<span className="req-star">*</span>
                   <input type="number" step="0.01" min="0" value={hdr.shipping} onChange={e => setH({ shipping: e.target.value })} placeholder="0.00" />
                 </label>
-                <label>Miscellaneous amount
+                <label>Miscellaneous amount<span className="req-star">*</span>
                   <input type="number" step="0.01" min="0" value={hdr.misc} onChange={e => setH({ misc: e.target.value })} placeholder="0.00" />
                 </label>
-                <label className="q-grid-wide">Quote requirements
+                <label className="q-grid-wide">Quote requirements <span className="q-req-note">— set by the manufacturer</span>
                   {mfgReqs.length > 0 ? (
-                    <div className="q-checks">
-                      {mfgReqs.map(r => (
-                        <label key={r} className="q-check"><input type="checkbox" checked={hdr.requirements.includes(r)} onChange={() => toggleReq(r)} />{r}</label>
-                      ))}
+                    <div className="q-req-pills">
+                      {mfgReqs.map(r => <span key={r} className="q-req-pill">{r}</span>)}
                     </div>
                   ) : (
                     <div className="q-reqs-none">No specific requirements requested by the manufacturer.</div>
@@ -464,6 +482,9 @@ function QuoteCard({ quote, lookups, email, revise }) {
               {submitState && submitState.status === 'saving' ? 'Submitting…' : (revise ? 'Submit revision' : 'Submit quote')}
             </button>
             {resultNode}
+            {hasStruct && missingFields.length > 0 && !resultNode && (
+              <span className="q-missing">Required: {missingFields.join(', ')}</span>
+            )}
           </div>
         </div>
       )}
