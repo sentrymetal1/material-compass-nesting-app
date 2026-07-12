@@ -217,7 +217,9 @@ function registerSupplierRoutes(app, deps) {
   // quote + line number. Not reliably exposed on the RFQ report, so fetch them scoped to the
   // supplier's quotes. Best-effort; cached 5 min per supplier.
   async function fetchQuoteNotes(supplierId, quoteIds) {
-    const ids = [...new Set((quoteIds || []).filter(Boolean).map(String))];
+    // Numeric record IDs only — a non-numeric fallback id (e.g. "q") in a chunk makes
+    // Zoho reject the whole OR criteria, blanking valid quotes batched with it.
+    const ids = [...new Set((quoteIds || []).map(String).filter(id => /^\d+$/.test(id)))];
     if (!ids.length) return {};
     return cachedLookup('jeffs-notes:' + supplierId, 5 * 60 * 1000, async () => {
       const map = {};
