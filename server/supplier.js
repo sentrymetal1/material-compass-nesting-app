@@ -32,6 +32,12 @@ const QUOTE_REQUIREMENTS_CHOICES = [
   'ISO 14000', 'ISO 14001', 'ISO 17025', 'ISO 22000', 'ISO 45001', 'ISO 50001',
   'ISO 9000', 'ISO 9001', 'MIL-STD-129', 'MTRs Required',
 ];
+// Per-line Item_Requirements (SVD multi-select). Pre-filled from the MFG's per-line
+// values; the supplier can edit, and any change is noted in the line comments.
+const ITEM_REQUIREMENTS_CHOICES = [
+  'Cut To Size', 'Laser Cut', 'Plasma Cut', 'Random Drop', 'See Attached File',
+  'See Notes', 'Stock Size', 'Sufficient To Cut', 'Water Jet Cut',
+];
 
 // OPEN-RFQ gate: a match only surfaces while its project is in one of these
 // Project_Quote_Status values (actively being sourced). Allowlist by design —
@@ -348,6 +354,7 @@ function registerSupplierRoutes(app, deps) {
         locations: loc.map(l => ({ id: String(l.ID), name: l.Name_of_Location || '' })),
         reps: rep.map(r => ({ id: String(r.ID), name: flatten(r.Name) || r.Email || '' })),
         quote_requirements: QUOTE_REQUIREMENTS_CHOICES,
+        item_requirements_choices: ITEM_REQUIREMENTS_CHOICES,
         // Must match the Zoho Lead_Time_For_Ship_Complete (header) choice list EXACTLY
         // (a choice field silently blanks any value that isn't an allowed option). Extend here
         // if the Zoho field has more options than are listed.
@@ -445,10 +452,17 @@ function registerSupplierRoutes(app, deps) {
         const ppl = noQuote ? 0 : Number(l.price_per_lb) || 0;
         const up = noQuote ? 0 : Number(l.unit_price) || 0;
         const tp = noQuote ? 0 : Number(l.total_price) || 0;
-        const cmt = l.comments || '';
         const desc = r.Description_And_Dimension_Text || r.Full_Item_Description || '';
-        const itemReq = Array.isArray(r.Item_Requirements) ? r.Item_Requirements : [];
-        const reqStr = itemReq.join(', ');
+        const itemReq = Array.isArray(r.Item_Requirements) ? r.Item_Requirements : [];   // MFG's per-line requirement
+        // Supplier may edit item requirements (pre-filled with the MFG's set). If they changed
+        // it, write the supplier's selection AND note the change in the line comments.
+        const supReq = Array.isArray(l.item_requirements) ? l.item_requirements.filter(Boolean) : itemReq;
+        const reqChanged = supReq.slice().sort().join('|') !== itemReq.slice().sort().join('|');
+        const reqStr = supReq.join(', ');
+        let cmt = l.comments || '';
+        if (reqChanged) {
+          cmt = (cmt ? cmt + ' | ' : '') + 'Item requirements changed to: ' + (supReq.length ? supReq.join(', ') : '(none)');
+        }
         const uw = Number(r.Unit_Weight) || 0;
         const tw = Number(r.CalcWeight) || 0;
         sumMaterial += tp;
@@ -479,7 +493,7 @@ function registerSupplierRoutes(app, deps) {
           SVD_Total_Length: r.Total_Length != null ? round(Number(r.Total_Length) || 0, 4) : '',
           SVD_Unit_Weight: round(uw, 2),
           SVD_Calc_Weight: round(tw, 2),
-          Item_Requirements: itemReq,
+          Item_Requirements: supReq,
           // pricing — match each field's configured precision (else "maximum digits")
           SVD_Item_Verification_Status: opt,
           SVD_Price_Per_Lb: round(ppl, 3),
@@ -493,7 +507,7 @@ function registerSupplierRoutes(app, deps) {
           PDF_Quote_Option: opt,
           PDF_Item_Description_and_Measurement: desc,
           PDF_Item_Description_and_Measurement_Multi_Line: reqStr ? (desc + '\n' + reqStr) : desc,
-          PDF_Item_Requirements: itemReq,
+          PDF_Item_Requirements: supReq,
           PDF_Quantity: r.Quantity != null ? r.Quantity : '',
           PDF_Unit_Weight: round(uw, 2),
           PDF_Total_Weight: round(tw, 2),

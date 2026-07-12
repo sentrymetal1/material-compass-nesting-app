@@ -12,6 +12,30 @@ const FITTING_OPTIONS = ['Quote As Is', 'No Quote'];
 const LEAD_TIME_FALLBACK_LIST = ['1 Day'].concat(Array.from({ length: 13 }, (_, i) => (i + 2) + ' Days'));
 // Quote valid (business days) — mirrors Zoho Quote_Is_Valid_For; server sends lookups.quote_valid_choices.
 const QUOTE_VALID_FALLBACK = [1, 2, 3, 4, 5, 15, 30, 45];
+// Per-line Item Requirements (SVD multi-select). Server sends lookups.item_requirements_choices.
+const ITEM_REQ_FALLBACK = ['Cut To Size', 'Laser Cut', 'Plasma Cut', 'Random Drop', 'See Attached File', 'See Notes', 'Stock Size', 'Sufficient To Cut', 'Water Jet Cut'];
+
+// Editable multi-select for a line's item requirements: selected values as removable
+// chips + an "add" dropdown. Pre-filled with the MFG's requirement for that line.
+function ItemReqEditor({ value, options, onChange }) {
+  const selected = Array.isArray(value) ? value : [];
+  const avail = (options || []).filter(o => !selected.includes(o));
+  return (
+    <div className="q-ireq">
+      {selected.map(r => (
+        <span key={r} className="q-ireq-chip">{r}
+          <button type="button" title="Remove" onClick={() => onChange(selected.filter(x => x !== r))}>×</button>
+        </span>
+      ))}
+      {avail.length > 0 && (
+        <select className="q-ireq-add" value="" onChange={e => { if (e.target.value) onChange([...selected, e.target.value]); }}>
+          <option value="">+ requirement…</option>
+          {avail.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
 
 // A lead-time <select> reused by the line rows, batch-fill, and header.
 function LeadTimeSelect({ value, disabled, choices, className, blankLabel, onChange }) {
@@ -73,7 +97,7 @@ function mergeQuotes(structuralQuotes, fittingQuotes) {
 
 // One structural line — supplier edits EITHER Line Total OR Price/lb (each recalcs the
 // other via line weight); unit price stays derived (total ÷ qty).
-function LineRow({ line, draft, onChange, leadChoices }) {
+function LineRow({ line, draft, onChange, leadChoices, itemReqChoices }) {
   const qty = Number(line.qty) || 0;
   const totalWeight = qty * (Number(line.unit_weight) || 0);
   const noQuote = draft.quote_option === 'No Quote';
@@ -96,9 +120,8 @@ function LineRow({ line, draft, onChange, leadChoices }) {
       <td className="q-ln-cell"><span className="q-ln">{line.line}</span></td>
       <td className="q-desc">
         {line.description}
-        {line.item_requirements && line.item_requirements.length > 0 && (
-          <div className="q-reqs">{line.item_requirements.map((r, i) => <span key={i} className="q-req">{r}</span>)}</div>
-        )}
+        <div className="q-ireq-lbl">Item requirements <span className="muted">(MFG — editable)</span></div>
+        <ItemReqEditor value={draft.item_requirements} options={itemReqChoices} onChange={reqs => onChange({ item_requirements: reqs })} />
       </td>
       <td className="q-num">{num(qty, 0)}</td>
       <td className="q-num">{num(totalWeight, 1)} lb</td>
@@ -166,7 +189,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
   // structural drafts keyed by rfqs_sent_id
   const [drafts, setDrafts] = useState(() => {
     const d = {};
-    quote.structural_lines.forEach(l => { d[l.rfqs_sent_id] = { total_price: l.total_price || '', price_per_lb: l.price_per_lb || '', quote_option: l.quote_option || 'Quote As Is', lead_time: '', comments: '' }; });
+    quote.structural_lines.forEach(l => { d[l.rfqs_sent_id] = { total_price: l.total_price || '', price_per_lb: l.price_per_lb || '', quote_option: l.quote_option || 'Quote As Is', lead_time: '', comments: '', item_requirements: Array.isArray(l.item_requirements) ? l.item_requirements : [] }; });
     return d;
   });
   const setLine = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -222,6 +245,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
   const mfgReqs = Array.isArray(quote.mfg_requirements) ? quote.mfg_requirements : [];
   const leadChoices = (lookups && lookups.lead_time_choices) || LEAD_TIME_FALLBACK_LIST;
   const quoteValidChoices = (lookups && lookups.quote_valid_choices) || QUOTE_VALID_FALLBACK;
+  const itemReqChoices = (lookups && lookups.item_requirements_choices) || ITEM_REQ_FALLBACK;
 
   const structGrand = quote.structural_lines.reduce((sum, l) => {
     const dr = drafts[l.rfqs_sent_id] || {};
@@ -282,6 +306,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
             quote_option: d.quote_option || 'Quote As Is',
             total_price: total, price_per_lb: parseFloat(d.price_per_lb) || 0,
             unit_price: qty > 0 ? total / qty : 0, lead_time: d.lead_time, comments: d.comments,
+            item_requirements: Array.isArray(d.item_requirements) ? d.item_requirements : [],
           };
         });
         const sv_form_id = (quote.structural_lines.find(l => l.sv_form_id) || {}).sv_form_id || '';
@@ -364,7 +389,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
                 </thead>
                 <tbody>
                   {quote.structural_lines.map(l => (
-                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} />
+                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} />
                   ))}
                 </tbody>
                 <tfoot>
