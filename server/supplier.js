@@ -411,7 +411,7 @@ function registerSupplierRoutes(app, deps) {
       const score = row => Object.keys(row).filter(k => /file|upload|note|requirement/i.test(k) && row[k] && (!Array.isArray(row[k]) || row[k].length)).length;
       const probe = async report => {
         const token = await getAccessToken();
-        const resp = await axios.get(creatorApiBase + '/report/' + report + '?max_records=8', { headers: zohoHeaders(token) });
+        const resp = await axios.get(creatorApiBase() + '/report/' + report + '?limit=8', { headers: zohoHeaders(token) });
         const prows = (resp.data && resp.data.data) || [];
         const row = prows.slice().sort((a, b) => score(b) - score(a))[0] || {};
         const sample = {};
