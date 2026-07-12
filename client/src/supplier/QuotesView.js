@@ -70,6 +70,9 @@ function mergeQuotes(structuralQuotes, fittingQuotes) {
         quote_description: q.quote_description || '',
         manufacturer: q.manufacturer || '',
         status: q.status || '',
+        // quote-level fields from the structural pipeline — preserve them through the merge
+        mfg_requirements: Array.isArray(q.mfg_requirements) ? q.mfg_requirements : [],
+        files: Array.isArray(q.files) ? q.files : [],
         structural_lines: [],
         fitting_lines: [],
       });
@@ -83,6 +86,8 @@ function mergeQuotes(structuralQuotes, fittingQuotes) {
     e.quote_description = e.quote_description || q.quote_description || '';
     e.manufacturer = e.manufacturer || q.manufacturer || '';
     e.status = e.status || q.status || '';
+    if (Array.isArray(q.mfg_requirements) && q.mfg_requirements.length) e.mfg_requirements = q.mfg_requirements;
+    if (Array.isArray(q.files) && q.files.length) e.files = q.files;
   }
   for (const q of fittingQuotes || []) {
     const e = ensure(q);
