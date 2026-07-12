@@ -401,6 +401,23 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
+  // TEMP diagnostic — capture the raw shape of the Quote file field so the reference-files
+  // download proxy can be built to match. Hit /api/supplier/me/rfq-file-debug?email=<supplier>.
+  // Remove once the files feature ships.
+  app.get('/api/supplier/me/rfq-file-debug', withSupplier, async (req, res) => {
+    try {
+      const rows = await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(req.supplier.id) + ')');
+      const first = (rows && rows[0]) || {};
+      const fileKeys = Object.keys(first).filter(k => /file|attach|upload/i.test(k));
+      const sample = {};
+      fileKeys.forEach(k => { sample[k] = first[k]; });
+      res.json({ ok: true, supplier: req.supplier.id, row_count: rows.length, file_keys: fileKeys, sample, all_keys: Object.keys(first) });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // POST /api/supplier/me/quote-submit — submit a priced quote (off-Zoho path).
   // Creates ONE Supplier_Verify_Form record with its Supplier_Verify_Detail rows passed
   // as a nested subform array — the exact mechanism the native "Submit Quote" widget uses
