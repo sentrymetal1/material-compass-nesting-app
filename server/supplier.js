@@ -240,10 +240,13 @@ function registerSupplierRoutes(app, deps) {
   }
 
   async function fetchSentRfqs(supplierId) {
-    // Cache per supplier (60s) so a supplier refreshing the Quotes tab doesn't
-    // re-hit Zoho each time — keeps Developer-API usage low.
+    // Cache per supplier (3 min) so a supplier refreshing the Quotes tab doesn't re-hit Zoho.
+    // Scope to Latest_Item_for_Supplier==true — the report holds every superseded revision's
+    // rows too (~1800 for an active supplier), and we only ever show the current version of
+    // each line. This cuts the fetch from ~10 pages to ~1-2, saving Developer-API calls.
+    const crit = encodeURIComponent('(Supplier_LU==' + supplierId + ' && Latest_Item_for_Supplier==true)');
     const rows = await cachedLookup('sent-rfqs:' + supplierId, 3 * 60 * 1000, async () =>
-      fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')'));
+      fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + crit));
     const byQuote = new Map();
     for (const r of rows) {
       // Skip RFQ lines from superseded MFG quote revisions (the revision workflow
