@@ -252,7 +252,10 @@ function computeAlteredLine(row, alteration, catalogs) {
     length_ft: lenFt,
     length_inch: effLenIn,
     length_inch_id: lengthInchRec ? lengthInchRec.id : lkid(row.Length_INCH),
-    total_length: round(lenFt * 12 + effLenIn, 4),
+    // DECIMAL FEET, not inches: Total_Length on the RFQ row is ft + in/12 (a 20' beam
+    // stores 20.0, a 2'4" plate stores 2.3333) — verified 162/162 against live rows.
+    // Writing inches here silently disagrees with every unaltered line.
+    total_length: round(lenFt + effLenIn / 12, 4),
     spec_id: specId,
     spec_name: spec.typeDetail,
     changed: { length: lengthChanged, quantity: qtyChanged, spec: specChanged },
