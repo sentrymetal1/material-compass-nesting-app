@@ -7,6 +7,14 @@ import React, { useEffect, useState, useCallback } from 'react';
 // (PATCHes the bridge rows). Merged client-side so neither proven backend path changes.
 const QUOTE_OPTIONS = ['Quote As Is', 'No Quote', 'Alter Material or Form Detail', 'Alter Quantity', 'Alter Length'];
 const FITTING_OPTIONS = ['Quote As Is', 'No Quote'];
+// The "Alter …" quote options already flow to Zoho as SVD_Item_Verification_Status; each
+// one now reveals the editor for WHAT it changes. One kind per line — that's the shape of
+// Item_Verification_Status (a single choice), not a UI limitation we invented.
+const ALTER_KIND = {
+  'Alter Length': 'length',
+  'Alter Quantity': 'quantity',
+  'Alter Material or Form Detail': 'spec',
+};
 // Lead time must be a valid Zoho choice ("N Days") — free text silently blanks the field.
 // The server sends the authoritative list via lookups.lead_time_choices; this is the fallback.
 const LEAD_TIME_FALLBACK_LIST = ['1 Day'].concat(Array.from({ length: 13 }, (_, i) => (i + 2) + ' Days'));
@@ -37,6 +45,103 @@ function ItemReqEditor({ value, options, onChange }) {
   );
 }
 
+// Build the alteration request for a line from its draft, or null when nothing to send.
+// Only the field matching the chosen "Alter …" option is sent — the server treats an
+// omitted key as "unchanged".
+function alterationBody(draft, kind) {
+  if (kind === 'length') {
+    const ft = parseFloat(draft.alt_length_ft), inch = parseFloat(draft.alt_length_inch);
+    if (!Number.isFinite(ft) && !Number.isFinite(inch)) return null;
+    return { length_ft: Number.isFinite(ft) ? ft : 0, length_inch: Number.isFinite(inch) ? inch : 0 };
+  }
+  if (kind === 'quantity') {
+    const q = parseFloat(draft.alt_quantity);
+    return Number.isFinite(q) ? { quantity: q } : null;
+  }
+  if (kind === 'spec') return draft.alt_spec_id ? { spec_id: draft.alt_spec_id } : null;
+  return null;
+}
+
+// The inline editor shown when a line's quote option is "Alter …". Every value the
+// supplier types is priced by the SERVER (/line-preview) — the client never computes a
+// weight or a description, so what's previewed here is exactly what submit will write.
+function AlterEditor({ line, draft, kind, specOptions, email, onChange }) {
+  const meta = line.alteration || {};
+  const seq = React.useRef(0);
+  const body = alterationBody(draft, kind);
+  const bodyKey = JSON.stringify(body);   // stable dep: refetch only when values change
+
+  useEffect(() => {
+    if (!body) { onChange({ preview: null, preview_error: '', previewing: false }); return undefined; }
+    const mine = ++seq.current;
+    onChange({ previewing: true });
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch('/api/supplier/me/line-preview?email=' + encodeURIComponent(email), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rfqs_sent_id: line.rfqs_sent_id, ...body }),
+        });
+        const j = await r.json();
+        // A slower earlier request must never clobber a newer one.
+        if (mine !== seq.current) return;
+        if (r.ok && j.ok) onChange({ preview: j.preview, preview_error: '', previewing: false });
+        else onChange({ preview: null, preview_error: j.error || 'Could not price this change.', previewing: false });
+      } catch (e) {
+        if (mine === seq.current) onChange({ preview: null, preview_error: String(e.message || e), previewing: false });
+      }
+    }, 350);
+    return () => clearTimeout(t);
+    // Keyed on bodyKey (the serialized values), NOT `body`/`onChange` — those are new
+    // objects every render and would re-fire the fetch forever.
+  }, [bodyKey, line.rfqs_sent_id, email]);   // eslint-disable-line
+
+  // Length on a line with no per-foot weight can't be repriced — say why rather than
+  // silently disable. (Some rows carry a good Unit_Weight with blank inputs.)
+  if (kind === 'length' && !meta.can_alter_length) {
+    return (
+      <div className="q-alter q-alter-blocked">
+        This line has no per-foot weight on file, so a new length can’t be priced automatically.
+        Please use Comments to propose a length, or choose a different quote option.
+      </div>
+    );
+  }
+
+  return (
+    <div className="q-alter">
+      {kind === 'length' && (
+        <label className="q-alter-f">New length
+          <input type="number" min="0" step="1" className="q-alter-n" placeholder={String(meta.length_ft ?? 0)}
+            value={draft.alt_length_ft ?? ''} onChange={e => onChange({ alt_length_ft: e.target.value })} />
+          <span className="q-alter-u">ft</span>
+          <input type="number" min="0" max="11.99" step="0.0625" className="q-alter-n" placeholder={String(meta.length_inch ?? 0)}
+            value={draft.alt_length_inch ?? ''} onChange={e => onChange({ alt_length_inch: e.target.value })} />
+          <span className="q-alter-u">in</span>
+        </label>
+      )}
+      {kind === 'quantity' && (
+        <label className="q-alter-f">New quantity
+          <input type="number" min="1" step="1" className="q-alter-n" placeholder={String(line.qty ?? '')}
+            value={draft.alt_quantity ?? ''} onChange={e => onChange({ alt_quantity: e.target.value })} />
+        </label>
+      )}
+      {kind === 'spec' && (
+        <label className="q-alter-f">New specification
+          <select value={draft.alt_spec_id || ''} onChange={e => onChange({ alt_spec_id: e.target.value })}>
+            <option value="">— keep {specOptions.find(o => o.id === meta.spec_id)?.label || 'current'} —</option>
+            {specOptions.filter(o => o.id !== meta.spec_id).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </label>
+      )}
+      {draft.previewing && <span className="q-alter-msg muted">pricing…</span>}
+      {!draft.previewing && draft.preview_error && <span className="q-alter-msg q-alter-err">{draft.preview_error}</span>}
+      {!draft.previewing && !draft.preview_error && draft.preview && (
+        <span className="q-alter-msg q-alter-ok">→ {draft.preview.description} · {num(draft.preview.unit_weight, 2)} lb/ea</span>
+      )}
+      {!body && !draft.previewing && <span className="q-alter-msg muted">Enter a value to reprice this line.</span>}
+    </div>
+  );
+}
+
 // A lead-time <select> reused by the line rows, batch-fill, and header.
 function LeadTimeSelect({ value, disabled, choices, className, blankLabel, onChange }) {
   return (
@@ -56,6 +161,17 @@ function num(n, dp) {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: dp == null ? 2 : dp });
 }
 const round = (n, dp) => { const f = Math.pow(10, dp); return Math.round(n * f) / f; };
+// The line as currently quoted: the MFG's line, with the server's priced preview folded
+// over it when the supplier has altered it. EVERY qty/weight/description read goes through
+// this — reading l.qty directly on an altered line is how the row and the quote totals
+// drift apart. Only a preview that actually changed something counts as altered.
+function effLine(line, draft) {
+  const p = draft && draft.preview;
+  if (!p) return line;
+  const changed = p.changed && (p.changed.length || p.changed.quantity || p.changed.spec);
+  if (!changed) return line;
+  return { ...line, qty: p.quantity, unit_weight: p.unit_weight, description: p.description, altered: true };
+}
 // Format a currency input to 2 decimals on blur ("" stays "" so 'required' still catches blanks).
 const fmtMoney2 = v => { const n = parseFloat(v); return isNaN(n) ? '' : n.toFixed(2); };
 
@@ -102,9 +218,14 @@ function mergeQuotes(structuralQuotes, fittingQuotes) {
 
 // One structural line — supplier edits EITHER Line Total OR Price/lb (each recalcs the
 // other via line weight); unit price stays derived (total ÷ qty).
-function LineRow({ line, draft, onChange, leadChoices, itemReqChoices }) {
-  const qty = Number(line.qty) || 0;
-  const totalWeight = qty * (Number(line.unit_weight) || 0);
+function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptions, email }) {
+  const kind = ALTER_KIND[draft.quote_option] || null;
+  // An altered line prices against its NEW qty/weight — effLine folds the server's
+  // preview over the original so the row, the pricing math and the quote totals can
+  // never disagree about what's being quoted.
+  const eff = effLine(line, draft);
+  const qty = Number(eff.qty) || 0;
+  const totalWeight = qty * (Number(eff.unit_weight) || 0);
   const noQuote = draft.quote_option === 'No Quote';
   const lineTotal = !noQuote ? (parseFloat(draft.total_price) || 0) : 0;
   const unitPrice = qty > 0 ? lineTotal / qty : 0;
@@ -124,13 +245,18 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices }) {
     <tr className={noQuote ? 'q-line q-noquote' : 'q-line'}>
       <td className="q-ln-cell"><span className="q-ln">{line.line}</span></td>
       <td className="q-desc">
-        {line.description}
+        {/* When altered, show what the MFG asked for struck through above the new line, so
+            the supplier can see exactly what they're changing before they send it. */}
+        {eff.altered
+          ? <><span className="q-desc-was">{line.description}</span><div className="q-desc-now">{eff.description}</div></>
+          : line.description}
         {line.mfg_note && <div className="q-mfgnote"><span className="q-mfgnote-lbl">MFG note:</span> {line.mfg_note}</div>}
+        {kind && <AlterEditor line={line} draft={draft} kind={kind} specOptions={specOptions} email={email} onChange={onChange} />}
         <div className="q-ireq-lbl">Item requirements <span className="muted">(MFG — editable)</span></div>
         <ItemReqEditor value={draft.item_requirements} options={itemReqChoices} onChange={reqs => onChange({ item_requirements: reqs })} />
       </td>
-      <td className="q-num">{num(qty, 0)}</td>
-      <td className="q-num">{num(totalWeight, 1)} lb</td>
+      <td className={eff.altered ? 'q-num q-altered' : 'q-num'}>{num(qty, 0)}</td>
+      <td className={eff.altered ? 'q-num q-altered' : 'q-num'}>{num(totalWeight, 1)} lb</td>
       <td className="q-opt">
         <select value={draft.quote_option || 'Quote As Is'} onChange={e => onChange({ quote_option: e.target.value })}>
           {QUOTE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
@@ -186,11 +312,16 @@ function FittingLineRow({ line, draft, onChange, leadChoices }) {
   );
 }
 
-function QuoteCard({ quote, lookups, email, revise }) {
+// NOTE: `revise` here = re-pricing a SUBMITTED quote as a new revision (quote-level).
+// That's unrelated to per-line alteration (`alterationCatalog` / the "Alter …" options).
+function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
   const hasStruct = quote.structural_lines.length > 0;
   const hasFit = quote.fitting_lines.length > 0;
   const [open, setOpen] = useState(false);
   const [submitState, setSubmitState] = useState(null); // {status, structResult, fitResult, error}
+  // Selectable specs for a line, from the shared catalog (hoisted out of the per-line
+  // payload — see alterationMeta on the server).
+  const specOptionsFor = l => ((alterationCatalog || {}).specs || {})[(l.alteration || {}).spec_key] || [];
 
   // structural drafts keyed by rfqs_sent_id
   const [drafts, setDrafts] = useState(() => {
@@ -272,7 +403,8 @@ function QuoteCard({ quote, lookups, email, revise }) {
   const totalWeight = quote.structural_lines.reduce((s, l) => {
     const dr = drafts[l.rfqs_sent_id] || {};
     if (dr.quote_option === 'No Quote') return s;
-    return s + (Number(l.qty) || 0) * (Number(l.unit_weight) || 0);
+    const e = effLine(l, dr);   // altered lines contribute their NEW weight, not the MFG's
+    return s + (Number(e.qty) || 0) * (Number(e.unit_weight) || 0);
   }, 0);
   const totalAmount = grand + (parseFloat(hdr.shipping) || 0) + (parseFloat(hdr.misc) || 0);
 
@@ -293,9 +425,25 @@ function QuoteCard({ quote, lookups, email, revise }) {
     ? REQUIRED_FIELDS.filter(([k]) => String(hdr[k] == null ? '' : hdr[k]).trim() === '').map(([, lbl]) => lbl)
     : [];
 
+  // A line marked "Alter …" that carries no actual change (or a change the server refused)
+  // must not go out: it would quote the MFG's original spec under an "altered" label.
+  const alterationProblems = quote.structural_lines.reduce((acc, l) => {
+    const d = drafts[l.rfqs_sent_id] || {};
+    const kind = ALTER_KIND[d.quote_option];
+    if (!kind) return acc;
+    if (!alterationBody(d, kind)) acc.push('Line ' + l.line + ': choose a new value for “' + d.quote_option + '”.');
+    else if (d.previewing) acc.push('Line ' + l.line + ': still pricing — one moment.');
+    else if (d.preview_error) acc.push('Line ' + l.line + ': ' + d.preview_error);
+    return acc;
+  }, []);
+
   const onSubmit = async () => {
     if (missingFields.length) {
       setSubmitState({ status: 'error', error: 'Please complete all required fields: ' + missingFields.join(', ') + '.' });
+      return;
+    }
+    if (alterationProblems.length) {
+      setSubmitState({ status: 'error', error: 'Please resolve the altered lines: ' + alterationProblems.join(' ') });
       return;
     }
     setSubmitState({ status: 'saving' });
@@ -305,14 +453,18 @@ function QuoteCard({ quote, lookups, email, revise }) {
       if (hasStruct) {
         const lines = quote.structural_lines.map(l => {
           const d = drafts[l.rfqs_sent_id] || {};
-          const qty = Number(l.qty) || 0;
+          const qty = Number(effLine(l, d).qty) || 0;   // altered lines divide by the NEW qty
           const total = parseFloat(d.total_price) || 0;
+          // Send the REQUEST, not our preview: the server recomputes from its own copy of
+          // the row and is the authority on the resulting description/weight.
+          const alteration = alterationBody(d, ALTER_KIND[d.quote_option] || null);
           return {
             rfqs_sent_id: l.rfqs_sent_id, sv_detail_id: l.sv_detail_id, line: l.line,
             quote_option: d.quote_option || 'Quote As Is',
             total_price: total, price_per_lb: parseFloat(d.price_per_lb) || 0,
             unit_price: qty > 0 ? total / qty : 0, lead_time: d.lead_time, comments: d.comments,
             item_requirements: Array.isArray(d.item_requirements) ? d.item_requirements : [],
+            ...(alteration ? { alteration } : {}),
           };
         });
         const sv_form_id = (quote.structural_lines.find(l => l.sv_form_id) || {}).sv_form_id || '';
@@ -352,7 +504,14 @@ function QuoteCard({ quote, lookups, email, revise }) {
     const sOk = !sr || sr.ok, fOk = !fr || fr.ok;
     const ok = sOk && fOk;
     const parts = [];
-    if (sr) parts.push(sr.ok ? `${sr.lines != null ? sr.lines : quote.structural_lines.length} structural` : ('structural failed' + (sr.message || sr.error ? ': ' + (sr.message || sr.error) : '')));
+    if (sr) parts.push(sr.ok
+      ? `${sr.lines != null ? sr.lines : quote.structural_lines.length} structural${sr.altered ? ` (${sr.altered} altered)` : ''}`
+      : ('structural failed' + (sr.message || sr.error ? ': ' + (sr.message || sr.error) : '')
+        // The server refuses the WHOLE submit if an altered line can't be recomputed —
+        // name the lines rather than leaving the supplier guessing.
+        + (Array.isArray(sr.line_errors) && sr.line_errors.length
+          ? ' — ' + sr.line_errors.map(e => 'line ' + e.line + ': ' + e.error).join('; ')
+          : '')));
     if (fr) parts.push(fr.ok ? `${fr.saved != null ? fr.saved : quote.fitting_lines.length} fitting` : `fitting failed (${fr.saved || 0}/${(fr.saved || 0) + (fr.failed || 0)})`);
     resultNode = <span className={'q-result ' + (ok ? 'q-result-ok' : 'q-result-warn')}>{(ok ? 'Quote submitted — ' : 'Partial submit — ') + parts.join(', ') + ' line' + (parts.length ? 's' : '') + '.'}</span>;
   } else if (submitState && submitState.status === 'error') {
@@ -405,7 +564,7 @@ function QuoteCard({ quote, lookups, email, revise }) {
                 </thead>
                 <tbody>
                   {quote.structural_lines.map(l => (
-                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} />
+                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} email={email} specOptions={specOptionsFor(l)} />
                   ))}
                 </tbody>
                 <tfoot>
@@ -579,7 +738,9 @@ export default function QuotesView({ email }) {
       const fittingQuotes = (fitR && fitR.ok) ? (fitR.quotes || []) : [];
       const quotes = mergeQuotes(structuralQuotes, fittingQuotes);
       const lookups = (rfqsR && rfqsR.lookups) || {};
-      setState({ status: 'ready', quotes, lookups, error: null });
+      // Shared spec lists for the "Alter …" editors (hoisted off the per-line payload).
+      const alteration_catalog = (rfqsR && rfqsR.alteration_catalog) || { specs: {} };
+      setState({ status: 'ready', quotes, lookups, alteration_catalog, error: null });
     } catch (e) {
       setState({ status: 'error', quotes: [], lookups: {}, error: String(e.message || e) });
     }
@@ -641,7 +802,7 @@ export default function QuotesView({ email }) {
                 </div>
               </div>
             )
-            : <QuoteCard key={q.quote_id} quote={q} lookups={state.lookups || {}} email={email} revise={tab === 'submitted'} />)}
+            : <QuoteCard key={q.quote_id} quote={q} lookups={state.lookups || {}} email={email} revise={tab === 'submitted'} alterationCatalog={state.alteration_catalog} />)}
       </section>
     </>
   );

@@ -8,6 +8,7 @@
 
 const { matchFittingsForSupplier } = require('./fittingMatch');
 const { matchStructuralForSupplier } = require('./structuralMatch');
+const { fetchCatalogs, computeAlteredLine, LineCalcError } = require('./lineCalc');
 
 const SUPPLIER_REPORT = 'Supplier_Entry_Report';
 
@@ -239,14 +240,69 @@ function registerSupplierRoutes(app, deps) {
     });
   }
 
+  // Human-readable "before" values, for the SUPPLIER ALTERED comment on a changed line.
+  const origLengthText = r => {
+    const ft = Number(r.Length_FT) || 0, inch = Number(r.Length_INCH_Result) || 0;
+    return ft + "'" + (inch > 0 ? inch + '"' : '');
+  };
+  const origSpecName = (r, catalogs) => {
+    const s = catalogs.specById[lkid(r.Material_Form_Detail)];
+    return s ? s.typeDetail : '';
+  };
+
+  // Per-line alteration metadata for the revise UI: what the line currently is and
+  // whether its geometry can be recomputed at all. Weight/description are NEVER computed
+  // here — that's computeAlteredLine's job on preview + submit.
+  //
+  // Deliberately TINY. This rides on every line of /rfqs, which returns ~1400 lines for an
+  // active supplier; the selectable spec lists are hoisted to a shared top-level catalog
+  // (only ~40 distinct lists exist) and referenced by spec_key. Inlining them per line
+  // added 727 KB to a 596 KB response.
+  function alterationMeta(r, catalogs) {
+    const ftId = lkid(r.Form_Type);
+    const meta = catalogs.formTypeById[ftId];
+    const matTypeId = lkid(r.Material_Type);
+    const widFt = Number(r.Width_FT && r.Width_FT.zc_display_value) || 0;
+    const weightPerFt = Number(r.Weight_Per_FT) || 0;
+    // A line with no weight basis (or a panel with no width) can't have its geometry
+    // recomputed — some rows carry a correct Unit_Weight alongside blank inputs, and
+    // recomputing would zero it. Those lines allow QTY only. See lineCalc's guard.
+    const canAlterLength = weightPerFt > 0 && (!meta || !meta.isPanel || widFt > 0);
+    return {
+      can_alter_length: canAlterLength,
+      is_panel: !!(meta && meta.isPanel),
+      length_ft: Number(r.Length_FT) || 0,
+      length_inch: Number(r.Length_INCH_Result) || 0,
+      spec_id: lkid(r.Material_Form_Detail),
+      spec_key: ftId + '|' + matTypeId,     // -> alteration_catalog.specs[spec_key]
+    };
+  }
+
+  // The selectable Specifications for one form-type + material-type pair. Specs are only
+  // valid within the same pair, or the line would stop describing the same product.
+  function specOptionsFor(spec_key, catalogs) {
+    const [ftId, matTypeId] = String(spec_key).split('|');
+    const out = [];
+    for (const id of Object.keys(catalogs.specById)) {
+      const s = catalogs.specById[id];
+      if (s.formTypeId === ftId && s.matTypeId === matTypeId && s.typeDetail) out.push({ id, label: s.typeDetail });
+    }
+    out.sort((a, b) => a.label.localeCompare(b.label));
+    return out;
+  }
+
   async function fetchSentRfqs(supplierId) {
     // Cache per supplier (3 min) so a supplier refreshing the Quotes tab doesn't re-hit Zoho.
     // Scope to Latest_Item_for_Supplier==true — the report holds every superseded revision's
     // rows too (~1800 for an active supplier), and we only ever show the current version of
     // each line. This cuts the fetch from ~10 pages to ~1-2, saving Developer-API calls.
     const crit = encodeURIComponent('(Supplier_LU==' + supplierId + ' && Latest_Item_for_Supplier==true)');
-    const rows = await cachedLookup('sent-rfqs:' + supplierId, 3 * 60 * 1000, async () =>
-      fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + crit));
+    const [rows, catalogs] = await Promise.all([
+      cachedLookup('sent-rfqs:' + supplierId, 3 * 60 * 1000, async () =>
+        fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + crit)),
+      // Cached 1h inside lineCalc — ~6 API calls/hour total, shared across suppliers.
+      fetchCatalogs({ fetchAllZohoPages, cachedLookup }),
+    ]);
     const byQuote = new Map();
     for (const r of rows) {
       // Skip RFQ lines from superseded MFG quote revisions (the revision workflow
@@ -284,10 +340,20 @@ function registerSupplierRoutes(app, deps) {
         total_price: r.Total_Price != null && r.Total_Price !== '' ? Number(r.Total_Price) : null,
         line_status: r.RFQ_Sent_Status || '',
         quote_option: r.Item_Verification_Status || '',
+        // revise UI: current geometry + what may change (see alterationMeta)
+        alteration: alterationMeta(r, catalogs),
       });
     }
     const out = [...byQuote.values()];
     out.forEach(q => q.lines.sort((a, b) => (Number(a.line) || 0) - (Number(b.line) || 0)));
+    // Shared spec catalog: built once for the spec_keys actually present, not per line.
+    const alterationCatalog = { specs: {} };
+    for (const q of out) {
+      for (const l of q.lines) {
+        const k = l.alteration && l.alteration.spec_key;
+        if (k && !alterationCatalog.specs[k]) alterationCatalog.specs[k] = specOptionsFor(k, catalogs);
+      }
+    }
     // Attach the manufacturer's quote-level reference files (best-effort; never block the list).
     try {
       const fileMap = await fetchQuoteFiles();
@@ -298,7 +364,9 @@ function registerSupplierRoutes(app, deps) {
       const notesMap = await fetchQuoteNotes(supplierId, out.map(q => q.quote_id));
       out.forEach(q => q.lines.forEach(l => { if (!l.mfg_note) l.mfg_note = notesMap[q.quote_id + '|' + String(l.line)] || ''; }));
     } catch (e) { /* keep whatever mfg_note the row already had */ }
-    return out;
+    // Returns an OBJECT, not the bare array: a property hung off the array would be
+    // silently dropped by JSON.stringify.
+    return { quotes: out, alteration_catalog: alterationCatalog };
   }
 
   // FITTING RFQs sent to this supplier (PUSH model — the bridge RFQs_Sent_Fittings,
@@ -439,10 +507,11 @@ function registerSupplierRoutes(app, deps) {
   // GET /api/supplier/me/rfqs — the supplier's sent RFQs grouped into quotes + tiles.
   app.get('/api/supplier/me/rfqs', withSupplier, async (req, res) => {
     try {
-      const [quotes, lookups] = await Promise.all([
+      const [sent, lookups] = await Promise.all([
         fetchSentRfqs(req.supplier.id),
         fetchSupplierLookups(req.supplier.id),
       ]);
+      const { quotes, alteration_catalog } = sent;
       // Map the full Quote_Form.Status pipeline into the 4 supplier tiles.
       const tile = s => {
         if (/^Open|Quote Revised/i.test(s)) return 'open';            // not submitted / past due / revised
@@ -453,7 +522,7 @@ function registerSupplierRoutes(app, deps) {
       };
       const tiles = { open: 0, submitted: 0, awarded: 0, closed: 0, other: 0 };
       quotes.forEach(q => { tiles[tile(q.status)]++; });
-      res.json({ ok: true, supplier: req.supplier, tiles, quote_count: quotes.length, quotes, lookups });
+      res.json({ ok: true, supplier: req.supplier, tiles, quote_count: quotes.length, quotes, lookups, alteration_catalog });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
@@ -479,6 +548,45 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
+  // Load this supplier's RFQ rows raw + the catalogs, for the alteration paths. The rows
+  // are the authority: an alteration is always applied to the SERVER's copy of the line,
+  // never to client-sent geometry.
+  async function loadAlterationContext(supplierId) {
+    const [rawRows, catalogs] = await Promise.all([
+      cachedLookup('sent-rfqs-raw:' + supplierId, 30 * 1000, async () =>
+        fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')')),
+      fetchCatalogs({ fetchAllZohoPages, cachedLookup }),
+    ]);
+    return { rowById: new Map(rawRows.map(r => [String(r.ID), r])), catalogs };
+  }
+
+  // Turn a LineCalcError into a 422 the UI can show verbatim. Anything else is a real fault.
+  function alterationError(res, e) {
+    if (e instanceof LineCalcError) return res.status(422).json({ ok: false, error: e.message, code: e.code });
+    throw e;
+  }
+
+  // POST /api/supplier/me/line-preview — recompute ONE altered line without writing.
+  // The revise UI calls this as the supplier edits, so the description/weight it shows
+  // come from the same code that will run at submit. The client never does this math.
+  app.post('/api/supplier/me/line-preview', withSupplier, async (req, res) => {
+    try {
+      const { rfqs_sent_id, length_ft, length_inch, quantity, spec_id } = req.body || {};
+      if (!rfqs_sent_id) return res.status(400).json({ ok: false, error: 'rfqs_sent_id required' });
+      const { rowById, catalogs } = await loadAlterationContext(String(req.supplier.id));
+      const row = rowById.get(String(rfqs_sent_id));
+      // Scoped to THIS supplier's rows, so an unknown id is either stale or not theirs.
+      if (!row) return res.status(404).json({ ok: false, error: 'Line not found for this supplier' });
+      try {
+        const out = computeAlteredLine(row, { length_ft, length_inch, quantity, spec_id }, catalogs);
+        res.json({ ok: true, preview: out });
+      } catch (e) { return alterationError(res, e); }
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // POST /api/supplier/me/quote-submit — submit a priced quote (off-Zoho path).
   // Creates ONE Supplier_Verify_Form record with its Supplier_Verify_Detail rows passed
   // as a nested subform array — the exact mechanism the native "Submit Quote" widget uses
@@ -498,9 +606,9 @@ function registerSupplierRoutes(app, deps) {
 
       // Pull the authoritative RFQs_Sent rows for this supplier and index by ID — we build
       // the subform from these (not from client-sent data) so lookups/weights are correct.
-      const rawRows = await cachedLookup('sent-rfqs-raw:' + supplierId, 30 * 1000, async () =>
-        fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')'));
-      const rowById = new Map(rawRows.map(r => [String(r.ID), r]));
+      // Catalogs come along for any altered lines; both are cached.
+      const { rowById, catalogs } = await loadAlterationContext(supplierId);
+      const rawRows = [...rowById.values()];
 
       // money/format helpers for the PDF snapshot strings the reference doc reads
       const money = n => '$' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
@@ -533,8 +641,10 @@ function registerSupplierRoutes(app, deps) {
 
       const detailRows = [];
       let missing = 0;
+      const lineErrors = [];  // per-line alteration failures — surfaced, never silently dropped
       let sumMaterial = 0;  // Σ line total price — feeds the header material/grand totals
       let sumWeight = 0;    // Σ line calc weight — feeds Response_Total_Weight
+      let alteredCount = 0;
       for (const l of lines) {
         const r = rowById.get(String(l.rfqs_sent_id));
         if (!r) { missing++; continue; }
@@ -543,7 +653,26 @@ function registerSupplierRoutes(app, deps) {
         const ppl = noQuote ? 0 : Number(l.price_per_lb) || 0;
         const up = noQuote ? 0 : Number(l.unit_price) || 0;
         const tp = noQuote ? 0 : Number(l.total_price) || 0;
-        const desc = stripItemNo(r.Description_And_Dimension_Text || r.Full_Item_Description || '');
+
+        // ── Alteration ────────────────────────────────────────────────────────
+        // Recompute from the SERVER's row + the supplier's requested change. The
+        // client's own preview values are never trusted — this is the authority.
+        let alt = null;
+        if (l.alteration && (l.alteration.length_ft != null || l.alteration.length_inch != null
+            || l.alteration.quantity != null || l.alteration.spec_id)) {
+          try {
+            const out = computeAlteredLine(r, l.alteration, catalogs);
+            if (out.changed.length || out.changed.quantity || out.changed.spec) { alt = out; alteredCount++; }
+          } catch (e) {
+            if (!(e instanceof LineCalcError)) throw e;
+            // Refuse the whole submit rather than quietly quoting the unaltered line —
+            // the supplier would be bound to a price for something they didn't offer.
+            lineErrors.push({ rfqs_sent_id: String(l.rfqs_sent_id), line: r.Line_Item || '', error: e.message, code: e.code });
+            continue;
+          }
+        }
+        const desc = alt ? stripItemNo(alt.description)
+                         : stripItemNo(r.Description_And_Dimension_Text || r.Full_Item_Description || '');
         const itemReq = Array.isArray(r.Item_Requirements) ? r.Item_Requirements : [];   // MFG's per-line requirement
         // Supplier may edit item requirements (pre-filled with the MFG's set). If they changed
         // it, write the supplier's selection AND note the change in the line comments.
@@ -554,8 +683,19 @@ function registerSupplierRoutes(app, deps) {
         if (reqChanged) {
           cmt = (cmt ? cmt + ' | ' : '') + 'Item requirements changed to: ' + (supReq.length ? supReq.join(', ') : '(none)');
         }
-        const uw = Number(r.Unit_Weight) || 0;
-        const tw = Number(r.CalcWeight) || 0;
+        // An altered line no longer matches what the MFG asked for, so say so in plain
+        // words on the line itself — the MFG's close-out reads these comments, and a
+        // silently-changed length/qty/spec would otherwise look like a normal quote.
+        if (alt) {
+          const notes = [];
+          if (alt.changed.length) notes.push('length ' + origLengthText(r) + ' → ' + alt.length_ft + "'" + (alt.length_inch > 0 ? alt.length_inch + '"' : ''));
+          if (alt.changed.quantity) notes.push('qty ' + (r.Quantity != null ? r.Quantity : '?') + ' → ' + alt.quantity);
+          if (alt.changed.spec) notes.push('spec ' + (origSpecName(r, catalogs) || '?') + ' → ' + alt.spec_name);
+          cmt = (cmt ? cmt + ' | ' : '') + 'SUPPLIER ALTERED: ' + notes.join(', ');
+        }
+        const uw = alt ? alt.unit_weight : (Number(r.Unit_Weight) || 0);
+        const tw = alt ? alt.calc_weight : (Number(r.CalcWeight) || 0);
+        const qtyVal = alt ? alt.quantity : (r.Quantity != null ? r.Quantity : '');
         sumMaterial += tp;
         if (!noQuote) sumWeight += tw;
         const leadTxt = l.lead_time || '';
@@ -575,13 +715,15 @@ function registerSupplierRoutes(app, deps) {
           SVD_Project_ID: lkid(r.MCP_Customer_Project_Form),
           SVD_Form_Types: lkid(r.Form_Type),
           SVD_Material_Types: lkid(r.Material_Type),
-          SVD_Material_Form_Detail: lkid(r.Material_Form_Detail),
-          // descriptive + dimensional snapshot
+          // Specification is alterable — write the supplier's pick, not the MFG's.
+          SVD_Material_Form_Detail: alt ? alt.spec_id : lkid(r.Material_Form_Detail),
+          // descriptive + dimensional snapshot (altered values when the supplier revised)
           SVD_Material_Description: desc,
           Line_Item: r.Line_Item || '',
           Reference_Quote_Number: svQuoteNum,
-          SVD_Quantity: r.Quantity != null ? r.Quantity : '',
-          SVD_Total_Length: r.Total_Length != null ? round(Number(r.Total_Length) || 0, 4) : '',
+          SVD_Quantity: qtyVal,
+          SVD_Total_Length: alt ? alt.total_length
+                                : (r.Total_Length != null ? round(Number(r.Total_Length) || 0, 4) : ''),
           SVD_Unit_Weight: round(uw, 2),
           SVD_Calc_Weight: round(tw, 2),
           Item_Requirements: supReq,
@@ -599,7 +741,7 @@ function registerSupplierRoutes(app, deps) {
           PDF_Item_Description_and_Measurement: desc,
           PDF_Item_Description_and_Measurement_Multi_Line: reqStr ? (desc + '\n' + reqStr) : desc,
           PDF_Item_Requirements: supReq,
-          PDF_Quantity: r.Quantity != null ? r.Quantity : '',
+          PDF_Quantity: qtyVal,
           PDF_Unit_Weight: round(uw, 2),
           PDF_Total_Weight: round(tw, 2),
           PDF_Weight_Multi_Line: 'Unit WT ' + num(uw, 2) + '\nTotal WT ' + num(tw, 2),
@@ -614,6 +756,16 @@ function registerSupplierRoutes(app, deps) {
         });
       }
 
+      // An alteration that can't be computed fails the WHOLE submit. Quoting the
+      // unaltered line instead would bind the supplier to a price for something they
+      // didn't offer, and dropping the line silently under-reports the quote.
+      if (lineErrors.length) {
+        return res.status(422).json({
+          ok: false,
+          error: 'Cannot submit: ' + lineErrors.length + ' altered line(s) could not be recomputed. Nothing was saved.',
+          line_errors: lineErrors,
+        });
+      }
       if (!detailRows.length) {
         return res.status(400).json({ ok: false, error: 'none of the submitted lines matched current RFQ rows', missing });
       }
@@ -692,8 +844,10 @@ function registerSupplierRoutes(app, deps) {
         sv_form_id: svFormId,
         lines: detailRows.length,
         skipped: missing,
+        altered: alteredCount,
         revised_prior: superseded,
         message: 'Quote submitted (SV record ' + svFormId + ', ' + detailRows.length + ' lines'
+          + (alteredCount ? ', ' + alteredCount + ' altered' : '')
           + (superseded ? ', superseded ' + superseded + ' prior' : '') + '). The SV workflow handles email + write-back.',
       });
     } catch (err) {

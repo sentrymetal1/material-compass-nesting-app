@@ -141,6 +141,19 @@
 .q-mfgnote-lbl { font-weight: 600; }
 .q-ireq-lbl { margin-top: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
 .q-ireq-lbl .muted { text-transform: none; letter-spacing: 0; }
+/* Per-line alteration ("Alter …" quote options): editor + live server-priced preview.
+   The MFG's original stays visible, struck through, above the supplier's new line. */
+.q-desc-was { text-decoration: line-through; color: var(--muted); }
+.q-desc-now { font-weight: 600; color: #1f5fb0; }
+.q-altered { color: #1f5fb0; font-weight: 600; }
+.q-alter { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px; background: #eef4fb; border: 1px solid #d3e2f2; border-radius: 4px; font-size: 12px; }
+.q-alter-blocked { background: #fff8e6; border-color: #f0dca0; color: #8a5a00; display: block; }
+.q-alter-f { display: inline-flex; align-items: center; gap: 4px; color: #1f5fb0; font-weight: 600; }
+.q-alter-n { width: 68px; }
+.q-alter-u { color: var(--muted); font-weight: 400; }
+.q-alter-msg { font-size: 11px; }
+.q-alter-ok { color: #1f5fb0; }
+.q-alter-err { color: #b00020; font-weight: 600; }
 .q-ireq { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .q-ireq-chip { font-size: 11px; background: #eef4fb; color: #1f5fb0; border: 1px solid #d3e2f2; border-radius: 4px; padding: 1px 3px 1px 6px; display: inline-flex; align-items: center; gap: 2px; }
 .q-ireq-chip button { border: none; background: none; color: #1f5fb0; cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px; }
