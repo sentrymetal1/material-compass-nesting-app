@@ -813,7 +813,7 @@ async function fetchLookupTables(token) {
     plateWidthFt = (r.data.data || []).map(row => ({
       id: row.ID,
       description: row.Description || '',
-      widthFt: parseFloat(row.Width_Ft) || parseFloat(row.Width_ft) || parseFloat(row['Width (ft)']) || 0
+      widthFt: parseFloat(row.Width) || 0
     }));
     console.log('Plate Standard Sizes:', plateWidthFt.length);
     if (plateWidthFt.length > 0 && plateWidthFt.every(r => r.widthFt === 0)) {
@@ -826,7 +826,7 @@ async function fetchLookupTables(token) {
   } catch (e) { console.error('Failed Plate Sizes fetch:', e.response?.data || e.message); }
 
   try {
-    const r = await axios.get(creatorApiBase()+'/report/All_Material_Types?limit=200', { headers: zohoHeaders(token) });
+    const r = await axios.get(creatorApiBase()+'/report/Material_Types_Report?limit=200', { headers: zohoHeaders(token) });
     materialTypes = (r.data.data || []).map(row => ({
       id: row.ID,
       name: row.Material_Type || row.zc_display_value || row.display_value || ''
