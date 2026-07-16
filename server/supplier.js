@@ -374,10 +374,41 @@ function registerSupplierRoutes(app, deps) {
   // prices each line directly on its bridge row (no separate response form). Grouped
   // into quotes for the UI. Read-only here; the price PATCH is a separate endpoint.
   const FIT_RFQ_REPORT = process.env.FITTING_RFQ_REPORT || 'RFQs_Sent_Fittings_Report';
+
+  // A fitting's SIZE (`4" | Class 300 | SCH 40`) lives on the MFG's demand line in
+  // Fitting_Description / Fitting_Description_Text — NOT in Dim1_Drop_Down/Dim2_Drop_Down,
+  // which are populated on 0 of 9 live rows and appear vestigial. The bridge doesn't carry
+  // the size at all, so we join demand-line-id -> size here rather than add a bridge field
+  // (that would need a re-send to backfill; this fixes existing rows immediately).
+  //
+  // Prefer the _Text mirror: it's populated where the lookup isn't (8/9 vs 5/9 live).
+  // "Redo Selection" is the cascade's reset sentinel, not a size — never show it.
+  async function fetchFittingSizes() {
+    return cachedLookup('fitting-sizes', 30 * 60 * 1000, async () => {
+      const map = {};
+      try {
+        const rows = await fetchAllZohoPages('/report/Fittings_Quote_Subform_Report');
+        for (const r of rows) {
+          const txt = String(r.Fitting_Description_Text || '').trim();
+          const lk = flatten(r.Fitting_Description).trim();
+          const size = (txt && txt !== 'Redo Selection') ? txt : ((lk && lk !== 'Redo Selection') ? lk : '');
+          if (size) map[String(r.ID)] = size;
+        }
+      } catch (e) {
+        // Best-effort: a size outage must not blank the whole fittings list.
+        console.error('Fitting sizes fetch failed:', (e.response && e.response.data) || e.message);
+      }
+      return map;
+    });
+  }
+
   async function fetchSentFittingRfqs(supplierId) {
     // fetchAllZohoPages returns [] on an empty criteria result (Zoho 9280), so no guard here.
-    const rows = await cachedLookup('fit-rfqs:' + supplierId, 60 * 1000, async () =>
-      fetchAllZohoPages('/report/' + FIT_RFQ_REPORT + '?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')'));
+    const [rows, sizeByDemandLine] = await Promise.all([
+      cachedLookup('fit-rfqs:' + supplierId, 60 * 1000, async () =>
+        fetchAllZohoPages('/report/' + FIT_RFQ_REPORT + '?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')')),
+      fetchFittingSizes(),
+    ]);
     const byQuote = new Map();
     for (const r of rows) {
       // only the supplier's current/active sent lines
@@ -397,14 +428,21 @@ function registerSupplierRoutes(app, deps) {
       }
       const type = flatten(r.Fitting_Type), make = flatten(r.Fitting_Make);
       const end = flatten(r.End_Type), conn = flatten(r.Connection_Type), spec = flatten(r.Fitting_Specification);
-      const size = r.Dim1_Drop_Down || '', sched = r.Dim2_Drop_Down || '';
+      const demandLineId = lkid(r.Fittings_Quote_Subform);
+      // Size comes from the demand line (see fetchFittingSizes). Fall back to the bridge's
+      // Dim1/Dim2 in case they're ever populated, but the demand line is the source of truth.
+      const size = sizeByDemandLine[demandLineId]
+        || [r.Dim1_Drop_Down, r.Dim2_Drop_Down].filter(Boolean).join(' | ')
+        || '';
       byQuote.get(qid).lines.push({
         rfq_row_id: String(r.ID),
-        demand_line_id: lkid(r.Fittings_Quote_Subform),
+        demand_line_id: demandLineId,
         line: r.Line_Item_Fitting || '',
         fitting: { type, make, end, connection: conn, specification: spec },
-        size, schedule: sched,
-        description: [type, make].filter(Boolean).join(' — ') + (end || conn || spec ? '  ·  ' + [end, conn, spec].filter(Boolean).join(' · ') : '') + (size ? '  ·  ' + size + (sched ? ' (' + sched + ')' : '') : ''),
+        size,
+        description: [type, make].filter(Boolean).join(' — ')
+          + (end || conn || spec ? '  ·  ' + [end, conn, spec].filter(Boolean).join(' · ') : '')
+          + (size ? '  ·  ' + size : ''),
         qty: r.Quantity != null && r.Quantity !== '' ? Number(r.Quantity) : null,
         // response (may be blank until the supplier prices it). Defensive reads —
         // these fields are being added; absent = undefined → null.
