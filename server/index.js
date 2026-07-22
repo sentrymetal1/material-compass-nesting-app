@@ -86,6 +86,74 @@ app.get('/api/takeoff/account/:manufacturer_id', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 
+// SCOPE RECONCILIATION — the project's ENTERED components + drawings (with IDs), for the
+// take-off's reconciliation panel to compare against what the AI read. Same reads as
+// fetchProjectContext, but returns arrays with IDs instead of a prompt string.
+app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
+  try {
+    const pid = req.params.project_id;
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    let components = [], drawings = [];
+    // Each read is guarded: a zero-match report query throws (Zoho 400/9280) — treat as empty.
+    try {
+      const rc = await axios.get(base + '/report/All_Project_Components?criteria=(MCP_Customer_Project_Form==' + pid + ')&limit=200', { headers: zohoHeaders(token) });
+      components = ((rc.data && rc.data.data) || [])
+        .map(function (x) { return { id: x.ID, name: String(x.Project_Component || '').trim() }; })
+        .filter(function (c) { return c.name; });
+    } catch (e) { /* none entered */ }
+    try {
+      const rd = await axios.get(base + '/report/All_Project_Drawing_Details?criteria=(MCP_Customer_Project_Form==' + pid + ')&limit=200', { headers: zohoHeaders(token) });
+      drawings = ((rd.data && rd.data.data) || [])
+        .map(function (x) { return { id: x.ID, number: String(x.Drawing_Number || '').trim() }; })
+        .filter(function (d) { return d.number; });
+    } catch (e) { /* none entered */ }
+    res.json({ ok: true, components: components, drawings: drawings });
+  } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+
+// SCOPE RECONCILIATION — add a component/drawing the AI read but the user hadn't entered.
+// Component: set Project_LU (the field the staging validator resolves on) at create; the
+// MCP_Customer_Project_Form link goes on as a best-effort patch (mirrors /save) so a lookup
+// rejection can never fail the add. Drawing: MCP_Customer_Project_Form is the direct link.
+app.post('/api/takeoff/project-scope/add', async (req, res) => {
+  try {
+    const { project_id, kind, value } = req.body || {};
+    if (!project_id) return res.status(400).json({ ok: false, error: 'project_id required' });
+    const v = String(value || '').trim();
+    if (!v) return res.status(400).json({ ok: false, error: 'value required' });
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+
+    let form, report, data, mcpBestEffort = false;
+    if (kind === 'component') {
+      form = 'Project_Components_Form'; report = 'All_Project_Components';
+      data = { Project_Component: v, Project_LU: project_id };
+      mcpBestEffort = true;
+    } else if (kind === 'drawing') {
+      form = 'Project_Drawing_Details_Form'; report = 'All_Project_Drawing_Details';
+      data = { Drawing_Number: v, MCP_Customer_Project_Form: project_id };
+    } else {
+      return res.status(400).json({ ok: false, error: "kind must be 'component' or 'drawing'" });
+    }
+
+    const zr = await axios.post(base + '/form/' + form, { data: data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the add', detail: zr.data });
+    const id = zr.data && zr.data.data && zr.data.data.ID;
+
+    if (id && mcpBestEffort) {
+      try {
+        await axios.patch(base + '/report/' + report + '/' + id, { data: { MCP_Customer_Project_Form: project_id } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      } catch (e) { /* the native-subform link is optional; Project_LU already ties it for staging */ }
+    }
+    res.json({ ok: true, id: id });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('project-scope add error:', detail);
+    res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
 // AI material take-off — PDFs in, BOM + project synopsis out. Injects this shop's prior
 // corrections (Tier-3 per-manufacturer learning) so the take-off pre-applies their preferences.
 app.post('/api/takeoff', async (req, res) => {
@@ -149,8 +217,11 @@ app.post('/api/takeoff/commit', async (req, res) => {
 
     // 1. create the Import_BOM_Form record (no file yet — guarded submission workflow no-ops).
     //    MFG_Client_Form is a lookup the import doesn't use; omit it (the mfg id doesn't match it).
+    // Replace, not Append: the widget holds the COMPLETE BOM and re-sends it whole on every
+    // commit (incl. the "Add drawings" flow, which merges in-browser first). With the import's
+    // Append mode now live (2026-07), 'Append' here would duplicate the BOM on any re-commit.
     const createResp = await axios.post(base + '/form/Import_BOM_Form',
-      { data: { Project_ID: project_id, BOM_Import_Mode: 'Append' } },
+      { data: { Project_ID: project_id, BOM_Import_Mode: 'Replace' } },
       { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     const recId = createResp.data && createResp.data.data && createResp.data.data.ID;
     if (!recId) return res.status(502).json({ ok: false, error: 'create returned no record ID', detail: createResp.data });
