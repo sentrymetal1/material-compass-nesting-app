@@ -142,7 +142,12 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
     let form, report, data, mcpBestEffort = false;
     if (kind === 'component') {
       form = 'Project_Components_Form'; report = 'All_Project_Components';
-      data = { Project_Component: v, Project_LU: project_id };
+      // THREE project links, all required. Project_LU is what the staging validator resolves on.
+      // Project_Bi_Directional_Lookup is what the project page's OnLoad dot-walks per component —
+      // native records have it, API records without it were BLANK, and the page threw a generic
+      // "Error occurred please contact application owner" on the null. MCP is the native subform
+      // link (best-effort patch below). Setting only the first two is what broke the page.
+      data = { Project_Component: v, Project_LU: project_id, Project_Bi_Directional_Lookup: project_id };
       mcpBestEffort = true;
     } else if (kind === 'drawing') {
       form = 'Project_Drawing_Details_Form'; report = 'All_Project_Drawing_Details';
@@ -157,7 +162,18 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
       return res.status(400).json({ ok: false, error: "kind must be 'component' or 'drawing'" });
     }
 
-    const zr = await axios.post(base + '/form/' + form, { data: data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    const postForm = function (d) {
+      return axios.post(base + '/form/' + form, { data: d }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    };
+    let zr = await postForm(data), bidiWarning = null;
+    // If the bidirectional link name is wrong, Zoho rejects the whole create. Rather than break every
+    // add, retry without it and SURFACE the miss — a silent fallback would just re-create the exact
+    // blank-link records that crashed the project page.
+    if (kind === 'component' && zr.data && zr.data.code !== 3000 && 'Project_Bi_Directional_Lookup' in data) {
+      delete data.Project_Bi_Directional_Lookup;
+      bidiWarning = 'Project_Bi_Directional_Lookup was rejected and omitted — the project page may error on this record. Confirm the field link name.';
+      zr = await postForm(data);
+    }
     if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the add', detail: zr.data });
     const id = zr.data && zr.data.data && zr.data.data.ID;
 
@@ -166,7 +182,7 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
         await axios.patch(base + '/report/' + report + '/' + id, { data: { MCP_Customer_Project_Form: project_id } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
       } catch (e) { /* the native-subform link is optional; Project_LU already ties it for staging */ }
     }
-    res.json({ ok: true, id: id });
+    res.json({ ok: true, id: id, warning: bidiWarning });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('project-scope add error:', detail);
