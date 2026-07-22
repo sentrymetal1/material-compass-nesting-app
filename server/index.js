@@ -86,6 +86,20 @@ app.get('/api/takeoff/account/:manufacturer_id', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 
+// Read-only dependent count — lets the widget label the delete button before you click it.
+// MUST stay above the /:project_id route below: Express matches in registration order, so the
+// param route would otherwise swallow "dependents" and treat it as a project id.
+app.get('/api/takeoff/project-scope/dependents', async (req, res) => {
+  try {
+    const { kind, id } = req.query || {};
+    if (!SCOPE_FORMS[kind]) return res.status(400).json({ ok: false, error: "kind must be 'component' or 'drawing'" });
+    if (!id) return res.status(400).json({ ok: false, error: 'id required' });
+    res.json({ ok: true, ...(await scopeDependents(kind, id)) });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message || String(err) });
+  }
+});
+
 // SCOPE RECONCILIATION — the project's ENTERED components + drawings (with IDs), for the
 // take-off's reconciliation panel to compare against what the AI read. Same reads as
 // fetchProjectContext, but returns arrays with IDs instead of a prompt string.
@@ -206,18 +220,6 @@ async function scopeDependents(kind, id) {
   } catch (e) { out.unchecked.push('BOM rows'); }
   return out;
 }
-
-// Read-only dependent count — the widget calls this to label the delete button before you click it.
-app.get('/api/takeoff/project-scope/dependents', async (req, res) => {
-  try {
-    const { kind, id } = req.query || {};
-    if (!SCOPE_FORMS[kind]) return res.status(400).json({ ok: false, error: "kind must be 'component' or 'drawing'" });
-    if (!id) return res.status(400).json({ ok: false, error: 'id required' });
-    res.json({ ok: true, ...(await scopeDependents(kind, id)) });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message || String(err) });
-  }
-});
 
 // SCOPE RECONCILIATION — delete an entered component/drawing the take-off did not find.
 // BLOCKS when anything is linked (drawings or BOM rows) and reports what, rather than cascading:
