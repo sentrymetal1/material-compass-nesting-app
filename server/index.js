@@ -118,7 +118,7 @@ app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
 // rejection can never fail the add. Drawing: MCP_Customer_Project_Form is the direct link.
 app.post('/api/takeoff/project-scope/add', async (req, res) => {
   try {
-    const { project_id, kind, value } = req.body || {};
+    const { project_id, kind, value, component_id } = req.body || {};
     if (!project_id) return res.status(400).json({ ok: false, error: 'project_id required' });
     const v = String(value || '').trim();
     if (!v) return res.status(400).json({ ok: false, error: 'value required' });
@@ -133,6 +133,12 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
     } else if (kind === 'drawing') {
       form = 'Project_Drawing_Details_Form'; report = 'All_Project_Drawing_Details';
       data = { Drawing_Number: v, MCP_Customer_Project_Form: project_id };
+      // Components ties the drawing to its parent component (the field /api/bom-lookups/drawings
+      // filters on). Without it the drawing is orphaned — present on the project, invisible per
+      // component. The caller supplies it because the take-off knows the pairing (a BOM row carries
+      // both `component` and `source_sheet`); add components first, then pass the new/known id here.
+      const cid = String(component_id || '').trim();
+      if (cid) data.Components = cid;
     } else {
       return res.status(400).json({ ok: false, error: "kind must be 'component' or 'drawing'" });
     }
@@ -150,6 +156,98 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('project-scope add error:', detail);
+    res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
+// Field map for the two scope records — used by update/delete below.
+const SCOPE_FORMS = {
+  component: { report: 'All_Project_Components',       field: 'Project_Component' },
+  drawing:   { report: 'All_Project_Drawing_Details',  field: 'Drawing_Number' },
+};
+
+// SCOPE RECONCILIATION — rename an entered component/drawing to the value the AI read.
+// Staging resolves components BY NAME, so renaming to the take-off's exact wording is what
+// converts a near-miss into a real link. Rename before committing: imported BOM rows keep a
+// `Component` name copy alongside Component_ID, and that copy does not follow a later rename.
+app.post('/api/takeoff/project-scope/update', async (req, res) => {
+  try {
+    const { kind, id, value } = req.body || {};
+    const spec = SCOPE_FORMS[kind];
+    if (!spec) return res.status(400).json({ ok: false, error: "kind must be 'component' or 'drawing'" });
+    if (!id) return res.status(400).json({ ok: false, error: 'id required' });
+    const v = String(value || '').trim();
+    if (!v) return res.status(400).json({ ok: false, error: 'value required' });
+
+    const token = await getAccessToken();
+    const data = {}; data[spec.field] = v;
+    const zr = await axios.patch(creatorApiBase() + '/report/' + spec.report + '/' + id,
+      { data: data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the rename', detail: zr.data });
+    res.json({ ok: true, id: String(id), value: v });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('project-scope update error:', detail);
+    res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
+// Dependents of a component: linked drawings (Components == id) and imported BOM rows
+// (Component_ID == id). A probe that THROWS returns null, not 0 — "we could not check" must never
+// be reported to the caller as "nothing is linked", or delete would look safe when it isn't.
+async function scopeDependents(kind, id) {
+  if (kind !== 'component') return { drawings: 0, bomRows: 0, unchecked: [] };
+  const out = { drawings: null, bomRows: null, unchecked: [] };
+  try {
+    out.drawings = (await fetchAllZohoPages('/report/All_Project_Drawing_Details?criteria=(Components==' + id + ')')).length;
+  } catch (e) { out.unchecked.push('drawings'); }
+  try {
+    out.bomRows = (await fetchAllZohoPages('/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=(Component_ID==' + id + ')')).length;
+  } catch (e) { out.unchecked.push('BOM rows'); }
+  return out;
+}
+
+// Read-only dependent count — the widget calls this to label the delete button before you click it.
+app.get('/api/takeoff/project-scope/dependents', async (req, res) => {
+  try {
+    const { kind, id } = req.query || {};
+    if (!SCOPE_FORMS[kind]) return res.status(400).json({ ok: false, error: "kind must be 'component' or 'drawing'" });
+    if (!id) return res.status(400).json({ ok: false, error: 'id required' });
+    res.json({ ok: true, ...(await scopeDependents(kind, id)) });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message || String(err) });
+  }
+});
+
+// SCOPE RECONCILIATION — delete an entered component/drawing the take-off did not find.
+// BLOCKS when anything is linked (drawings or BOM rows) and reports what, rather than cascading:
+// "the AI didn't read it" is not evidence the scope is unused, so a review screen must never be
+// able to silently orphan records. An unchecked probe also blocks — unknown is not zero.
+app.post('/api/takeoff/project-scope/delete', async (req, res) => {
+  try {
+    const { kind, id } = req.body || {};
+    const spec = SCOPE_FORMS[kind];
+    if (!spec) return res.status(400).json({ ok: false, error: "kind must be 'component' or 'drawing'" });
+    if (!id) return res.status(400).json({ ok: false, error: 'id required' });
+
+    const dep = await scopeDependents(kind, id);
+    const blockers = [];
+    if (dep.drawings) blockers.push(dep.drawings + ' drawing' + (dep.drawings === 1 ? '' : 's'));
+    if (dep.bomRows)  blockers.push(dep.bomRows  + ' BOM row' + (dep.bomRows  === 1 ? '' : 's'));
+    dep.unchecked.forEach(function (w) { blockers.push('could not check ' + w); });
+    if (blockers.length) {
+      return res.status(409).json({ ok: false, blocked: true, dependents: dep,
+        error: 'Still linked: ' + blockers.join(' + ') + '. Clear these on the project page first.' });
+    }
+
+    const token = await getAccessToken();
+    const zr = await axios.delete(creatorApiBase() + '/report/' + spec.report + '?criteria=(ID==' + id + ')',
+      { headers: zohoHeaders(token) });
+    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the delete', detail: zr.data });
+    res.json({ ok: true, id: String(id) });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('project-scope delete error:', detail);
     res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
   }
 });
