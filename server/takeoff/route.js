@@ -15,7 +15,7 @@
 //              cost_usd, import_csv, verify_csv, credits_left, free_left }
 // =============================================================================
 
-const { runTakeoff, reviseTakeoff, chatTakeoff, LOW_CONF } = require("./engine");
+const { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, LOW_CONF } = require("./engine");
 const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
 
@@ -170,4 +170,21 @@ async function chatHandler(req, res, deps) {
   }
 }
 
-module.exports = { takeoffHandler, reviseHandler, chatHandler };
+// POST /api/takeoff/index — the intake sheet-index pass. Body: { pdfs[] | pdf_base64, model? }.
+// Returns { sheets:[{number,title,pages:[start,end],confidence}], cost_usd, model }. Reads only sheet
+// numbers + page ranges — no take-off, no components. The widget matches these against the user's list.
+// Not metered (like revise/chat) — it's a cheap setup step, not a billable take-off.
+async function indexHandler(req, res) {
+  try {
+    const body = req.body || {};
+    const docs = (Array.isArray(body.pdfs) && body.pdfs.length) ? body.pdfs : (body.pdf_base64 ? [body.pdf_base64] : []);
+    if (!docs.length) return res.status(400).json({ ok: false, error: "pdfs[] or pdf_base64 required" });
+    const out = await readSheetIndex({ docs: docs, modelKey: body.model || "sonnet" });
+    return res.json({ ok: true, sheets: out.sheets, cost_usd: out.cost_usd, model: out.modelId });
+  } catch (err) {
+    console.error("takeoff index error", err);
+    return res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+  }
+}
+
+module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler };

@@ -445,4 +445,90 @@ async function chatTakeoff(opts) {
   return { edited: false, reply: textOut || "(no reply)", cost_usd: cost, usage: resp.usage, modelId: model.id };
 }
 
-module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
+// -----------------------------------------------------------------------------
+//  readSheetIndex — the intake "sheet-index" pass. Reads ONLY the sheet NUMBERS
+//  (+ page ranges) from a drawing PDF; does NOT take off materials or propose any
+//  components. The widget reconciles these sheets against the user's typed list.
+//  Input dominates cost (same PDF as a take-off), but output is tiny and there's
+//  no synopsis reasoning, so it's much cheaper than a full run.
+// -----------------------------------------------------------------------------
+const SHEET_INDEX_TOOL = {
+  name: "submit_sheet_index",
+  description: "Report the drawing sheets present in the uploaded PDF(s): each sheet's number, title, and page range. Do NOT take off materials.",
+  input_schema: {
+    type: "object",
+    properties: {
+      sheets: {
+        type: "array",
+        description: "One entry per distinct drawing sheet found, in page order.",
+        items: {
+          type: "object",
+          properties: {
+            number:     { type: "string",  description: "The EXACT sheet/drawing number from the title block, verbatim (e.g. 'RIS-48300-S1-A-1', 'S-201'). Never normalize, expand, or invent." },
+            title:      { type: "string",  description: "Short sheet title if legible, else empty." },
+            page_start: { type: "integer", description: "1-based page in the uploaded PDF where this sheet begins." },
+            page_end:   { type: "integer", description: "1-based page where this sheet ends (= page_start for a single-page sheet)." },
+            confidence: { type: "number",  description: "0-1 confidence the number was read correctly." },
+          },
+          required: ["number", "page_start", "page_end"],
+        },
+      },
+    },
+    required: ["sheets"],
+  },
+};
+
+const SHEET_SYSTEM =
+  "You are INDEXING a structural steel drawing package — not taking it off. Read ONLY the sheet/drawing NUMBER " +
+  "from each page's title block (and any drawing-index / sheet-list page) and report which pages each sheet spans. " +
+  "Do NOT list members, quantities, sizes, or materials. Do NOT infer or propose components. " +
+  "RULES: (1) Use the EXACT number printed in the title block, verbatim — never normalize, expand, or invent one. " +
+  "(2) One entry per distinct sheet, in page order; give the full page range if a sheet spans several pages. " +
+  "(3) If a page has no legible sheet number, SKIP it — never fabricate. (4) Give a per-sheet confidence. " +
+  "Return via submit_sheet_index.";
+
+async function readSheetIndex(opts) {
+  opts = opts || {};
+  const docs = opts.docs;
+  const modelKey = opts.modelKey || "sonnet"; // accuracy of sheet detection matters; output is tiny so tier ≠ cost driver
+  if (!Array.isArray(docs) || !docs.length) throw new Error("readSheetIndex: docs[] (base64 PDFs) required");
+  const model = MODELS[modelKey] || MODELS.sonnet;
+  const anthropic = opts.client || new Anthropic();
+
+  const resp = await anthropic.messages.create({
+    model: model.id,
+    max_tokens: 4000,
+    system: SHEET_SYSTEM,
+    tools: [SHEET_INDEX_TOOL],
+    tool_choice: { type: "tool", name: "submit_sheet_index" },
+    messages: [{
+      role: "user",
+      content: [].concat(
+        docs.map(function (d) { return { type: "document", source: { type: "base64", media_type: "application/pdf", data: d } }; }),
+        [{ type: "text", text: "Index the sheets in the attached drawing package: list each sheet number and the pages it spans. Do not take off materials." }]
+      ),
+    }],
+  });
+
+  const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
+  let sheets = unwrap(toolUse ? toolUse.input.sheets : [], []);
+  if (!Array.isArray(sheets)) sheets = [];
+  sheets = sheets.map(function (s) {
+    const num = String((s && s.number) == null ? "" : s.number).trim();
+    if (!num) return null;                          // no number = unusable, drop it
+    const ps = Math.max(1, parseInt(s && s.page_start, 10) || 1);
+    const pe = Math.max(ps, parseInt(s && s.page_end, 10) || ps);
+    const conf = (s && typeof s.confidence === "number") ? s.confidence : null;
+    return { number: num, title: String((s && s.title) == null ? "" : s.title).trim(), pages: [ps, pe], confidence: conf };
+  }).filter(Boolean);
+
+  return {
+    sheets: sheets,
+    cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
+    usage: resp.usage,
+    modelKey: MODELS[modelKey] ? modelKey : "sonnet",
+    modelId: model.id,
+  };
+}
+
+module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };

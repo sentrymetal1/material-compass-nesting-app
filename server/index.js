@@ -4,7 +4,7 @@ const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
 const FormData = require('form-data');
-const { takeoffHandler, reviseHandler, chatHandler } = require('./takeoff/route');
+const { takeoffHandler, reviseHandler, chatHandler, indexHandler } = require('./takeoff/route');
 
 const app = express();
 app.use(cors());
@@ -364,6 +364,7 @@ async function fetchProjectContext(projectId) {
 // AI take-off revise (3c) — current package + instruction in, revised package out.
 app.post('/api/takeoff/revise', (req, res) => reviseHandler(req, res, {}));
 app.post('/api/takeoff/chat', (req, res) => chatHandler(req, res, {}));
+app.post('/api/takeoff/index', (req, res) => indexHandler(req, res)); // intake: read sheet numbers + page ranges
 
 // AI take-off COMMIT — write the reviewed BOM CSV into Import_BOM_Form (Zoho) server-side.
 // The widget runs standalone (no Creator SDK context), so the Zoho write happens here using the
