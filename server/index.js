@@ -119,10 +119,43 @@ app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
     try {
       const rd = await axios.get(base + '/report/All_Project_Drawing_Details?criteria=(MCP_Customer_Project_Form==' + pid + ')&limit=200', { headers: zohoHeaders(token) });
       drawings = ((rd.data && rd.data.data) || [])
-        .map(function (x) { return { id: x.ID, number: String(x.Drawing_Number || '').trim() }; })
+        // Components is the lookup to the parent component; v2.1 returns it as {ID, display_value}
+        // WHEN the report exposes that column. If it doesn't, component_id is '' and we backfill below.
+        .map(function (x) { return { id: x.ID, number: String(x.Drawing_Number || '').trim(),
+                                     component_id: (x.Components && x.Components.ID) ? String(x.Components.ID) : '' }; })
         .filter(function (d) { return d.number; });
     } catch (e) { /* none entered */ }
-    res.json({ ok: true, components: components, drawings: drawings });
+
+    // BACKFILL the parent link when the flat read didn't surface Components (report column not
+    // configured — see [[feedback_zoho_report_api_columns]]). One query per component: the drawings
+    // a component owns are Drawing_Details[Components==<component id>]. Only runs if NO drawing came
+    // back with a parent, so a properly-columned report costs zero extra calls.
+    if (components.length && drawings.length && !drawings.some(function (d) { return d.component_id; })) {
+      for (const c of components) {
+        try {
+          const rr = await axios.get(base + '/report/All_Project_Drawing_Details?criteria=(Components==' + c.id + ')&limit=200', { headers: zohoHeaders(token) });
+          ((rr.data && rr.data.data) || []).forEach(function (x) {
+            const d = drawings.find(function (z) { return String(z.id) === String(x.ID); });
+            if (d) d.component_id = String(c.id);
+          });
+        } catch (e) { /* this component has no drawings, or query 400'd on zero match */ }
+      }
+    }
+
+    // Nest drawings under their component; drawings with no/unknown parent go to unassigned.
+    const byId = {};
+    components.forEach(function (c) { byId[String(c.id)] = { component_id: String(c.id), component: c.name, drawings: [] }; });
+    const unassigned = [];
+    drawings.forEach(function (d) {
+      const node = d.component_id ? byId[String(d.component_id)] : null;
+      if (node) node.drawings.push({ id: d.id, number: d.number });
+      else unassigned.push({ id: d.id, number: d.number });
+    });
+    const tree = components.map(function (c) { return byId[String(c.id)]; });
+
+    // Keep the flat components/drawings arrays (review.html's reconciliation reads them);
+    // tree + unassigned_drawings are the new nested view the intake UI pre-fills from.
+    res.json({ ok: true, components: components, drawings: drawings, tree: tree, unassigned_drawings: unassigned });
   } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 
