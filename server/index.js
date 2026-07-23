@@ -278,7 +278,15 @@ app.post('/api/takeoff', async (req, res) => {
   const tier = (req.body && req.body.tier) || ((req.body && req.body.include_synopsis === false) ? 'basic' : 'premium');
   try { if (mfgId) shopLearning = await fetchShopLearning(mfgId); } catch (e) {}
   try { universalKnowledge = await getUniversalKnowledge(); } catch (e) {}
-  try { const pid = req.body && req.body.project_id; if (pid) projectContext = await fetchProjectContext(pid); } catch (e) {}
+  // Scope: a user-CONFIRMED Component→Drawing tree in the body wins over the Zoho-read fallback.
+  // This is the intake redesign — the tree is arranged before the take-off so rows come back tagged
+  // against names the user approved, instead of the AI guessing and reconciling afterward.
+  try {
+    const tree = req.body && req.body.scope_tree;
+    const treeCtx = buildScopeTreeContext(tree);
+    if (treeCtx) { projectContext = treeCtx; }
+    else { const pid = req.body && req.body.project_id; if (pid) projectContext = await fetchProjectContext(pid); }
+  } catch (e) {}
 
   // Phase 0 meter: deduct the visual price after a successful run, attach balance to the response.
   const origJson = res.json.bind(res);
@@ -295,6 +303,43 @@ app.post('/api/takeoff', async (req, res) => {
 
   return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge, projectContext: projectContext });
 });
+
+// CONFIRMED SCOPE TREE — the user-arranged Component→Drawing breakdown, passed in the request body
+// as scope_tree = [{ component: "Upper Frame weldment", drawings: ["RIS-48300-S1-A-1", ...] }, ...].
+// Turns it into an AUTHORITATIVE prompt block: stronger than fetchProjectContext because the user
+// confirmed it, and it shows the nesting (which drawings belong to which component) so the AI tags
+// `component` and `source_sheet` consistently. Returns '' if the tree is absent/empty/malformed,
+// so the mount falls back to the Zoho-read context.
+function buildScopeTreeContext(tree) {
+  if (!Array.isArray(tree) || !tree.length) return '';
+  const seenC = {}, nodes = [];
+  tree.forEach(function (n) {
+    const name = String((n && n.component) == null ? '' : n.component).trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seenC[key]) return;                 // dedupe components by name
+    seenC[key] = 1;
+    const seenD = {}, draws = [];
+    (Array.isArray(n && n.drawings) ? n.drawings : []).forEach(function (d) {
+      const dv = String(d == null ? '' : d).trim(); if (!dv) return;
+      const dk = dv.toLowerCase(); if (seenD[dk]) return; seenD[dk] = 1; draws.push(dv);
+    });
+    nodes.push({ name: name, draws: draws });
+  });
+  if (!nodes.length) return '';
+  const allDraws = [];
+  const body = nodes.map(function (n) {
+    n.draws.forEach(function (d) { if (allDraws.indexOf(d) < 0) allDraws.push(d); });
+    return '- ' + n.name + (n.draws.length ? '  [drawings: ' + n.draws.join(', ') + ']' : '  [no drawings listed]');
+  }).join('\n');
+  return "THIS PROJECT'S CONFIRMED SCOPE BREAKDOWN (the estimator arranged and approved this — it is AUTHORITATIVE):\n\n" +
+    "COMPONENTS / ASSEMBLIES, each with the drawings it is detailed on:\n" + body + '\n\n' +
+    "RULES:\n" +
+    "- Assign EVERY quantified member's `component` to the single best-fitting name above, spelled EXACTLY as shown.\n" +
+    "- Set `source_sheet` to the EXACT drawing number the member is read from; prefer a drawing listed under that member's component.\n" +
+    "- Do NOT invent new component names or drawing numbers. If a member genuinely fits none of the above, leave `component` empty and note it in the top-level `notes` — do not force-fit it.\n" +
+    (allDraws.length ? "- The full confirmed drawing set: " + allDraws.join(', ') + '.\n' : '');
+}
 
 // PROJECT CONTEXT — feed the take-off this project's pre-defined Components + Drawings so the AI
 // tags each member to the right component and cites the exact drawing numbers (clean staging match).
