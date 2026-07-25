@@ -319,7 +319,7 @@ app.post('/api/takeoff', async (req, res) => {
   // against names the user approved, instead of the AI guessing and reconciling afterward.
   try {
     const tree = req.body && req.body.scope_tree;
-    const treeCtx = buildScopeTreeContext(tree);
+    const treeCtx = buildScopeTreeContext(tree, req.body && req.body.excluded_drawings, req.body && req.body.drawing_aliases);
     if (treeCtx) { projectContext = treeCtx; }
     else { const pid = req.body && req.body.project_id; if (pid) projectContext = await fetchProjectContext(pid); }
   } catch (e) {}
@@ -346,7 +346,7 @@ app.post('/api/takeoff', async (req, res) => {
 // confirmed it, and it shows the nesting (which drawings belong to which component) so the AI tags
 // `component` and `source_sheet` consistently. Returns '' if the tree is absent/empty/malformed,
 // so the mount falls back to the Zoho-read context.
-function buildScopeTreeContext(tree) {
+function buildScopeTreeContext(tree, excluded, aliases) {
   if (!Array.isArray(tree) || !tree.length) return '';
   const seenC = {}, nodes = [];
   tree.forEach(function (n) {
@@ -368,12 +368,36 @@ function buildScopeTreeContext(tree) {
     n.draws.forEach(function (d) { if (allDraws.indexOf(d) < 0) allDraws.push(d); });
     return '- ' + n.name + (n.draws.length ? '  [drawings: ' + n.draws.join(', ') + ']' : '  [no drawings listed]');
   }).join('\n');
+  // Sheets the estimator deliberately left out, with their reason. This is a decision they made at
+  // intake after seeing every sheet in the PDF, so it is binding: skip the sheet, don't re-litigate.
+  const skips = (Array.isArray(excluded) ? excluded : [])
+    .map(function (x) {
+      const num = String((x && x.number) == null ? '' : x.number).trim();
+      if (!num) return null;
+      const why = String((x && x.reason) == null ? '' : x.reason).trim();
+      return '- ' + num + (why ? '  — ' + why : '');
+    }).filter(Boolean);
+
+  // The number printed on the sheet vs. the number this project files it under. The estimator
+  // confirmed the two are the same drawing, so tag rows with THEIR number — no guessing.
+  const alias = (Array.isArray(aliases) ? aliases : [])
+    .map(function (a) {
+      const from = String((a && a.pdf_number) == null ? '' : a.pdf_number).trim();
+      const to = String((a && a.use_number) == null ? '' : a.use_number).trim();
+      return (from && to && from !== to) ? '- the sheet printed "' + from + '" is this project\'s drawing "' + to + '" — use "' + to + '"' : null;
+    }).filter(Boolean);
+
   return "THIS PROJECT'S CONFIRMED SCOPE BREAKDOWN (the estimator arranged and approved this — it is AUTHORITATIVE):\n\n" +
     "COMPONENTS / ASSEMBLIES, each with the drawings it is detailed on:\n" + body + '\n\n' +
+    (skips.length ? "EXCLUDED SHEETS — the estimator deliberately left these out of this take-off:\n" + skips.join('\n') + '\n\n' : '') +
+    (alias.length ? "DRAWING NUMBER MAPPING — same drawing, different number printed on the sheet:\n" + alias.join('\n') + '\n\n' : '') +
     "RULES:\n" +
     "- Assign EVERY quantified member's `component` to the single best-fitting name above, spelled EXACTLY as shown.\n" +
     "- Set `source_sheet` to the EXACT drawing number the member is read from; prefer a drawing listed under that member's component.\n" +
     "- Do NOT invent new component names or drawing numbers. If a member genuinely fits none of the above, leave `component` empty and note it in the top-level `notes` — do not force-fit it.\n" +
+    (skips.length ? "- Take NO material off the excluded sheets above. If one carries a member you would otherwise have taken off, mention it once in `notes` — do not add rows for it.\n" : '') +
+    (alias.length ? "- Apply the drawing number mapping above to `source_sheet` — report the project's number, never the one printed on the sheet.\n" : '') +
+    "- The scope above covers every sheet in the documents. If you find a sheet that is neither listed nor excluded, take it off and flag it in `notes` — it means the intake missed it.\n" +
     (allDraws.length ? "- The full confirmed drawing set: " + allDraws.join(', ') + '.\n' : '');
 }
 
