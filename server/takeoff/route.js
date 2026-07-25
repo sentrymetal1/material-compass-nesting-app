@@ -19,6 +19,16 @@ const { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, LOW_CONF } = req
 const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
 
+// Errors from the upstream model API are shown to the user verbatim, and they name the vendor and
+// its model ids ("anthropic", "claude-sonnet-…"). The product is Material Compass AI, so rewrite
+// them on the way out. The raw text still goes to the server log, where it's needed for debugging.
+function outward(err) {
+  return String((err && err.message) || err)
+    .replace(/\bclaude[-\w.:\[\]]*/gi, "Material Compass AI")
+    .replace(/\banthropic\b/gi, "Material Compass AI")
+    .replace(/\bx-api-key\b/gi, "API key");
+}
+
 async function takeoffHandler(req, res, deps) {
   deps = deps || {};
   const getManufacturer = deps.getManufacturer;
@@ -91,7 +101,7 @@ async function takeoffHandler(req, res, deps) {
     });
   } catch (err) {
     console.error("takeoff error", err);
-    return res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    return res.status(500).json({ ok: false, error: outward(err) });
   }
 }
 
@@ -133,7 +143,7 @@ async function reviseHandler(req, res, deps) {
     });
   } catch (err) {
     console.error("revise error", err);
-    return res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    return res.status(500).json({ ok: false, error: outward(err) });
   }
 }
 
@@ -166,7 +176,7 @@ async function chatHandler(req, res, deps) {
     return res.json({ ok: true, edited: false, reply: out.reply, cost_usd: out.cost_usd });
   } catch (err) {
     console.error("chat error", err);
-    return res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    return res.status(500).json({ ok: false, error: outward(err) });
   }
 }
 
@@ -190,7 +200,7 @@ async function indexHandler(req, res) {
                       cost_usd: out.cost_usd, model: out.modelId });
   } catch (err) {
     console.error("takeoff index error", err);
-    return res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    return res.status(500).json({ ok: false, error: outward(err) });
   }
 }
 
