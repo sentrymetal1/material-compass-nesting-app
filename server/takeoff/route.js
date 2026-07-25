@@ -63,7 +63,7 @@ async function takeoffHandler(req, res, deps) {
     }
 
     // 1. Proven engine.
-    const out = await runTakeoff({ docs: docs, modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext });
+    const out = await runTakeoff({ docs: docs, modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog });
     const rows = out.rows;
 
     // 2. Build CSVs + counts.

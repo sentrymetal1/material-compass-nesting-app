@@ -337,8 +337,54 @@ app.post('/api/takeoff', async (req, res) => {
     return origJson(payload);
   };
 
-  return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge, projectContext: projectContext });
+  // The shop's real size list. Best-effort: if the lookup read fails the take-off still runs on
+  // knowledge.md's format rules — degraded, not blocked.
+  let liveCatalog = '';
+  try { liveCatalog = await buildLiveCatalogContext(); }
+  catch (e) { console.error('live catalog unavailable, falling back to knowledge.md formats:', e.message || e); }
+
+  return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge,
+    projectContext: projectContext, liveCatalog: liveCatalog });
 });
+
+// LIVE MATERIAL CATALOG for the take-off prompt — the shop's ACTUAL Form Type × Material Type ×
+// size list, so the AI copies a real size instead of composing one from a format rule (composed
+// sizes are what arrive with an empty/unresolvable Material). Cached for an hour and prompt-cached
+// downstream, so the Zoho cost is one refresh per hour, not per take-off.
+async function buildLiveCatalogContext() {
+  return cachedLookup('takeoff:catalog-context', 60 * 60 * 1000, async () => {
+    // Same reports the BOM-editor lookups use — proven link names, don't guess new ones.
+    const ftRows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
+    const mtRows = await fetchAllZohoPages('/report/Material_Types_Report');
+    // 25k cap: the sizes table runs past the default 5k safety stop, and a truncated catalog would
+    // quietly make real sizes look invalid — worse than no catalog at all.
+    const sizes = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report', 25000);
+
+    const ft = {}, mt = {};
+    ftRows.forEach(function (r) { ft[String(r.ID)] = String(r.Form_Type || '').trim(); });
+    mtRows.forEach(function (r) { mt[String(r.ID)] = String(r.Material_Type || '').trim(); });
+
+    const groups = {}, order = [];
+    sizes.forEach(function (r) {
+      const desc = String(r.Description || '').trim();
+      if (!desc) return;
+      const f = ft[String((r.Form_Types && r.Form_Types.ID) || '')] || '';
+      const m = mt[String((r.Material_Types && r.Material_Types.ID) || '')] || '';
+      if (!f) return;
+      const key = f + ' | ' + (m || 'any material');
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      if (groups[key].indexOf(desc) < 0) groups[key].push(desc);
+    });
+    if (!order.length) return '';
+
+    const body = order.sort().map(function (k) { return '### ' + k + '\n' + groups[k].join(' · '); }).join('\n\n');
+    const total = order.reduce(function (n, k) { return n + groups[k].length; }, 0);
+    return "THIS SHOP'S LIVE MATERIAL CATALOG — " + total + " sizes across " + order.length +
+      " Form Type × Material Type combinations. A row's `size` MUST be one of these strings, copied " +
+      "verbatim. They are grouped as `Form Type | Material Type`; pick the size from the group that " +
+      "matches the row's form and material.\n\n" + body + '\n';
+  });
+}
 
 // CONFIRMED SCOPE TREE — the user-arranged Component→Drawing breakdown, passed in the request body
 // as scope_tree = [{ component: "Upper Frame weldment", drawings: ["RIS-48300-S1-A-1", ...] }, ...].
@@ -802,11 +848,13 @@ class ZohoApiError extends Error {
   }
 }
 
-async function fetchAllZohoPages(reportPath) {
+async function fetchAllZohoPages(reportPath, capOverride) {
   const token = await getAccessToken();
   let all = [];
   const pageSize = 200;  // Zoho v2.1 API rejects > 200 with code 2945 MORE_THAN_MAX_LENGTH
-  const hardCap = 5000;  // safety stop; 200/page → max 25 calls
+  // Safety stop; 200/page → 25 calls by default. Callers that genuinely need a whole table (the
+  // take-off's material catalog — a truncated one makes real sizes look invalid) pass a bigger cap.
+  const hardCap = Number(capOverride) > 0 ? Number(capOverride) : 5000;
   // Creator API v2.1 paginates via the `record_cursor` response header, NOT the
   // v2-style `from` param (v2.1 ignores `from`, re-returning the first page every
   // time). Pass the cursor back as a request header to fetch the next batch; it's

@@ -159,7 +159,7 @@ function buildTakeoffTool(includeSynopsis) {
 
 const TAKEOFF_TOOL = buildTakeoffTool(true);
 
-function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, projectContext) {
+function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, projectContext, liveCatalog) {
   const base =
     "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
     "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
@@ -189,10 +189,24 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
       "`conflicts`, `compliance` items, `totals`, and per-section `confidence`. Be specific and cite sheets."
     : " Put any brief ambiguities in the top-level `notes` field.";
 
+  // knowledge.md teaches the SHAPE of a size ("L{a} x {b} x {t}"), which let the model compose sizes
+  // that look right but don't exist in this shop's lookup — those land as blank/unresolved material.
+  // The live catalog closes that: it's the actual list of sizes, so `size` becomes a copy, not a guess.
+  const sizeRule = liveCatalog
+    ? "\n\nMATERIAL SIZES ARE A CLOSED LIST. Your `size` MUST be copied VERBATIM from the catalog block " +
+      "below (the shop's own lookup) — matching character for character including spaces, quotes and " +
+      "fractions. Never compose, reformat or round a size, and never leave `size` empty. If a member's " +
+      "size genuinely isn't in the list, pick the nearest listed size, set confidence ≤ 0.3, and say which " +
+      "size the drawing actually called for in the row's `note` — an explicit near-miss can be corrected, " +
+      "a blank cannot.\n"
+    : "";
+
   const blocks = [
-    { type: "text", text: base + outputBOM + outputSynopsis + " Then call submit_takeoff. Do not reply in prose." },
+    { type: "text", text: base + outputBOM + outputSynopsis + sizeRule + " Then call submit_takeoff. Do not reply in prose." },
     { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
   ];
+  // The shop's live Form Type × Material Type × size catalog — big and stable ⇒ prompt-cached.
+  if (liveCatalog && String(liveCatalog).trim()) blocks.push({ type: "text", text: String(liveCatalog), cache_control: { type: "ephemeral" } });
   // Universal learned knowledge (Tier 1) — same for all shops → cached.
   if (universalKnowledge && String(universalKnowledge).trim()) blocks.push({ type: "text", text: String(universalKnowledge), cache_control: { type: "ephemeral" } });
   // This project's pre-defined components + drawings — per-project, NOT cached.
@@ -228,7 +242,7 @@ async function runTakeoff(opts) {
   const resp = await anthropic.messages.create({
     model: model.id,
     max_tokens: 16000,
-    system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge, opts.projectContext),
+    system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge, opts.projectContext, opts.liveCatalog),
     tools: [buildTakeoffTool(includeSynopsis)],
     tool_choice: { type: "tool", name: "submit_takeoff" },
     messages: [{
