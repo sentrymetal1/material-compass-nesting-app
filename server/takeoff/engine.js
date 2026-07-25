@@ -195,7 +195,8 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
   const sizeRule = liveCatalog
     ? "\n\nMATERIAL SIZES ARE A CLOSED LIST. Your `size` MUST be copied VERBATIM from the catalog block " +
       "below (the shop's own lookup) — matching character for character including spaces, quotes and " +
-      "fractions. Never compose, reformat or round a size, and never leave `size` empty. If a member's " +
+      "fractions — the catalog writes dimensions as FRACTIONS, not decimals (`1-1/2 x 1/8`, never " +
+      "`1.5 x 1/8`). Never compose, reformat or round a size, and never leave `size` empty. If a member's " +
       "size genuinely isn't in the list, pick the nearest listed size, set confidence ≤ 0.3, and say which " +
       "size the drawing actually called for in the row's `note` — an explicit near-miss can be corrected, " +
       "a blank cannot.\n"

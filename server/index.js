@@ -339,12 +339,14 @@ app.post('/api/takeoff', async (req, res) => {
 
   // The shop's real size list. Best-effort: if the lookup read fails the take-off still runs on
   // knowledge.md's format rules — degraded, not blocked.
-  let liveCatalog = '';
-  try { liveCatalog = await buildLiveCatalogContext(); }
-  catch (e) { console.error('live catalog unavailable, falling back to knowledge.md formats:', e.message || e); }
+  let liveCatalog = '', catalogGroups = null;
+  try {
+    liveCatalog = await buildLiveCatalogContext();
+    catalogGroups = await buildCatalogGroups();   // same cached object; used to snap sizes post-run
+  } catch (e) { console.error('live catalog unavailable, falling back to knowledge.md formats:', e.message || e); }
 
   return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge,
-    projectContext: projectContext, liveCatalog: liveCatalog });
+    projectContext: projectContext, liveCatalog: liveCatalog, catalogGroups: catalogGroups });
 });
 
 // LIVE MATERIAL CATALOG for the take-off prompt — the shop's ACTUAL Form Type × Material Type ×

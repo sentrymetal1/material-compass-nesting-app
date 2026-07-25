@@ -18,6 +18,7 @@
 const { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, LOW_CONF } = require("./engine");
 const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
+const { snapRows } = require("./snap");
 
 // Errors from the upstream model API are shown to the user verbatim, and they name the vendor and
 // its model ids ("anthropic", "claude-sonnet-…"). The product is Material Compass AI, so rewrite
@@ -66,6 +67,11 @@ async function takeoffHandler(req, res, deps) {
     const out = await runTakeoff({ docs: docs, modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog });
     const rows = out.rows;
 
+    // 1b. Snap materials to the catalog's exact spelling BEFORE the CSV is built — the import
+    // matches on the string, so "1.5 x 1/8" and "1-1/2 x 1/8" are not the same row to it.
+    const snap = deps.catalogGroups ? snapRows(rows, deps.catalogGroups) : { snapped: [], unmatched: [] };
+    if (snap.snapped.length) console.log("[takeoff] snapped " + snap.snapped.length + " materials to catalog spelling");
+
     // 2. Build CSVs + counts.
     const import_csv = buildImportCsv(rows);
     const verify_csv = buildVerifyList(rows);
@@ -96,6 +102,8 @@ async function takeoffHandler(req, res, deps) {
       cost_usd: out.cost_usd,
       import_csv: import_csv,
       verify_csv: verify_csv,
+      material_snapped: snap.snapped.length,
+      material_unmatched: snap.unmatched.length,
       credits_left: balance ? balance.credits_left : null,
       free_left: balance ? balance.free_left : null,
     });
