@@ -180,7 +180,8 @@ async function indexHandler(req, res) {
     const docs = (Array.isArray(body.pdfs) && body.pdfs.length) ? body.pdfs : (body.pdf_base64 ? [body.pdf_base64] : []);
     if (!docs.length) return res.status(400).json({ ok: false, error: "pdfs[] or pdf_base64 required" });
     const out = await readSheetIndex({ docs: docs, modelKey: body.model || "sonnet" });
-    return res.json({ ok: true, sheets: out.sheets, cost_usd: out.cost_usd, model: out.modelId });
+    return res.json({ ok: true, sheets: out.sheets, duplicates_merged: out.duplicates_merged,
+                      cost_usd: out.cost_usd, model: out.modelId });
   } catch (err) {
     console.error("takeoff index error", err);
     return res.status(500).json({ ok: false, error: String((err && err.message) || err) });

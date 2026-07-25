@@ -485,7 +485,28 @@ const SHEET_SYSTEM =
   "RULES: (1) Use the EXACT number printed in the title block, verbatim — never normalize, expand, or invent one. " +
   "(2) One entry per distinct sheet, in page order; give the full page range if a sheet spans several pages. " +
   "(3) If a page has no legible sheet number, SKIP it — never fabricate. (4) Give a per-sheet confidence. " +
+  "(5) NEVER report the same sheet number twice. A drawing that continues over several pages (or whose title " +
+  "block repeats) is ONE entry with the full page range — distinct sheets always have distinct numbers. " +
+  "Before returning, check your list for repeated numbers and merge them. " +
   "Return via submit_sheet_index.";
+
+// The model still repeats a number now and then (continuation pages, re-drawn title blocks),
+// which showed up in the widget as "30 drawings" for a 27-drawing package. Collapse repeats
+// deterministically: one entry per number, page range unioned, best title/confidence kept.
+function mergeSheets(list) {
+  const byKey = {}, order = [];
+  let merged = 0;
+  list.forEach(function (s) {
+    const key = String(s.number).toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const prev = byKey[key];
+    if (!prev) { byKey[key] = s; order.push(key); return; }
+    merged++;
+    prev.pages = [Math.min(prev.pages[0], s.pages[0]), Math.max(prev.pages[1], s.pages[1])];
+    if (s.title && s.title.length > prev.title.length) prev.title = s.title;   // keep the fullest title
+    if (s.confidence != null) prev.confidence = (prev.confidence == null) ? s.confidence : Math.max(prev.confidence, s.confidence);
+  });
+  return { sheets: order.map(function (k) { return byKey[k]; }), merged: merged };
+}
 
 async function readSheetIndex(opts) {
   opts = opts || {};
@@ -522,8 +543,11 @@ async function readSheetIndex(opts) {
     return { number: num, title: String((s && s.title) == null ? "" : s.title).trim(), pages: [ps, pe], confidence: conf };
   }).filter(Boolean);
 
+  const dedup = mergeSheets(sheets);
+
   return {
-    sheets: sheets,
+    sheets: dedup.sheets,
+    duplicates_merged: dedup.merged,
     cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
     usage: resp.usage,
     modelKey: MODELS[modelKey] ? modelKey : "sonnet",
@@ -531,4 +555,4 @@ async function readSheetIndex(opts) {
   };
 }
 
-module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
+module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, mergeSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
