@@ -244,6 +244,9 @@ app.post('/api/takeoff/project-scope/update', async (req, res) => {
 
     const token = await getAccessToken();
     const data = {}; data[spec.field] = v;
+    // A drawing can also be RE-PARENTED here: the intake screen lets the estimator pick a drawing
+    // that sits on the project with no component and file it under one, which is the same PATCH.
+    if (kind === 'drawing' && req.body.component_id) data.Components = String(req.body.component_id);
     const zr = await axios.patch(creatorApiBase() + '/report/' + spec.report + '/' + id,
       { data: data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the rename', detail: zr.data });
