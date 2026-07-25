@@ -354,8 +354,11 @@ app.post('/api/takeoff', async (req, res) => {
 // TTL is 12h on purpose: the table is thousands of rows, so a rebuild is dozens of paged Zoho
 // reads and the daily API budget is tight ([[feedback_zoho_api_call_budget]]). The size catalog
 // changes rarely — twice a day is plenty, and every take-off in between is free.
-async function buildLiveCatalogContext() {
-  return cachedLookup('takeoff:catalog-context', 12 * 60 * 60 * 1000, async () => {
+// The grouped catalog itself: { "Form Type|Material Type": [size, ...] }. Built once and used BOTH
+// for the model's prompt block and for the review page's material check, so the validator and the
+// model can never disagree about what a valid size is.
+async function buildCatalogGroups() {
+  return cachedLookup('takeoff:catalog-groups', 12 * 60 * 60 * 1000, async () => {
     // Same reports the BOM-editor lookups use — proven link names, don't guess new ones.
     const ftRows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
     const mtRows = await fetchAllZohoPages('/report/Material_Types_Report');
@@ -367,27 +370,44 @@ async function buildLiveCatalogContext() {
     ftRows.forEach(function (r) { ft[String(r.ID)] = String(r.Form_Type || '').trim(); });
     mtRows.forEach(function (r) { mt[String(r.ID)] = String(r.Material_Type || '').trim(); });
 
-    const groups = {}, order = [];
+    const groups = {};
     sizes.forEach(function (r) {
       const desc = String(r.Description || '').trim();
       if (!desc) return;
       const f = ft[String((r.Form_Types && r.Form_Types.ID) || '')] || '';
       const m = mt[String((r.Material_Types && r.Material_Types.ID) || '')] || '';
       if (!f) return;
-      const key = f + ' | ' + (m || 'any material');
-      if (!groups[key]) { groups[key] = []; order.push(key); }
+      const key = f + '|' + (m || 'any material');
+      if (!groups[key]) groups[key] = [];
       if (groups[key].indexOf(desc) < 0) groups[key].push(desc);
     });
-    if (!order.length) return '';
-
-    const body = order.sort().map(function (k) { return '### ' + k + '\n' + groups[k].join(' · '); }).join('\n\n');
-    const total = order.reduce(function (n, k) { return n + groups[k].length; }, 0);
-    return "THIS SHOP'S LIVE MATERIAL CATALOG — " + total + " sizes across " + order.length +
-      " Form Type × Material Type combinations. A row's `size` MUST be one of these strings, copied " +
-      "verbatim. They are grouped as `Form Type | Material Type`; pick the size from the group that " +
-      "matches the row's form and material.\n\n" + body + '\n';
+    return groups;
   });
 }
+
+// The same catalog rendered for the model.
+async function buildLiveCatalogContext() {
+  const groups = await buildCatalogGroups();
+  const keys = Object.keys(groups).sort();
+  if (!keys.length) return '';
+  const body = keys.map(function (k) {
+    return '### ' + k.replace('|', ' | ') + '\n' + groups[k].join(' · ');
+  }).join('\n\n');
+  const total = keys.reduce(function (n, k) { return n + groups[k].length; }, 0);
+  return "THIS SHOP'S LIVE MATERIAL CATALOG — " + total + " sizes across " + keys.length +
+    " Form Type × Material Type combinations. A row's `size` MUST be one of these strings, copied " +
+    "verbatim. They are grouped as `Form Type | Material Type`; pick the size from the group that " +
+    "matches the row's form and material.\n\n" + body + '\n';
+}
+
+// The review page's material check reads the SAME list the model was given.
+app.get('/api/takeoff/catalog-index', async (req, res) => {
+  try {
+    res.json({ ok: true, groups: await buildCatalogGroups() });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+  }
+});
 
 // What the take-off is actually told the shop stocks — counts + a sample, so the catalog can be
 // checked without spending a take-off. Builds (and caches) the same block the run uses.
