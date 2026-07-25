@@ -351,8 +351,11 @@ app.post('/api/takeoff', async (req, res) => {
 // size list, so the AI copies a real size instead of composing one from a format rule (composed
 // sizes are what arrive with an empty/unresolvable Material). Cached for an hour and prompt-cached
 // downstream, so the Zoho cost is one refresh per hour, not per take-off.
+// TTL is 12h on purpose: the table is thousands of rows, so a rebuild is dozens of paged Zoho
+// reads and the daily API budget is tight ([[feedback_zoho_api_call_budget]]). The size catalog
+// changes rarely — twice a day is plenty, and every take-off in between is free.
 async function buildLiveCatalogContext() {
-  return cachedLookup('takeoff:catalog-context', 60 * 60 * 1000, async () => {
+  return cachedLookup('takeoff:catalog-context', 12 * 60 * 60 * 1000, async () => {
     // Same reports the BOM-editor lookups use — proven link names, don't guess new ones.
     const ftRows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
     const mtRows = await fetchAllZohoPages('/report/Material_Types_Report');
@@ -385,6 +388,22 @@ async function buildLiveCatalogContext() {
       "matches the row's form and material.\n\n" + body + '\n';
   });
 }
+
+// What the take-off is actually told the shop stocks — counts + a sample, so the catalog can be
+// checked without spending a take-off. Builds (and caches) the same block the run uses.
+app.get('/api/takeoff/catalog-check', async (req, res) => {
+  try {
+    const txt = await buildLiveCatalogContext();
+    const groups = (txt.match(/^### /gm) || []).length;
+    res.json({
+      ok: true, built: !!txt, groups: groups,
+      approx_tokens: Math.round(txt.length / 4),
+      head: txt.slice(0, 600),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+  }
+});
 
 // CONFIRMED SCOPE TREE — the user-arranged Component→Drawing breakdown, passed in the request body
 // as scope_tree = [{ component: "Upper Frame weldment", drawings: ["RIS-48300-S1-A-1", ...] }, ...].
