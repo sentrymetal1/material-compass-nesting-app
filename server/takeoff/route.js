@@ -170,17 +170,23 @@ async function chatHandler(req, res, deps) {
   }
 }
 
-// POST /api/takeoff/index — the intake sheet-index pass. Body: { pdfs[] | pdf_base64, model? }.
-// Returns { sheets:[{number,title,pages:[start,end],confidence}], cost_usd, model }. Reads only sheet
-// numbers + page ranges — no take-off, no components. The widget matches these against the user's list.
+// POST /api/takeoff/index — the intake sheet-index pass. Body: { pdfs[] | pdf_base64, names?, model? }.
+// Returns { sheets:[{doc,number,title,pages:[start,end],page_list,confidence}], pages:[per-page reads],
+// audit:{page_count,sheets,pages_blank,pages_missing,ok,...}, cost_usd, model }. The model reads one row
+// PER PAGE; sheets are grouped in code and reconciled against the page count parsed from the PDF itself,
+// so the drawing count is checkable rather than asserted. No take-off, no components.
 // Not metered (like revise/chat) — it's a cheap setup step, not a billable take-off.
 async function indexHandler(req, res) {
   try {
     const body = req.body || {};
     const docs = (Array.isArray(body.pdfs) && body.pdfs.length) ? body.pdfs : (body.pdf_base64 ? [body.pdf_base64] : []);
     if (!docs.length) return res.status(400).json({ ok: false, error: "pdfs[] or pdf_base64 required" });
-    const out = await readSheetIndex({ docs: docs, modelKey: body.model || "sonnet" });
-    return res.json({ ok: true, sheets: out.sheets, duplicates_merged: out.duplicates_merged,
+    const out = await readSheetIndex({
+      docs: docs,
+      names: Array.isArray(body.names) ? body.names : [],
+      modelKey: body.model || "sonnet",
+    });
+    return res.json({ ok: true, sheets: out.sheets, pages: out.pages, audit: out.audit,
                       cost_usd: out.cost_usd, model: out.modelId });
   } catch (err) {
     console.error("takeoff index error", err);

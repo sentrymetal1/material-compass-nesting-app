@@ -452,60 +452,92 @@ async function chatTakeoff(opts) {
 //  Input dominates cost (same PDF as a take-off), but output is tiny and there's
 //  no synopsis reasoning, so it's much cheaper than a full run.
 // -----------------------------------------------------------------------------
+//  The model is asked for ONE ROW PER PAGE — never for a list of "sheets". Sheets are then
+//  derived in code by grouping consecutive pages that carry the same title-block number, and
+//  the whole thing is reconciled against the REAL page count parsed from the PDF file itself.
+//  That's what makes the drawing count checkable: pages are ground truth, drawings are derived.
 const SHEET_INDEX_TOOL = {
   name: "submit_sheet_index",
-  description: "Report the drawing sheets present in the uploaded PDF(s): each sheet's number, title, and page range. Do NOT take off materials.",
+  description: "Report the title-block drawing number found on EVERY page of the uploaded PDF(s), one entry per page. Do NOT take off materials.",
   input_schema: {
     type: "object",
     properties: {
-      sheets: {
+      pages: {
         type: "array",
-        description: "One entry per distinct drawing sheet found, in page order.",
+        description: "EXACTLY one entry per page of the package, in page order — including pages with no drawing number.",
         items: {
           type: "object",
           properties: {
-            number:     { type: "string",  description: "The EXACT sheet/drawing number from the title block, verbatim (e.g. 'RIS-48300-S1-A-1', 'S-201'). Never normalize, expand, or invent." },
-            title:      { type: "string",  description: "Short sheet title if legible, else empty." },
-            page_start: { type: "integer", description: "1-based page in the uploaded PDF where this sheet begins." },
-            page_end:   { type: "integer", description: "1-based page where this sheet ends (= page_start for a single-page sheet)." },
-            confidence: { type: "number",  description: "0-1 confidence the number was read correctly." },
+            doc:        { type: "integer", description: "1-based index of the attached document this page is in (1 = first PDF attached). Use 1 if only one document." },
+            page:       { type: "integer", description: "1-based page number WITHIN that document." },
+            number:     { type: "string",  description: "The EXACT drawing number from this page's title block, verbatim (e.g. 'RIS-48300-S1-A-1', 'S-201'). Empty string if the page has no legible drawing number (cover, index, notes, blank). Never normalize, expand, or invent." },
+            title:      { type: "string",  description: "Short sheet title from the title block if legible, else empty." },
+            continued:  { type: "boolean", description: "True if this page is a continuation of the SAME drawing number as the previous page." },
+            confidence: { type: "number",  description: "0-1 confidence the number was read correctly (0 when there is no number)." },
           },
-          required: ["number", "page_start", "page_end"],
+          required: ["page", "number"],
         },
       },
     },
-    required: ["sheets"],
+    required: ["pages"],
   },
 };
 
 const SHEET_SYSTEM =
-  "You are INDEXING a structural steel drawing package — not taking it off. Read ONLY the sheet/drawing NUMBER " +
-  "from each page's title block (and any drawing-index / sheet-list page) and report which pages each sheet spans. " +
-  "Do NOT list members, quantities, sizes, or materials. Do NOT infer or propose components. " +
-  "RULES: (1) Use the EXACT number printed in the title block, verbatim — never normalize, expand, or invent one. " +
-  "(2) One entry per distinct sheet, in page order; give the full page range if a sheet spans several pages. " +
-  "(3) If a page has no legible sheet number, SKIP it — never fabricate. (4) Give a per-sheet confidence. " +
-  "(5) NEVER report the same sheet number twice. A drawing that continues over several pages (or whose title " +
-  "block repeats) is ONE entry with the full page range — distinct sheets always have distinct numbers. " +
-  "Before returning, check your list for repeated numbers and merge them. " +
-  "Return via submit_sheet_index.";
+  "You are INDEXING a structural steel drawing package — not taking it off. Go through the attached PDF(s) PAGE BY PAGE " +
+  "and report the drawing number in each page's title block. Do NOT list members, quantities, sizes, or materials. " +
+  "Do NOT infer or propose components.\n" +
+  "RULES: (1) Return EXACTLY ONE ENTRY PER PAGE, in page order, for EVERY page — no page skipped, no page reported twice. " +
+  "The number of entries you return MUST equal the number of pages stated in the request. " +
+  "(2) Use the EXACT number printed in the title block, verbatim — never normalize, expand, or invent one. " +
+  "(3) If a page has no legible drawing number (cover sheet, drawing index, notes page, blank), return that page with " +
+  "number as an empty string and confidence 0 — never fabricate a number and never omit the page. " +
+  "(4) If a page continues the SAME drawing as the previous page, repeat that same number and set continued=true. " +
+  "Do NOT group pages yourself — one row per page; the grouping is done downstream. " +
+  "(5) Give a per-page confidence. Return via submit_sheet_index.";
 
-// The model still repeats a number now and then (continuation pages, re-drawn title blocks),
-// which showed up in the widget as "30 drawings" for a 27-drawing package. Collapse repeats
-// deterministically: one entry per number, page range unioned, best title/confidence kept.
-function mergeSheets(list) {
-  const byKey = {}, order = [];
-  let merged = 0;
-  list.forEach(function (s) {
-    const key = String(s.number).toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const prev = byKey[key];
-    if (!prev) { byKey[key] = s; order.push(key); return; }
-    merged++;
-    prev.pages = [Math.min(prev.pages[0], s.pages[0]), Math.max(prev.pages[1], s.pages[1])];
-    if (s.title && s.title.length > prev.title.length) prev.title = s.title;   // keep the fullest title
-    if (s.confidence != null) prev.confidence = (prev.confidence == null) ? s.confidence : Math.max(prev.confidence, s.confidence);
+// GROUND TRUTH — the page count comes from the PDF file itself, never from the model.
+// pdf-lib parses the real page tree (works with compressed object streams, unlike a byte
+// scan). Returns null if the file can't be parsed, so callers can degrade instead of lying.
+async function pdfPageCount(b64) {
+  try {
+    const { PDFDocument } = require("pdf-lib");
+    const doc = await PDFDocument.load(Buffer.from(String(b64), "base64"),
+      { ignoreEncryption: true, updateMetadata: false, throwOnInvalidObject: false });
+    const n = doc.getPageCount();
+    return (typeof n === "number" && n > 0) ? n : null;
+  } catch (err) {
+    console.error("pdfPageCount failed:", (err && err.message) || err);
+    return null;
+  }
+}
+
+// Derive SHEETS from the per-page reads: consecutive pages carrying the same title-block
+// number are one drawing. A number that reappears after a gap is still ONE drawing (its
+// page list keeps both runs) but is reported in `split` so it can be shown as unusual.
+function groupPagesIntoSheets(entries) {
+  const key = function (n) { return String(n).toUpperCase().replace(/[^A-Z0-9]/g, ""); };
+  const sorted = entries.slice().sort(function (a, b) { return (a.doc - b.doc) || (a.page - b.page); });
+  const byKey = {}, order = [], split = [];
+  let last = null;
+  sorted.forEach(function (e) {
+    if (!e.number) { last = null; return; }                 // unreadable page breaks the run
+    const k = e.doc + "|" + key(e.number);
+    const s = byKey[k];
+    if (!s) {
+      byKey[k] = { doc: e.doc, number: e.number, title: e.title || "", pages: [e.page, e.page],
+                   page_list: [e.page], confidence: (e.confidence == null ? null : e.confidence) };
+      order.push(k);
+    } else {
+      if (last !== k && split.indexOf(s.number) < 0) split.push(s.number);   // non-adjacent repeat
+      s.pages = [Math.min(s.pages[0], e.page), Math.max(s.pages[1], e.page)];
+      s.page_list.push(e.page);
+      if (e.title && e.title.length > (s.title || "").length) s.title = e.title;   // keep the fullest title
+      if (e.confidence != null) s.confidence = (s.confidence == null) ? e.confidence : Math.max(s.confidence, e.confidence);
+    }
+    last = k;
   });
-  return { sheets: order.map(function (k) { return byKey[k]; }), merged: merged };
+  return { sheets: order.map(function (k) { return byKey[k]; }), split: split };
 }
 
 async function readSheetIndex(opts) {
@@ -516,9 +548,27 @@ async function readSheetIndex(opts) {
   const model = MODELS[modelKey] || MODELS.sonnet;
   const anthropic = opts.client || new Anthropic();
 
+  // Count the pages BEFORE asking the model anything — this is the number everything is checked against.
+  const docPages = [];
+  for (let i = 0; i < docs.length; i++) docPages.push(await pdfPageCount(docs[i]));
+  const names = Array.isArray(opts.names) ? opts.names : [];
+  const knownPages = docPages.every(function (n) { return n != null; });
+  const totalPages = knownPages ? docPages.reduce(function (a, b) { return a + b; }, 0) : null;
+
+  // Tell the model exactly how many pages it must account for, per document.
+  const manifest = docPages.map(function (n, i) {
+    return "Document " + (i + 1) + (names[i] ? ' ("' + names[i] + '")' : "") +
+      ": " + (n == null ? "page count unknown" : n + " page" + (n === 1 ? "" : "s"));
+  }).join("\n");
+  const ask = "Index the attached drawing package PAGE BY PAGE.\n" + manifest +
+    (totalPages != null
+      ? "\n\nReturn EXACTLY " + totalPages + " entries — one per page, in order, including any page with no drawing number."
+      : "\n\nReturn exactly one entry per page, in order, including any page with no drawing number.") +
+    "\nDo not take off materials.";
+
   const resp = await anthropic.messages.create({
     model: model.id,
-    max_tokens: 4000,
+    max_tokens: 8000,           // one row per page: a 100-page set needs the headroom
     system: SHEET_SYSTEM,
     tools: [SHEET_INDEX_TOOL],
     tool_choice: { type: "tool", name: "submit_sheet_index" },
@@ -526,28 +576,68 @@ async function readSheetIndex(opts) {
       role: "user",
       content: [].concat(
         docs.map(function (d) { return { type: "document", source: { type: "base64", media_type: "application/pdf", data: d } }; }),
-        [{ type: "text", text: "Index the sheets in the attached drawing package: list each sheet number and the pages it spans. Do not take off materials." }]
+        [{ type: "text", text: ask }]
       ),
     }],
   });
 
   const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
-  let sheets = unwrap(toolUse ? toolUse.input.sheets : [], []);
-  if (!Array.isArray(sheets)) sheets = [];
-  sheets = sheets.map(function (s) {
-    const num = String((s && s.number) == null ? "" : s.number).trim();
-    if (!num) return null;                          // no number = unusable, drop it
-    const ps = Math.max(1, parseInt(s && s.page_start, 10) || 1);
-    const pe = Math.max(ps, parseInt(s && s.page_end, 10) || ps);
-    const conf = (s && typeof s.confidence === "number") ? s.confidence : null;
-    return { number: num, title: String((s && s.title) == null ? "" : s.title).trim(), pages: [ps, pe], confidence: conf };
-  }).filter(Boolean);
+  let raw = unwrap(toolUse ? toolUse.input.pages : [], []);
+  if (!Array.isArray(raw)) raw = [];
 
-  const dedup = mergeSheets(sheets);
+  // Normalize, and keep only ONE entry per (doc,page) — the page is the primary key, so a
+  // page the model reported twice can no longer become a second drawing.
+  const seen = {}, entries = [];
+  let dupPages = 0;
+  raw.forEach(function (p) {
+    const doc = Math.min(Math.max(1, parseInt(p && p.doc, 10) || 1), docs.length);
+    const page = parseInt(p && p.page, 10);
+    if (!page || page < 1) return;
+    if (docPages[doc - 1] != null && page > docPages[doc - 1]) return;   // page that doesn't exist
+    const k = doc + ":" + page;
+    if (seen[k]) { dupPages++; return; }
+    seen[k] = 1;
+    entries.push({
+      doc: doc, page: page,
+      number: String((p && p.number) == null ? "" : p.number).trim(),
+      title: String((p && p.title) == null ? "" : p.title).trim(),
+      confidence: (p && typeof p.confidence === "number") ? p.confidence : null,
+    });
+  });
+
+  const grouped = groupPagesIntoSheets(entries);
+
+  // Reconcile against the real page count: every page either belongs to a drawing, has no
+  // drawing number (cover/index/notes), or was never reported. All three are reported.
+  const blank = [], missing = [];
+  entries.forEach(function (e) { if (!e.number) blank.push({ doc: e.doc, page: e.page }); });
+  docPages.forEach(function (n, i) {
+    if (n == null) return;
+    for (let p = 1; p <= n; p++) if (!seen[(i + 1) + ":" + p]) missing.push({ doc: i + 1, page: p });
+  });
+  const named = entries.filter(function (e) { return !!e.number; }).length;
+
+  const audit = {
+    page_count: totalPages,                       // null ⇒ a PDF wouldn't parse; nothing is claimed
+    docs: docPages.map(function (n, i) {
+      return { doc: i + 1, name: names[i] || null, pages: n,
+               pages_named: entries.filter(function (e) { return e.doc === i + 1 && e.number; }).length };
+    }),
+    sheets: grouped.sheets.length,
+    pages_named: named,
+    pages_blank: blank,                           // real pages with no title-block number
+    pages_missing: missing,                       // pages the model never reported back
+    pages_reported_twice: dupPages,               // collapsed on the page key
+    split_numbers: grouped.split,                 // same number in non-adjacent page runs
+    // "ok" = every page of every PDF was accounted for exactly once. Only then is the
+    // drawing count trustworthy without a human eyeballing it.
+    ok: (totalPages != null && missing.length === 0 && dupPages === 0),
+  };
 
   return {
-    sheets: dedup.sheets,
-    duplicates_merged: dedup.merged,
+    sheets: grouped.sheets,
+    pages: entries,
+    audit: audit,
     cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
     usage: resp.usage,
     modelKey: MODELS[modelKey] ? modelKey : "sonnet",
@@ -555,4 +645,4 @@ async function readSheetIndex(opts) {
   };
 }
 
-module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, mergeSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
+module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, pdfPageCount, groupPagesIntoSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
