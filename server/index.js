@@ -362,9 +362,7 @@ async function buildCatalogGroups() {
     // Same reports the BOM-editor lookups use — proven link names, don't guess new ones.
     const ftRows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
     const mtRows = await fetchAllZohoPages('/report/Material_Types_Report');
-    // 25k cap: the sizes table runs past the default 5k safety stop, and a truncated catalog would
-    // quietly make real sizes look invalid — worse than no catalog at all.
-    const sizes = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report', 25000);
+    const sizes = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report');
 
     const ft = {}, mt = {};
     ftRows.forEach(function (r) { ft[String(r.ID)] = String(r.Form_Type || '').trim(); });
@@ -887,13 +885,19 @@ class ZohoApiError extends Error {
   }
 }
 
+// The cap is a runaway guard, not a size limit — it exists so a bad criteria can't page forever.
+// It was 5000, which the material catalog quietly outgrew (8,858 sizes and climbing): every read
+// silently returned the first 5000, so real sizes looked invalid and weights came back 0. Raised
+// well past any current table, and truncation is now recorded and reported instead of being a
+// console warning nobody sees. Reads that hit this are all cached, so the paging cost is rare.
+const PAGE_CAP = 40000;                 // 200/page → 200 calls worst case, on a cache miss only
+const TRUNCATED = {};                   // reportPath → { rows, cap, at } for /api/lookups/truncation
+
 async function fetchAllZohoPages(reportPath, capOverride) {
   const token = await getAccessToken();
   let all = [];
   const pageSize = 200;  // Zoho v2.1 API rejects > 200 with code 2945 MORE_THAN_MAX_LENGTH
-  // Safety stop; 200/page → 25 calls by default. Callers that genuinely need a whole table (the
-  // take-off's material catalog — a truncated one makes real sizes look invalid) pass a bigger cap.
-  const hardCap = Number(capOverride) > 0 ? Number(capOverride) : 5000;
+  const hardCap = Number(capOverride) > 0 ? Number(capOverride) : PAGE_CAP;
   // Creator API v2.1 paginates via the `record_cursor` response header, NOT the
   // v2-style `from` param (v2.1 ignores `from`, re-returning the first page every
   // time). Pass the cursor back as a request header to fetch the next batch; it's
@@ -927,12 +931,23 @@ async function fetchAllZohoPages(reportPath, capOverride) {
     cursor = resp.headers['record_cursor'] || resp.headers['Record_Cursor'] || null;
     if (!cursor) break;
     if (all.length >= hardCap) {
-      console.warn('[bom-lookups] fetchAllZohoPages hit hardCap', hardCap, 'for', reportPath);
+      // Hitting the cap means the caller is holding an INCOMPLETE table and doesn't know it —
+      // that's how "the catalog doesn't have this size" and "weight 0" bugs start. Make it loud
+      // and queryable rather than a warning in a log nobody reads.
+      TRUNCATED[reportPath] = { rows: all.length, cap: hardCap, at: new Date().toISOString() };
+      console.error('[zoho] TRUNCATED read — hit the ' + hardCap + '-row cap on ' + reportPath +
+        '. The caller is working from an incomplete table; raise PAGE_CAP.');
       break;
     }
   }
   return all;
 }
+
+// Any table read since boot that came back incomplete. Empty = every lookup is whole.
+app.get('/api/lookups/truncation', (req, res) => {
+  const list = Object.keys(TRUNCATED).map(function (k) { return Object.assign({ report: k }, TRUNCATED[k]); });
+  res.json({ ok: true, cap: PAGE_CAP, truncated: list, healthy: list.length === 0 });
+});
 
 function sendZohoAwareError(res, err) {
   if (err instanceof ZohoApiError) {
