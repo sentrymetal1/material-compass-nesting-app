@@ -29,14 +29,12 @@
     .toprow button.go { margin-top:2px; }
     .toprow .scanbtn { margin-top:10px; }
     .colhint { font-size:11.5px; color:#8893a0; margin-top:8px; line-height:1.5; }
-    /* The three working columns: the component list, the proposal, and what's still open. Worked
-       across rather than scrolled between, so they stay in line at any usable width. */
-    .cols { display:grid; grid-template-columns:minmax(340px,1.15fr) minmax(280px,1fr) minmax(300px,1.05fr);
-            gap:20px; align-items:start; margin-top:22px; }
-    @media (max-width:1400px) { .cols { grid-template-columns:minmax(320px,1.1fr) minmax(260px,1fr); }
-                                .cols > #covCol { grid-column:1 / -1; } }
-    @media (max-width:1050px) { .cols { grid-template-columns:1fr; gap:18px; }
-                                .cols > #covCol { grid-column:auto; } }
+    /* The four working columns, all in line: the component list, the proposal, what's still open,
+       and the drawings the PDF actually contains. Worked across, never scrolled between. */
+    .cols { display:grid; grid-template-columns:minmax(300px,1.05fr) minmax(230px,0.85fr) minmax(270px,1fr) minmax(300px,1.1fr);
+            gap:18px; align-items:start; margin-top:22px; }
+    @media (max-width:1500px) { .cols { grid-template-columns:repeat(2, minmax(0,1fr)); gap:20px; } }
+    @media (max-width:1050px) { .cols { grid-template-columns:1fr; gap:18px; } }
     /* The three read-out panels: equal columns, each scrolling independently so a 27-drawing
        list can't push the other two off the screen. Collapses 3 → 2 → 1 as the window narrows. */
     .panels { display:grid; grid-template-columns:1fr; gap:20px; align-items:start; margin-top:22px; }
@@ -379,12 +377,10 @@
         <div class="ptl">Still to resolve</div>
         <div class="pbody" id="coverage"></div>
       </div>
-    </div>
 
-    <!-- The raw read: every drawing found, with its page and where it's going. Full width beneath
-         the three working columns — it's reference, not somewhere decisions get made. -->
-    <div class="panels" id="panels">
-      <div class="panel">
+      <!-- In line with the rest: it's the source list the other three are checked against, so
+           having to scroll to the bottom of the page to see it defeated the purpose. -->
+      <div class="panel" id="allocCol">
         <div class="ptl">Drawings found in the PDF</div>
         <div class="pbody" id="allocPanel"></div>
       </div>
@@ -398,7 +394,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.45 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.46 (2026-07-26)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -619,6 +615,14 @@
     function compByName(name) {
       const k = _norm(name);
       return k ? (project.components.find((c) => _norm(c.name) === k) || null) : null;
+    }
+    // Same guard for drawings: adding a number a component already carries must not make a second
+    // record. Clicking "Add under this component" twice — or once per re-read — was producing
+    // 10E-2 four times over.
+    function drawingOnComp(cid, number) {
+      const c = compById(cid), k = _norm(number);
+      if (!c || !k) return null;
+      return c.drawings.find((d) => _norm(d.number) === k) || null;
     }
     function drawingById(id) {
       for (const c of project.components) {
@@ -1356,7 +1360,11 @@
         done++; tick(it.num);
       }
       for (const it of plan.create) {
-        try { await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: it.num, component_id: scope[it.ci].cid }); }
+        try {
+          if (!drawingOnComp(scope[it.ci].cid, it.num)) {
+            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: it.num, component_id: scope[it.ci].cid });
+          }
+        }
         catch (e) { failed.push(it.num + " — " + (e.message || e)); }
         done++; tick(it.num);
       }
@@ -1820,7 +1828,9 @@
         try {
           const rec = findDrawingByNumber(s.number);
           if (rec && !rec.owner) await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: scope[ci].cid });
-          else if (!rec) await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: scope[ci].cid });
+          else if (!rec && !drawingOnComp(scope[ci].cid, s.number)) {
+            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: scope[ci].cid });
+          }
           descMap[s.number] = s.title || "";
           if (asRef) markReference(s, "Reference only — no material taken off");
         } catch (err) { failed.push(s.number); }
@@ -1856,7 +1866,7 @@
           const rec = findDrawingByNumber(s.number);
           if (rec && !rec.owner) {                      // on the project but unfiled — file it here
             await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: cid });
-          } else if (!rec) {
+          } else if (!rec && !drawingOnComp(cid, s.number)) {
             await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: cid });
           }
           descMap[s.number] = s.title || "";
@@ -1881,10 +1891,7 @@
         if (col) col.style.display = has ? "block" : "none";
         return has;
       };
-      show("suggest"); show("coverage");                   // both live in the working row, not here
-      const a = show("allocPanel");
-      const row = document.getElementById("panels");
-      if (row) row.style.display = a ? "grid" : "none";
+      show("suggest"); show("coverage"); show("allocPanel");   // all four live in the working row now
     }
 
     function renderCoverage() {
@@ -2084,6 +2091,12 @@
           ci = Number(sel && sel.value);
         }
         if (ci == null || ci < 0 || !scope[ci] || !scope[ci].cid) { setScopeStatus("Pick a component first."); return; }
+        if (drawingOnComp(scope[ci].cid, sheet.number)) {    // already there — don't make a twin
+          if (asRef) markReference(sheet, "Reference only — no material taken off");
+          scopeFromProject(); renderScope();
+          setScopeStatus(escHtml(sheet.number) + " is already under " + escHtml(scope[ci].name) + ".");
+          return;
+        }
         setScopeStatus('<span class="spin"></span>Adding ' + escHtml(sheet.number) + " under " + escHtml(scope[ci].name) + "…");
         try {
           await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: sheet.number, component_id: scope[ci].cid });
