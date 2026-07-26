@@ -202,6 +202,7 @@ async function indexHandler(req, res) {
     const out = await readSheetIndex({
       docs: docs,
       names: Array.isArray(body.names) ? body.names : [],
+      knownComponents: Array.isArray(body.components) ? body.components : [],
       modelKey: body.model || "sonnet",
     });
     return res.json({ ok: true, sheets: out.sheets, pages: out.pages, audit: out.audit,

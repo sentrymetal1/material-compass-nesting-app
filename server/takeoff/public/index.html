@@ -275,6 +275,8 @@
     .sug { padding:10px 11px 11px; }
     .sgrow { padding:7px 9px; }
     .sgname { font-size:12px; padding:4px 6px; }
+    .sgname.fixed { flex:1; min-width:140px; font-weight:600; color:#2b3340; padding:5px 0; }
+    .sgexist { font-size:11px; padding:3px 5px; border:1px solid #cdd3da; border-radius:5px; max-width:170px; }
     .sgtag { font-size:10px; }
     .sgnums { font-size:11px; }
     .preflight { padding:10px 12px 12px; }
@@ -383,7 +385,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.39 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.40 (2026-07-26)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -549,6 +551,7 @@
     let excluded = { c: {}, d: {} };                  // record ids left OUT of this take-off (local only)
     let allocPlan = null;                             // pending "here's what this does to the project" confirmation
     let suggestNames = {};                            // per-suggestion renames before they are taken
+    let suggestTarget = {};                           // suggestion index → existing component id to file it under
     let suggestDismissed = false;                     // "no thanks" — proposal panel stays closed
     let sheets = [];                                  // every drawing read out of the PDFs (survives the allocation)
     // NOTHING is dropped. A drawing that carries no material to take off is still a drawing on the
@@ -1026,6 +1029,8 @@
           // two sheets into one drawing — and this read is what every later count is measured
           // against, so it's the wrong place to save a few cents.
           body: JSON.stringify({ pdfs: docs.map((d) => d.b64), names: docs.map((d) => d.name),
+                                 // so it proposes YOUR components rather than variants of them
+                                 components: project.components.map((c) => c.name),
                                  model: (document.getElementById("model") || {}).value || "sonnet" }),
         });
         const d = await r.json();
@@ -1552,13 +1557,27 @@
       if (!groups.length) { host.innerHTML = ""; updatePanels(); return; }
       const rows = groups.map((g, i) => {
         const nums = g.missing.map((s) => escHtml(s.number)).join(", ");
+        const target = suggestTarget[i] || "";              // an existing component chosen for this group
+        const into = target ? compById(target) : null;
+        // Always offer the project's own components: a proposal should never force a new component
+        // when one that fits already exists.
+        const pick = project.components.length
+          ? '<select class="sgexist" data-i="' + i + '" title="Put these drawings under an existing component instead">' +
+              '<option value="">＋ create as new</option>' +
+              project.components.map((c) => '<option value="' + escAttr(c.id) + '"' +
+                (String(c.id) === String(target) ? " selected" : "") + ">under " + escHtml(c.name) + "</option>").join("") +
+            "</select>"
+          : "";
         return '<div class="sgrow">' +
           '<div class="sghd">' +
-            '<input type="text" class="sgname" data-i="' + i + '" value="' + escAttr(g.name) + '" ' +
-              'title="Rename before you take it — this is the component name that gets created" />' +
-            (g.exists ? '<span class="sgtag">already on the project</span>' : '<span class="sgtag new">new component</span>') +
+            (into
+              ? '<span class="sgname fixed">' + escHtml(into.name) + "</span>"
+              : '<input type="text" class="sgname" data-i="' + i + '" value="' + escAttr(g.name) + '" ' +
+                'title="Rename before you take it — this is the component name that gets created" />') +
+            (into || g.exists ? '<span class="sgtag">already on the project</span>' : '<span class="sgtag new">new component</span>') +
+            pick +
             '<button type="button" class="covbtn" data-k="sgtake" data-i="' + i + '">' +
-              (g.exists ? "Add these drawings" : "Create with these drawings") + "</button>" +
+              (into || g.exists ? "Add these drawings" : "Create with these drawings") + "</button>" +
           "</div>" +
           '<div class="sgnums">' + g.missing.length + " drawing" + (g.missing.length === 1 ? "" : "s") + ": " + nums + "</div>" +
         "</div>";
@@ -1579,6 +1598,14 @@
       const t = e.target;
       if (!t.classList || !t.classList.contains("sgname")) return;
       suggestNames[Number(t.getAttribute("data-i"))] = t.value;     // rename before taking
+    });
+    // Redirect a whole suggested group into a component the project already has.
+    document.getElementById("suggest").addEventListener("change", (e) => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains("sgexist")) return;
+      const i = Number(t.getAttribute("data-i"));
+      if (t.value) suggestTarget[i] = t.value; else delete suggestTarget[i];
+      renderSuggestions();
     });
     document.getElementById("suggest").addEventListener("click", async (e) => {
       const el = e.target.closest("[data-k]"); if (!el) return;
@@ -1639,11 +1666,14 @@
       const groups = suggestionGroups();
       const g = groups[i];
       if (!g) return;
-      const name = String(suggestNames[i] || g.name).trim();
+      // An existing component chosen for this group wins over the proposed name — that's the whole
+      // point of the picker: never create a second component for an assembly you already have.
+      const chosen = suggestTarget[i] ? compById(suggestTarget[i]) : null;
+      const name = chosen ? chosen.name : String(suggestNames[i] || g.name).trim();
       if (!name) return;
       setScopeStatus('<span class="spin"></span>Adding “' + escHtml(name) + "” and its drawings to the project…");
       try {
-        let cid = g.exists ? String(g.exists.id) : null;
+        let cid = chosen ? String(chosen.id) : (g.exists ? String(g.exists.id) : null);
         if (!cid) {
           const out = await scopeApi("add", { project_id: params.project_id, kind: "component", value: name });
           cid = String(out.id);
@@ -1657,7 +1687,7 @@
           }
           descMap[s.number] = s.title || "";
         }
-        suggestNames = {};
+        suggestNames = {}; suggestTarget = {};   // indexes shift as groups are taken
         await loadProject(); scopeFromProject(); saveScope(); renderScope();
         if (!quiet) setScopeStatus("Added “" + escHtml(name) + "” with " + g.missing.length + " drawing" +
           (g.missing.length === 1 ? "" : "s") + " to the project.");

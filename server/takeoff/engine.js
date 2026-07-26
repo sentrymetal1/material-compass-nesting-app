@@ -585,7 +585,19 @@ async function readSheetIndex(opts) {
     return "Document " + (i + 1) + (names[i] ? ' ("' + names[i] + '")' : "") +
       ": " + (n == null ? "page count unknown" : n + " page" + (n === 1 ? "" : "s"));
   }).join("\n");
-  const ask = "Index the attached drawing package PAGE BY PAGE.\n" + manifest +
+  // The project's existing components. Without these the model invents a near-duplicate ("Platform
+  // Parts" beside an existing "Platform Assembly") and the estimator ends up with two components
+  // for one assembly. Reusing what's there is almost always right.
+  const known = (Array.isArray(opts.knownComponents) ? opts.knownComponents : [])
+    .map(function (c) { return String(c || "").trim(); }).filter(Boolean);
+  const knownBlock = known.length
+    ? "\n\nTHIS PROJECT ALREADY HAS THESE COMPONENTS:\n" + known.map(function (c) { return "- " + c; }).join("\n") +
+      "\nIf a sheet belongs to one of them, put that name in `suggested_component` EXACTLY as written above. " +
+      "Only invent a new name when a sheet genuinely fits none of them — do not coin a variant of an " +
+      "existing name (no 'Platform Parts' next to an existing 'Platform Assembly')."
+    : "";
+
+  const ask = "Index the attached drawing package PAGE BY PAGE.\n" + manifest + knownBlock +
     (totalPages != null
       ? "\n\nReturn EXACTLY " + totalPages + " entries — one per page, in order, including any page with no drawing number."
       : "\n\nReturn exactly one entry per page, in order, including any page with no drawing number.") +
