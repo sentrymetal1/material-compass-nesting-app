@@ -126,6 +126,7 @@
                     padding:2px 7px; white-space:nowrap; flex:0 0 auto; }
     .scopesum { font-size:11px; color:#556; background:#f7fafd; border:1px solid #e3ecf6;
                 border-radius:6px; padding:6px 9px; margin-bottom:9px; line-height:1.6; }
+    .scopedup { margin-top:5px; padding-top:5px; border-top:1px solid #e3ecf6; color:#8a4b09; }
     /* Record-bound pickers: components and drawings are chosen, not typed. */
     .comp .crow select { flex:1; padding:7px 8px; border:1px solid #cdd3da; border-radius:6px;
                          font-size:13px; font-weight:600; background:#fff; min-width:0; }
@@ -385,7 +386,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.40 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.41 (2026-07-26)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -582,6 +583,13 @@
     }
 
     function compById(cid) { return project.components.find((c) => String(c.id) === String(cid)) || null; }
+    // Every "create a component" path goes through this first. Without it, adding a component whose
+    // name already exists made a SECOND record — which is how a project ends up with two
+    // "Platform Assembly" entries in the picker, each holding half the drawings.
+    function compByName(name) {
+      const k = _norm(name);
+      return k ? (project.components.find((c) => _norm(c.name) === k) || null) : null;
+    }
     function drawingById(id) {
       for (const c of project.components) {
         const d = c.drawings.find((x) => String(x.id) === String(id));
@@ -609,13 +617,16 @@
     }
 
     // ---- scope rendering ----------------------------------------------------
+    // Every component stays selectable. Greying out the ones already in the list meant that once
+    // the whole project was on screen there was no way to MOVE a card — the only enabled option
+    // was the one already chosen. Picking one that's already here merges the two cards instead.
     function compOptions(selCid) {
       const used = {};
       scope.forEach((s) => { if (s.cid && String(s.cid) !== String(selCid)) used[String(s.cid)] = 1; });
       return '<option value="">— choose a component —</option>' +
         project.components.map((c) => '<option value="' + escAttr(c.id) + '"' +
-          (String(c.id) === String(selCid) ? " selected" : "") +
-          (used[String(c.id)] ? " disabled" : "") + ">" + escHtml(c.name) + "</option>").join("") +
+          (String(c.id) === String(selCid) ? " selected" : "") + ">" + escHtml(c.name) +
+          (used[String(c.id)] ? "  (already listed — merges)" : "") + "</option>").join("") +
         '<option value="__new">＋ New component…</option>';
     }
     // Filtered exactly like the project page: this component's drawings, plus any drawing sitting
@@ -708,7 +719,16 @@
         if (referenceSheets.length) bits.push("<b>" + referenceSheets.length + "</b> reference-only");
         if (dropped) bits.push("<b>" + dropped + "</b> ✕'d out of this run");
         if (sheets.length) bits.push("<b>" + sheets.length + "</b> read from the PDF");
-        sum = '<div class="scopesum">' + bits.join(" · ") + "</div>";
+        // Two records with the same name split an assembly's drawings in half and are impossible to
+        // spot in a picker. Call them out, with the fix: move the drawings across, then bin the empty one.
+        const byName = {};
+        project.components.forEach((c) => { const k = _norm(c.name); (byName[k] = byName[k] || []).push(c); });
+        const dups = Object.keys(byName).filter((k) => byName[k].length > 1).map((k) => byName[k][0].name);
+        sum = '<div class="scopesum">' + bits.join(" · ") +
+          (dups.length ? '<div class="scopedup">⚠ The project has more than one component called <b>' +
+            escHtml(dups.slice(0, 3).join("</b>, <b>")) + "</b>. Point each drawing at the one you're keeping " +
+            "(the drawing picker moves it), then 🗑 the empty duplicate.</div>" : "") +
+        "</div>";
       }
       host.innerHTML = ((!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + sum + cards;
       renderCoverage();          // scope changed ⇒ the accounted-for tally changed
@@ -726,6 +746,15 @@
       if (!scope[ci]) return;
       if (k === "csel") {
         if (t.value === "__new") { creating = { ci: ci, di: null }; renderScope(); focusScopeInput('input[data-k="nval"]'); return; }
+        // Already on screen? Merge into that card rather than showing the component twice.
+        const dupIdx = scope.findIndex((x, xi) => xi !== ci && x.cid && String(x.cid) === String(t.value));
+        if (dupIdx > -1) {
+          scope.splice(ci, 1);
+          saveScope(); renderScope();
+          setScopeStatus("“" + escHtml((compById(t.value) || {}).name || "") +
+            "” was already in the list — merged, rather than showing it twice.");
+          return;
+        }
         const c = compById(t.value);
         scope[ci] = c
           ? { cid: String(c.id), name: c.name, drawings: c.drawings.map((d) => ({ id: String(d.id), number: d.number })) }
@@ -822,6 +851,17 @@
       if (!params.project_id) {
         creating = null; renderScope();
         setScopeStatus("No project on the page URL — open the take-off from the project so records can be added.");
+        return;
+      }
+      // Reuse rather than duplicate.
+      const dup = (kind === "component") ? compByName(v) : null;
+      if (dup) {
+        creating = null;
+        if (scope[ci]) scope[ci] = { cid: String(dup.id), name: dup.name,
+          drawings: dup.drawings.map((d) => ({ id: String(d.id), number: d.number })) };
+        delete excluded.c[String(dup.id)];
+        saveScope(); renderScope();
+        setScopeStatus("“" + escHtml(dup.name) + "” is already on the project — using it instead of making a second one.");
         return;
       }
       setScopeStatus('<span class="spin"></span>Adding “' + escHtml(v) + "” to the project…");
@@ -1673,7 +1713,8 @@
       if (!name) return;
       setScopeStatus('<span class="spin"></span>Adding “' + escHtml(name) + "” and its drawings to the project…");
       try {
-        let cid = chosen ? String(chosen.id) : (g.exists ? String(g.exists.id) : null);
+        const byName = chosen ? null : compByName(name);    // same guard on the suggestion path
+        let cid = chosen ? String(chosen.id) : (g.exists ? String(g.exists.id) : (byName ? String(byName.id) : null));
         if (!cid) {
           const out = await scopeApi("add", { project_id: params.project_id, kind: "component", value: name });
           cid = String(out.id);
@@ -1864,12 +1905,19 @@
         let ci;
         if (k === "newcomp") {
           const name = btn.getAttribute("data-name");
-          setScopeStatus('<span class="spin"></span>Adding component “' + escHtml(name) + "” to the project…");
-          try {
-            const out = await scopeApi("add", { project_id: params.project_id, kind: "component", value: name });
-            await loadProject(); scopeFromProject(); renderScope();
-            ci = scope.findIndex((c) => String(c.cid) === String(out.id));
-          } catch (err) { setScopeStatus("Could not add the component: " + escHtml(err.message || err)); return; }
+          const have = compByName(name);                    // never make a second one with the same name
+          if (have) {
+            delete excluded.c[String(have.id)];
+            scopeFromProject(); renderScope();
+            ci = scope.findIndex((c) => String(c.cid) === String(have.id));
+          } else {
+            setScopeStatus('<span class="spin"></span>Adding component “' + escHtml(name) + "” to the project…");
+            try {
+              const out = await scopeApi("add", { project_id: params.project_id, kind: "component", value: name });
+              await loadProject(); scopeFromProject(); renderScope();
+              ci = scope.findIndex((c) => String(c.cid) === String(out.id));
+            } catch (err) { setScopeStatus("Could not add the component: " + escHtml(err.message || err)); return; }
+          }
         } else {
           const sel = btn.parentElement && btn.parentElement.querySelector('[data-k="covcomp"]');
           ci = Number(sel && sel.value);
