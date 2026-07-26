@@ -386,7 +386,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.42 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.43 (2026-07-26)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -562,11 +562,12 @@
     let referenceSheets = [];                         // [{number,title,pages,reason}] — placed, not taken off
     let separate = {};                                // near-miss numbers the user confirmed are their own drawing
     let aliases = {};                                 // PDF number (normalized) → the drawing number to use instead
+    let readMeta = null;                              // when the sheet list was read, and at what depth
     const sheetKey = () => "mc_sheets_" + (params.project_id || "_");
     function saveSheets() {
       try {
         localStorage.setItem(sheetKey(), JSON.stringify({ sheets: sheets, reference: referenceSheets,
-          separate: separate, aliases: aliases, audit: audit }));
+          separate: separate, aliases: aliases, audit: audit, readMeta: readMeta }));
       } catch (e) {}
     }
     const isReference = (num) => referenceSheets.some((x) => _norm(x.number) === _norm(num));
@@ -750,13 +751,42 @@
       if (!scope[ci]) return;
       if (k === "csel") {
         if (t.value === "__new") { creating = { ci: ci, di: null }; renderScope(); focusScopeInput('input[data-k="nval"]'); return; }
-        // Already on screen? Merge into that card rather than showing the component twice.
+        // Already on screen? This is a consolidation, not a swap. Moving the card's OLD component
+        // off the list would strand its drawings, so offer to move them across on the project —
+        // which is the whole point when you're clearing up a duplicate component.
         const dupIdx = scope.findIndex((x, xi) => xi !== ci && x.cid && String(x.cid) === String(t.value));
         if (dupIdx > -1) {
+          const from = scope[ci].cid ? compById(scope[ci].cid) : null;
+          const into = compById(t.value);
+          if (from && into && String(from.id) !== String(into.id) && from.drawings.length) {
+            const n = from.drawings.length;
+            if (window.confirm("Move all " + n + " drawing" + (n === 1 ? "" : "s") + " from “" + from.name +
+                "” into “" + into.name + "” on the project?\n\n" +
+                "That's how you clear up a duplicate component — the drawings move, they aren't dropped.")) {
+              const failed = [];
+              for (let z = 0; z < from.drawings.length; z++) {
+                const d = from.drawings[z];
+                setScopeStatus('<span class="spin"></span>Moving ' + escHtml(d.number) + "… " + (z + 1) + "/" + n);
+                try { await scopeApi("update", { kind: "drawing", id: d.id, value: d.number, component_id: into.id }); }
+                catch (err) { failed.push(d.number); }
+              }
+              await loadProject();
+              // A genuine duplicate that's now empty is just clutter — clear it.
+              let removed = false;
+              const nowEmpty = compById(from.id);
+              if (!failed.length && nowEmpty && !nowEmpty.drawings.length && _norm(nowEmpty.name) === _norm(into.name)) {
+                try { await scopeApi("delete", { kind: "component", id: from.id }); removed = true; await loadProject(); } catch (err) {}
+              }
+              scopeFromProject(); saveScope(); renderScope();
+              setScopeStatus((n - failed.length) + " of " + n + " drawing" + (n === 1 ? "" : "s") + " moved into “" +
+                escHtml(into.name) + "”" + (removed ? ", and the empty duplicate was deleted" : "") + "." +
+                (failed.length ? ' <span style="color:#b45309">Failed: ' + escHtml(failed.join(", ")) + "</span>" : ""));
+              return;
+            }
+          }
           scope.splice(ci, 1);
           saveScope(); renderScope();
-          setScopeStatus("“" + escHtml((compById(t.value) || {}).name || "") +
-            "” was already in the list — merged, rather than showing it twice.");
+          setScopeStatus("“" + escHtml((into || {}).name || "") + "” was already in the list — merged, rather than showing it twice.");
           return;
         }
         const c = compById(t.value);
@@ -1097,6 +1127,9 @@
           audit.docs.forEach((a, i) => { if (docs[i]) docs[i].pages = a.pages || 0; });
           renderFiles();
         }
+        readMeta = { at: new Date().toISOString().slice(0, 16).replace("T", " "),
+                     model: (document.getElementById("model") || {}).value || "sonnet",
+                     files: docs.map((x) => x.name) };
         detected = dedupeSheets(readSheets.map((s) => ({
           doc: Number(s.doc) || 1,
           number: String(s.number || "").trim(),
@@ -1151,7 +1184,16 @@
       const host = document.getElementById("allocPanel");
       if (!detected.length && !audit) { host.innerHTML = ""; updatePanels(); return; }
       if (!detected.length) {   // allocation done (or nothing read) — the page tally still stands
-        host.innerHTML = '<div class="alloc">' + auditHtml() +
+        // A read from an earlier visit with no PDF on the page can't be refreshed — the ↻ button
+        // needs a file. Say where the list came from and what to do about it.
+        const depth = readMeta && ({ haiku: "Quick", sonnet: "Standard", opus: "Deep" })[readMeta.model];
+        const stale = (sheets.length && !docs.length)
+          ? '<div class="aud warn" style="margin-bottom:8px">This list is from an earlier read' +
+              (readMeta ? " (" + escHtml(readMeta.at) + (depth ? ", " + depth + " depth" : "") + ")" : "") +
+              ". <b>Load the PDF again</b> to re-read it — the count can only be checked against the file. " +
+              '<a href="#" data-k="clearread">discard this read</a></div>'
+          : "";
+        host.innerHTML = '<div class="alloc">' + stale + auditHtml() +
           '<div class="apg">' + (sheets.length
             ? sheets.length + " drawing" + (sheets.length === 1 ? "" : "s") + " from the last read. " +
               "Use <b>↻ Re-read the drawings in the PDF</b> if the count looks short — a sheet read as a " +
@@ -1317,6 +1359,13 @@
       if (e.target.closest("#commitAlloc")) { commitAlloc(); return; }
       if (e.target.closest("#runOnlyAlloc")) { e.preventDefault(); applyAllocRunOnly(); return; }
       if (e.target.closest("#cancelAlloc")) { e.preventDefault(); allocPlan = null; renderAlloc(); return; }
+      if (e.target.closest('[data-k="clearread"]')) {     // drop a stale read rather than work from it
+        e.preventDefault();
+        sheets = []; audit = null; readMeta = null; referenceSheets = []; aliases = {}; separate = {};
+        saveSheets(); renderAlloc(); renderCoverage();
+        setScopeStatus("Old read discarded. Load the PDF to read it again.");
+        return;
+      }
       const sp = e.target.closest(".asplit");             // two drawings read as one number
       if (sp) { splitRow(Number(sp.getAttribute("data-split"))); return; }
       const drop = e.target.closest(".adrop");            // a mis-read row (index page, detail, etc.)
@@ -1421,6 +1470,7 @@
           // Keep the page↔drawing reconciliation across reloads — without it there's no way to see
           // WHY a 27-page set read as 24 drawings.
           if (st.audit && typeof st.audit === "object") audit = st.audit;
+          if (st.readMeta && typeof st.readMeta === "object") readMeta = st.readMeta;
           aliases = (st.aliases && typeof st.aliases === "object") ? st.aliases : {};
         }
       } catch (e) {}
