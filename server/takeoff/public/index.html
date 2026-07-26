@@ -170,6 +170,17 @@
     .covbulk { background:#fff; border:1px solid #f0e2cc; border-radius:6px; padding:8px 10px; margin-top:8px;
                display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:11.5px; color:#334; }
     .covbulk .covwhy { flex-basis:100%; margin-top:2px; }
+    /* The full drawing checklist — read down it to see what's in and what isn't. */
+    .ckwrap { margin-top:9px; font-size:11.5px; color:#66707c; }
+    .ckwrap summary { cursor:pointer; font-weight:600; color:#334; }
+    .ckrow { display:flex; align-items:baseline; gap:7px; padding:2px 0 2px 4px; }
+    .ckrow .ckmark { width:12px; flex:0 0 12px; text-align:center; font-weight:700; }
+    .ckrow .cknum { font-weight:600; color:#2b3340; white-space:nowrap; }
+    .ckrow .ckwhere { color:#8893a0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ckrow.in .ckmark { color:#1e7a3c; }
+    .ckrow.ref .ckmark { color:#5F94CE; }
+    .ckrow.open .ckmark, .ckrow.open .cknum { color:#b45309; }
+    .ckrow.warn .ckmark, .ckrow.warn .cknum { color:#a12727; }
     .covex { margin-top:9px; font-size:11.5px; color:#66707c; }
     .covex summary { cursor:pointer; }
     .covexrow { display:flex; align-items:center; gap:8px; padding:4px 0 4px 12px; }
@@ -352,6 +363,7 @@
             this take-off.</span>
         </div>
         <div class="sstat" id="scopeStatus"></div>
+        <div id="scopeSum"></div>
         <div id="scopeList"></div>
         <button type="button" class="addc" id="addComp">+ Add component</button>
       </div>
@@ -386,7 +398,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.43 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.44 (2026-07-26)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -583,6 +595,23 @@
       } catch (e) {}
     }
 
+    // Human order, not ASCII order: "10A-2" before "10A-10", and "10-4" before "10A-2A". Digits are
+    // compared as numbers so a list of drawing numbers reads the way an estimator would write it.
+    function natCmp(a, b) {
+      const A = String(a || "").toUpperCase().match(/\d+|\D+/g) || [];
+      const B = String(b || "").toUpperCase().match(/\d+|\D+/g) || [];
+      for (let i = 0; i < Math.max(A.length, B.length); i++) {
+        const x = A[i], y = B[i];
+        if (x === undefined) return -1;
+        if (y === undefined) return 1;
+        const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+        if (nx && ny) { const d = Number(x) - Number(y); if (d) return d; }
+        else if (x !== y) return x < y ? -1 : 1;
+      }
+      return 0;
+    }
+    const byNumber = (a, b) => natCmp(a && a.number, b && b.number);
+
     function compById(cid) { return project.components.find((c) => String(c.id) === String(cid)) || null; }
     // Every "create a component" path goes through this first. Without it, adding a component whose
     // name already exists made a SECOND record — which is how a project ends up with two
@@ -600,11 +629,14 @@
     }
     // This run mirrors the project, minus whatever the estimator ticked out of it.
     function scopeFromProject() {
-      scope = project.components.filter((c) => !excluded.c[String(c.id)]).map((c) => ({
-        cid: String(c.id), name: c.name,
-        drawings: c.drawings.filter((d) => !excluded.d[String(d.id)])
-          .map((d) => ({ id: String(d.id), number: d.number })),
-      }));
+      scope = project.components.filter((c) => !excluded.c[String(c.id)])
+        .slice().sort((a, b) => natCmp(a.name, b.name))          // components A→Z
+        .map((c) => ({
+          cid: String(c.id), name: c.name,
+          drawings: c.drawings.filter((d) => !excluded.d[String(d.id)])
+            .map((d) => ({ id: String(d.id), number: d.number }))
+            .sort(byNumber),                                     // drawings in drawing-number order
+        }));
     }
 
     async function scopeApi(path, body) {
@@ -634,7 +666,7 @@
     // on the project with no component yet (picking one files it under this component).
     function drawOptions(cid, selId, used) {
       const c = compById(cid);
-      const own = c ? c.drawings : [];
+      const own = c ? c.drawings.slice().sort(byNumber) : [];
       let html = '<option value="">— choose a drawing —</option>' +
         own.map((d) => '<option value="' + escAttr(d.id) + '"' +
           (String(d.id) === String(selId) ? " selected" : "") +
@@ -675,6 +707,53 @@
         "to the project itself.</span></div>";
     }
 
+    // The tallies. Its own element and its own render, because a coverage change moves these
+    // numbers just as much as a scope change does — computing them only inside renderScope left
+    // the summary stale after resolving a drawing.
+    function renderSummary() {
+      const host = document.getElementById("scopeSum");
+      if (!host) return;
+      // Say the arithmetic out loud. "24 of 24 accounted for" and 22 rows in this list are both
+      // true when two sheets are reference-only or ✕'d from this run — but only if the page
+      // shows where every number went. Counting rows by hand shouldn't be necessary.
+      let sum = "";
+      if (project.components.length || sheets.length) {
+        const rows = scope.reduce((n, c) => n + (c.drawings || []).filter((d) => d && d.number).length, 0);
+        const onProject = project.components.reduce((n, c) => n + c.drawings.length, 0) + project.unassigned.length;
+        // Anything on the project but not in the list above was ✕'d out of this run — either the
+        // drawing itself or the whole component it sits under.
+        const dropped = Math.max(0, onProject - rows);
+        // TWO SEPARATE TALLIES. Mixing "drawings in the PDF" with "drawing records on the project"
+        // in one sentence is what made these numbers impossible to reconcile — they count
+        // different things and they're allowed to differ.
+        const cov = sheets.length ? coverage() : null;
+        const bits = [];
+        if (cov) {
+          bits.push("<b>From the PDF:</b> " + sheets.length + " read · " +
+            (cov.assigned - cov.reference) + " placed" +
+            (cov.reference ? " · " + cov.reference + " reference-only" : "") +
+            (cov.open.length ? " · <b style=\"color:#b45309\">" + cov.open.length + " still to place</b>" : " · none outstanding"));
+        }
+        const nComp = scope.filter((c) => c.cid).length;
+        let proj = "<b>On the project:</b> " + rows + " drawing" + (rows === 1 ? "" : "s") + " across " +
+          nComp + " component" + (nComp === 1 ? "" : "s") + " in this take-off";
+        if (dropped) proj += " · " + dropped + " not in this run (<a href=\"#\" data-k=\"bringback\">bring back</a>)";
+        bits.push(proj);
+        // Two records with the same name split an assembly's drawings in half and are impossible to
+        // spot in a picker. Call them out, with the fix: move the drawings across, then bin the empty one.
+        const byName = {};
+        project.components.forEach((c) => { const k = _norm(c.name); (byName[k] = byName[k] || []).push(c); });
+        const dups = Object.keys(byName).filter((k) => byName[k].length > 1).map((k) => byName[k][0].name);
+        sum = '<div class="scopesum">' + bits.map((b) => "<div>" + b + "</div>").join("") +
+          (dups.length ? '<div class="scopedup">⚠ The project has more than one component called <b>' +
+            escHtml(dups.slice(0, 3).join("</b>, <b>")) + "</b>. Point each drawing at the one you're keeping " +
+            "(the drawing picker moves it), then 🗑 the empty duplicate.</div>" : "") +
+        "</div>";
+      }
+
+      host.innerHTML = sum;
+    }
+
     function renderScope() {
       const host = document.getElementById("scopeList");
       if (!project.loaded) { host.innerHTML = ""; return; }
@@ -705,37 +784,8 @@
             (c.cid ? '<button type="button" class="addd" data-k="adddraw" data-ci="' + ci + '">+ add drawing</button>' : "") +
           "</div></div>";
       }).join("");
-      // Say the arithmetic out loud. "24 of 24 accounted for" and 22 rows in this list are both
-      // true when two sheets are reference-only or ✕'d from this run — but only if the page
-      // shows where every number went. Counting rows by hand shouldn't be necessary.
-      let sum = "";
-      if (project.components.length || sheets.length) {
-        const rows = scope.reduce((n, c) => n + (c.drawings || []).filter((d) => d && d.number).length, 0);
-        const onProject = project.components.reduce((n, c) => n + c.drawings.length, 0) + project.unassigned.length;
-        // Anything on the project but not in the list above was ✕'d out of this run — either the
-        // drawing itself or the whole component it sits under.
-        const dropped = Math.max(0, onProject - rows);
-        const bits = ["<b>" + rows + "</b> drawing" + (rows === 1 ? "" : "s") + " in this take-off, across <b>" +
-          scope.filter((c) => c.cid).length + "</b> component" + (scope.filter((c) => c.cid).length === 1 ? "" : "s")];
-        if (referenceSheets.length) bits.push("<b>" + referenceSheets.length + "</b> reference-only");
-        // "✕'d" was wrong: this is every project drawing not currently listed, which also covers
-        // drawings under a component that was ✕'d or merged away. Say what it is, and offer the
-        // one click that brings them all back — nothing should be strandable by accident.
-        if (dropped) bits.push("<b>" + dropped + "</b> on the project but not in this run " +
-          '(<a href="#" data-k="bringback">bring back</a>)');
-        if (sheets.length) bits.push("<b>" + sheets.length + "</b> read from the PDF");
-        // Two records with the same name split an assembly's drawings in half and are impossible to
-        // spot in a picker. Call them out, with the fix: move the drawings across, then bin the empty one.
-        const byName = {};
-        project.components.forEach((c) => { const k = _norm(c.name); (byName[k] = byName[k] || []).push(c); });
-        const dups = Object.keys(byName).filter((k) => byName[k].length > 1).map((k) => byName[k][0].name);
-        sum = '<div class="scopesum">' + bits.join(" · ") +
-          (dups.length ? '<div class="scopedup">⚠ The project has more than one component called <b>' +
-            escHtml(dups.slice(0, 3).join("</b>, <b>")) + "</b>. Point each drawing at the one you're keeping " +
-            "(the drawing picker moves it), then 🗑 the empty duplicate.</div>" : "") +
-        "</div>";
-      }
-      host.innerHTML = ((!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + sum + cards;
+      host.innerHTML = ((!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + cards;
+      renderSummary();
       renderCoverage();          // scope changed ⇒ the accounted-for tally changed
     }
     function focusScopeInput(sel) {
@@ -1916,14 +1966,40 @@
       const reopen = (suggestDismissed && sheets.length)
         ? '<div class="covwhy"><a href="#" data-k="showsug">show the suggested breakdown again</a></div>' : "";
 
+      // THE CHECKLIST. Every drawing read from the PDF, in drawing-number order, with where it
+      // ended up — so "what's in and what's not" is something you read down, not something you
+      // work out from three different totals.
+      const stateOf = (it) => {
+        if (it.state === "assigned") return { mark: it.ref ? "◇" : "✓", cls: it.ref ? "ref" : "in",
+          where: (it.ref ? "reference · " : "") + (it.hit ? it.hit.comp : "") };
+        if (it.state === "near") return { mark: "?", cls: "open", where: "number needs confirming" };
+        return { mark: "•", cls: "open", where: "not on a component yet" };
+      };
+      const checklist = cov.items.slice().sort((a, b) => natCmp(a.s.number, b.s.number)).map((it) => {
+        const st = stateOf(it);
+        return '<div class="ckrow ' + st.cls + '"><span class="ckmark">' + st.mark + "</span>" +
+          '<span class="cknum">' + escHtml(it.s.number) + "</span>" +
+          '<span class="ckwhere">' + escHtml(st.where) + "</span></div>";
+      }).join("");
+      const missingFromPdf = cov.extras.slice().sort(byNumber).map((x) =>
+        '<div class="ckrow warn"><span class="ckmark">!</span><span class="cknum">' + escHtml(x.number) + "</span>" +
+        '<span class="ckwhere">on ' + escHtml(x.comp) + ", not in the PDF</span></div>").join("");
+      const ckList = cov.items.length
+        ? '<details class="ckwrap"' + (ok ? "" : " open") + "><summary>Check the full list — " +
+            cov.items.length + " drawing" + (cov.items.length === 1 ? "" : "s") + " read" +
+            (cov.extras.length ? " · " + cov.extras.length + " on the project but not in the PDF" : "") +
+          "</summary>" + checklist + missingFromPdf + "</details>"
+        : "";
+
       host.innerHTML = '<div class="cov ' + (ok ? "ok" : "open") + '">' +
         '<div class="covttl">' + (ok ? "✓ " : "◷ ") + "All drawings accounted for: <b>" + done + " of " + total + "</b>" +
           (cov.reference ? " (" + (cov.assigned - cov.reference) + " taken off, " + cov.reference + " reference only)" : "") +
           (ok ? "" : " — <b>" + cov.open.length + " still to resolve</b>") + "</div>" +
         (ok ? "" : '<div class="covsub">Every drawing goes on a component — the ones with no material to take ' +
           "off go on as reference only. Nothing is dropped.</div>") + bulk + reopen +
-        openRows + extras + exList +
+        openRows + extras + ckList + exList +
       "</div>";
+      renderSummary();          // the tallies move with the coverage, not just with the scope list
       updatePanels();
     }
 
