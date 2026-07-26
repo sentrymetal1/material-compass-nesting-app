@@ -333,7 +333,10 @@ app.post('/api/takeoff', async (req, res) => {
   // against names the user approved, instead of the AI guessing and reconciling afterward.
   try {
     const tree = req.body && req.body.scope_tree;
-    const treeCtx = buildScopeTreeContext(tree, req.body && req.body.excluded_drawings, req.body && req.body.drawing_aliases);
+    // reference_drawings is the current name; excluded_drawings is the old one, kept so an older
+    // cached copy of the widget keeps working.
+    const refs = (req.body && (req.body.reference_drawings || req.body.excluded_drawings)) || [];
+    const treeCtx = buildScopeTreeContext(tree, refs, req.body && req.body.drawing_aliases);
     if (treeCtx) { projectContext = treeCtx; }
     else { const pid = req.body && req.body.project_id; if (pid) projectContext = await fetchProjectContext(pid); }
   } catch (e) {}
@@ -467,8 +470,9 @@ function buildScopeTreeContext(tree, excluded, aliases) {
     n.draws.forEach(function (d) { if (allDraws.indexOf(d) < 0) allDraws.push(d); });
     return '- ' + n.name + (n.draws.length ? '  [drawings: ' + n.draws.join(', ') + ']' : '  [no drawings listed]');
   }).join('\n');
-  // Sheets the estimator deliberately left out, with their reason. This is a decision they made at
-  // intake after seeing every sheet in the PDF, so it is binding: skip the sheet, don't re-litigate.
+  // Reference-only sheets. They are ON the project like every other drawing — nothing is dropped —
+  // but they carry no material to take off (layouts, sections, general notes). READ them for
+  // context; just don't raise BOM rows from them.
   const skips = (Array.isArray(excluded) ? excluded : [])
     .map(function (x) {
       const num = String((x && x.number) == null ? '' : x.number).trim();
@@ -488,13 +492,13 @@ function buildScopeTreeContext(tree, excluded, aliases) {
 
   return "THIS PROJECT'S CONFIRMED SCOPE BREAKDOWN (the estimator arranged and approved this — it is AUTHORITATIVE):\n\n" +
     "COMPONENTS / ASSEMBLIES, each with the drawings it is detailed on:\n" + body + '\n\n' +
-    (skips.length ? "EXCLUDED SHEETS — the estimator deliberately left these out of this take-off:\n" + skips.join('\n') + '\n\n' : '') +
+    (skips.length ? "REFERENCE-ONLY SHEETS — part of the package and on the project, but no material comes off them:\n" + skips.join('\n') + '\n\n' : '') +
     (alias.length ? "DRAWING NUMBER MAPPING — same drawing, different number printed on the sheet:\n" + alias.join('\n') + '\n\n' : '') +
     "RULES:\n" +
     "- Assign EVERY quantified member's `component` to the single best-fitting name above, spelled EXACTLY as shown.\n" +
     "- Set `source_sheet` to the EXACT drawing number the member is read from; prefer a drawing listed under that member's component.\n" +
     "- Do NOT invent new component names or drawing numbers. If a member genuinely fits none of the above, leave `component` empty and note it in the top-level `notes` — do not force-fit it.\n" +
-    (skips.length ? "- Take NO material off the excluded sheets above. If one carries a member you would otherwise have taken off, mention it once in `notes` — do not add rows for it.\n" : '') +
+    (skips.length ? "- READ the reference-only sheets above for context (dimensions, layouts, finishes, connections) but raise NO rows from them. If one clearly carries a fabricated member the estimator may have misjudged, say so once in `notes` rather than adding the row.\n" : '') +
     (alias.length ? "- Apply the drawing number mapping above to `source_sheet` — report the project's number, never the one printed on the sheet.\n" : '') +
     "- The scope above covers every sheet in the documents. If you find a sheet that is neither listed nor excluded, take it off and flag it in `notes` — it means the intake missed it.\n" +
     (allDraws.length ? "- The full confirmed drawing set: " + allDraws.join(', ') + '.\n' : '');

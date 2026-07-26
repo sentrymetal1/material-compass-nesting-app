@@ -383,7 +383,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.38 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.39 (2026-07-26)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -551,12 +551,21 @@
     let suggestNames = {};                            // per-suggestion renames before they are taken
     let suggestDismissed = false;                     // "no thanks" — proposal panel stays closed
     let sheets = [];                                  // every drawing read out of the PDFs (survives the allocation)
-    let excludedSheets = [];                          // sheets deliberately left out: [{number,title,pages,reason}]
+    // NOTHING is dropped. A drawing that carries no material to take off is still a drawing on the
+    // project — it's flagged REFERENCE ONLY, which tells the AI to read it for context but not to
+    // raise BOM rows from it. So every sheet ends up on a component either way, and the take-off
+    // can always be traced back to the full set.
+    let referenceSheets = [];                         // [{number,title,pages,reason}] — placed, not taken off
+    let separate = {};                                // near-miss numbers the user confirmed are their own drawing
     let aliases = {};                                 // PDF number (normalized) → the drawing number to use instead
     const sheetKey = () => "mc_sheets_" + (params.project_id || "_");
     function saveSheets() {
-      try { localStorage.setItem(sheetKey(), JSON.stringify({ sheets: sheets, excluded: excludedSheets, aliases: aliases })); } catch (e) {}
+      try {
+        localStorage.setItem(sheetKey(), JSON.stringify({ sheets: sheets, reference: referenceSheets,
+          separate: separate, aliases: aliases }));
+      } catch (e) {}
     }
+    const isReference = (num) => referenceSheets.some((x) => _norm(x.number) === _norm(num));
     const exclKey = () => "mc_excl_" + (params.project_id || "_");
     const descKey = () => "mc_desc_" + (params.project_id || "_");
     function escAttr(s) { return escHtml(s).replace(/"/g, "&quot;"); }
@@ -682,7 +691,7 @@
           "</div></div>";
       }).join("");
       // Say the arithmetic out loud. "24 of 24 accounted for" and 22 rows in this list are both
-      // true when two sheets were left out on purpose or ✕'d from this run — but only if the page
+      // true when two sheets are reference-only or ✕'d from this run — but only if the page
       // shows where every number went. Counting rows by hand shouldn't be necessary.
       let sum = "";
       if (project.components.length || sheets.length) {
@@ -693,8 +702,7 @@
         const dropped = Math.max(0, onProject - rows);
         const bits = ["<b>" + rows + "</b> drawing" + (rows === 1 ? "" : "s") + " in this take-off, across <b>" +
           scope.filter((c) => c.cid).length + "</b> component" + (scope.filter((c) => c.cid).length === 1 ? "" : "s")];
-        if (excludedSheets.length) bits.push("<b>" + excludedSheets.length + "</b> sheet" +
-          (excludedSheets.length === 1 ? "" : "s") + " left out on purpose");
+        if (referenceSheets.length) bits.push("<b>" + referenceSheets.length + "</b> reference-only");
         if (dropped) bits.push("<b>" + dropped + "</b> ✕'d out of this run");
         if (sheets.length) bits.push("<b>" + sheets.length + "</b> read from the PDF");
         sum = '<div class="scopesum">' + bits.join(" · ") + "</div>";
@@ -965,7 +973,7 @@
         : "";
       if (t.multi.length) {
         extra += '<span class="sub2">⚑ ' + t.multi.length + (t.multi.length === 1 ? " drawing covers" : " drawings cover") +
-          " more than one page (" +
+          " more than one page — <b>if your set has more drawings than the count above, this is why</b> (" +
           t.multi.slice(0, 6).map((x) => escHtml(x.s.number) + " p." + pagesOf(x.s)[0] + "–" + pagesOf(x.s).slice(-1)[0]).join(", ") +
           "). If that's really two drawings read as one number, hit <b>Split</b> on the row and fix the number.</span>";
       }
@@ -1014,7 +1022,11 @@
       try {
         const r = await fetch(RAILWAY_URL + "/api/takeoff/index", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pdfs: docs.map((d) => d.b64), names: docs.map((d) => d.name), model: "haiku" }),  // haiku: cheap title-block read
+          // Follow the chosen reading depth. The cheap tier misreads continuation pages — it groups
+          // two sheets into one drawing — and this read is what every later count is measured
+          // against, so it's the wrong place to save a few cents.
+          body: JSON.stringify({ pdfs: docs.map((d) => d.b64), names: docs.map((d) => d.name),
+                                 model: (document.getElementById("model") || {}).value || "sonnet" }),
         });
         const d = await r.json();
         if (!r.ok || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
@@ -1336,7 +1348,10 @@
         const st = JSON.parse(localStorage.getItem(sheetKey()) || "null");
         if (st && Array.isArray(st.sheets)) {
           sheets = st.sheets;
-          excludedSheets = Array.isArray(st.excluded) ? st.excluded : [];
+          // Older saves called these "excluded"; they're reference sheets now — still on the job.
+          referenceSheets = Array.isArray(st.reference) ? st.reference
+            : (Array.isArray(st.excluded) ? st.excluded : []);
+          separate = (st.separate && typeof st.separate === "object") ? st.separate : {};
           aliases = (st.aliases && typeof st.aliases === "object") ? st.aliases : {};
         }
       } catch (e) {}
@@ -1453,21 +1468,20 @@
     }
     function coverage() {
       const idx = scopeDrawIndex();
-      const exMap = {};
-      excludedSheets.forEach((x) => { exMap[_norm(x.number)] = x; });
       // Drawings that a sheet in this PDF matches exactly — those records are spoken for.
       const claimed = {};
       sheets.forEach((s) => { if (s.number) claimed[_norm(s.number)] = 1; });
 
       const items = sheets.map((s) => {
         const n = _norm(s.number);
-        if (exMap[n]) return { s: s, state: "excluded", ex: exMap[n] };
+        const ref = isReference(s.number);            // placed, but not taken off — still accounted for
         const exact = idx.find((x) => _norm(x.number) === n);
-        if (exact) return { s: s, state: "assigned", hit: exact };
+        if (exact) return { s: s, state: "assigned", hit: exact, ref: ref };
         if (aliases[n]) {
           const al = idx.find((x) => _norm(x.number) === _norm(aliases[n]));
-          if (al) return { s: s, state: "assigned", hit: al, alias: aliases[n] };
+          if (al) return { s: s, state: "assigned", hit: al, alias: aliases[n], ref: ref };
         }
+        if (separate[n]) return { s: s, state: "missing", ref: ref };   // user said it's its own drawing
         // Never propose a near-match against a drawing that another sheet in this PDF matches
         // exactly — "use the PDF's number" would rename that drawing out from under the sheet that
         // owns it, which put the other sheet back into the unresolved list. That's how the same
@@ -1486,10 +1500,11 @@
       sheets.forEach((s) => { inPdf[_norm(s.number)] = 1; });
       const extras = sheets.length ? idx.filter((x) => !inPdf[_norm(x.number)] &&
         !Object.keys(aliases).some((k) => _norm(aliases[k]) === _norm(x.number))) : [];
+      const assigned = items.filter((i) => i.state === "assigned");
       return {
         items: items, extras: extras,
-        assigned: items.filter((i) => i.state === "assigned").length,
-        excluded: items.filter((i) => i.state === "excluded").length,
+        assigned: assigned.length,
+        reference: assigned.filter((i) => i.ref).length,   // on a component, read for context only
         open: items.filter((i) => i.state === "missing" || i.state === "near"),
       };
     }
@@ -1512,14 +1527,12 @@
       project.components.forEach((c) => { named[_norm(c.name)] = c; });
       const inScope = {};
       scopeDrawIndex().forEach((x) => { inScope[_norm(x.number)] = 1; });
-      const exMap = {};
-      excludedSheets.forEach((x) => { exMap[_norm(x.number)] = 1; });
+
 
       const byName = {}, order = [];
       sheets.forEach((s) => {
         const name = String(s.suggestion || "").trim() || suggestComponent(s.title);
         if (!name || !s.number) return;
-        if (exMap[_norm(s.number)]) return;                   // already left out on purpose
         const k = _norm(name);
         if (!byName[k]) { byName[k] = { name: name, sheets: [], exists: named[k] || null }; order.push(k); }
         byName[k].sheets.push(s);
@@ -1579,9 +1592,16 @@
       }
     });
 
+    function markReference(sheet, reason) {
+      if (isReference(sheet.number)) return;
+      referenceSheets.push({ number: sheet.number, title: sheet.title || "", pages: sheet.pages || [],
+        reason: reason || "Reference only — no material taken off" });
+      saveSheets();
+    }
+
     // Every unplaced sheet under one component, in one go. Writes one drawing record per sheet (the
     // same call the per-row button makes), reporting progress because it's N Zoho writes, not one.
-    async function bulkAssign() {
+    async function bulkAssign(asRef) {
       if (!params.project_id) { setScopeStatus("Open the take-off from the project page to add records."); return; }
       const sel = document.getElementById("bulkComp");
       const ci = Number(sel && sel.value);
@@ -1589,8 +1609,9 @@
       const list = coverage().open.filter((x) => x.state === "missing").map((x) => x.s);
       if (!list.length) return;
       if (!window.confirm("Add all " + list.length + " unplaced drawing" + (list.length === 1 ? "" : "s") +
-        " to the project under “" + scope[ci].name + "”?\n\nThat creates " + list.length +
-        " drawing record" + (list.length === 1 ? "" : "s") + " on the project.")) return;
+        " to the project under “" + scope[ci].name + "”" + (asRef ? " as REFERENCE ONLY" : "") + "?\n\n" +
+        "That creates " + list.length + " drawing record" + (list.length === 1 ? "" : "s") + " on the project" +
+        (asRef ? ", and the take-off will read them for context without raising BOM rows from them." : "."))) return;
       const failed = [];
       for (let n = 0; n < list.length; n++) {
         const s = list[n];
@@ -1601,29 +1622,15 @@
           if (rec && !rec.owner) await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: scope[ci].cid });
           else if (!rec) await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: scope[ci].cid });
           descMap[s.number] = s.title || "";
+          if (asRef) markReference(s, "Reference only — no material taken off");
         } catch (err) { failed.push(s.number); }
       }
       await loadProject(); scopeFromProject(); saveScope(); renderScope();
       setScopeStatus((list.length - failed.length) + " of " + list.length + " added under “" +
-        escHtml(scope[ci].name) + "”." + (failed.length ? ' <span style="color:#b45309">Failed: ' +
-        escHtml(failed.slice(0, 5).join(", ")) + "</span>" : ""));
+        escHtml(scope[ci].name) + "”" + (asRef ? " as reference only" : "") + "." +
+        (failed.length ? ' <span style="color:#b45309">Failed: ' + escHtml(failed.slice(0, 5).join(", ")) + "</span>" : ""));
     }
 
-    // The mirror image: leave every unplaced sheet out, one reason for the lot.
-    function bulkExclude() {
-      const list = coverage().open.filter((x) => x.state === "missing").map((x) => x.s);
-      if (!list.length) return;
-      const reason = window.prompt("Leave all " + list.length + " unplaced drawing" + (list.length === 1 ? "" : "s") +
-        " out of this take-off.\n\nWhy? (carried through the take-off, so the AI skips them)",
-        "Not in this scope of work");
-      if (reason == null) return;
-      list.forEach((s) => {
-        excludedSheets.push({ number: s.number, title: s.title || "", pages: s.pages || [],
-          reason: String(reason).trim() || "Excluded by the estimator" });
-      });
-      saveSheets(); renderCoverage();
-      setScopeStatus(list.length + " drawing" + (list.length === 1 ? "" : "s") + " left out — the take-off is told to skip them.");
-    }
 
     // Create (or reuse) the component, then file its drawings under it — on the project, so the
     // take-off and the project agree. Same endpoints as every other add on this screen.
@@ -1683,7 +1690,7 @@
       if (!sheets.length) { host.innerHTML = ""; updatePanels(); return; }
       const cov = coverage();
       const total = cov.items.length;
-      const done = cov.assigned + cov.excluded;
+      const done = cov.assigned;
       const ok = !cov.open.length;
 
       const openRows = cov.open.map((it, i) => {
@@ -1703,30 +1710,36 @@
               '<button type="button" class="covbtn" data-k="usepdf" data-i="' + k + '">Use the PDF’s number</button>' +
               '<button type="button" class="covbtn alt" data-k="alias" data-i="' + k + '">They’re the same — keep “' +
                 escHtml(it.hit.number) + '”</button>' +
-              '<button type="button" class="covbtn alt" data-k="excl" data-i="' + k + '">Leave this sheet out…</button>' +
+              '<button type="button" class="covbtn alt" data-k="sep" data-i="' + k +
+                '">Different drawing — add it</button>' +
             "</div></div>";
         }
         return '<div class="covrow"><div class="covhd"><b>' + escHtml(it.s.number) + "</b> " +
           '<span class="adesc">' + escHtml(it.s.title || "") + '</span> <span class="apg">' + pg + "</span></div>" +
-          '<div class="covwhy">This sheet isn’t on any component yet. Put it under one (it’s added to the project ' +
-            "with this exact number), or leave it out on purpose." +
+          '<div class="covwhy">This sheet isn’t on any component yet. Put it under one — it’s added to the ' +
+            "project with this exact number. If it carries no material to take off (a layout, a section, a " +
+            "general note), add it as <b>reference only</b>: it still goes on the component, the take-off just " +
+            "doesn’t raise rows from it." +
             (sug ? " The title suggests a component called <b>" + escHtml(sug) + "</b>." : "") + "</div>" +
           '<div class="covacts">' +
             (namedComps().length
-              ? compChoices(namedComps()[0].i) + '<button type="button" class="covbtn" data-k="assign" data-i="' + k + '">Add under this component</button>'
+              ? compChoices(namedComps()[0].i) +
+                '<button type="button" class="covbtn" data-k="assign" data-i="' + k + '">Add under this component</button>' +
+                '<button type="button" class="covbtn alt" data-k="assignref" data-i="' + k + '">Add as reference only</button>'
               : '<span class="apg">pick or add a component above first</span>') +
             (sug ? '<button type="button" class="covbtn alt" data-k="newcomp" data-i="' + k + '" data-name="' + escAttr(sug) +
               '">＋ New component “' + escHtml(sug) + '”</button>' : "") +
-            '<button type="button" class="covbtn alt" data-k="excl" data-i="' + k + '">Leave this sheet out…</button>' +
           "</div></div>";
       }).join("");
 
-      const exList = excludedSheets.length
-        ? '<details class="covex"><summary>' + excludedSheets.length + " sheet" + (excludedSheets.length === 1 ? "" : "s") +
-            " deliberately left out — carried through the whole take-off</summary>" +
-          excludedSheets.map((x, i) => '<div class="covexrow"><b>' + escHtml(x.number) + "</b> " +
+      // Reference sheets are ON the project like any other drawing — this list is just so it's
+      // obvious which ones the take-off won't raise rows from, and easy to change your mind.
+      const exList = referenceSheets.length
+        ? '<details class="covex"><summary>' + referenceSheets.length + " sheet" + (referenceSheets.length === 1 ? "" : "s") +
+            " on a component as <b>reference only</b> — read for context, no BOM rows</summary>" +
+          referenceSheets.map((x, i) => '<div class="covexrow"><b>' + escHtml(x.number) + "</b> " +
             '<span class="adesc">' + escHtml(x.reason || "") + "</span>" +
-            '<button type="button" class="covbtn alt" data-k="unexcl" data-i="' + i + '">put back</button></div>').join("") +
+            '<button type="button" class="covbtn alt" data-k="unref" data-i="' + i + '">take material off it</button></div>').join("") +
           "</details>"
         : "";
 
@@ -1749,7 +1762,8 @@
               named.map((x) => '<option value="' + x.i + '">' + escHtml(x.name) + "</option>").join("") +
             "</select>" +
             '<button type="button" class="covbtn" data-k="bulkadd">Add all ' + unplaced.length + " here</button>" +
-            '<button type="button" class="covbtn alt" data-k="bulkout">Leave all ' + unplaced.length + " out…</button>" +
+            '<button type="button" class="covbtn alt" data-k="bulkref">Add all ' + unplaced.length +
+              " here as reference</button>" +
             (nearCount ? '<div class="covwhy">' + nearCount + " number" + (nearCount === 1 ? "" : "s") +
               " that nearly match one of yours " + (nearCount === 1 ? "is" : "are") + " left below — those need your call.</div>" : "") +
           "</div>"
@@ -1759,10 +1773,10 @@
 
       host.innerHTML = '<div class="cov ' + (ok ? "ok" : "open") + '">' +
         '<div class="covttl">' + (ok ? "✓ " : "◷ ") + "All drawings accounted for: <b>" + done + " of " + total + "</b>" +
-          (cov.excluded ? " (" + cov.assigned + " on components, " + cov.excluded + " left out)" : "") +
+          (cov.reference ? " (" + (cov.assigned - cov.reference) + " taken off, " + cov.reference + " reference only)" : "") +
           (ok ? "" : " — <b>" + cov.open.length + " still to resolve</b>") + "</div>" +
-        (ok ? "" : '<div class="covsub">Nothing from these sheets will reach the take-off until each one is placed or ' +
-          "left out on purpose.</div>") + bulk + reopen +
+        (ok ? "" : '<div class="covsub">Every drawing goes on a component — the ones with no material to take ' +
+          "off go on as reference only. Nothing is dropped.</div>") + bulk + reopen +
         openRows + extras + exList +
       "</div>";
       updatePanels();
@@ -1772,19 +1786,14 @@
     document.getElementById("coverage").addEventListener("click", async (e) => {
       const btn = e.target.closest("[data-k]"); if (!btn) return;   // buttons AND the reopen link
       const k = btn.getAttribute("data-k"), i = Number(btn.getAttribute("data-i"));
-      if (k === "unexcl") { excludedSheets.splice(i, 1); saveSheets(); renderCoverage(); return; }
+      if (k === "unref") { referenceSheets.splice(i, 1); saveSheets(); renderCoverage(); return; }
       if (k === "showsug") { e.preventDefault(); suggestDismissed = false; renderCoverage(); return; }
-      if (k === "bulkadd") { await bulkAssign(); return; }
-      if (k === "bulkout") { bulkExclude(); return; }
+      if (k === "bulkadd") { await bulkAssign(false); return; }
+      if (k === "bulkref") { await bulkAssign(true); return; }
       const sheet = sheets[i];
       if (!sheet) return;
-      if (k === "excl") {
-        const reason = window.prompt("Leave " + sheet.number + " out of this take-off.\n\n" +
-          "Why? (carried through the take-off, so the AI skips it and the reason shows on the review)",
-          "Not in this scope of work");
-        if (reason == null) return;
-        excludedSheets.push({ number: sheet.number, title: sheet.title || "",
-          pages: sheet.pages || [], reason: String(reason).trim() || "Excluded by the estimator" });
+      if (k === "sep") {                                  // "different drawing" — treat it as unplaced
+        separate[_norm(sheet.number)] = 1;
         saveSheets(); renderCoverage();
         return;
       }
@@ -1819,8 +1828,9 @@
           " — the take-off will use your number.");
         return;
       }
-      if (k === "assign" || k === "newcomp") {
+      if (k === "assign" || k === "assignref" || k === "newcomp") {
         if (!params.project_id) { setScopeStatus("Open the take-off from the project page to add records."); return; }
+        const asRef = (k === "assignref");
         let ci;
         if (k === "newcomp") {
           const name = btn.getAttribute("data-name");
@@ -1839,8 +1849,10 @@
         try {
           await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: sheet.number, component_id: scope[ci].cid });
           descMap[sheet.number] = sheet.title || "";
+          if (asRef) markReference(sheet, "Reference only — no material taken off");
           await loadProject(); scopeFromProject(); renderScope(); renderCoverage(); saveScope();
-          setScopeStatus(escHtml(sheet.number) + " added to the project under " + escHtml(scope[ci].name) + ".");
+          setScopeStatus(escHtml(sheet.number) + " added under " + escHtml(scope[ci].name) +
+            (asRef ? " as reference only — it's on the project, the take-off just won't raise rows from it." : "."));
         } catch (err) { setScopeStatus("Could not add the drawing: " + escHtml(err.message || err)); }
       }
     });
@@ -1866,9 +1878,9 @@
         "in the take-off match the sheets.");
       // Hard stop: a sheet nobody has placed or deliberately left out would be read blind.
       if (cov && cov.open.length) blockers.push(cov.open.length + " drawing" + (cov.open.length === 1 ? "" : "s") +
-        " from the PDF " + (cov.open.length === 1 ? "is" : "are") + " neither on a component nor left out on purpose: <b>" +
+        " from the PDF " + (cov.open.length === 1 ? "is" : "are") + " not on a component yet: <b>" +
         escHtml(cov.open.slice(0, 8).map((x) => x.s.number).join(", ")) + (cov.open.length > 8 ? " …" : "") +
-        "</b> — resolve them under <b>All drawings accounted for</b> above.");
+        "</b> — place them under <b>Still to resolve</b> (as reference only if they carry no material).");
       if (unallocated.length) warn.push(unallocated.length + " drawing" + (unallocated.length === 1 ? "" : "s") +
         " read from the PDF " + (unallocated.length === 1 ? "is" : "are") + " not in the scope below: <b>" +
         escHtml(unallocated.slice(0, 8).join(", ")) + (unallocated.length > 8 ? " …" : "") + "</b>");
@@ -1889,13 +1901,13 @@
           (sheets.length ? "<span><b>" + sheets.length + "</b> drawings in the PDF</span>" : "") +
           "<span><b>" + tree.length + "</b> component" + (tree.length === 1 ? "" : "s") + "</span>" +
           "<span><b>" + drawings + "</b> drawings in scope</span>" +
-          (excludedSheets.length ? "<span><b>" + excludedSheets.length + "</b> left out on purpose</span>" : "") +
+          (referenceSheets.length ? "<span><b>" + referenceSheets.length + "</b> reference only</span>" : "") +
         "</div>" +
         (blockers.length ? '<div class="pfstop">' + blockers.map((b) => "<div>⛔ " + b + "</div>").join("") + "</div>" : "") +
         (warn.length ? '<div class="pfwarn">' + warn.map((w) => "<div>⚠ " + w + "</div>").join("") + "</div>" : "") +
         "<ul class=\"pflist\">" + list + (tree.length > 12 ? "<li>…</li>" : "") + "</ul>" +
-        (excludedSheets.length ? '<div class="pfex">Left out (the take-off is told to skip these, and why): ' +
-          escHtml(excludedSheets.slice(0, 8).map((x) => x.number).join(", ")) + "</div>" : "") +
+        (referenceSheets.length ? '<div class="pfex">Reference only — on the project, read for context, no BOM rows: ' +
+          escHtml(referenceSheets.slice(0, 8).map((x) => x.number).join(", ")) + "</div>" : "") +
         (blockers.length
           ? '<div class="pfalt"><a href="#" id="goCancel">close and resolve them above</a></div>'
           : '<button type="button" class="go" id="goConfirm" style="margin-top:10px">▶ Start the full take-off</button>' +
@@ -1940,7 +1952,7 @@
             scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
             // Everything the estimator decided about coverage travels with the run: which sheets to
             // skip and why, and any sheet whose number on the drawing differs from the project's.
-            excluded_drawings: excludedSheets.map((x) => ({ number: x.number, title: x.title, reason: x.reason })),
+            reference_drawings: referenceSheets.map((x) => ({ number: x.number, title: x.title, reason: x.reason })),
             drawing_aliases: Object.keys(aliases).map((k) => {
               const s = sheets.find((z) => _norm(z.number) === k);
               return { pdf_number: s ? s.number : k, use_number: aliases[k] };
