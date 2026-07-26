@@ -489,6 +489,7 @@ const SHEET_INDEX_TOOL = {
             title:      { type: "string",  description: "Short sheet title from the title block if legible, else empty." },
             continued:  { type: "boolean", description: "True if this page is a continuation of the SAME drawing number as the previous page." },
             confidence: { type: "number",  description: "0-1 confidence the number was read correctly (0 when there is no number)." },
+            suggested_component: { type: "string", description: "The component / assembly this sheet details, as a SHORT name (2-4 words) taken from the title block, e.g. 'Catwalk Floor', 'Platform Railing', 'Stair Stringers'. Drop the project/product prefix. Sheets detailing the SAME assembly MUST get the IDENTICAL string so they group. Empty for a cover, index or notes page." },
           },
           required: ["page", "number"],
         },
@@ -509,7 +510,14 @@ const SHEET_SYSTEM =
   "number as an empty string and confidence 0 — never fabricate a number and never omit the page. " +
   "(4) If a page continues the SAME drawing as the previous page, repeat that same number and set continued=true. " +
   "Do NOT group pages yourself — one row per page; the grouping is done downstream. " +
-  "(5) Give a per-page confidence. Return via submit_sheet_index.";
+  "(5) Give a per-page confidence.\n" +
+  "(6) ALSO propose the component / assembly each sheet details, in `suggested_component`, read from the " +
+  "title block — this is a SUGGESTION the estimator will accept, rename or ignore, so make it the name a " +
+  "fabricator would use: short (2-4 words), no project or product prefix, no sheet numbers. Sheets that " +
+  "detail the SAME assembly must carry the IDENTICAL string so they group under one component; a sheet " +
+  "family sharing a number stem (…-10A-2A, …-10A-2B, …-10A-3) is usually one assembly. Leave it empty for " +
+  "cover, index and notes pages. Do NOT invent an assembly the title block doesn't support.\n" +
+  "Return via submit_sheet_index.";
 
 // GROUND TRUTH — the page count comes from the PDF file itself, never from the model.
 // pdf-lib parses the real page tree (works with compressed object streams, unlike a byte
@@ -541,9 +549,11 @@ function groupPagesIntoSheets(entries) {
     const s = byKey[k];
     if (!s) {
       byKey[k] = { doc: e.doc, number: e.number, title: e.title || "", pages: [e.page, e.page],
-                   page_list: [e.page], confidence: (e.confidence == null ? null : e.confidence) };
+                   page_list: [e.page], confidence: (e.confidence == null ? null : e.confidence),
+                   suggested_component: e.suggested_component || "" };
       order.push(k);
     } else {
+      if (!s.suggested_component && e.suggested_component) s.suggested_component = e.suggested_component;
       if (last !== k && split.indexOf(s.number) < 0) split.push(s.number);   // non-adjacent repeat
       s.pages = [Math.min(s.pages[0], e.page), Math.max(s.pages[1], e.page)];
       s.page_list.push(e.page);
@@ -617,6 +627,7 @@ async function readSheetIndex(opts) {
       number: String((p && p.number) == null ? "" : p.number).trim(),
       title: String((p && p.title) == null ? "" : p.title).trim(),
       confidence: (p && typeof p.confidence === "number") ? p.confidence : null,
+      suggested_component: String((p && p.suggested_component) == null ? "" : p.suggested_component).trim(),
     });
   });
 
