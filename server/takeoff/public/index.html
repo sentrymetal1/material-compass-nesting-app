@@ -122,6 +122,10 @@
             font-size:13px; font-weight:600; border-radius:6px; padding:9px; width:100%; }
     .addc:hover { border-color:var(--blue); background:#f0f6fc; }
     .comp .ddesc { font-size:11px; color:#8893a0; margin:2px 0 0 4px; }
+    .comp .ccount { font-size:10.5px; color:#66707c; background:#eef2f6; border-radius:10px;
+                    padding:2px 7px; white-space:nowrap; flex:0 0 auto; }
+    .scopesum { font-size:11px; color:#556; background:#f7fafd; border:1px solid #e3ecf6;
+                border-radius:6px; padding:6px 9px; margin-bottom:9px; line-height:1.6; }
     /* Record-bound pickers: components and drawings are chosen, not typed. */
     .comp .crow select { flex:1; padding:7px 8px; border:1px solid #cdd3da; border-radius:6px;
                          font-size:13px; font-weight:600; background:#fff; min-width:0; }
@@ -379,7 +383,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.37 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.38 (2026-07-26)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -669,12 +673,33 @@
           : (editing && editing.kind === "component" && String(editing.id) === String(c.cid))
             ? editCell("component", c.cid, c.name, ci, null)
             : '<select data-k="csel" data-ci="' + ci + '">' + compOptions(c.cid) + "</select>";
-        return '<div class="comp"><div class="crow">' + ccell + rowBtns("component", ci, null, c.cid) + "</div>" +
+        const nd = (c.drawings || []).filter((d) => d && d.number).length;
+        return '<div class="comp"><div class="crow">' + ccell +
+          '<span class="ccount">' + nd + " dwg" + (nd === 1 ? "" : "s") + "</span>" +
+          rowBtns("component", ci, null, c.cid) + "</div>" +
           '<div class="draws">' + rows +
             (c.cid ? '<button type="button" class="addd" data-k="adddraw" data-ci="' + ci + '">+ add drawing</button>' : "") +
           "</div></div>";
       }).join("");
-      host.innerHTML = ((!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + cards;
+      // Say the arithmetic out loud. "24 of 24 accounted for" and 22 rows in this list are both
+      // true when two sheets were left out on purpose or ✕'d from this run — but only if the page
+      // shows where every number went. Counting rows by hand shouldn't be necessary.
+      let sum = "";
+      if (project.components.length || sheets.length) {
+        const rows = scope.reduce((n, c) => n + (c.drawings || []).filter((d) => d && d.number).length, 0);
+        const onProject = project.components.reduce((n, c) => n + c.drawings.length, 0) + project.unassigned.length;
+        // Anything on the project but not in the list above was ✕'d out of this run — either the
+        // drawing itself or the whole component it sits under.
+        const dropped = Math.max(0, onProject - rows);
+        const bits = ["<b>" + rows + "</b> drawing" + (rows === 1 ? "" : "s") + " in this take-off, across <b>" +
+          scope.filter((c) => c.cid).length + "</b> component" + (scope.filter((c) => c.cid).length === 1 ? "" : "s")];
+        if (excludedSheets.length) bits.push("<b>" + excludedSheets.length + "</b> sheet" +
+          (excludedSheets.length === 1 ? "" : "s") + " left out on purpose");
+        if (dropped) bits.push("<b>" + dropped + "</b> ✕'d out of this run");
+        if (sheets.length) bits.push("<b>" + sheets.length + "</b> read from the PDF");
+        sum = '<div class="scopesum">' + bits.join(" · ") + "</div>";
+      }
+      host.innerHTML = ((!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + sum + cards;
       renderCoverage();          // scope changed ⇒ the accounted-for tally changed
     }
     function focusScopeInput(sel) {
