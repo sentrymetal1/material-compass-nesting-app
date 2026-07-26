@@ -12,6 +12,20 @@ app.use('/api/takeoff', express.json({ limit: '60mb' })); // AI take-off: base64
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 
+// AI TAKE-OFF WIDGET — served from this app so the URL the user sees is Material Compass's own,
+// not a github.io address belonging to a personal account. Same origin as /api/takeoff too, so the
+// widget's calls stop being cross-origin, and a deploy is live immediately instead of waiting on a
+// CDN cache. The GitHub Pages copy still works while the launcher button points at it.
+app.get('/takeoff', (req, res, next) => {
+  // Express matches '/takeoff' and '/takeoff/' on the same route, so only the slash-less form gets
+  // redirected — otherwise this bounces forever. The slash matters: review.html is linked relatively.
+  const p = req.originalUrl.split('?')[0];
+  if (p.endsWith('/')) return next();
+  const q = req.originalUrl.indexOf('?');
+  res.redirect(301, '/takeoff/' + (q > -1 ? req.originalUrl.slice(q) : ''));
+});
+app.use('/takeoff', express.static(path.join(__dirname, 'takeoff', 'public')));
+
 const ZOHO = {
   clientId: process.env.ZOHO_CLIENT_ID,
   clientSecret: process.env.ZOHO_CLIENT_SECRET,

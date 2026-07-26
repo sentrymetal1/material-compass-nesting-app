@@ -1,0 +1,2019 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Material Take-off</title>
+
+  <!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
+  <script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
+
+  <style>
+    :root { --blue:#5F94CE; --w:1780px; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; margin:0; padding:24px;
+           color:#222; background:#f7f8fa; }
+    .appbar { max-width:var(--w); margin:0 auto 14px; display:flex; align-items:center; gap:10px; }
+    .appbar .brand { font-weight:800; font-size:16px; color:var(--blue); letter-spacing:.2px; }
+    .appbar .page { font-size:13px; color:#667; border-left:1px solid #e3e6ea; padding-left:10px; }
+    .card { max-width:var(--w); margin:0 auto; background:#fff; border:1px solid #e3e6ea;
+            border-radius:10px; padding:26px 28px; }
+    h1 { font-size:19px; margin:0 0 4px; }
+    .sub { color:#667; font-size:13px; margin:0 0 20px; max-width:820px; }
+    /* Two working columns: documents/model on the left, the scope tree + PDF allocation on the
+       right (it's the tall one). Collapses to a single column on narrow screens. */
+    /* Control strip: documents · depth · run. */
+    .toprow { display:grid; grid-template-columns:minmax(260px,1.1fr) minmax(190px,0.8fr) minmax(190px,0.8fr);
+              gap:24px; align-items:start; }
+    @media (max-width:900px) { .toprow { grid-template-columns:1fr; gap:18px; } }
+    .toprow button.go { margin-top:2px; }
+    .toprow .scanbtn { margin-top:10px; }
+    .colhint { font-size:11.5px; color:#8893a0; margin-top:8px; line-height:1.5; }
+    /* The three working columns: the component list, the proposal, and what's still open. Worked
+       across rather than scrolled between, so they stay in line at any usable width. */
+    .cols { display:grid; grid-template-columns:minmax(340px,1.15fr) minmax(280px,1fr) minmax(300px,1.05fr);
+            gap:20px; align-items:start; margin-top:22px; }
+    @media (max-width:1400px) { .cols { grid-template-columns:minmax(320px,1.1fr) minmax(260px,1fr); }
+                                .cols > #covCol { grid-column:1 / -1; } }
+    @media (max-width:1050px) { .cols { grid-template-columns:1fr; gap:18px; }
+                                .cols > #covCol { grid-column:auto; } }
+    /* The three read-out panels: equal columns, each scrolling independently so a 27-drawing
+       list can't push the other two off the screen. Collapses 3 → 2 → 1 as the window narrows. */
+    .panels { display:grid; grid-template-columns:1fr; gap:20px; align-items:start; margin-top:22px; }
+    .panels:empty, .panel:empty { display:none; }
+    .panel { min-width:0; }
+    .panel .ptl { font-size:12px; font-weight:700; color:#66707c; text-transform:uppercase;
+                  letter-spacing:.4px; padding-bottom:6px; margin-bottom:2px; border-bottom:1px solid #eceff2; }
+    .panel .pbody { max-height:70vh; overflow:auto; padding-right:2px; }
+    /* Inside a column the panels are already boxed — drop their own top margins. */
+    .panel .alloc, .panel .sug, .panel .cov { margin-top:8px; }
+    .secttl { font-size:13px; font-weight:700; color:#2b3340; padding-bottom:7px;
+              margin-bottom:12px; border-bottom:1px solid #eceff2;
+              display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+    .secttl .n { color:var(--blue); }
+    .secttl .reload { font-size:12px; font-weight:600; color:var(--blue); text-decoration:none;
+                      white-space:nowrap; cursor:pointer; }
+    .secttl .reload:hover { text-decoration:underline; }
+    .drop { display:flex; flex-direction:column; align-items:center; justify-content:center;
+            gap:4px; border:2px dashed #c4ccd6; border-radius:8px; padding:24px; min-height:104px;
+            text-align:center; cursor:pointer; transition:.15s; }
+    .drop:hover, .drop.over { border-color:var(--blue); background:#f0f6fc; }
+    .drop strong { font-size:15px; color:#2b3340; }
+    .drop .hint { font-size:12px; color:#8893a0; }
+    .drop input { display:none; }
+    .files { margin-top:12px; font-size:13px; color:#334; }
+    .files div { padding:4px 2px; border-bottom:1px solid #f1f3f5; }
+    .files div:last-child { border-bottom:0; }
+    .files .big { color:#b45309; font-weight:600; }
+    .files .frow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .files .fname { color:#334; }
+    .files .fmb { color:#8893a0; font-weight:400; }
+    .files .fx { border:0; background:transparent; color:#b45309; cursor:pointer; font-size:14px;
+      line-height:1; padding:2px 7px; border-radius:4px; }
+    .files .fx:hover { background:#fdeeee; color:#c0392b; }
+    label.model { display:block; margin:18px 0 6px; font-size:12px; color:#556; }
+    select { width:100%; padding:8px; border:1px solid #cdd3da; border-radius:6px; }
+    button.go { margin-top:18px; width:100%; padding:12px; border:0; border-radius:6px;
+                background:var(--blue); color:#fff; font-size:15px; font-weight:600;
+                cursor:pointer; }
+    button.go:disabled { opacity:.5; cursor:not-allowed; }
+    .status { margin-top:18px; font-size:14px; }
+    .spin { display:inline-block; width:16px; height:16px; border:2px solid #cdd3da;
+            border-top-color:var(--blue); border-radius:50%; animation:s 0.8s linear infinite;
+            vertical-align:-3px; margin-right:8px; }
+    @keyframes s { to { transform:rotate(360deg); } }
+    .result { margin-top:18px; padding:14px; border-radius:8px; background:#f0f6fc;
+              border:1px solid #cfe0f2; font-size:14px; }
+    .result b.big { font-size:16px; }
+    .warn { background:#fff7ed; border-color:#fcd9a8; }
+    .err  { background:#fdeeee; border-color:#f3c2c2; }
+    .pill { display:inline-block; margin:8px 8px 0 0; padding:4px 10px; border-radius:20px;
+            background:#fff; border:1px solid #cfe0f2; font-size:12px; }
+    .dl { display:inline-block; margin:12px 8px 0 0; padding:10px 16px; background:var(--blue);
+          color:#fff; text-decoration:none; border-radius:6px; font-weight:600; cursor:pointer;
+          border:0; font-size:13px; }
+    .dl.alt { background:#fff; color:var(--blue); border:1px solid var(--blue); }
+    .notes { margin-top:10px; padding:10px; background:#fafbfc; border:1px solid #eceff2;
+             border-radius:6px; font-size:12px; color:#445; white-space:pre-wrap; max-height:180px;
+             overflow:auto; }
+    .foot { text-align:center; color:#aab; font-size:11px; margin-top:18px; }
+    /* Scope tree — the estimator's components → drawings, sent as scope_tree. */
+    .scope { margin-top:0; }
+    .scope > .lbl { font-size:12px; color:#556; margin-bottom:8px;
+                    display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+    .scope > .lbl .opt { color:#8893a0; font-weight:400; }
+    .scope > .lbl .reload { color:var(--blue); text-decoration:none; font-weight:600; white-space:nowrap; cursor:pointer; }
+    .scope > .lbl .reload:hover { text-decoration:underline; }
+    .scope .sstat { font-size:12px; color:#8893a0; margin:0 0 8px; }
+    .scope .sstat .spin { width:12px; height:12px; border-width:2px; margin-right:6px; }
+    .comp { border:1px solid #e3e6ea; border-radius:8px; padding:10px 10px 8px;
+            margin-bottom:8px; background:#fafbfc; }
+    .comp .crow { display:flex; align-items:center; gap:8px; }
+    .comp .crow input { flex:1; padding:7px 8px; border:1px solid #cdd3da; border-radius:6px; font-size:13px; }
+    .comp .draws { margin:8px 0 0 14px; }
+    .comp .drow { display:flex; align-items:center; gap:8px; margin-top:6px; }
+    .comp .drow input { flex:1; padding:6px 8px; border:1px solid #d6dbe1; border-radius:6px; font-size:12.5px; }
+    .comp .xbtn { border:0; background:transparent; color:#b45309; cursor:pointer; font-size:14px;
+                  line-height:1; padding:2px 7px; border-radius:4px; }
+    .comp .xbtn:hover { background:#fdeeee; color:#c0392b; }
+    .comp .addd { border:0; background:transparent; color:var(--blue); cursor:pointer;
+                  font-size:12px; padding:6px 2px 0 0; font-weight:600; }
+    .addc { border:1px dashed #c4ccd6; background:#fff; color:var(--blue); cursor:pointer;
+            font-size:13px; font-weight:600; border-radius:6px; padding:9px; width:100%; }
+    .addc:hover { border-color:var(--blue); background:#f0f6fc; }
+    .comp .ddesc { font-size:11px; color:#8893a0; margin:2px 0 0 4px; }
+    /* Record-bound pickers: components and drawings are chosen, not typed. */
+    .comp .crow select { flex:1; padding:7px 8px; border:1px solid #cdd3da; border-radius:6px;
+                         font-size:13px; font-weight:600; background:#fff; min-width:0; }
+    .comp .drow select { flex:1; padding:6px 8px; border:1px solid #d6dbe1; border-radius:6px;
+                         font-size:12.5px; background:#fff; min-width:0; }
+    .comp .einp { flex:1; padding:6px 8px; border:1px solid var(--blue); border-radius:6px; font-size:12.5px; min-width:0; }
+    .comp .rowbtns { display:flex; align-items:center; gap:2px; flex:0 0 auto; }
+    .comp .ibtn { border:0; background:transparent; color:#8893a0; cursor:pointer; font-size:12.5px;
+                  line-height:1; padding:4px 6px; border-radius:4px; }
+    .comp .ibtn:hover { background:#eef2f6; color:#334; }
+    .comp .ibtn.del:hover { background:#fdeeee; color:#c0392b; }
+    .comp .okbtn { border:0; background:var(--blue); color:#fff; cursor:pointer; font-size:11.5px;
+                   font-weight:600; border-radius:5px; padding:6px 9px; white-space:nowrap; }
+    /* Suggested breakdown: the AI's proposed components with their drawings — take it or leave it. */
+    .sug { margin-top:10px; border:1px solid #cfe0f2; border-radius:8px; background:#f7fafd; padding:11px 13px 13px; }
+    .sug .sugttl { font-size:12.5px; font-weight:700; color:#2b3340; }
+    .sgrow { background:#fff; border:1px solid #e3ecf6; border-radius:6px; padding:8px 10px; margin-top:8px; }
+    .sghd { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .sgname { flex:1; min-width:140px; padding:5px 7px; border:1px solid #cdd3da; border-radius:5px;
+              font-size:12.5px; font-weight:600; font-family:inherit; }
+    .sgtag { font-size:10.5px; color:#66707c; background:#f1f4f8; border-radius:10px; padding:2px 8px; white-space:nowrap; }
+    .sgtag.new { color:#1e5b32; background:#eef8f0; }
+    .sgnums { font-size:11.5px; color:#66707c; margin-top:5px; line-height:1.5; }
+    .sugacts { display:flex; align-items:center; gap:12px; margin-top:10px; }
+    .sugacts a { font-size:11.5px; color:#8893a0; }
+    /* Coverage: every sheet in the PDF placed or deliberately left out, resolved in real time. */
+    .cov { margin-top:10px; border-radius:8px; padding:11px 13px 13px; border:1px solid; }
+    .cov.ok   { background:#eef8f0; border-color:#cfe8d6; }
+    .cov.open { background:#fff7ed; border-color:#fcd9a8; }
+    .cov .covttl { font-size:12.5px; font-weight:600; color:#2b3340; }
+    .cov .covsub { font-size:11.5px; color:#8a4b09; margin-top:3px; }
+    .covrow { background:#fff; border:1px solid #f0e2cc; border-radius:6px; padding:9px 10px; margin-top:8px; }
+    .covrow .covhd { font-size:12.5px; color:#2b3340; }
+    .covrow .covwhy, .cov > .covwhy { font-size:11.5px; color:#66707c; line-height:1.5; margin-top:3px; }
+    .covacts { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:7px; }
+    .covbtn { border:0; background:var(--blue); color:#fff; border-radius:5px; padding:5px 9px;
+              font-size:11.5px; font-weight:600; cursor:pointer; }
+    .covbtn.alt { background:#fff; color:#556; border:1px solid #cdd3da; font-weight:500; }
+    .covbtn.alt:hover { background:#f4f7fa; }
+    .covsel { padding:5px 6px; border:1px solid #cdd3da; border-radius:5px; font-size:11.5px; max-width:190px; }
+    .covbulk { background:#fff; border:1px solid #f0e2cc; border-radius:6px; padding:8px 10px; margin-top:8px;
+               display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:11.5px; color:#334; }
+    .covbulk .covwhy { flex-basis:100%; margin-top:2px; }
+    .covex { margin-top:9px; font-size:11.5px; color:#66707c; }
+    .covex summary { cursor:pointer; }
+    .covexrow { display:flex; align-items:center; gap:8px; padding:4px 0 4px 12px; }
+    .covexrow .adesc { flex:1; }
+    /* Pre-flight: what is about to be sent, confirmed on this screen before anything runs. */
+    .preflight { margin-top:12px; border:1px solid #cfe0f2; border-radius:8px; background:#f7fafd; padding:12px 14px 14px; }
+    .preflight .pfhd { font-size:12.5px; font-weight:700; color:#2b3340; margin-bottom:8px; }
+    .preflight .pfrow { display:flex; flex-wrap:wrap; gap:6px 8px; margin-bottom:8px; }
+    .preflight .pfrow span { background:#fff; border:1px solid #cfe0f2; border-radius:20px;
+                             padding:3px 10px; font-size:11.5px; color:#334; }
+    .preflight .pfwarn { background:#fff7ed; border:1px solid #fcd9a8; color:#8a4b09; border-radius:6px;
+                         padding:8px 10px; font-size:12px; line-height:1.5; margin-bottom:8px; }
+    .preflight .pfstop { background:#fdeeee; border:1px solid #f3c2c2; color:#a12727; border-radius:6px;
+                         padding:8px 10px; font-size:12px; line-height:1.5; margin-bottom:8px; }
+    .preflight .pfex { font-size:11.5px; color:#66707c; margin-top:7px; }
+    .preflight .pflist { margin:0; padding-left:18px; font-size:12px; color:#445; }
+    .preflight .pflist li { margin:2px 0; }
+    .preflight .pfalt { margin-top:7px; text-align:center; font-size:11.5px; }
+    .preflight .pfalt a { color:#8893a0; }
+    .planlist { margin:6px 0 2px; padding-left:18px; }
+    .planlist li { margin:2px 0; }
+    .planalt { margin-top:7px; font-size:11.5px; }
+    .planalt a { color:#8a4b09; text-decoration:underline; }
+    /* PDF sheet-read → allocation preview */
+    .scanbtn { margin-top:8px; width:100%; padding:9px; border:1px solid var(--blue); border-radius:6px;
+               background:#f0f6fc; color:var(--blue); font-weight:600; font-size:13px; cursor:pointer; }
+    .scanbtn:hover { background:#e4eefa; }
+    .scanbtn:disabled { opacity:.6; cursor:default; }
+    .alloc { margin-top:10px; border:1px solid #cfe0f2; border-radius:8px; background:#f7fafd; padding:12px 14px 14px; }
+    .alloc .ahd { font-size:12.5px; color:#334; font-weight:600; margin-bottom:2px; }
+    .alloc .ahint { font-size:11.5px; color:#8893a0; margin-bottom:8px; }
+    /* Page-count reconciliation — the PDF's own page count vs. the drawings found. */
+    .aud { font-size:12.5px; border-radius:6px; padding:9px 11px; margin-bottom:10px; line-height:1.45; }
+    .aud.ok   { background:#eef8f0; border:1px solid #cfe8d6; color:#1e5b32; }
+    .aud.warn { background:#fff7ed; border:1px solid #fcd9a8; color:#8a4b09; }
+    .aud b { font-weight:700; }
+    .aud .sub2 { display:block; margin-top:3px; font-size:11.5px; opacity:.9; }
+    /* Aligned columns: sheet no. | title | pages | → | component | remove */
+    .alloc .agrid { display:grid; grid-template-columns:max-content minmax(0,1fr) max-content 10px minmax(110px,180px) max-content;
+                    align-items:center; column-gap:8px; }
+    .alloc .acolhd { font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; color:#8893a0;
+                     padding-bottom:6px; border-bottom:1px solid #dde8f4; }
+    .alloc .agrid > div { padding:6px 0; border-bottom:1px solid #e6eef7; min-width:0; }
+    .alloc .agrid > div.acolhd { padding:0 0 6px; }
+    /* The number is editable in place — a misread digit shouldn't mean re-reading the PDF. */
+    .alloc input.anum { font-weight:600; color:#2b3340; font-size:13px; font-family:inherit;
+                        border:1px solid transparent; background:transparent; border-radius:4px;
+                        padding:3px 5px; width:16ch; }
+    .alloc input.anum:hover { border-color:#dde8f4; background:#fff; }
+    .alloc input.anum:focus { border-color:var(--blue); background:#fff; outline:none; }
+    .alloc .low input.anum { color:#b45309; }
+    .alloc .asplit { border:1px solid #cfe0f2; background:#fff; color:var(--blue); cursor:pointer;
+                     font-size:10.5px; font-weight:600; border-radius:4px; padding:2px 6px; margin-left:6px; }
+    .alloc .asplit:hover { background:#f0f6fc; }
+    .alloc .adesc { color:#667; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .alloc .apg { color:#8893a0; font-size:11px; white-space:nowrap; }
+    .alloc .low .anum { color:#b45309; }
+    .alloc .arrow { color:#8893a0; font-size:12px; text-align:center; }
+    .alloc select { width:100%; padding:5px 6px; border:1px solid #cdd3da; border-radius:5px; font-size:12px; }
+    .alloc .adrop { border:0; background:transparent; color:#b45309; cursor:pointer; font-size:13px;
+                    line-height:1; padding:2px 6px; border-radius:4px; }
+    .alloc .adrop:hover { background:#fdeeee; color:#c0392b; }
+    .alloc .aapply { margin-top:12px; width:100%; padding:9px; border:0; border-radius:6px;
+                     background:var(--blue); color:#fff; font-weight:600; font-size:13px; cursor:pointer; }
+
+    /* ---- DENSITY -----------------------------------------------------------
+       Three working columns side by side, so the type steps down a notch to fit
+       more of each list on screen. Kept as one block at the end: it's the only
+       place sizes are tuned, so the whole page shifts together. */
+    body { font-size:12.5px; }
+    h1 { font-size:17px; }
+    .sub { font-size:12px; max-width:900px; }
+    .secttl { font-size:11.5px; }
+    .panel .ptl { font-size:11px; }
+    .files { font-size:12px; }
+    .files .fmb { font-size:11.5px; }
+    label.model, .colhint { font-size:11px; }
+    select { padding:6px 7px; font-size:12px; }
+    button.go { font-size:14px; padding:10px; }
+    .scanbtn, .addc { font-size:12px; padding:8px; }
+    .scope > .lbl, .scope .sstat { font-size:11px; }
+    .comp { padding:8px 8px 7px; }
+    .comp .crow select, .comp .crow input { font-size:12px; padding:6px 7px; }
+    .comp .drow select, .comp .drow input, .comp .einp { font-size:11.5px; padding:5px 7px; }
+    .comp .ddesc { font-size:10.5px; }
+    .comp .addd, .comp .okbtn { font-size:11px; }
+    .alloc { padding:10px 11px 11px; }
+    .alloc .ahd { font-size:12px; }
+    .alloc .ahint, .alloc .acolhd { font-size:10.5px; }
+    .alloc input.anum { font-size:12px; }
+    .alloc .adesc, .alloc select { font-size:11.5px; }
+    .alloc .apg { font-size:10.5px; }
+    .aud { font-size:11.5px; padding:8px 10px; }
+    .aud .sub2 { font-size:11px; }
+    .cov { padding:10px 11px 11px; }
+    .cov .covttl, .sug .sugttl { font-size:12px; }
+    .cov .covsub { font-size:11px; }
+    .covrow { padding:8px 9px; }
+    .covrow .covhd { font-size:12px; }
+    .covrow .covwhy, .cov > .covwhy { font-size:11px; }
+    .covbtn { font-size:11px; padding:4px 8px; }
+    .covsel { font-size:11px; }
+    .covex, .covexrow { font-size:11px; }
+    .sug { padding:10px 11px 11px; }
+    .sgrow { padding:7px 9px; }
+    .sgname { font-size:12px; padding:4px 6px; }
+    .sgtag { font-size:10px; }
+    .sgnums { font-size:11px; }
+    .preflight { padding:10px 12px 12px; }
+    .preflight .pfhd { font-size:12px; }
+    .preflight .pfrow span { font-size:11px; }
+    .preflight .pfwarn, .preflight .pfstop { font-size:11.5px; }
+    .preflight .pflist { font-size:11.5px; }
+    .status { font-size:13px; }
+    .result { font-size:13px; }
+  </style>
+</head>
+<body>
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off</span></div>
+  <div class="card">
+    <h1>AI Material Take-off</h1>
+    <p class="sub">Upload the project drawings + Division-05 spec (PDF — you can select several:
+       S sheets, A sheets, and the Metals spec). As soon as they're in, Material Compass AI reads the
+       title blocks and suggests how the drawings break down into components — take it, edit it, or
+       ignore it. Nothing is taken off until you start the run. Keep the combined size under ~32 MB.</p>
+
+    <div id="resume" style="display:none;margin:0 0 16px;padding:11px 13px;background:#f0f6fc;
+         border:1px solid #cfe0f2;border-radius:8px;font-size:13px;color:#334;">
+      💾 You have a saved take-off for this project.
+      <a id="resumeLink" href="#" style="color:var(--blue);font-weight:600;text-decoration:none;">Open it →</a>
+      <span style="color:#8893a0;">or run a new one below.</span>
+    </div>
+
+    <!-- The controls, as a strip across the top: what to read · how deeply · go. Keeping these in
+         one column left a tall empty gap beside the scope editor. -->
+    <div class="toprow">
+      <div class="panel">
+        <div class="secttl"><span>Documents</span></div>
+        <label class="drop" id="drop">
+          <strong>Click to choose PDFs</strong>
+          <span class="hint">or drag them here</span>
+          <input type="file" id="file" accept="application/pdf" multiple />
+        </label>
+        <div class="files" id="fileList"></div>
+        <button type="button" class="scanbtn" id="scanPdf" style="display:none">🔍 Preview the drawings in the PDF</button>
+      </div>
+
+      <div class="panel">
+        <div class="secttl"><span>Reading depth</span></div>
+        <!-- Tier labels are ours; the values stay the engine's keys. -->
+        <select id="model">
+          <option value="haiku">Quick — cheapest, try first</option>
+          <option value="sonnet" selected>Standard — balanced (recommended)</option>
+          <option value="opus">Deep — most accurate, priciest</option>
+        </select>
+        <div class="colhint">Standard suits most packages. Deep is worth it on dense or poorly
+          scanned sets; Quick is for a first look.</div>
+      </div>
+
+      <div class="panel">
+        <div class="secttl"><span>Run</span></div>
+        <button class="go" id="go" disabled>Run take-off →</button>
+        <div class="colhint">You'll get a summary to check before anything is read — nothing is
+          spent until you confirm it.</div>
+      </div>
+    </div>
+    <div id="preflight"></div>
+
+    <div class="cols">
+      <div class="scope" id="scope">
+        <div class="secttl">
+          <span>Components &amp; drawings</span>
+          <a class="reload" id="reloadScope" title="Re-pull the project's components &amp; drawings">↻ Reload from project</a>
+        </div>
+        <div class="lbl">
+          <span class="opt">These are the project’s own records — pick from them so every BOM row ties back to a
+            real component and drawing. ✎ renames and 🗑 deletes on the project itself; ✕ just leaves it out of
+            this take-off.</span>
+        </div>
+        <div class="sstat" id="scopeStatus"></div>
+        <div id="scopeList"></div>
+        <button type="button" class="addc" id="addComp">+ Add component</button>
+      </div>
+
+      <!-- In line with the scope editor on purpose: the proposal and the open items both feed the
+           component list to their left, so all three are worked across, not scrolled between. -->
+      <div class="panel" id="sugCol">
+        <div class="ptl">Suggested breakdown</div>
+        <div class="pbody" id="suggest"></div>
+      </div>
+
+      <div class="panel" id="covCol">
+        <div class="ptl">Still to resolve</div>
+        <div class="pbody" id="coverage"></div>
+      </div>
+    </div>
+
+    <!-- The raw read: every drawing found, with its page and where it's going. Full width beneath
+         the three working columns — it's reference, not somewhere decisions get made. -->
+    <div class="panels" id="panels">
+      <div class="panel">
+        <div class="ptl">Drawings found in the PDF</div>
+        <div class="pbody" id="allocPanel"></div>
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+    <div id="resultBox"></div>
+
+    <div class="foot" id="foot"></div>
+  </div>
+
+  <script>
+    // ---- CONFIG ----------------------------------------------------------
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.36 (2026-07-26)";
+    // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
+    // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
+    // entirely; the absolute URL is only needed by the GitHub Pages copy.
+    const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
+    const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
+    // ~32 MB upstream request cap; warn the user before they waste a click.
+    const MAX_MB = 32;
+
+    // ---- ZOHO WRITE (step 3a) — CONFIRM every link name in the form builder ----
+    // When the Zoho SDK is present the widget writes the BOM CSV straight into a
+    // CSV Import Tool record (no manual upload). Flow: addRecord(empty) → uploadFile
+    // → updateRecord(Run_Import=true), which fires the On-Edit import workflow with
+    // the file actually attached. See the Deluge trigger in INTEGRATION/SYNOPSIS docs.
+    const AUTO_SUBMIT = true;            // set false to force the download path
+    const Z = {
+      APP:           "type-formsheet-2-18-21",   // app link name
+      IMPORT_FORM:   "Import_BOM_Form",          // CSV Import Tool form (addRecord target)
+      IMPORT_REPORT: "Import_BOM_Form_Report",   // its report (uploadFile / updateRecord target)
+      REVIEW_PAGE:   "",                          // WIRE: staging-review page link name (optional)
+      MODE_VALUE:    "Append",                    // BOM Import Mode — Append keeps existing rows
+      F: {
+        project: "Project_ID",
+        mfg:     "MFG_Client_Form",
+        mode:    "BOM_Import_Mode",
+        file:    "BOM_CSV_File",
+        run:     "Run_Import",           // NEW field to add — the On-Edit trigger keys off this
+      },
+    };
+    // ----------------------------------------------------------------------
+    console.log(BUILD_TAG);
+    document.getElementById("foot").textContent = BUILD_TAG;
+
+    // Resolve params (project_id + manufacturer_id) from the page URL.
+    function getParams() {
+      const q = new URLSearchParams(window.location.search);
+      return { project_id: q.get("project_id"), manufacturer_id: q.get("manufacturer_id") };
+    }
+    let params = getParams();
+    // If a saved take-off exists for this project, offer a way back to it (no re-run, no re-cost).
+    async function showResume() {
+      if (!params.project_id) return;
+      let has = false;
+      try { has = !!localStorage.getItem("mc_takeoff_" + params.project_id); } catch (e) {}
+      if (!has) {  // not on this device — check the project's saved take-off in Zoho
+        try {
+          const r = await fetch(RAILWAY_URL + "/api/takeoff/saved/" + encodeURIComponent(params.project_id));
+          const d = await r.json();
+          has = !!(d && d.ok && d.found);
+        } catch (e) {}
+      }
+      if (!has) return;
+      const el = document.getElementById("resume"), lk = document.getElementById("resumeLink");
+      if (lk) lk.href = "review.html?project_id=" + encodeURIComponent(params.project_id) +
+        "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
+      if (el) el.style.display = "block";
+    }
+    // If the Zoho SDK is present, prefer its query params (more reliable in-iframe).
+    if (window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.init) {
+      ZOHO.CREATOR.init().then(() => {
+        try {
+          const p = ZOHO.CREATOR.UTIL.getQueryParams();
+          params = { project_id: p.project_id || params.project_id,
+                     manufacturer_id: p.manufacturer_id || params.manufacturer_id };
+        } catch (e) { /* keep URL params */ }
+        showResume();
+      });
+    }
+    showResume();
+
+    const fileEl = document.getElementById("file");
+    const drop = document.getElementById("drop");
+    const go = document.getElementById("go");
+    const statusEl = document.getElementById("status");
+    const resultBox = document.getElementById("resultBox");
+    let docs = [];        // [{ name, b64, mb }]
+
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault(); drop.classList.remove("over");
+      if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+    });
+    fileEl.addEventListener("change", () => addFiles(fileEl.files));
+    // Remove a single file (event delegation — robust regardless of script scope).
+    document.getElementById("fileList").addEventListener("click", (e) => {
+      const btn = e.target.closest(".fx"); if (!btn) return;
+      const i = Number(btn.getAttribute("data-i"));
+      if (i >= 0 && i < docs.length) { docs.splice(i, 1); invalidateScan(); renderFiles(); }
+    });
+
+    function readAsB64(f) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("read failed: " + f.name));
+        reader.onload = () => resolve(String(reader.result).split(",")[1]); // strip data: prefix
+        reader.readAsDataURL(f);
+      });
+    }
+
+    // ADD (not replace) — accumulate across multiple picks/drops, skipping duplicates
+    // (same name + size). Clearing fileEl.value lets the SAME file be re-selected later.
+    async function addFiles(fileListLike) {
+      const incoming = [...fileListLike].filter((f) => f.type === "application/pdf");
+      fileEl.value = "";
+      if (!incoming.length) { statusEl.textContent = "Please choose PDF files."; return; }
+      let dupes = 0, added = 0;
+      for (const f of incoming) {
+        const key = f.name + "|" + f.size;
+        if (docs.some((d) => d.key === key)) { dupes++; continue; }
+        docs.push({ key, name: f.name, b64: await readAsB64(f), mb: f.size / 1024 / 1024 });
+        added++;
+      }
+      if (added) invalidateScan();
+      renderFiles();
+      maybeAutoPreview();          // read the drawings without waiting to be asked
+      statusEl.textContent = dupes ? (dupes + " file" + (dupes > 1 ? "s" : "") + " already added — skipped.") : "";
+    }
+
+    // The page tally belongs to the exact set of files that were read. Change the files and
+    // it's stale — throw it away rather than show a count that no longer matches the PDFs.
+    function invalidateScan() {
+      if (!audit && !detected.length) return;
+      audit = null; detected = [];
+      docs.forEach((d) => { d.pages = 0; });
+      renderAlloc();
+      setScopeStatus("Files changed — read the drawings from the PDF again to re-check the count.");
+    }
+
+    function escHtml(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+    function renderFiles() {
+      const totalMb = docs.reduce((s, d) => s + d.mb, 0);
+      const over = totalMb > MAX_MB;
+      const rows = docs.map((d, i) =>
+        '<div class="frow"><span class="fname">• ' + escHtml(d.name) +
+          '  <span class="fmb">(' + d.mb.toFixed(1) + ' MB' +
+            (d.pages ? ' · ' + d.pages + ' page' + (d.pages === 1 ? '' : 's') : '') + ')</span></span>' +
+          '<button type="button" class="fx" data-i="' + i + '" title="Remove this file" aria-label="Remove">✕</button></div>'
+      ).join("");
+      const totalPages = docs.reduce((s, d) => s + (d.pages || 0), 0);
+      document.getElementById("fileList").innerHTML = docs.length
+        ? rows + '<div class="' + (over ? "big" : "") + '"><b>Total: ' + totalMb.toFixed(1) + " MB" +
+            (totalPages ? " · " + totalPages + " page" + (totalPages === 1 ? "" : "s") : "") +
+            (over ? "  — over " + MAX_MB + " MB, trim before running" : "") + "</b></div>"
+        : '<div class="fmb" style="padding:6px 2px">No files yet — choose or drop PDFs above.</div>';
+      go.disabled = over || docs.length === 0;
+      updateScanBtn();
+    }
+
+    // ---- PROJECT SCOPE — RECORD-BOUND (components ▸ drawings) ---------------
+    // Every component and drawing here IS a project record: the pickers are bound to the project's
+    // Project_Components_Form / Project_Drawing_Details_Form rows, and add / rename / delete write
+    // straight back to the project through /api/takeoff/project-scope/*. Free text is gone on
+    // purpose — a typo'd component name or drawing number is exactly what makes a take-off row
+    // impossible to tie back to the project, and the estimator maintains this list there anyway.
+    let project = { components: [], unassigned: [], loaded: false };   // authoritative, from Zoho
+    let scope = [];                                   // this run's selection: [{cid, name, drawings:[{id,number}]}]
+    let descMap = {};                                 // drawing number → description (read from the PDF)
+    let detected = [];                                // last PDF sheet-read: [{number,title,pages,confidence,compIdx}]
+    let audit = null;                                 // last sheet-read's page reconciliation (server-parsed page count)
+    let editing = null;                               // {kind,id} being renamed in place
+    let creating = null;                              // {ci,di} row swapped into "type the new value"
+    let excluded = { c: {}, d: {} };                  // record ids left OUT of this take-off (local only)
+    let allocPlan = null;                             // pending "here's what this does to the project" confirmation
+    let suggestNames = {};                            // per-suggestion renames before they are taken
+    let suggestDismissed = false;                     // "no thanks" — proposal panel stays closed
+    let sheets = [];                                  // every drawing read out of the PDFs (survives the allocation)
+    let excludedSheets = [];                          // sheets deliberately left out: [{number,title,pages,reason}]
+    let aliases = {};                                 // PDF number (normalized) → the drawing number to use instead
+    const sheetKey = () => "mc_sheets_" + (params.project_id || "_");
+    function saveSheets() {
+      try { localStorage.setItem(sheetKey(), JSON.stringify({ sheets: sheets, excluded: excludedSheets, aliases: aliases })); } catch (e) {}
+    }
+    const exclKey = () => "mc_excl_" + (params.project_id || "_");
+    const descKey = () => "mc_desc_" + (params.project_id || "_");
+    function escAttr(s) { return escHtml(s).replace(/"/g, "&quot;"); }
+
+    // Only the local bits are persisted — the records themselves live on the project.
+    function saveScope() {
+      try {
+        localStorage.setItem(exclKey(), JSON.stringify(excluded));
+        localStorage.setItem(descKey(), JSON.stringify(descMap));
+      } catch (e) {}
+    }
+
+    function compById(cid) { return project.components.find((c) => String(c.id) === String(cid)) || null; }
+    function drawingById(id) {
+      for (const c of project.components) {
+        const d = c.drawings.find((x) => String(x.id) === String(id));
+        if (d) return d;
+      }
+      return project.unassigned.find((x) => String(x.id) === String(id)) || null;
+    }
+    // This run mirrors the project, minus whatever the estimator ticked out of it.
+    function scopeFromProject() {
+      scope = project.components.filter((c) => !excluded.c[String(c.id)]).map((c) => ({
+        cid: String(c.id), name: c.name,
+        drawings: c.drawings.filter((d) => !excluded.d[String(d.id)])
+          .map((d) => ({ id: String(d.id), number: d.number })),
+      }));
+    }
+
+    async function scopeApi(path, body) {
+      const r = await fetch(RAILWAY_URL + "/api/takeoff/project-scope/" + path, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      let d = {};
+      try { d = await r.json(); } catch (e) {}
+      if (!r.ok || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
+      return d;
+    }
+
+    // ---- scope rendering ----------------------------------------------------
+    function compOptions(selCid) {
+      const used = {};
+      scope.forEach((s) => { if (s.cid && String(s.cid) !== String(selCid)) used[String(s.cid)] = 1; });
+      return '<option value="">— choose a component —</option>' +
+        project.components.map((c) => '<option value="' + escAttr(c.id) + '"' +
+          (String(c.id) === String(selCid) ? " selected" : "") +
+          (used[String(c.id)] ? " disabled" : "") + ">" + escHtml(c.name) + "</option>").join("") +
+        '<option value="__new">＋ New component…</option>';
+    }
+    // Filtered exactly like the project page: this component's drawings, plus any drawing sitting
+    // on the project with no component yet (picking one files it under this component).
+    function drawOptions(cid, selId, used) {
+      const c = compById(cid);
+      const own = c ? c.drawings : [];
+      let html = '<option value="">— choose a drawing —</option>' +
+        own.map((d) => '<option value="' + escAttr(d.id) + '"' +
+          (String(d.id) === String(selId) ? " selected" : "") +
+          (used[String(d.id)] && String(d.id) !== String(selId) ? " disabled" : "") + ">" +
+          escHtml(d.number) + "</option>").join("");
+      if (project.unassigned.length) {
+        html += '<optgroup label="On the project, not linked to a component">' +
+          project.unassigned.map((d) => '<option value="' + escAttr(d.id) + '"' +
+            (String(d.id) === String(selId) ? " selected" : "") + ">" + escHtml(d.number) + "</option>").join("") +
+          "</optgroup>";
+      }
+      return html + '<option value="__new">＋ New drawing…</option>';
+    }
+    function rowBtns(kind, ci, di, id) {
+      const p = kind === "component" ? "c" : "d";
+      const at = ' data-ci="' + ci + '"' + (di == null ? "" : ' data-di="' + di + '"');
+      return '<span class="rowbtns">' +
+        (id ? '<button type="button" class="ibtn" data-k="' + p + 'ren"' + at + ' title="Rename on the project">✎</button>' +
+              '<button type="button" class="ibtn del" data-k="' + p + 'del"' + at + ' title="Delete from the project">🗑</button>' : "") +
+        '<button type="button" class="xbtn" data-k="' + p + 'x"' + at + ' title="Leave out of this take-off">✕</button></span>';
+    }
+    function editCell(kind, id, value, ci, di) {
+      return '<input type="text" class="einp" data-k="eval" value="' + escAttr(value) + '" />' +
+        '<button type="button" class="okbtn" data-k="esave" data-kind="' + kind + '" data-id="' + escAttr(id) + '"' +
+          ' data-ci="' + ci + '"' + (di == null ? "" : ' data-di="' + di + '"') + ">Save</button>" +
+        '<button type="button" class="ibtn" data-k="ecancel">Cancel</button>';
+    }
+    function newCell(kind, ci, di, ph) {
+      return '<input type="text" class="einp" data-k="nval" placeholder="' + escAttr(ph) + '" />' +
+        '<button type="button" class="okbtn" data-k="nsave" data-kind="' + kind + '" data-ci="' + ci + '"' +
+          (di == null ? "" : ' data-di="' + di + '"') + ">Add to project</button>" +
+        '<button type="button" class="ibtn" data-k="ncancel">Cancel</button>';
+    }
+    function emptyScopeHtml() {
+      return '<div class="aud warn" style="margin:0 0 10px"><b>This project has no components or drawings entered yet.</b>' +
+        '<span class="sub2">The AI tags every BOM row to your component names and drawing numbers, so they have to exist ' +
+        "first. Enter them on the project page, or add them here with <b>+ Add component</b> — either way they are written " +
+        "to the project itself.</span></div>";
+    }
+
+    function renderScope() {
+      const host = document.getElementById("scopeList");
+      if (!project.loaded) { host.innerHTML = ""; return; }
+      const cards = scope.map((c, ci) => {
+        const used = {};
+        (c.drawings || []).forEach((d) => { if (d && d.id) used[String(d.id)] = 1; });
+        const rows = (c.drawings && c.drawings.length ? c.drawings : [{ id: "", number: "" }]).map((d, di) => {
+          const desc = descMap[String((d && d.number) || "").trim()];
+          const cell = (creating && creating.ci === ci && creating.di === di)
+            ? newCell("drawing", ci, di, "New drawing no. (e.g. RIS-48300-S1-A-1)")
+            : (editing && editing.kind === "drawing" && d && String(editing.id) === String(d.id))
+              ? editCell("drawing", d.id, d.number, ci, di)
+              : '<select data-k="dsel" data-ci="' + ci + '" data-di="' + di + '">' +
+                  drawOptions(c.cid, d && d.id, used) + "</select>";
+          return '<div class="drow">' + cell + rowBtns("drawing", ci, di, d && d.id) + "</div>" +
+            (desc ? '<div class="ddesc">' + escHtml(desc) + "</div>" : "");
+        }).join("");
+        const ccell = (creating && creating.ci === ci && creating.di == null)
+          ? newCell("component", ci, null, "New component name")
+          : (editing && editing.kind === "component" && String(editing.id) === String(c.cid))
+            ? editCell("component", c.cid, c.name, ci, null)
+            : '<select data-k="csel" data-ci="' + ci + '">' + compOptions(c.cid) + "</select>";
+        return '<div class="comp"><div class="crow">' + ccell + rowBtns("component", ci, null, c.cid) + "</div>" +
+          '<div class="draws">' + rows +
+            (c.cid ? '<button type="button" class="addd" data-k="adddraw" data-ci="' + ci + '">+ add drawing</button>' : "") +
+          "</div></div>";
+      }).join("");
+      host.innerHTML = ((!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + cards;
+      renderCoverage();          // scope changed ⇒ the accounted-for tally changed
+    }
+    function focusScopeInput(sel) {
+      const el = document.querySelector("#scopeList " + sel);
+      if (el) { el.focus(); if (el.select) el.select(); }
+    }
+
+    // ---- scope edits (all of these hit the project) -------------------------
+    document.getElementById("scope").addEventListener("change", async (e) => {
+      const t = e.target;
+      if (t.tagName !== "SELECT") return;
+      const k = t.getAttribute("data-k"), ci = Number(t.getAttribute("data-ci"));
+      if (!scope[ci]) return;
+      if (k === "csel") {
+        if (t.value === "__new") { creating = { ci: ci, di: null }; renderScope(); focusScopeInput('input[data-k="nval"]'); return; }
+        const c = compById(t.value);
+        scope[ci] = c
+          ? { cid: String(c.id), name: c.name, drawings: c.drawings.map((d) => ({ id: String(d.id), number: d.number })) }
+          : { cid: "", name: "", drawings: [] };
+        if (c) delete excluded.c[String(c.id)];
+        saveScope(); renderScope();
+      } else if (k === "dsel") {
+        const di = Number(t.getAttribute("data-di"));
+        if (t.value === "__new") { creating = { ci: ci, di: di }; renderScope(); focusScopeInput('input[data-k="nval"]'); return; }
+        const d = drawingById(t.value);
+        if (!d) { scope[ci].drawings[di] = { id: "", number: "" }; renderScope(); return; }
+        scope[ci].drawings[di] = { id: String(d.id), number: d.number };
+        delete excluded.d[String(d.id)];
+        saveScope();
+        // Picking a drawing that isn't linked to any component files it under this one, on the project.
+        if (scope[ci].cid && project.unassigned.some((x) => String(x.id) === String(d.id))) {
+          setScopeStatus('<span class="spin"></span>Linking ' + escHtml(d.number) + " to " + escHtml(scope[ci].name) + " on the project…");
+          try {
+            await scopeApi("update", { kind: "drawing", id: d.id, value: d.number, component_id: scope[ci].cid });
+            await loadProject(); renderScope();
+            setScopeStatus("Linked " + escHtml(d.number) + " to " + escHtml(scope[ci].name) + " on the project.");
+          } catch (err) { setScopeStatus("Could not link it on the project: " + escHtml(err.message || err)); }
+        } else renderScope();
+      }
+    });
+    // Enter commits an inline add/rename.
+    document.getElementById("scope").addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const k = e.target.getAttribute && e.target.getAttribute("data-k");
+      if (k !== "eval" && k !== "nval") return;
+      e.preventDefault();
+      const btn = e.target.parentElement && e.target.parentElement.querySelector(".okbtn");
+      if (btn) btn.click();
+    });
+    document.getElementById("scope").addEventListener("click", (e) => {
+      const btn = e.target.closest("button"); if (!btn) return;
+      const k = btn.getAttribute("data-k"); if (!k) return;      // #addComp has no data-k
+      const ci = Number(btn.getAttribute("data-ci"));
+      const di = btn.hasAttribute("data-di") ? Number(btn.getAttribute("data-di")) : null;
+      if (k === "ecancel") { editing = null; renderScope(); return; }
+      if (k === "ncancel") { creating = null; renderScope(); return; }
+      if (k === "esave") { saveRename(btn); return; }
+      if (k === "nsave") { saveNew(btn); return; }
+      if (!scope[ci]) return;
+      if (k === "adddraw") { (scope[ci].drawings = scope[ci].drawings || []).push({ id: "", number: "" }); renderScope(); return; }
+      if (k === "cx") {                                          // out of THIS take-off, still on the project
+        if (scope[ci].cid) excluded.c[String(scope[ci].cid)] = 1;
+        scope.splice(ci, 1); saveScope(); renderScope(); return;
+      }
+      if (k === "dx") {
+        const d = (scope[ci].drawings || [])[di];
+        if (d && d.id) excluded.d[String(d.id)] = 1;
+        scope[ci].drawings.splice(di, 1); saveScope(); renderScope(); return;
+      }
+      if (k === "cren") { editing = { kind: "component", id: scope[ci].cid }; renderScope(); focusScopeInput('input[data-k="eval"]'); return; }
+      if (k === "dren") {
+        const d = (scope[ci].drawings || [])[di]; if (!d || !d.id) return;
+        editing = { kind: "drawing", id: d.id }; renderScope(); focusScopeInput('input[data-k="eval"]'); return;
+      }
+      if (k === "cdel") { deleteRecord("component", scope[ci].cid, scope[ci].name); return; }
+      if (k === "ddel") {
+        const d = (scope[ci].drawings || [])[di]; if (!d || !d.id) return;
+        deleteRecord("drawing", d.id, d.number); return;
+      }
+    });
+    document.getElementById("addComp").addEventListener("click", () => {
+      scope.push({ cid: "", name: "", drawings: [] }); renderScope();
+    });
+
+    async function saveRename(btn) {
+      const inp = btn.parentElement && btn.parentElement.querySelector('input[data-k="eval"]');
+      const v = String((inp && inp.value) || "").trim();
+      const kind = btn.getAttribute("data-kind"), id = btn.getAttribute("data-id");
+      if (!v || !id) { editing = null; renderScope(); return; }
+      setScopeStatus('<span class="spin"></span>Renaming on the project…');
+      try {
+        await scopeApi("update", { kind: kind, id: id, value: v });
+        editing = null;
+        await loadProject(); scopeFromProject(); renderScope();
+        setScopeStatus("Renamed to “" + escHtml(v) + "” on the project.");
+      } catch (err) {
+        editing = null; renderScope();
+        setScopeStatus("Rename failed: " + escHtml(err.message || err));
+      }
+    }
+
+    async function saveNew(btn) {
+      const inp = btn.parentElement && btn.parentElement.querySelector('input[data-k="nval"]');
+      const v = String((inp && inp.value) || "").trim();
+      const kind = btn.getAttribute("data-kind");
+      const ci = Number(btn.getAttribute("data-ci"));
+      const di = btn.hasAttribute("data-di") ? Number(btn.getAttribute("data-di")) : null;
+      if (!v) { creating = null; renderScope(); return; }
+      if (!params.project_id) {
+        creating = null; renderScope();
+        setScopeStatus("No project on the page URL — open the take-off from the project so records can be added.");
+        return;
+      }
+      setScopeStatus('<span class="spin"></span>Adding “' + escHtml(v) + "” to the project…");
+      try {
+        const body = { project_id: params.project_id, kind: kind, value: v };
+        if (kind === "drawing") body.component_id = (scope[ci] && scope[ci].cid) || "";
+        const out = await scopeApi("add", body);
+        creating = null;
+        await loadProject();
+        if (kind === "component" && scope[ci]) scope[ci] = { cid: String(out.id), name: v, drawings: [] };
+        else if (scope[ci]) scope[ci].drawings[di] = { id: String(out.id), number: v };
+        renderScope();
+        setScopeStatus("Added “" + escHtml(v) + "” to the project." + (out.warning ? " ⚠ " + escHtml(out.warning) : ""));
+      } catch (err) {
+        creating = null; renderScope();
+        setScopeStatus("Could not add it to the project: " + escHtml(err.message || err));
+      }
+    }
+
+    // Deleting hits the PROJECT, so it asks first — and the server refuses when drawings or BOM
+    // rows still hang off the record, reporting what's linked instead of cascading.
+    async function deleteRecord(kind, id, label) {
+      if (!id) return;
+      const what = kind === "component" ? "component" : "drawing";
+      if (!window.confirm("Delete the " + what + " “" + label + "” from the PROJECT?\n\n" +
+          "This removes the record from the project itself — not just from this take-off.\n" +
+          "(To leave it out of this take-off only, use ✕.)")) return;
+      setScopeStatus('<span class="spin"></span>Deleting “' + escHtml(label) + "” on the project…");
+      try {
+        await scopeApi("delete", { kind: kind, id: id });
+        await loadProject(); scopeFromProject(); renderScope();
+        setScopeStatus("Deleted “" + escHtml(label) + "” from the project.");
+      } catch (err) {
+        setScopeStatus("Not deleted — " + escHtml(err.message || err));
+      }
+    }
+
+    // ---- PDF SHEET-READ → ALLOCATION --------------------------------------
+    // Read the ACTUAL drawing/sheet numbers + descriptions out of the loaded PDF (the cheap
+    // /api/takeoff/index pass), show them, and let the estimator confirm which component each
+    // goes under. With one component, they all default to it. The confirmed allocation becomes
+    // the drawings under each component — i.e. what rides in scope_tree to the take-off.
+    const _norm = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    // Only components that are real project records can receive an allocation.
+    const namedComps = () => scope.map((c, i) => ({ i, name: String(c.name || "").trim(), cid: c.cid }))
+      .filter((x) => x.name && x.cid);
+    // Best-guess component for a detected sheet: single component ⇒ it; else match the sheet
+    // number against each component's name or its already-listed drawings; else the first.
+    function guessComp(num) {
+      const named = namedComps();
+      if (named.length <= 1) return named.length ? named[0].i : -1;
+      const sn = _norm(num);
+      for (const x of named) {
+        if (_norm(x.name) && sn.indexOf(_norm(x.name)) > -1) return x.i;
+        for (const d of (scope[x.i].drawings || [])) {
+          const dn = _norm(d && d.number);
+          if (dn && (sn.indexOf(dn) > -1 || dn.indexOf(sn) > -1)) return x.i;
+        }
+      }
+      return named[0].i;
+    }
+    // One row per SHEET NUMBER. The model sometimes emits a continuation page (or a repeated
+    // title block) as a second entry — a 27-drawing package came back as 30 — so collapse
+    // repeats: page range unioned, fullest title kept. The server merges too; this is the
+    // belt-and-braces copy so an older backend still shows a clean list.
+    function dedupeSheets(list) {
+      const byKey = {}, out = [];
+      list.forEach((s) => {
+        const key = (s.doc || 1) + "|" + _norm(s.number);
+        const prev = byKey[key];
+        if (!prev) { byKey[key] = s; out.push(s); return; }
+        const pa = prev.pages || [], pb = s.pages || [];
+        if (pa.length || pb.length) {
+          const all = pa.concat(pb).map(Number).filter((n) => !isNaN(n));
+          if (all.length) prev.pages = [Math.min(...all), Math.max(...all)];
+        }
+        if (s.pageList && s.pageList.length) prev.pageList = (prev.pageList || []).concat(s.pageList);
+        if (s.title && s.title.length > (prev.title || "").length) prev.title = s.title;
+        if (s.confidence != null) {
+          prev.confidence = (prev.confidence == null) ? s.confidence : Math.max(prev.confidence, s.confidence);
+        }
+      });
+      return out;
+    }
+
+    // ---- PAGE ↔ DRAWING RECONCILIATION ------------------------------------
+    // The point: pages are ground truth (parsed from the PDF file itself, server-side), and
+    // drawings are DERIVED from them — so the drawing count is checkable arithmetic, not the
+    // model's opinion. Every page ends up in exactly one bucket: on a drawing, no drawing
+    // number (cover/index/notes), or never read back. Recomputed on every render, so dropping
+    // a row updates the tally instead of leaving a stale "all good".
+    function pageTally() {
+      if (!audit || !Array.isArray(audit.docs)) return null;
+      const total = audit.docs.reduce((s, a) => s + (a.pages || 0), 0);
+      if (!total) return null;
+      const covered = {};                               // "doc:page" → on a kept drawing
+      detected.forEach((s) => {
+        pagesOf(s).forEach((p) => { if (p) covered[(s.doc || 1) + ":" + p] = 1; });
+      });
+      const notRead = (audit.pages_missing || []).map((p) => (p.doc || 1) + ":" + p.page);
+      const notReadSet = {}; notRead.forEach((k) => { notReadSet[k] = 1; });
+      const noNumber = [];
+      audit.docs.forEach((a) => {
+        for (let p = 1; p <= (a.pages || 0); p++) {
+          const k = (a.doc || 1) + ":" + p;
+          if (!covered[k] && !notReadSet[k]) noNumber.push({ doc: a.doc || 1, page: p });
+        }
+      });
+      // A drawing covering several pages is legitimate, but it's also what a MISREAD number
+      // looks like (two different sheets read as the same number collapse into one row), so
+      // it's always called out and can be split back apart.
+      const multi = detected.map((s, k) => ({ k: k, s: s, n: pagesOf(s).length }))
+        .filter((x) => x.n > 1);
+      return {
+        total: total, drawings: detected.length, multi: multi,
+        onDrawing: Object.keys(covered).length,
+        noNumber: noNumber,                              // read, but no title-block number (cover/index) or row dropped
+        notRead: (audit.pages_missing || []),            // the model never returned these pages
+        twice: audit.pages_reported_twice || 0,
+        split: audit.split_numbers || [],
+      };
+    }
+    function rangeOf(a, b) { const out = []; for (let i = Number(a); i <= Number(b); i++) out.push(i); return out; }
+    // Every page this row covers — the explicit page list if the server sent one, else its range.
+    function pagesOf(s) {
+      if (s.pageList && s.pageList.length) return s.pageList.slice().sort((a, b) => a - b);
+      if (s.pages && s.pages.length) return rangeOf(s.pages[0], s.pages[1] == null ? s.pages[0] : s.pages[1]);
+      return [];
+    }
+    function pageLabels(arr) {
+      const shown = arr.slice(0, 12).map((p) => "p." + p.page + (p.doc > 1 ? " (file " + p.doc + ")" : "")).join(", ");
+      return shown + (arr.length > 12 ? " …" : "");
+    }
+
+    function auditHtml() {
+      if (!audit) return "";
+      const t = pageTally();
+      if (!t) {
+        return '<div class="aud warn">⚠ Couldn’t read the page count out of the PDF, so the ' + detected.length +
+          " drawing" + (detected.length === 1 ? "" : "s") + " below could not be checked against it. Review the list by eye.</div>";
+      }
+      const head = "<b>" + t.total + " page" + (t.total === 1 ? "" : "s") + "</b> in the PDF → <b>" +
+        t.drawings + " drawing" + (t.drawings === 1 ? "" : "s") + "</b>";
+      const bad = [];
+      if (t.notRead.length) bad.push(t.notRead.length + " page" + (t.notRead.length === 1 ? "" : "s") +
+        " never came back from the read (" + pageLabels(t.notRead) + ")");
+      if (t.twice) bad.push(t.twice + " page" + (t.twice === 1 ? "" : "s") + " reported twice (collapsed)");
+      if (t.split.length) bad.push("appears on non-adjacent pages: " + t.split.slice(0, 6).join(", "));
+      let extra = t.noNumber.length
+        ? '<span class="sub2">' + t.noNumber.length + " page" + (t.noNumber.length === 1 ? "" : "s") +
+          " carry no drawing number (" + pageLabels(t.noNumber) + ") — normal for cover, index and notes pages.</span>"
+        : "";
+      if (t.multi.length) {
+        extra += '<span class="sub2">⚑ ' + t.multi.length + (t.multi.length === 1 ? " drawing covers" : " drawings cover") +
+          " more than one page (" +
+          t.multi.slice(0, 6).map((x) => escHtml(x.s.number) + " p." + pagesOf(x.s)[0] + "–" + pagesOf(x.s).slice(-1)[0]).join(", ") +
+          "). If that's really two drawings read as one number, hit <b>Split</b> on the row and fix the number.</span>";
+      }
+      if (!bad.length) {
+        return '<div class="aud ok">✓ ' + head + " — all " + t.total + " pages accounted for: " +
+          t.onDrawing + " on a drawing" + (t.noNumber.length ? ", " + t.noNumber.length + " without a number" : "") + "." +
+          extra + "</div>";
+      }
+      return '<div class="aud warn">⚠ ' + head + " — " + bad.join("; ") +
+        ". Re-read the PDF, or add the missing drawing numbers by hand below." + extra + "</div>";
+    }
+
+    function updateScanBtn() {
+      const b = document.getElementById("scanPdf");
+      if (!b) return;
+      b.style.display = docs.length ? "block" : "none";
+      // Once a read exists the button is a re-read, not the first step — say so.
+      b.textContent = sheets.length ? "↻ Re-read the drawings in the PDF" : "🔍 Preview the drawings in the PDF";
+    }
+
+    // The preview runs itself once the files settle — it's the read every user was going to click
+    // anyway, and the suggestions are only useful before they start building the scope by hand.
+    // Debounced so adding three files is one read, not three; keyed on the file set so the same
+    // upload is never read twice; skipped when the set is over the size cap (it would just fail).
+    let autoTimer = null, autoDone = {}, scanning = false;
+    const fileSig = () => docs.map((d) => d.key).sort().join("|");
+    function maybeAutoPreview() {
+      if (!docs.length) return;
+      const sig = fileSig();
+      if (autoDone[sig] || scanning) return;
+      if (docs.reduce((s, d) => s + d.mb, 0) > MAX_MB) return;
+      clearTimeout(autoTimer);
+      autoTimer = setTimeout(() => {
+        if (scanning || autoDone[fileSig()]) return;
+        scanPdf();
+      }, 1200);
+    }
+
+    async function scanPdf() {
+      if (!docs.length || scanning) return;
+      scanning = true;
+      autoDone[fileSig()] = 1;
+      const btn = document.getElementById("scanPdf");
+      btn.disabled = true;
+      setScopeStatus('<span class="spin"></span>Reading drawing numbers from the PDF…');
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/takeoff/index", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pdfs: docs.map((d) => d.b64), names: docs.map((d) => d.name), model: "haiku" }),  // haiku: cheap title-block read
+        });
+        const d = await r.json();
+        if (!r.ok || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
+        const readSheets = Array.isArray(d.sheets) ? d.sheets : [];
+        // The server parses the real page count out of each PDF — show it on the files.
+        audit = d.audit || null;
+        if (audit && Array.isArray(audit.docs)) {
+          audit.docs.forEach((a, i) => { if (docs[i]) docs[i].pages = a.pages || 0; });
+          renderFiles();
+        }
+        detected = dedupeSheets(readSheets.map((s) => ({
+          doc: Number(s.doc) || 1,
+          number: String(s.number || "").trim(),
+          title: String(s.title || "").trim(),
+          pages: Array.isArray(s.pages) ? s.pages : [],
+          pageList: Array.isArray(s.page_list) ? s.page_list.map(Number) : null,
+          confidence: (s.confidence == null ? null : Number(s.confidence)),
+          suggestion: String(s.suggested_component || "").trim(),   // AI's proposed component for this sheet
+          compIdx: guessComp(String(s.number || "")),
+        })).filter((s) => s.number));
+        // Coverage tracks the same objects, so edits and drops in the grid follow through.
+        sheets = detected;
+        saveSheets();
+        renderAlloc();
+        if (!detected.length) {
+          setScopeStatus("No drawing numbers found in the PDF — type them under a component instead.");
+          return;
+        }
+        setScopeStatus("Read " + (audit && audit.page_count ? audit.page_count + " page" + (audit.page_count === 1 ? "" : "s") + " → " : "") +
+          detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
+          (d.cost_usd != null ? " ($" + d.cost_usd + ")" : "") + ". Confirm how they're allocated below.");
+      } catch (e) {
+        setScopeStatus("Couldn’t read the PDF (" + (e.message || e) + "). Use ↻ to try again, or pick the " +
+          "components and drawings yourself below.");
+      } finally { scanning = false; btn.disabled = false; updateScanBtn(); }
+    }
+
+    // What "Use this allocation" is about to do to the project, spelled out before it does it.
+    function planHtml() {
+      if (!allocPlan) return "";
+      const p = allocPlan;
+      const li = [];
+      if (p.create.length) li.push("<li><b>create " + p.create.length + " drawing" + (p.create.length === 1 ? "" : "s") +
+        "</b> on the project: " + escHtml(p.create.slice(0, 8).map((x) => x.num).join(", ")) + (p.create.length > 8 ? " …" : "") + "</li>");
+      if (p.link.length) li.push("<li><b>link " + p.link.length + "</b> already-on-the-project drawing" +
+        (p.link.length === 1 ? "" : "s") + " to their component: " + escHtml(p.link.slice(0, 8).map((x) => x.num).join(", ")) +
+        (p.link.length > 8 ? " …" : "") + "</li>");
+      if (p.match.length) li.push("<li>" + p.match.length + " already on the right component — no change</li>");
+      if (p.elsewhere.length) li.push("<li>" + p.elsewhere.length + " already belong to a different component (" +
+        escHtml(p.elsewhere.slice(0, 4).map((x) => x.num + " → " + x.rec.ownerName).join(", ")) +
+        ") — left alone; move them on the project if that's wrong</li>");
+      if (p.skipped) li.push("<li>" + p.skipped + " row" + (p.skipped === 1 ? "" : "s") + " have no component chosen — skipped</li>");
+      return '<div class="aud warn" style="margin-bottom:10px"><b>This will update the project:</b>' +
+        '<ul class="planlist">' + li.join("") + "</ul>" +
+        '<button type="button" class="aapply" id="commitAlloc" style="margin-top:6px">✓ Update the project and use this allocation</button>' +
+        '<div class="planalt"><a href="#" id="runOnlyAlloc">Use for this take-off only (don’t touch the project)</a> · ' +
+        '<a href="#" id="cancelAlloc">cancel</a></div></div>';
+    }
+
+    function renderAlloc() {
+      renderCoverage();                                    // the two panels always agree
+      const host = document.getElementById("allocPanel");
+      if (!detected.length && !audit) { host.innerHTML = ""; updatePanels(); return; }
+      if (!detected.length) {   // read happened but nothing usable came out — still show the tally
+        host.innerHTML = '<div class="alloc">' + auditHtml() +
+          '<div class="apg">No drawing numbers were read — type them under a component instead.</div></div>';
+        return;
+      }
+      const named = namedComps();
+      const valid = new Set(named.map((x) => x.i));
+      const rows = detected.map((s, k) => {
+        if (!valid.has(s.compIdx)) s.compIdx = named.length ? named[0].i : -1;   // clamp a stale index
+        const low = (s.confidence != null && s.confidence < 0.5) ? " low" : "";
+        const pg = (s.pages && s.pages.length)
+          ? "p." + s.pages[0] + ((s.pages[1] && s.pages[1] !== s.pages[0]) ? "–" + s.pages[1] : "") : "";
+        const sel = named.length
+          ? '<select data-k="' + k + '">' +
+              named.map((x) => '<option value="' + x.i + '"' + (x.i === s.compIdx ? " selected" : "") + ">" + escHtml(x.name) + "</option>").join("") +
+            "</select>"
+          : '<span class="apg">name a component first</span>';
+        const span = pagesOf(s).length;
+        return '<div class="' + low + '"><input type="text" class="anum" data-num="' + k + '" value="' +
+            escAttr(s.number) + '" title="Correct the drawing number if it was misread" /></div>' +
+          '<div class="adesc" title="' + escAttr(s.title || "") + '">' + escHtml(s.title || "") + "</div>" +
+          '<div class="apg">' + pg +
+            (span > 1 ? ' <button type="button" class="asplit" data-split="' + k +
+              '" title="Split into one row per page — use if two drawings were read as one number">Split</button>' : "") +
+          "</div>" +
+          '<div class="arrow">→</div>' +
+          "<div>" + sel + "</div>" +
+          '<div><button type="button" class="adrop" data-drop="' + k + '" title="Not a drawing — remove this row" aria-label="Remove">✕</button></div>';
+      }).join("");
+      host.innerHTML = '<div class="alloc">' +
+        auditHtml() + planHtml() +
+        '<div class="ahd">Detected ' + detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
+          " in the PDF — confirm how they go into the take-off:</div>" +
+        '<div class="ahint">Numbers are editable — fix a misread one in place, <b>Split</b> a row that ' +
+          'covers two drawings, ✕ a row that isn’t a drawing.</div>' +
+        '<div class="agrid">' +
+          '<div class="acolhd">Drawing no.</div><div class="acolhd">Title</div><div class="acolhd">Pages</div>' +
+          '<div class="acolhd"></div><div class="acolhd">Component</div><div class="acolhd"></div>' +
+          rows +
+        "</div>" +
+        (named.length
+          ? '<button type="button" class="aapply" id="applyAlloc">✓ Use this allocation</button>'
+          : '<div class="apg" style="margin-top:8px">Add or name a component above, then re-read.</div>') +
+      "</div>";
+      updatePanels();
+    }
+
+    // Applying the allocation is where the PROJECT gets straightened out: each number read from the
+    // PDF is matched against the project's drawing records, and whatever is missing or floating
+    // unlinked is written back. That's the point of binding this screen to records — the take-off
+    // and the project end up describing the same drawings, by id, not by two lots of typing.
+    function findDrawingByNumber(num) {
+      const n = _norm(num);
+      for (const c of project.components) {
+        const d = c.drawings.find((x) => _norm(x.number) === n);
+        if (d) return { id: d.id, number: d.number, owner: String(c.id), ownerName: c.name };
+      }
+      const u = project.unassigned.find((x) => _norm(x.number) === n);
+      return u ? { id: u.id, number: u.number, owner: null, ownerName: "" } : null;
+    }
+    function planAlloc() {
+      const plan = { match: [], link: [], create: [], elsewhere: [], skipped: 0 };
+      const seen = {};
+      detected.forEach((s) => {
+        const ci = s.compIdx, num = String(s.number || "").trim();
+        if (!num) return;
+        if (ci == null || ci < 0 || !scope[ci] || !scope[ci].cid) { plan.skipped++; return; }
+        const key = ci + "|" + _norm(num);
+        if (seen[key]) return;
+        seen[key] = 1;
+        const rec = findDrawingByNumber(num);
+        const item = { s: s, ci: ci, num: num, rec: rec };
+        if (!rec) plan.create.push(item);
+        else if (!rec.owner) plan.link.push(item);
+        else if (String(rec.owner) === String(scope[ci].cid)) plan.match.push(item);
+        else plan.elsewhere.push(item);
+      });
+      return plan;
+    }
+    function applyAlloc() {
+      const plan = planAlloc();
+      if (!plan.match.length && !plan.link.length && !plan.create.length && !plan.elsewhere.length) {
+        setScopeStatus("Nothing to allocate — pick a component for the drawings first.");
+        return;
+      }
+      allocPlan = plan;
+      renderAlloc();
+      const host = document.getElementById("allocPanel");
+      if (host && host.scrollIntoView) host.scrollIntoView({ block: "nearest" });
+    }
+
+    // Run the plan: link the floating drawings, create the missing ones, then re-read the project
+    // so the pickers show exactly what's now on it. One Zoho write per drawing — the count is shown
+    // up front because that is real API budget being spent.
+    async function commitAlloc() {
+      const plan = allocPlan;
+      if (!plan) return;
+      const total = plan.link.length + plan.create.length;
+      const failed = [];
+      let done = 0;
+      const tick = (label) => setScopeStatus('<span class="spin"></span>Updating the project… ' +
+        done + "/" + total + " · " + escHtml(label));
+      for (const it of plan.link) {
+        try { await scopeApi("update", { kind: "drawing", id: it.rec.id, value: it.num, component_id: scope[it.ci].cid }); }
+        catch (e) { failed.push(it.num + " — " + (e.message || e)); }
+        done++; tick(it.num);
+      }
+      for (const it of plan.create) {
+        try { await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: it.num, component_id: scope[it.ci].cid }); }
+        catch (e) { failed.push(it.num + " — " + (e.message || e)); }
+        done++; tick(it.num);
+      }
+      detected.forEach((s) => { if (s.number) descMap[String(s.number).trim()] = s.title || ""; });
+      sheets = detected.slice();   // keep the read for the coverage check after the grid closes
+      allocPlan = null; detected = [];
+      saveSheets();
+      try { await loadProject(); } catch (e) { /* keep what we have */ }
+      scopeFromProject(); saveScope(); renderScope(); renderAlloc();
+      setScopeStatus((total - failed.length) + " of " + total + " drawing" + (total === 1 ? "" : "s") +
+        " written to the project" + (plan.match.length ? " (" + plan.match.length + " were already there)" : "") + "." +
+        (failed.length ? ' <span style="color:#b45309">Failed: ' + escHtml(failed.slice(0, 4).join("; ")) + "</span>" : "") +
+        " Review below, then Run take-off.");
+    }
+
+    // Escape hatch: use the read numbers for this take-off without touching the project. Kept
+    // deliberately secondary — a run whose drawings aren't project records can't be traced back.
+    function applyAllocRunOnly() {
+      const plan = allocPlan || planAlloc();
+      const byCi = {};
+      [].concat(plan.match, plan.link, plan.create, plan.elsewhere).forEach((it) => {
+        (byCi[it.ci] = byCi[it.ci] || []).push(it);
+      });
+      Object.keys(byCi).forEach((ci) => {
+        scope[ci].drawings = byCi[ci].map((it) => ({ id: (it.rec && it.rec.id) || "", number: it.num }));
+      });
+      detected.forEach((s) => { if (s.number) descMap[String(s.number).trim()] = s.title || ""; });
+      sheets = detected.slice();   // keep the read for the coverage check after the grid closes
+      allocPlan = null; detected = [];
+      saveSheets();
+      saveScope(); renderScope(); renderAlloc();
+      setScopeStatus("Using the PDF's drawing numbers for this run only — they were NOT added to the project.");
+    }
+
+    document.getElementById("scanPdf").addEventListener("click", scanPdf);
+    document.getElementById("allocPanel").addEventListener("change", (e) => {
+      if (e.target.tagName !== "SELECT") return;
+      const k = Number(e.target.getAttribute("data-k"));
+      if (detected[k]) detected[k].compIdx = Number(e.target.value);
+    });
+    // Correcting a misread number: update state only — re-rendering would drop the caret.
+    document.getElementById("allocPanel").addEventListener("input", (e) => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains("anum")) return;
+      const k = Number(t.getAttribute("data-num"));
+      if (detected[k]) detected[k].number = t.value;
+    });
+    document.getElementById("allocPanel").addEventListener("click", (e) => {
+      if (e.target.closest("#applyAlloc")) { applyAlloc(); return; }
+      if (e.target.closest("#commitAlloc")) { commitAlloc(); return; }
+      if (e.target.closest("#runOnlyAlloc")) { e.preventDefault(); applyAllocRunOnly(); return; }
+      if (e.target.closest("#cancelAlloc")) { e.preventDefault(); allocPlan = null; renderAlloc(); return; }
+      const sp = e.target.closest(".asplit");             // two drawings read as one number
+      if (sp) { splitRow(Number(sp.getAttribute("data-split"))); return; }
+      const drop = e.target.closest(".adrop");            // a mis-read row (index page, detail, etc.)
+      if (drop) {
+        const k = Number(drop.getAttribute("data-drop"));
+        if (k >= 0 && k < detected.length) { detected.splice(k, 1); renderAlloc(); }
+      }
+    });
+
+    // Break a multi-page row back into one row per page, so a number misread on one page can
+    // be corrected without re-reading the PDF. Pages stay covered either way, so the tally holds.
+    function splitRow(k) {
+      const s = detected[k];
+      if (!s) return;
+      const pages = pagesOf(s);
+      if (pages.length < 2) return;
+      const rows = pages.map((p) => ({
+        doc: s.doc || 1, number: s.number, title: s.title, pages: [p, p], pageList: [p],
+        confidence: s.confidence, compIdx: s.compIdx,
+      }));
+      detected.splice.apply(detected, [k, 1].concat(rows));
+      renderAlloc();
+      setScopeStatus("Split into " + rows.length + " rows — correct the drawing number on each.");
+    }
+
+    // Shape the state into the server's scope_tree = [{component, drawings[]}] — names and numbers,
+    // exactly as the take-off prompt expects. The records behind them are the project's.
+    function buildScopeTree() {
+      return scope.map((c) => ({
+        component: String(c.name || "").trim(),
+        drawings: (c.drawings || []).map((d) => String((d && d.number) || "").trim()).filter(Boolean),
+      })).filter((n) => n.component);
+    }
+    function setScopeStatus(html) { document.getElementById("scopeStatus").innerHTML = html || ""; }
+
+    // Read the project's Components + Drawings (nested by the drawing's parent component). This is
+    // the only source of truth for the pickers — nothing here is typed free-hand.
+    async function loadProject() {
+      if (!params.project_id) { project = { components: [], unassigned: [], loaded: true }; return false; }
+      const r = await fetch(RAILWAY_URL + "/api/takeoff/project-scope/" + encodeURIComponent(params.project_id));
+      const d = await r.json();
+      if (!d || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
+      project = {
+        components: (Array.isArray(d.tree) ? d.tree : []).map((n) => ({
+          id: String(n.component_id), name: String((n && n.component) || "").trim(),
+          drawings: (Array.isArray(n && n.drawings) ? n.drawings : [])
+            .map((x) => ({ id: String(x.id), number: String((x && x.number) || "").trim() }))
+            .filter((x) => x.number),
+        })).filter((c) => c.name),
+        unassigned: (Array.isArray(d.unassigned_drawings) ? d.unassigned_drawings : [])
+          .map((x) => ({ id: String(x.id), number: String((x && x.number) || "").trim() }))
+          .filter((x) => x.number),
+        loaded: true,
+      };
+      return true;
+    }
+
+    // `force` (the ↻ link) also clears this run's exclusions, so it goes back to mirroring the project.
+    async function pullProjectScope(force) {
+      if (!params.project_id) {
+        project.loaded = true; scope = []; renderScope();
+        setScopeStatus("Open the take-off from the project page so it can load that project’s components and drawings.");
+        return false;
+      }
+      setScopeStatus('<span class="spin"></span>Loading components &amp; drawings from the project…');
+      try {
+        await loadProject();
+        if (force) { excluded = { c: {}, d: {} }; saveScope(); }
+        scopeFromProject();
+        renderScope();
+        const nc = project.components.length;
+        const nd = project.components.reduce((s, c) => s + c.drawings.length, 0) + project.unassigned.length;
+        if (!nc && !nd) {
+          setScopeStatus("Nothing entered on this project yet — add it here or on the project page before running.");
+          return false;
+        }
+        setScopeStatus("Loaded " + nc + " component" + (nc === 1 ? "" : "s") + " and " + nd + " drawing" +
+          (nd === 1 ? "" : "s") + " from the project" +
+          (project.unassigned.length ? " (" + project.unassigned.length + " not linked to a component yet)" : "") + ".");
+        return true;
+      } catch (e) {
+        project.loaded = true; renderScope();
+        setScopeStatus("Could not load the project’s components and drawings (" + escHtml(e.message || e) +
+          "). Fix that, or enter them on the project page, before running.");
+        return false;
+      }
+    }
+
+    function initScope() {
+      try { const dm = JSON.parse(localStorage.getItem(descKey()) || "null"); if (dm && typeof dm === "object") descMap = dm; } catch (e) {}
+      try { const ex = JSON.parse(localStorage.getItem(exclKey()) || "null"); if (ex && ex.c && ex.d) excluded = ex; } catch (e) {}
+      // Restore the last PDF read for this project so the coverage check (and the exclusions the
+      // user already decided) survive a reload — they're part of the take-off's audit trail.
+      try {
+        const st = JSON.parse(localStorage.getItem(sheetKey()) || "null");
+        if (st && Array.isArray(st.sheets)) {
+          sheets = st.sheets;
+          excludedSheets = Array.isArray(st.excluded) ? st.excluded : [];
+          aliases = (st.aliases && typeof st.aliases === "object") ? st.aliases : {};
+        }
+      } catch (e) {}
+      pullProjectScope(false);
+    }
+    document.getElementById("reloadScope").addEventListener("click", (e) => { e.preventDefault(); pullProjectScope(true); });
+
+    initScope();
+
+    // CSV download helper (the manual-upload fallback when the SDK isn't present).
+    function download(name, text) {
+      const blob = new Blob([text], { type: "text/csv" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    }
+
+    // STEP 3a — write the BOM CSV straight into a CSV Import Tool record so it lands
+    // in staging with NO manual upload. Three calls (the SDK can't attach a file at
+    // create time): create the record → attach the CSV → flip Run_Import so the
+    // On-Edit import workflow runs WITH the file present.
+    // Commit via Railway — the widget runs standalone (no Creator SDK context), so the Zoho
+    // write happens server-side using the app's OAuth.
+    async function submitToZoho(importCsv, proj, mfg) {
+      const r = await fetch(RAILWAY_URL + "/api/takeoff/commit", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: proj, manufacturer_id: mfg, import_csv: importCsv }),
+      });
+      const data = await r.json();
+      if (!r.ok || data.ok === false) throw new Error(data.error || ("HTTP " + r.status));
+      return data.import_id;
+    }
+
+    // ---- COVERAGE — every sheet in the PDF must be accounted for ------------
+    // The drawing number is the spine: it ties a page of the PDF to a project drawing record, and
+    // every BOM row back to both. So nothing read off the PDF is allowed to just sit there — each
+    // sheet is either assigned to a component, or EXCLUDED on purpose with a reason that travels
+    // with the take-off. Where a number nearly matches, the user says which is right; the tool
+    // never guesses. Recomputed on every render, so the guidance is live as they type.
+    function lev(a, b) {                                   // classic edit distance, small strings
+      const m = a.length, n = b.length;
+      if (!m) return n; if (!n) return m;
+      let prev = Array.from({ length: n + 1 }, (_, j) => j), cur = new Array(n + 1);
+      for (let i = 1; i <= m; i++) {
+        cur[0] = i;
+        for (let j = 1; j <= n; j++) {
+          cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+        const t = prev; prev = cur; cur = t;
+      }
+      return prev[n];
+    }
+    function similar(a, b) {
+      if (!a || !b) return 0;
+      if (a === b) return 1;
+      return 1 - lev(a, b) / Math.max(a.length, b.length);
+    }
+    // Drawing numbers are SEGMENTED (I1-4800-2-10A-7), and a different segment means a different
+    // drawing — "10A-7" is not a near-miss of "10-1" however similar the strings look. So a near
+    // match is only ever: same segment count, exactly ONE segment differing, and that segment
+    // either a prefix of the other ("2" vs "2B") or a character-level typo of it ("10A" vs "1OA").
+    // Anything else is a separate drawing and gets treated as unaccounted for.
+    function segs(s) { return String(s || "").toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean); }
+    function nearMatch(a, b) {
+      const A = segs(a), B = segs(b);
+      if (!A.length || A.length !== B.length) return 0;
+      let diff = -1;
+      for (let i = 0; i < A.length; i++) {
+        if (A[i] === B[i]) continue;
+        if (diff > -1) return 0;                           // two segments differ ⇒ different drawing
+        diff = i;
+      }
+      if (diff < 0) return 1;                              // identical
+      const x = A[diff], y = B[diff];
+      // A prefix relation only means "same drawing, extra sheet suffix" on the LAST segment
+      // ("…-2" vs "…-2B"). Mid-number it's a different family entirely: 10B-1 is NOT 10-1, and
+      // treating it as one was offering to rename a drawing into a different drawing.
+      if (diff === A.length - 1 && (x.indexOf(y) === 0 || y.indexOf(x) === 0)) return 0.9;
+      const sim = similar(x, y);
+      return (sim >= 0.8 && x.length === y.length) ? sim : 0;   // a one-character typo in one segment
+    }
+    const NEAR = 0.8;                                      // below this it isn't a plausible typo
+
+    // A component name suggested from the sheet's own title: drop the words every sheet shares
+    // (the project/product prefix) and title-case what's left — "RIS 4800 INNOVATE CATWALK FLOOR"
+    // with siblings all starting "RIS 4800 INNOVATE" suggests "Catwalk Floor".
+    function commonPrefixWords() {
+      const lists = sheets.map((s) => String(s.title || "").toUpperCase().split(/\s+/).filter(Boolean));
+      if (lists.length < 2) return 0;
+      let n = 0;
+      for (;;) {
+        const w = lists[0][n];
+        if (!w || n >= 4) break;
+        if (!lists.every((l) => l[n] === w)) break;
+        n++;
+      }
+      return n;
+    }
+    function suggestComponent(title) {
+      const words = String(title || "").split(/\s+/).filter(Boolean);
+      const cut = words.slice(commonPrefixWords()).filter((w) => !/^\d+$/.test(w));
+      const pick = (cut.length ? cut : words).slice(0, 3);
+      return pick.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+    }
+
+    function scopeDrawIndex() {
+      const out = [];
+      scope.forEach((c, ci) => (c.drawings || []).forEach((d, di) => {
+        if (d && d.number) out.push({ ci: ci, di: di, id: d.id, number: d.number, comp: c.name, cid: c.cid });
+      }));
+      return out;
+    }
+    function coverage() {
+      const idx = scopeDrawIndex();
+      const exMap = {};
+      excludedSheets.forEach((x) => { exMap[_norm(x.number)] = x; });
+      // Drawings that a sheet in this PDF matches exactly — those records are spoken for.
+      const claimed = {};
+      sheets.forEach((s) => { if (s.number) claimed[_norm(s.number)] = 1; });
+
+      const items = sheets.map((s) => {
+        const n = _norm(s.number);
+        if (exMap[n]) return { s: s, state: "excluded", ex: exMap[n] };
+        const exact = idx.find((x) => _norm(x.number) === n);
+        if (exact) return { s: s, state: "assigned", hit: exact };
+        if (aliases[n]) {
+          const al = idx.find((x) => _norm(x.number) === _norm(aliases[n]));
+          if (al) return { s: s, state: "assigned", hit: al, alias: aliases[n] };
+        }
+        // Never propose a near-match against a drawing that another sheet in this PDF matches
+        // exactly — "use the PDF's number" would rename that drawing out from under the sheet that
+        // owns it, which put the other sheet back into the unresolved list. That's how the same
+        // question kept coming back.
+        let best = null, score = 0;
+        idx.forEach((x) => {
+          if (claimed[_norm(x.number)]) return;
+          const sc = nearMatch(x.number, s.number);
+          if (sc > score) { score = sc; best = x; }
+        });
+        if (best && score >= NEAR) return { s: s, state: "near", hit: best, score: score };
+        return { s: s, state: "missing" };
+      });
+      // The reverse check: a drawing you've selected that no uploaded PDF contains.
+      const inPdf = {};
+      sheets.forEach((s) => { inPdf[_norm(s.number)] = 1; });
+      const extras = sheets.length ? idx.filter((x) => !inPdf[_norm(x.number)] &&
+        !Object.keys(aliases).some((k) => _norm(aliases[k]) === _norm(x.number))) : [];
+      return {
+        items: items, extras: extras,
+        assigned: items.filter((i) => i.state === "assigned").length,
+        excluded: items.filter((i) => i.state === "excluded").length,
+        open: items.filter((i) => i.state === "missing" || i.state === "near"),
+      };
+    }
+
+    function compChoices(selected) {
+      const named = namedComps();
+      if (!named.length) return "";
+      return '<select class="covsel" data-k="covcomp">' +
+        named.map((x) => '<option value="' + x.i + '"' + (x.i === selected ? " selected" : "") + ">" +
+          escHtml(x.name) + "</option>").join("") + "</select>";
+    }
+
+    // ---- SUGGESTED BREAKDOWN ------------------------------------------------
+    // The whole proposal, up front: the components the AI thinks this package describes, each with
+    // the drawings that belong to it. Purely a suggestion — take all of it, take one group, rename
+    // a group before taking it, or ignore the lot and build the scope by hand. Nothing is written
+    // to the project until a button is pressed.
+    function suggestionGroups() {
+      const named = {};
+      project.components.forEach((c) => { named[_norm(c.name)] = c; });
+      const inScope = {};
+      scopeDrawIndex().forEach((x) => { inScope[_norm(x.number)] = 1; });
+      const exMap = {};
+      excludedSheets.forEach((x) => { exMap[_norm(x.number)] = 1; });
+
+      const byName = {}, order = [];
+      sheets.forEach((s) => {
+        const name = String(s.suggestion || "").trim() || suggestComponent(s.title);
+        if (!name || !s.number) return;
+        if (exMap[_norm(s.number)]) return;                   // already left out on purpose
+        const k = _norm(name);
+        if (!byName[k]) { byName[k] = { name: name, sheets: [], exists: named[k] || null }; order.push(k); }
+        byName[k].sheets.push(s);
+      });
+      // Only worth proposing where something is still missing from the scope.
+      return order.map((k) => byName[k]).map((g) => {
+        g.missing = g.sheets.filter((s) => !inScope[_norm(s.number)]);
+        return g;
+      }).filter((g) => g.missing.length);
+    }
+
+    function renderSuggestions() {
+      const host = document.getElementById("suggest");
+      if (!host) return;
+      if (!sheets.length || suggestDismissed) { host.innerHTML = ""; updatePanels(); return; }
+      const groups = suggestionGroups();
+      if (!groups.length) { host.innerHTML = ""; updatePanels(); return; }
+      const rows = groups.map((g, i) => {
+        const nums = g.missing.map((s) => escHtml(s.number)).join(", ");
+        return '<div class="sgrow">' +
+          '<div class="sghd">' +
+            '<input type="text" class="sgname" data-i="' + i + '" value="' + escAttr(g.name) + '" ' +
+              'title="Rename before you take it — this is the component name that gets created" />' +
+            (g.exists ? '<span class="sgtag">already on the project</span>' : '<span class="sgtag new">new component</span>') +
+            '<button type="button" class="covbtn" data-k="sgtake" data-i="' + i + '">' +
+              (g.exists ? "Add these drawings" : "Create with these drawings") + "</button>" +
+          "</div>" +
+          '<div class="sgnums">' + g.missing.length + " drawing" + (g.missing.length === 1 ? "" : "s") + ": " + nums + "</div>" +
+        "</div>";
+      }).join("");
+      const total = groups.reduce((n, g) => n + g.missing.length, 0);
+      // The column heading already says what this is — don't repeat it, just the numbers and the rule.
+      host.innerHTML = '<div class="sug">' +
+        '<div class="covwhy">Read off the title blocks: <b>' + groups.length + " component" +
+          (groups.length === 1 ? "" : "s") + "</b> covering <b>" + total + " drawing" + (total === 1 ? "" : "s") +
+          "</b> not yet in your scope. Use it, edit it, or ignore it — nothing is written to the project " +
+          "until you take it.</div>" + rows +
+        '<div class="sugacts"><button type="button" class="covbtn" data-k="sgall">✓ Use all suggestions</button>' +
+        '<a href="#" data-k="sgno">no thanks — I\'ll do it myself</a></div></div>';
+      updatePanels();
+    }
+
+    document.getElementById("suggest").addEventListener("input", (e) => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains("sgname")) return;
+      suggestNames[Number(t.getAttribute("data-i"))] = t.value;     // rename before taking
+    });
+    document.getElementById("suggest").addEventListener("click", async (e) => {
+      const el = e.target.closest("[data-k]"); if (!el) return;
+      const k = el.getAttribute("data-k");
+      if (k === "sgno") { e.preventDefault(); suggestDismissed = true; renderSuggestions(); return; }
+      if (k === "sgtake") { await takeSuggestion(Number(el.getAttribute("data-i"))); return; }
+      if (k === "sgall") {
+        const n = suggestionGroups().length;
+        for (let i = 0; i < n; i++) await takeSuggestion(0, true);   // list shrinks as each is taken
+        setScopeStatus("Took the suggested breakdown. Review it below — it's all editable.");
+      }
+    });
+
+    // Every unplaced sheet under one component, in one go. Writes one drawing record per sheet (the
+    // same call the per-row button makes), reporting progress because it's N Zoho writes, not one.
+    async function bulkAssign() {
+      if (!params.project_id) { setScopeStatus("Open the take-off from the project page to add records."); return; }
+      const sel = document.getElementById("bulkComp");
+      const ci = Number(sel && sel.value);
+      if (!scope[ci] || !scope[ci].cid) { setScopeStatus("Pick a component first."); return; }
+      const list = coverage().open.filter((x) => x.state === "missing").map((x) => x.s);
+      if (!list.length) return;
+      if (!window.confirm("Add all " + list.length + " unplaced drawing" + (list.length === 1 ? "" : "s") +
+        " to the project under “" + scope[ci].name + "”?\n\nThat creates " + list.length +
+        " drawing record" + (list.length === 1 ? "" : "s") + " on the project.")) return;
+      const failed = [];
+      for (let n = 0; n < list.length; n++) {
+        const s = list[n];
+        setScopeStatus('<span class="spin"></span>Adding to “' + escHtml(scope[ci].name) + "”… " +
+          (n + 1) + "/" + list.length + " · " + escHtml(s.number));
+        try {
+          const rec = findDrawingByNumber(s.number);
+          if (rec && !rec.owner) await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: scope[ci].cid });
+          else if (!rec) await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: scope[ci].cid });
+          descMap[s.number] = s.title || "";
+        } catch (err) { failed.push(s.number); }
+      }
+      await loadProject(); scopeFromProject(); saveScope(); renderScope();
+      setScopeStatus((list.length - failed.length) + " of " + list.length + " added under “" +
+        escHtml(scope[ci].name) + "”." + (failed.length ? ' <span style="color:#b45309">Failed: ' +
+        escHtml(failed.slice(0, 5).join(", ")) + "</span>" : ""));
+    }
+
+    // The mirror image: leave every unplaced sheet out, one reason for the lot.
+    function bulkExclude() {
+      const list = coverage().open.filter((x) => x.state === "missing").map((x) => x.s);
+      if (!list.length) return;
+      const reason = window.prompt("Leave all " + list.length + " unplaced drawing" + (list.length === 1 ? "" : "s") +
+        " out of this take-off.\n\nWhy? (carried through the take-off, so the AI skips them)",
+        "Not in this scope of work");
+      if (reason == null) return;
+      list.forEach((s) => {
+        excludedSheets.push({ number: s.number, title: s.title || "", pages: s.pages || [],
+          reason: String(reason).trim() || "Excluded by the estimator" });
+      });
+      saveSheets(); renderCoverage();
+      setScopeStatus(list.length + " drawing" + (list.length === 1 ? "" : "s") + " left out — the take-off is told to skip them.");
+    }
+
+    // Create (or reuse) the component, then file its drawings under it — on the project, so the
+    // take-off and the project agree. Same endpoints as every other add on this screen.
+    async function takeSuggestion(i, quiet) {
+      if (!params.project_id) { setScopeStatus("Open the take-off from the project page to add records."); return; }
+      const groups = suggestionGroups();
+      const g = groups[i];
+      if (!g) return;
+      const name = String(suggestNames[i] || g.name).trim();
+      if (!name) return;
+      setScopeStatus('<span class="spin"></span>Adding “' + escHtml(name) + "” and its drawings to the project…");
+      try {
+        let cid = g.exists ? String(g.exists.id) : null;
+        if (!cid) {
+          const out = await scopeApi("add", { project_id: params.project_id, kind: "component", value: name });
+          cid = String(out.id);
+        }
+        for (const s of g.missing) {
+          const rec = findDrawingByNumber(s.number);
+          if (rec && !rec.owner) {                      // on the project but unfiled — file it here
+            await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: cid });
+          } else if (!rec) {
+            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: cid });
+          }
+          descMap[s.number] = s.title || "";
+        }
+        suggestNames = {};
+        await loadProject(); scopeFromProject(); saveScope(); renderScope();
+        if (!quiet) setScopeStatus("Added “" + escHtml(name) + "” with " + g.missing.length + " drawing" +
+          (g.missing.length === 1 ? "" : "s") + " to the project.");
+      } catch (err) {
+        setScopeStatus("Could not take that suggestion: " + escHtml(err.message || err));
+      }
+    }
+
+    // Show the three-panel row only when there's something in it, and hide an empty column so the
+    // remaining panels take the full width instead of leaving a gap.
+    function updatePanels() {
+      const show = (id) => {
+        const el = document.getElementById(id);
+        if (!el) return false;
+        const has = !!el.innerHTML.trim();
+        const col = el.closest(".panel");
+        if (col) col.style.display = has ? "block" : "none";
+        return has;
+      };
+      show("suggest"); show("coverage");                   // both live in the working row, not here
+      const a = show("allocPanel");
+      const row = document.getElementById("panels");
+      if (row) row.style.display = a ? "grid" : "none";
+    }
+
+    function renderCoverage() {
+      renderSuggestions();
+      const host = document.getElementById("coverage");
+      if (!host) return;
+      if (!sheets.length) { host.innerHTML = ""; updatePanels(); return; }
+      const cov = coverage();
+      const total = cov.items.length;
+      const done = cov.assigned + cov.excluded;
+      const ok = !cov.open.length;
+
+      const openRows = cov.open.map((it, i) => {
+        const k = sheets.indexOf(it.s);
+        const pg = (it.s.pages && it.s.pages.length)
+          ? "p." + it.s.pages[0] + (it.s.pages[1] && it.s.pages[1] !== it.s.pages[0] ? "–" + it.s.pages[1] : "") : "";
+        // Prefer the AI's own proposal for this sheet; the title heuristic is only the fallback,
+        // so this row and the suggested breakdown never offer two different names for one sheet.
+        const sug = String(it.s.suggestion || "").trim() || suggestComponent(it.s.title);
+        if (it.state === "near") {
+          return '<div class="covrow"><div class="covhd"><b>' + escHtml(it.s.number) + "</b> " +
+            '<span class="apg">' + pg + "</span></div>" +
+            '<div class="covwhy">The PDF says <b>' + escHtml(it.s.number) + "</b>, your project has <b>" +
+              escHtml(it.hit.number) + "</b> under " + escHtml(it.hit.comp) + " — close, but not the same. " +
+              "Say which is right so every row ties to one number.</div>" +
+            '<div class="covacts">' +
+              '<button type="button" class="covbtn" data-k="usepdf" data-i="' + k + '">Use the PDF’s number</button>' +
+              '<button type="button" class="covbtn alt" data-k="alias" data-i="' + k + '">They’re the same — keep “' +
+                escHtml(it.hit.number) + '”</button>' +
+              '<button type="button" class="covbtn alt" data-k="excl" data-i="' + k + '">Leave this sheet out…</button>' +
+            "</div></div>";
+        }
+        return '<div class="covrow"><div class="covhd"><b>' + escHtml(it.s.number) + "</b> " +
+          '<span class="adesc">' + escHtml(it.s.title || "") + '</span> <span class="apg">' + pg + "</span></div>" +
+          '<div class="covwhy">This sheet isn’t on any component yet. Put it under one (it’s added to the project ' +
+            "with this exact number), or leave it out on purpose." +
+            (sug ? " The title suggests a component called <b>" + escHtml(sug) + "</b>." : "") + "</div>" +
+          '<div class="covacts">' +
+            (namedComps().length
+              ? compChoices(namedComps()[0].i) + '<button type="button" class="covbtn" data-k="assign" data-i="' + k + '">Add under this component</button>'
+              : '<span class="apg">pick or add a component above first</span>') +
+            (sug ? '<button type="button" class="covbtn alt" data-k="newcomp" data-i="' + k + '" data-name="' + escAttr(sug) +
+              '">＋ New component “' + escHtml(sug) + '”</button>' : "") +
+            '<button type="button" class="covbtn alt" data-k="excl" data-i="' + k + '">Leave this sheet out…</button>' +
+          "</div></div>";
+      }).join("");
+
+      const exList = excludedSheets.length
+        ? '<details class="covex"><summary>' + excludedSheets.length + " sheet" + (excludedSheets.length === 1 ? "" : "s") +
+            " deliberately left out — carried through the whole take-off</summary>" +
+          excludedSheets.map((x, i) => '<div class="covexrow"><b>' + escHtml(x.number) + "</b> " +
+            '<span class="adesc">' + escHtml(x.reason || "") + "</span>" +
+            '<button type="button" class="covbtn alt" data-k="unexcl" data-i="' + i + '">put back</button></div>').join("") +
+          "</details>"
+        : "";
+
+      const extras = cov.extras.length
+        ? '<div class="covwhy" style="margin-top:8px">⚠ ' + cov.extras.length + " selected drawing" +
+          (cov.extras.length === 1 ? "" : "s") + " (" + escHtml(cov.extras.slice(0, 6).map((x) => x.number).join(", ")) +
+          ") " + (cov.extras.length === 1 ? "isn’t" : "aren’t") + " in the PDFs you loaded — upload the missing PDF, " +
+          "or ✕ them out of this take-off.</div>"
+        : "";
+
+      // Bulk bar: 20-odd sheets that all belong to one component shouldn't need 20 clicks. Only the
+      // UNPLACED ones go in bulk — a near-miss number is a decision about which number is right, so
+      // it stays per-row rather than being swept up silently.
+      const unplaced = cov.open.filter((x) => x.state === "missing");
+      const nearCount = cov.open.length - unplaced.length;
+      const named = namedComps();
+      const bulk = (unplaced.length > 1 && named.length)
+        ? '<div class="covbulk"><b>All ' + unplaced.length + " at once:</b> " +
+            '<select class="covsel" id="bulkComp">' +
+              named.map((x) => '<option value="' + x.i + '">' + escHtml(x.name) + "</option>").join("") +
+            "</select>" +
+            '<button type="button" class="covbtn" data-k="bulkadd">Add all ' + unplaced.length + " here</button>" +
+            '<button type="button" class="covbtn alt" data-k="bulkout">Leave all ' + unplaced.length + " out…</button>" +
+            (nearCount ? '<div class="covwhy">' + nearCount + " number" + (nearCount === 1 ? "" : "s") +
+              " that nearly match one of yours " + (nearCount === 1 ? "is" : "are") + " left below — those need your call.</div>" : "") +
+          "</div>"
+        : "";
+      const reopen = (suggestDismissed && sheets.length)
+        ? '<div class="covwhy"><a href="#" data-k="showsug">show the suggested breakdown again</a></div>' : "";
+
+      host.innerHTML = '<div class="cov ' + (ok ? "ok" : "open") + '">' +
+        '<div class="covttl">' + (ok ? "✓ " : "◷ ") + "All drawings accounted for: <b>" + done + " of " + total + "</b>" +
+          (cov.excluded ? " (" + cov.assigned + " on components, " + cov.excluded + " left out)" : "") +
+          (ok ? "" : " — <b>" + cov.open.length + " still to resolve</b>") + "</div>" +
+        (ok ? "" : '<div class="covsub">Nothing from these sheets will reach the take-off until each one is placed or ' +
+          "left out on purpose.</div>") + bulk + reopen +
+        openRows + extras + exList +
+      "</div>";
+      updatePanels();
+    }
+
+    // Coverage actions — each one resolves an open sheet, and each one is explicit.
+    document.getElementById("coverage").addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-k]"); if (!btn) return;   // buttons AND the reopen link
+      const k = btn.getAttribute("data-k"), i = Number(btn.getAttribute("data-i"));
+      if (k === "unexcl") { excludedSheets.splice(i, 1); saveSheets(); renderCoverage(); return; }
+      if (k === "showsug") { e.preventDefault(); suggestDismissed = false; renderCoverage(); return; }
+      if (k === "bulkadd") { await bulkAssign(); return; }
+      if (k === "bulkout") { bulkExclude(); return; }
+      const sheet = sheets[i];
+      if (!sheet) return;
+      if (k === "excl") {
+        const reason = window.prompt("Leave " + sheet.number + " out of this take-off.\n\n" +
+          "Why? (carried through the take-off, so the AI skips it and the reason shows on the review)",
+          "Not in this scope of work");
+        if (reason == null) return;
+        excludedSheets.push({ number: sheet.number, title: sheet.title || "",
+          pages: sheet.pages || [], reason: String(reason).trim() || "Excluded by the estimator" });
+        saveSheets(); renderCoverage();
+        return;
+      }
+      if (k === "usepdf") {                                 // rename the project record to the PDF's number
+        const cov = coverage();
+        const it = cov.items.find((x) => x.s === sheet);
+        if (!it || !it.hit || !it.hit.id) return;
+        // Last line of defence: if some other sheet in this PDF IS that drawing, renaming it would
+        // take the number away from that sheet. Add a new drawing instead of moving an existing one.
+        const owner = sheets.find((z) => z !== sheet && _norm(z.number) === _norm(it.hit.number));
+        if (owner) {
+          setScopeStatus("Not renamed — " + escHtml(it.hit.number) + " is its own sheet in this PDF (p." +
+            ((owner.pages || [])[0] || "?") + "). Add " + escHtml(sheet.number) + " as its own drawing instead.");
+          renderCoverage();
+          return;
+        }
+        setScopeStatus('<span class="spin"></span>Renaming ' + escHtml(it.hit.number) + " to " + escHtml(sheet.number) + " on the project…");
+        try {
+          await scopeApi("update", { kind: "drawing", id: it.hit.id, value: sheet.number });
+          await loadProject(); scopeFromProject(); renderScope(); renderCoverage();
+          setScopeStatus("Renamed to " + escHtml(sheet.number) + " on the project — it now matches the sheet.");
+        } catch (err) { setScopeStatus("Rename failed: " + escHtml(err.message || err)); }
+        return;
+      }
+      if (k === "alias") {                                  // keep their number, record the tie
+        const cov = coverage();
+        const it = cov.items.find((x) => x.s === sheet);
+        if (!it || !it.hit) return;
+        aliases[_norm(sheet.number)] = it.hit.number;
+        saveSheets(); renderCoverage();
+        setScopeStatus("Tied sheet " + escHtml(sheet.number) + " to your drawing " + escHtml(it.hit.number) +
+          " — the take-off will use your number.");
+        return;
+      }
+      if (k === "assign" || k === "newcomp") {
+        if (!params.project_id) { setScopeStatus("Open the take-off from the project page to add records."); return; }
+        let ci;
+        if (k === "newcomp") {
+          const name = btn.getAttribute("data-name");
+          setScopeStatus('<span class="spin"></span>Adding component “' + escHtml(name) + "” to the project…");
+          try {
+            const out = await scopeApi("add", { project_id: params.project_id, kind: "component", value: name });
+            await loadProject(); scopeFromProject(); renderScope();
+            ci = scope.findIndex((c) => String(c.cid) === String(out.id));
+          } catch (err) { setScopeStatus("Could not add the component: " + escHtml(err.message || err)); return; }
+        } else {
+          const sel = btn.parentElement && btn.parentElement.querySelector('[data-k="covcomp"]');
+          ci = Number(sel && sel.value);
+        }
+        if (ci == null || ci < 0 || !scope[ci] || !scope[ci].cid) { setScopeStatus("Pick a component first."); return; }
+        setScopeStatus('<span class="spin"></span>Adding ' + escHtml(sheet.number) + " under " + escHtml(scope[ci].name) + "…");
+        try {
+          await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: sheet.number, component_id: scope[ci].cid });
+          descMap[sheet.number] = sheet.title || "";
+          await loadProject(); scopeFromProject(); renderScope(); renderCoverage(); saveScope();
+          setScopeStatus(escHtml(sheet.number) + " added to the project under " + escHtml(scope[ci].name) + ".");
+        } catch (err) { setScopeStatus("Could not add the drawing: " + escHtml(err.message || err)); }
+      }
+    });
+
+    // ---- PRE-FLIGHT ---------------------------------------------------------
+    // The full take-off costs money and takes a minute, and it can only be as good as the scope it
+    // is handed. So "Run" doesn't run: it lays out exactly what is about to be sent — the drawings
+    // read from the PDF against the components and drawings selected — and waits for a second,
+    // deliberate click. Everything stays on this screen so anything wrong can be fixed in place.
+    function preflightHtml() {
+      const tree = buildScopeTree();
+      const pages = docs.reduce((s, d) => s + (d.pages || 0), 0);
+      const drawings = tree.reduce((s, c) => s + c.drawings.length, 0);
+      const inScope = {};
+      tree.forEach((c) => c.drawings.forEach((d) => { inScope[_norm(d)] = 1; }));
+      // Read off the PDF but not in the scope being sent — the exact mismatch worth catching here.
+      const unallocated = detected.filter((s) => s.number && !inScope[_norm(s.number)]).map((s) => s.number);
+      const empties = tree.filter((c) => !c.drawings.length).map((c) => c.component);
+      const cov = sheets.length ? coverage() : null;
+      const blockers = [];
+      const warn = [];
+      if (!audit) warn.push("You haven’t previewed the PDF yet — <b>Preview the drawings</b> first so the drawing numbers " +
+        "in the take-off match the sheets.");
+      // Hard stop: a sheet nobody has placed or deliberately left out would be read blind.
+      if (cov && cov.open.length) blockers.push(cov.open.length + " drawing" + (cov.open.length === 1 ? "" : "s") +
+        " from the PDF " + (cov.open.length === 1 ? "is" : "are") + " neither on a component nor left out on purpose: <b>" +
+        escHtml(cov.open.slice(0, 8).map((x) => x.s.number).join(", ")) + (cov.open.length > 8 ? " …" : "") +
+        "</b> — resolve them under <b>All drawings accounted for</b> above.");
+      if (unallocated.length) warn.push(unallocated.length + " drawing" + (unallocated.length === 1 ? "" : "s") +
+        " read from the PDF " + (unallocated.length === 1 ? "is" : "are") + " not in the scope below: <b>" +
+        escHtml(unallocated.slice(0, 8).join(", ")) + (unallocated.length > 8 ? " …" : "") + "</b>");
+      if (empties.length) warn.push(escHtml(empties.slice(0, 5).join(", ")) +
+        (empties.length > 5 ? " and others" : "") + " have no drawings selected");
+      if (!tree.length) warn.push("<b>No components are selected</b> — the AI will have nothing to tag its rows to.");
+
+      const list = tree.slice(0, 12).map((c) => "<li><b>" + escHtml(c.component) + "</b> — " +
+        (c.drawings.length ? escHtml(c.drawings.slice(0, 6).join(", ")) + (c.drawings.length > 6 ? " …" : "") : "no drawings")
+        + "</li>").join("");
+
+      return '<div class="preflight">' +
+        '<div class="pfhd">' + (blockers.length ? "Not ready yet" : "Ready to run") +
+          " — check this before it reads the drawings</div>" +
+        '<div class="pfrow">' +
+          "<span><b>" + docs.length + "</b> file" + (docs.length === 1 ? "" : "s") + "</span>" +
+          (pages ? "<span><b>" + pages + "</b> pages</span>" : "") +
+          (sheets.length ? "<span><b>" + sheets.length + "</b> drawings in the PDF</span>" : "") +
+          "<span><b>" + tree.length + "</b> component" + (tree.length === 1 ? "" : "s") + "</span>" +
+          "<span><b>" + drawings + "</b> drawings in scope</span>" +
+          (excludedSheets.length ? "<span><b>" + excludedSheets.length + "</b> left out on purpose</span>" : "") +
+        "</div>" +
+        (blockers.length ? '<div class="pfstop">' + blockers.map((b) => "<div>⛔ " + b + "</div>").join("") + "</div>" : "") +
+        (warn.length ? '<div class="pfwarn">' + warn.map((w) => "<div>⚠ " + w + "</div>").join("") + "</div>" : "") +
+        "<ul class=\"pflist\">" + list + (tree.length > 12 ? "<li>…</li>" : "") + "</ul>" +
+        (excludedSheets.length ? '<div class="pfex">Left out (the take-off is told to skip these, and why): ' +
+          escHtml(excludedSheets.slice(0, 8).map((x) => x.number).join(", ")) + "</div>" : "") +
+        (blockers.length
+          ? '<div class="pfalt"><a href="#" id="goCancel">close and resolve them above</a></div>'
+          : '<button type="button" class="go" id="goConfirm" style="margin-top:10px">▶ Start the full take-off</button>' +
+            '<div class="pfalt"><a href="#" id="goCancel">cancel — keep editing</a></div>') +
+      "</div>";
+    }
+
+    go.addEventListener("click", () => {
+      if (!docs.length) return;
+      if (!params.project_id) {
+        resultBox.innerHTML = '<div class="result err">No project_id on the page URL. ' +
+          'The take-off button must pass project_id (and manufacturer_id).</div>';
+        return;
+      }
+      document.getElementById("preflight").innerHTML = preflightHtml();
+      const el = document.getElementById("preflight");
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+    });
+    document.getElementById("preflight").addEventListener("click", (e) => {
+      if (e.target.closest("#goConfirm")) { document.getElementById("preflight").innerHTML = ""; runTakeoff(); return; }
+      if (e.target.closest("#goCancel")) { e.preventDefault(); document.getElementById("preflight").innerHTML = ""; }
+    });
+
+    async function runTakeoff() {
+      go.disabled = true; resultBox.innerHTML = "";
+      const t0 = Date.now();
+      const timer = setInterval(() => {
+        statusEl.innerHTML = '<span class="spin"></span>Reading ' + docs.length +
+          ' document' + (docs.length > 1 ? "s" : "") + '… ' +
+          Math.round((Date.now() - t0) / 1000) + 's';
+      }, 250);
+
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/takeoff", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: params.project_id,
+            manufacturer_id: params.manufacturer_id,
+            pdfs: docs.map((d) => d.b64),
+            model: document.getElementById("model").value,
+            scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
+            // Everything the estimator decided about coverage travels with the run: which sheets to
+            // skip and why, and any sheet whose number on the drawing differs from the project's.
+            excluded_drawings: excludedSheets.map((x) => ({ number: x.number, title: x.title, reason: x.reason })),
+            drawing_aliases: Object.keys(aliases).map((k) => {
+              const s = sheets.find((z) => _norm(z.number) === k);
+              return { pdf_number: s ? s.number : k, use_number: aliases[k] };
+            }),
+          }),
+        });
+        const data = await r.json();
+        clearInterval(timer); statusEl.textContent = "";
+
+        // Out of credits → 402. Show a Buy-credits button instead of a generic error.
+        if (r.status === 402 || data.error === "out_of_credits") {
+          resultBox.innerHTML =
+            '<div class="result warn"><b>You’re out of AI take-offs.</b><br>' +
+            'Buy more credits to keep going.' +
+            (data.buy_url
+              ? '<br><a class="dl" href="' + data.buy_url + '" target="_top">Buy take-off credits →</a>'
+              : '') + '</div>';
+          go.disabled = false;
+          return;
+        }
+        if (!r.ok || data.ok === false) {
+          resultBox.innerHTML = '<div class="result err"><b>Take-off failed.</b><br>' +
+            (data.error || ("HTTP " + r.status)) + '</div>';
+          go.disabled = false;
+          return;
+        }
+
+        // ---- success: summary + actions --------------------------------------
+        const cls = data.low_confidence ? "warn" : "";
+        const left = (data.free_left != null || data.credits_left != null)
+          ? ((data.free_left || 0) + (data.credits_left || 0)) : null;
+        const proj = params.project_id;
+
+        // Premium tier → hand off to the full project approval page (review.html),
+        // which renders the synopsis (scope / decisions / gaps / BOM) and commits.
+        if (data.synopsis) {
+          data.__project = proj;  // tag so the review page can't confuse it with another project's take-off
+          try { sessionStorage.setItem("takeoff_result", JSON.stringify(data)); } catch (e) {}
+          try { if (proj) localStorage.setItem("mc_takeoff_" + proj, JSON.stringify(data)); } catch (e) {}
+          location.href = "review.html?project_id=" + encodeURIComponent(proj) +
+            "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
+          return;
+        }
+
+        const canAutoSubmit = AUTO_SUBMIT;  // commit goes through Railway now (no SDK needed)
+        resultBox.innerHTML = '<div class="result ' + cls + '">' +
+          '<b class="big">' + data.count + ' BOM rows ready.</b>' +
+          '<div>' +
+            '<span class="pill">' + data.count + ' quantified</span>' +
+            (data.gap_count ? '<span class="pill">' + data.gap_count + ' gaps to verify</span>' : '') +
+            (data.low_confidence ? '<span class="pill">' + data.low_confidence + ' low-confidence</span>' : '') +
+            '<span class="pill">$' + (data.cost_usd ?? "?") + '</span>' +
+            (left != null ? '<span class="pill">' + left + ' take-offs left</span>' : '') +
+          '</div>' +
+          (canAutoSubmit
+            ? '<button class="dl" id="send">Send to BOM staging →</button>' +
+              '<button class="dl alt" id="dlImport">↓ Download CSV instead</button>'
+            : '<button class="dl" id="dlImport">↓ Download BOM CSV</button>') +
+          (data.gap_count ? '<button class="dl alt" id="dlVerify">↓ Verify list</button>' : '') +
+          '<div id="sendMsg" style="margin-top:10px;font-size:12px;color:#667">' +
+            (canAutoSubmit
+              ? 'Sends the BOM into your staging review under this project — then approve it there.'
+              : 'Upload the BOM CSV under this project to review &amp; import.') +
+          '</div>' +
+          (data.notes ? '<div class="notes">' + data.notes.replace(/</g, "&lt;") + '</div>' : '') +
+          '</div>';
+
+        document.getElementById("dlImport").addEventListener("click", () =>
+          download("takeoff-import-" + proj + ".csv", data.import_csv || ""));
+        const dv = document.getElementById("dlVerify");
+        if (dv) dv.addEventListener("click", () =>
+          download("takeoff-verify-" + proj + ".csv", data.verify_csv || ""));
+
+        const sendBtn = document.getElementById("send");
+        if (sendBtn) sendBtn.addEventListener("click", async () => {
+          sendBtn.disabled = true;
+          const msg = document.getElementById("sendMsg");
+          msg.innerHTML = '<span class="spin"></span>Sending to staging…';
+          try {
+            await submitToZoho(data.import_csv || "", proj, params.manufacturer_id);
+            msg.innerHTML = '✓ Sent. Opening your staging review…';
+            const url = Z.REVIEW_PAGE + (Z.REVIEW_PAGE.includes("?") ? "&" : "?") + "project_id=" + proj;
+            setTimeout(() => window.open(url, "_top"), 800);
+          } catch (e) {
+            sendBtn.disabled = false;
+            msg.innerHTML = '<span style="color:#b91c1c">Send failed: ' + (e.message || e) + '</span>' +
+              '<br>Use “Download CSV instead” and upload it to the CSV Import Tool.';
+          }
+        });
+
+        go.disabled = false;
+      } catch (e) {
+        clearInterval(timer);
+        statusEl.textContent = "";
+        resultBox.innerHTML = '<div class="result err"><b>Network error.</b><br>' + e.message + '</div>';
+        go.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>

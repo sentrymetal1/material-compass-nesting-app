@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Take-off — Project Review</title>
+<!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
+<script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
+<!--
+  LIVE approval page (build 3b). Renders a real take-off result {rows, import_csv, synopsis}.
+  Data source, in order: window.TAKEOFF_RESULT  →  sessionStorage 'takeoff_result'
+  (set by the upload widget)  →  built-in SAMPLE (so it opens standalone for design review).
+  Approve & Submit commits the BOM via submitToZoho (3a); other section-writes are WIRE-stubbed.
+-->
+<style>
+  :root{
+    --blue:#5F94CE; --ink:#1f2a37; --mut:#667; --line:#e3e6ea;
+    --grn:#2e7d32; --grnbg:#e8f5e9; --ylw:#b45309; --ylwbg:#fff7ed;
+    --red:#b91c1c; --redbg:#fdeeee;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:1100px;margin:0 auto;}
+  .appbar{max-width:1100px;margin:0 auto 14px;display:flex;align-items:center;gap:10px;padding:2px;}
+  .appbar .brand{font-weight:800;font-size:16px;color:var(--blue);letter-spacing:.2px;}
+  .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .applybtn{font-size:11px;color:#fff;background:var(--blue);border:0;border-radius:5px;padding:2px 9px;cursor:pointer;margin-left:4px;}
+  /* Material check — rows that can't resolve against the shop's catalog */
+  .matrow{border-top:1px solid #f2e4e4;padding:9px 0;font-size:13px;}
+  .matrow:first-of-type{border-top:0;}
+  .matquick{margin-top:5px;font-size:12px;color:var(--mut);}
+  .matquick select{font-size:12px;padding:3px 6px;border:1px solid #cdd3da;border-radius:5px;max-width:260px;}
+  .applybtn:hover{opacity:.9;}
+  .applybtn:disabled{opacity:.5;cursor:default;}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;background:var(--blue);color:#fff;text-align:center;
+        padding:11px;font-size:14px;font-weight:600;display:none;box-shadow:0 2px 10px rgba(0,0,0,.18);}
+  .busy.show{display:block;}
+  .busy.err{background:var(--red);}
+  .busy.ok{background:var(--grn);}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;overflow:hidden;}
+  .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:13px 18px;border-bottom:1px solid var(--line);background:#fafbfc;}
+  .card h2 .lt{text-transform:none;letter-spacing:0;font-weight:400;color:var(--mut);}
+  .card .body{padding:16px 18px;}
+  .hero{background:linear-gradient(180deg,#fff,#f7f9fc);} .hero .body{padding:20px 18px;}
+  .hero h1{margin:0 0 4px;font-size:20px;} .hero .type{color:var(--mut);font-size:13px;margin-bottom:14px;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:5px 11px;color:#334;}
+  .conf{float:right;font-weight:700;font-size:13px;padding:5px 12px;border-radius:20px;}
+  .c-hi{background:var(--grnbg);color:var(--grn);} .c-md{background:var(--ylwbg);color:var(--ylw);} .c-lo{background:var(--redbg);color:var(--red);}
+  .stream{display:flex;gap:12px;padding:9px 0;border-bottom:1px dashed #eef1f4;} .stream:last-child{border-bottom:0;}
+  .stream .tag{flex:0 0 92px;font-weight:600;font-size:12px;}
+  .tag.fab{color:var(--blue);} .tag.buy{color:var(--ylw);} .tag.oth{color:var(--mut);} .tag.snd{color:var(--grn);}
+  .stream .items{font-size:13px;color:#2b3340;}
+  .dec{padding:12px 0;border-bottom:1px dashed #eef1f4;} .dec:last-child{border-bottom:0;}
+  .dec .q{font-size:14px;font-weight:600;margin-bottom:2px;} .dec .why{font-size:12px;color:var(--mut);margin-bottom:8px;}
+  .opts{display:flex;gap:8px;flex-wrap:wrap;}
+  .opt{font-size:13px;border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer;background:#fff;user-select:none;transition:.12s;}
+  .opt:hover{border-color:var(--blue);} .opt.sel{background:var(--blue);color:#fff;border-color:var(--blue);}
+  .opt.rec::after{content:" ★";color:#f2c14e;font-size:11px;} .opt.sel.rec::after{color:#fff;}
+  .undec{box-shadow:inset 3px 0 0 var(--ylw);padding-left:10px;border-radius:3px;}
+  .decnote{font-size:12px;color:var(--ylw);margin-top:6px;}
+  .twoup{display:grid;grid-template-columns:1fr 1fr;gap:14px;} @media(max-width:640px){.twoup{grid-template-columns:1fr;}}
+  details{font-size:13px;} details summary{cursor:pointer;font-weight:600;padding:4px 0;}
+  details ul{margin:6px 0 0;padding-left:18px;color:#2b3340;} details li{margin:4px 0;}
+  .src{color:var(--mut);font-size:11px;}
+  .comp{display:flex;gap:10px;align-items:flex-start;font-size:13px;margin-bottom:8px;} .comp .ok{color:var(--grn);font-weight:700;white-space:nowrap;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{text-align:left;color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--line);}
+  td{padding:7px 8px;border-bottom:1px solid #f1f3f5;}
+  tr.lo td{background:var(--redbg);} tr.md td{background:var(--ylwbg);}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;}
+  .d-hi{background:var(--grn);} .d-md{background:var(--ylw);} .d-lo{background:var(--red);}
+  .galv{font-size:10px;background:#eef6ee;color:var(--grn);border-radius:4px;padding:1px 5px;}
+  tr.grp-comp td{background:#eef2f7;color:#1f3a5f;font-weight:700;font-size:13px;padding:9px 12px;border-top:2px solid #cdd8e6;border-bottom:1px solid #d7e0ec;}
+  tr.grp-draw td{background:#f7f9fb;color:#46566b;font-weight:600;font-size:12px;padding:5px 12px 5px 24px;border-bottom:1px solid #eef1f4;}
+  .grp-meta{font-weight:500;color:#8493a4;font-size:11px;margin-left:8px;}
+  .pillbtn{font-size:11px;color:var(--blue);border:1px solid #cfe0f2;background:#f3f8fd;border-radius:5px;padding:1px 7px;margin-left:6px;cursor:pointer;}
+  .ai{display:flex;gap:8px;} .ai input{flex:1;padding:10px 12px;border:1px solid #cdd3da;border-radius:8px;font-size:13px;}
+  .achip{display:inline-flex;align-items:center;gap:6px;font-size:11px;background:#eef4fb;border:1px solid #cfe0f2;color:#2b4a6f;border-radius:6px;padding:3px 8px;}
+  .achip b{cursor:pointer;color:#c0392b;font-weight:700;}
+  .btn{border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;font-size:13px;}
+  .btn.ghost{background:#fff;border:1px solid var(--blue);color:var(--blue);} .btn.go{background:var(--blue);color:#fff;} .btn.go:disabled{opacity:.45;cursor:not-allowed;}
+  .bar{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -2px 8px rgba(0,0,0,.05);}
+  .bar .left{font-size:13px;color:var(--mut);} .bar .left b{color:var(--ink);}
+  /* conversational Tell-the-AI */
+  .chatthread{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;padding-right:4px;}
+  .chathint{color:var(--mut);font-size:13px;line-height:1.5;}
+  .cmsg{display:flex;} .cmsg.u{justify-content:flex-end;}
+  .cmsg .bub{max-width:82%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word;}
+  .cmsg.u .bub{background:var(--blue);color:#fff;border-bottom-right-radius:4px;}
+  .cmsg.ai .bub{background:#eef2f7;color:#1f2c3d;border-bottom-left-radius:4px;}
+  .cmsg.ai.pending .bub{color:var(--mut);font-style:italic;}
+  .cmsg.err .bub{background:var(--redbg);color:var(--red);}
+  .cedit{display:block;margin-top:5px;font-size:11px;color:var(--grn);font-weight:600;}
+  .cfiles{margin-top:4px;font-size:11px;opacity:.85;}
+  .footerdock{position:sticky;bottom:0;z-index:6;display:flex;flex-direction:column;gap:8px;padding-top:8px;background:linear-gradient(to bottom, rgba(238,241,245,0) 0%, #eef1f5 22%);}
+  .chatdock{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px;box-shadow:0 -2px 8px rgba(0,0,0,.05);}
+  .chatdock .ai{display:flex;gap:8px;align-items:center;}
+  .chatdock .ai input{flex:1;padding:10px 12px;border:1px solid #cdd3da;border-radius:8px;font-size:13px;}
+  .chatdock .iconbtn{border:1px solid var(--blue);background:#fff;color:var(--blue);border-radius:8px;padding:9px 11px;font-size:14px;cursor:pointer;line-height:1;}
+  .achips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
+  .balchip{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:700;color:var(--grn);background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:7px 11px;}
+  .balchip .balsub{font-weight:500;color:#5b8a5e;font-size:11px;}
+  .scopearea{flex:1;min-width:0;min-height:80px;padding:9px 12px;border:1px solid #cdd3da;border-radius:8px;font-family:'Segoe UI',system-ui,sans-serif;font-size:12.5px;line-height:1.55;resize:vertical;}
+  .commit{margin-top:10px;font-size:13px;background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:12px 14px;display:none;} .commit ul{margin:8px 0 0;padding-left:18px;}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #cdd3da;border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px;} @keyframes s{to{transform:rotate(360deg);}}
+  .foot{text-align:center;color:#9aa6b2;font-size:11px;margin:6px 0 24px;}
+  @media print {
+    body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .wrap,.appbar{max-width:100%;}
+    #printBtn,#newRun,.bar,.busy,.commit,#reviseCard,.applybtn,.pillbtn,.footerdock,#chatCard{display:none !important;}
+    .card{box-shadow:none;break-inside:avoid;}
+    input[type=number]{border:none;padding:0;width:auto;background:transparent;font-size:12.5px;}
+  }
+</style>
+</head>
+<body>
+<div id="busy" class="busy"></div>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span id="saveInd" style="font-size:11px;color:var(--mut);margin-left:12px"></span>
+  <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:auto;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
+  <a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a>
+  <a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
+<input type="file" id="addFile" accept="application/pdf" multiple style="display:none" onchange="addDrawings(this)">
+<div class="wrap" id="wrap"><div class="card"><div class="body">Loading take-off…</div></div></div>
+
+<script>
+  // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
+  // Same-origin when this page is served by the Material Compass backend (/takeoff/review.html);
+  // the absolute host is only needed by the GitHub Pages copy.
+  const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
+  const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
+  const VERSION = "v0.38 · 2026-07-25";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  console.log("Material Compass review.html " + VERSION);
+  const Z = {
+    APP:"type-formsheet-2-18-21",            // app link name
+    IMPORT_FORM:"Import_BOM_Form",           // CSV Import Tool form (addRecord target)
+    IMPORT_REPORT:"Import_BOM_Form_Report",  // its report (uploadFile / updateRecord target)
+    REVIEW_PAGE:"https://customer.materialcompassportal.com/#Page:BOM_Staging_Review_Page", // staging review (same page the workflow opens)
+    MODE_VALUE:"Append",                     // BOM Import Mode choice — Append keeps existing rows (Replace would wipe them)
+    F:{project:"Project_ID",mfg:"MFG_Client_Form",mode:"BOM_Import_Mode",file:"BOM_CSV_File",run:"Run_Import"},
+  };
+
+  // ---- params (project_id / manufacturer_id) ---------------------------------
+  function getParams(){ const q=new URLSearchParams(location.search);
+    return { project_id:q.get("project_id"), manufacturer_id:q.get("manufacturer_id") }; }
+  let params = getParams();
+  if (window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.init) {
+    ZOHO.CREATOR.init().then(()=>{ try{ const p=ZOHO.CREATOR.UTIL.getQueryParams();
+      params={project_id:p.project_id||params.project_id, manufacturer_id:p.manufacturer_id||params.manufacturer_id};}catch(e){} });
+  }
+
+  // ---- data source + persistence ---------------------------------------------
+  // Results are saved to localStorage keyed by project, so closing & reopening this
+  // page (same browser) restores the last take-off instead of losing a paid run.
+  function lsKey(){ return params.project_id ? ("mc_takeoff_"+params.project_id) : null; }
+  // window + sessionStorage are GLOBAL (not project-keyed) — a result from another project must
+  // never be reused here, or you'd open Schutte and see Alden. Every result is tagged __project.
+  function sameProj(R){ return !!(R && params.project_id && String(R.__project||"")===String(params.project_id)); }
+  function loadResult(){
+    if (window.TAKEOFF_RESULT && sameProj(window.TAKEOFF_RESULT)) return window.TAKEOFF_RESULT;
+    try { const s=sessionStorage.getItem("takeoff_result"); if(s){ const R=JSON.parse(s); if(sameProj(R)) return R; } } catch(e){}
+    try { const k=lsKey(); if(k){ const s=localStorage.getItem(k); if(s) return JSON.parse(s); } } catch(e){}  // localStorage is already project-keyed
+    return SAMPLE;
+  }
+  function saveResult(result){
+    if(result && params.project_id) result.__project = params.project_id;  // tag so it can't leak across projects
+    window.TAKEOFF_RESULT = result;
+    if(result && result.__demo) return;   // never persist demo/sample data (was polluting localStorage)
+    try { sessionStorage.setItem("takeoff_result", JSON.stringify(result)); } catch(e){}
+    try { const k=lsKey(); if(k) localStorage.setItem(k, JSON.stringify(result)); } catch(e){}
+    scheduleZohoSave();   // also persist to the project record in Zoho (debounced)
+  }
+  // ---- durable save to Zoho (per project), debounced ----
+  let _zohoTimer=null;
+  function setSaveInd(txt,color){ const el=document.getElementById("saveInd"); if(el){ el.textContent=txt; el.style.color=color||"var(--mut)"; } }
+  function scheduleZohoSave(){ if(_zohoTimer) clearTimeout(_zohoTimer); _zohoTimer=setTimeout(doZohoSave, 2500); }
+  async function doZohoSave(){
+    const R=loadResult();
+    if(!R || R.__demo || !params.project_id || !Array.isArray(R.rows) || !R.rows.length) return;
+    setSaveInd("saving…","var(--mut)");
+    const pkg={ rows:R.rows, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd };
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id, package:pkg})});
+      const d=await r.json();
+      setSaveInd(d.ok?"💾 saved to project":"⚠ save failed", d.ok?"var(--grn)":"var(--red)");
+    }catch(e){ setSaveInd("⚠ save failed","var(--red)"); }
+  }
+  function haveLive(){ try{
+    if(window.TAKEOFF_RESULT && sameProj(window.TAKEOFF_RESULT)) return true;
+    const s=sessionStorage.getItem("takeoff_result"); if(s && sameProj(JSON.parse(s))) return true;
+    const k=lsKey(); if(k && localStorage.getItem(k)) return true;
+  }catch(e){} return false; }
+
+  // ---- helpers ---------------------------------------------------------------
+  const esc = (s)=>String(s==null?"":s).replace(/</g,"&lt;");
+  const escAttr = (s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const SCOPE_CATS = [["fabricate","Fabricate","fab"],["buyout","Buyout","buy"],["by_others","By others","oth"],["send_out","Send-out","snd"]];
+  const arr = (a)=>Array.isArray(a)?a:[];
+  const confClass=(c)=> c>=0.8?"hi":c>=0.5?"md":"lo";
+  const confBadge=(c)=> '<span class="conf c-'+confClass(c)+'">'+Math.round((c||0)*100)+'% confident</span>';
+  const splitFt=(n)=>{const r=Number(n)||0;const ft=Math.max(0,Math.floor(r));return ft+"'"+Math.round((r-ft)*12)+'"';};
+  // decimal feet → feet-inches with fractions (nearest 1/16): 0.8→9-5/8", 24→24'-0", 6.33→6'-3-15/16"
+  function fmtFtIn(ftVal){
+    let v=Number(ftVal)||0; if(v<0) v=0;
+    let feet=Math.floor(v);
+    let s=Math.round((v-feet)*192);   // 1/16-inch units in the remaining foot (12*16)
+    feet+=Math.floor(s/192); s=s%192;
+    let inch=Math.floor(s/16), f16=s%16, frac="";
+    if(f16>0){ let n=f16,d=16; while(n%2===0){n/=2;d/=2;} frac=n+"/"+d; }
+    const inchStr=(inch>0||frac)?(inch+(frac?("-"+frac):"")+'"'):"";
+    if(feet>0&&inchStr) return feet+"'-"+inchStr;
+    if(feet>0) return feet+"'-0\"";
+    return inchStr||'0"';
+  }
+  // Plates/sheets carry width×length; linear members carry length only.
+  function dimStr(r){ return r.width_ft ? (fmtFtIn(r.width_ft)+" × "+fmtFtIn(r.length_ft)) : fmtFtIn(r.length_ft); }
+
+  let DECISIONS = [];   // working copy with .sel
+  let CONFLICTS = [];   // for the per-conflict Apply buttons
+  let BOM_EXPANDED = false;  // BOM table: show first 8 vs all + editable
+  let SCOPE_EDIT = false;    // Scope of Work: edit mode (add/edit/remove write-ups)
+  let REVISE_ATTACHMENTS = [];  // reference docs attached to "Tell the AI to revise" [{kind,name,media_type?,data?,text?}]
+  let ACCOUNT = null;           // {balance, price:{premium,basic}} — prepaid meter (Phase 0 visual)
+  let PROJECT_SCOPE = null;     // {components:[{id,name}], drawings:[{id,number}]} from Zoho; null until fetched
+  let SCOPE_FETCH_DONE = false; // true once the project-scope fetch resolves (distinguish "loading" from "none entered")
+  let RECON = { component:null, drawing:null };  // last reconcile() result per kind; index-keyed action handlers read this
+
+  // ===== SCOPE RECONCILIATION =================================================
+  // Compare what the AI READ (r.component / r.source_sheet) vs. the project's
+  // ENTERED components & drawings. Match rule MIRRORS the staging validator
+  // (entered-name CONTAINS take-off value, normalized) so this previews what
+  // staging will actually resolve. Every fix rewrites r.* → flows into the commit CSV.
+  const _norm  = (s)=>String(s==null?"":s).toLowerCase().trim().replace(/\s+/g," ");
+  const RECROW = (bd,bg)=>'padding:5px 9px;border-left:3px solid '+bd+';background:'+bg+';border-radius:4px;margin:4px 0;font-size:12.5px';
+
+  async function fetchProjectScope(){
+    if(!params.project_id || loadResult().__demo){ SCOPE_FETCH_DONE=true; return; }
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/"+encodeURIComponent(params.project_id));
+      const d=await r.json();
+      if(d&&d.ok){ PROJECT_SCOPE={components:arr(d.components),drawings:arr(d.drawings)}; }
+    }catch(e){ /* non-fatal — panel shows a soft notice */ }
+    SCOPE_FETCH_DONE=true; render();
+  }
+  function reconEntered(kind){
+    if(!PROJECT_SCOPE) return [];
+    return kind==='component'
+      ? arr(PROJECT_SCOPE.components).map(function(c){return {id:c.id,name:String(c.name==null?"":c.name)};})
+      : arr(PROJECT_SCOPE.drawings).map(function(d){return {id:d.id,name:String(d.number==null?"":d.number)};});
+  }
+  // What the AI read, from BOTH sources:
+  //   1. per-row `component` / `source_sheet` tags, and
+  //   2. the Scope of Work write-up, which pairs each assembly with its drawing:
+  //      "Lid Assembly (top, hinge side, …) – RIS-48300-S2 family"
+  // Source 2 matters because the synopsis is often populated when the per-row tags are not —
+  // reading only the rows reported "0 matched" while the answer sat in plain sight on the page.
+  const DRAW_RE=/\b[A-Za-z]{1,4}[0-9]*(?:-[A-Za-z0-9]+){2,}\b/g;
+  function scopeStreams(){
+    const sw=(loadResult().synopsis||{}).scope_of_work||{};
+    const fab=arr(sw.fabricate);
+    return { fab:fab, all:fab.concat(arr(sw.buyout),arr(sw.by_others),arr(sw.send_out)) };
+  }
+  function scopeComponents(){   // "Upper Frame weldment (W6x25 …) – RIS-…" → "Upper Frame weldment"
+    return scopeStreams().fab.map(function(l){
+      return String(l).split(/\s[–—-]\s/)[0].replace(/\s*\(.*$/,"").trim();
+    }).filter(Boolean);
+  }
+  function scopeDrawings(){     // every drawing-shaped token across all streams
+    const out=[];
+    scopeStreams().all.forEach(function(l){ (String(l).match(DRAW_RE)||[]).forEach(function(x){ out.push(x); }); });
+    return out;
+  }
+  // drawing → parent component, straight off the scope line that names both:
+  //   "Upper Frame weldment (W6x25 …) – RIS-48300-S1-A-1"  →  {ris-48300-s1-a-1: "Upper Frame weldment"}
+  function scopeDrawingParent(){
+    const map={};
+    scopeStreams().fab.forEach(function(l){
+      const s=String(l), name=s.split(/\s[–—-]\s/)[0].replace(/\s*\(.*$/,"").trim();
+      if(!name) return;
+      (s.match(DRAW_RE)||[]).forEach(function(d){ map[_norm(d)]=name; });
+    });
+    return map;
+  }
+  function reconTakeoff(kind){   // distinct AI values → [{norm,value,rows,src}]
+    const field=kind==='component'?'component':'source_sheet', map={};
+    const push=function(raw,fromRow){
+      const v=String(raw==null?"":raw).trim(); if(!v) return;
+      const n=_norm(v); if(!map[n]) map[n]={norm:n,value:v,rows:0,src:fromRow?'rows':'scope'};
+      if(fromRow){ map[n].rows++; map[n].src='rows'; }
+    };
+    arr(loadResult().rows).forEach(function(r){ if((Number(r.quantity)||0)>0) push(r[field],true); });
+    (kind==='component'?scopeComponents():scopeDrawings()).forEach(function(v){ push(v,false); });
+    return Object.keys(map).map(function(n){return map[n];});
+  }
+  function reconState(){ return loadResult().__reconcile||{}; }
+  function reconSet(mut){ const R=loadResult(); R.__reconcile=R.__reconcile||{ignored:{component:[],drawing:[]},acked:{component:[],drawing:[]},unpaired:{component:[],drawing:[]}}; mut(R.__reconcile); saveResult(R); render(); }
+
+  // ---- near-match (≈) --------------------------------------------------------
+  // A near match is a SUGGESTION TO RENAME, never a match. The strict rule below stays
+  // byte-identical to the staging validator, so the panel can never show a green ✓ for a link
+  // that then imports blank. Renaming the entered value to the take-off's exact wording is what
+  // turns the pair into a real match — which also means the validator needs no change.
+  // Prime case: the REVERSE of the strict rule — take-off "Upper Frame weldment" contains
+  // entered "Upper Frame". The strict rule misses it; a rename fixes it for good.
+  function _tok(s){ return _norm(s).split(/[^a-z0-9]+/).filter(Boolean); }
+  function _sim(a,b){
+    const A=_tok(a), B=_tok(b).slice(); if(!A.length||!B.length) return 0;
+    let hit=0; A.forEach(function(t){ const i=B.indexOf(t); if(i>-1){ hit++; B.splice(i,1); } });
+    return hit/Math.max(A.length,_tok(b).length);
+  }
+  function _near(en,tn){ return tn.indexOf(en)>-1 || _sim(en,tn)>=0.5; }
+
+  function reconcile(kind){
+    const entered=reconEntered(kind).map(function(e){return {e:e,n:_norm(e.name)};}).filter(function(x){return x.n;});
+    const takeoff=reconTakeoff(kind);
+    const rc=reconState(), ign=arr(rc.ignored&&rc.ignored[kind]), ack=arr(rc.acked&&rc.acked[kind]),
+          unp=arr(rc.unpaired&&rc.unpaired[kind]);
+    const hit=function(en,tn){ return en===tn || en.indexOf(tn)>-1; };  // entered CONTAINS take-off (validator rule)
+    const matched=[], takeoffOnly=[];
+    takeoff.forEach(function(t){
+      if(entered.some(function(x){return hit(x.n,t.norm);})) matched.push(t);
+      else if(ign.indexOf(t.norm)<0) takeoffOnly.push(t);
+    });
+    let enteredOnly=entered.filter(function(x){ return !takeoff.some(function(t){return hit(x.n,t.norm);}) && ack.indexOf(x.n)<0; }).map(function(x){return x.e;});
+
+    // Greedy best-score pairing across the two leftover lists. Each side is consumed at most once,
+    // and anything you flag "not the same" is skipped so it falls back to its own section.
+    const near=[], usedT={}, usedE={};
+    enteredOnly.forEach(function(e){
+      if(unp.indexOf(_norm(e.name))>-1) return;
+      let best=null, bestScore=0;
+      takeoffOnly.forEach(function(t,ti){
+        if(usedT[ti] || !_near(_norm(e.name),t.norm)) return;
+        const s=_sim(_norm(e.name),t.norm);
+        if(s>=bestScore){ bestScore=s; best=ti; }
+      });
+      if(best!==null){ usedT[best]=1; usedE[_norm(e.name)]=1; near.push({entered:e, takeoff:takeoffOnly[best]}); }
+    });
+    return {
+      enteredTotal:entered.length, matched:matched, near:near,
+      takeoffOnly:takeoffOnly.filter(function(t,ti){ return !usedT[ti]; }),
+      enteredOnly:enteredOnly.filter(function(e){ return !usedE[_norm(e.name)]; }),
+    };
+  }
+  // ---- actions (index-keyed so no raw strings ride inside onclick attributes) ----
+  function reconMap(kind,fromNorm,toName){
+    if(!toName) return;
+    const field=kind==='component'?'component':'source_sheet', R=loadResult();
+    arr(R.rows).forEach(function(r){ if(_norm(r[field])===fromNorm) r[field]=toName; });
+    saveResult(R); render();
+  }
+  function reconMapIdx(kind,i,sel){ const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(t) reconMap(kind,t.norm,sel.value); }
+  function reconIgnoreIdx(kind,i){ const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(t) reconSet(function(rc){ rc.ignored=rc.ignored||{}; rc.ignored[kind]=arr(rc.ignored[kind]).concat([t.norm]); }); }
+  // Dismissals must be undoable — an ignored item was otherwise hidden for good, with no way back
+  // short of clearing localStorage.
+  function reconUnignoreIdx(kind,i){ reconSet(function(rc){ rc.ignored=rc.ignored||{}; rc.ignored[kind]=arr(rc.ignored[kind]).filter(function(_,j){return j!==i;}); }); }
+  function reconUnackIdx(kind,i){ reconSet(function(rc){ rc.acked=rc.acked||{}; rc.acked[kind]=arr(rc.acked[kind]).filter(function(_,j){return j!==i;}); }); }
+  function reconDismissedHtml(kind){
+    const rc=reconState(), ign=arr(rc.ignored&&rc.ignored[kind]), ack=arr(rc.acked&&rc.acked[kind]);
+    if(!ign.length && !ack.length) return "";
+    const label={}; reconTakeoff(kind).forEach(function(t){ label[t.norm]=t.value; });
+    reconEntered(kind).forEach(function(e){ label[_norm(e.name)]=e.name; });
+    const chip=function(n,i,fn){ return '<span style="display:inline-block;background:#eef1f5;border-radius:10px;padding:1px 4px 1px 8px;margin:2px 4px 2px 0">'+
+      esc(label[n]||n)+' <button class="applybtn" style="background:#9aa6b2;padding:0 6px" onclick="'+fn+'(\''+kind+'\','+i+')" title="Show this again">undo</button></span>'; };
+    return '<div class="src" style="margin:2px 0 4px">Dismissed: '+
+      ign.map(function(n,i){return chip(n,i,'reconUnignoreIdx');}).join("")+
+      ack.map(function(n,i){return chip(n,i,'reconUnackIdx');}).join("")+'</div>';
+  }
+  function reconAckIdx(kind,i){ const e=RECON[kind]&&RECON[kind].enteredOnly[i]; if(e) reconSet(function(rc){ rc.acked=rc.acked||{}; rc.acked[kind]=arr(rc.acked[kind]).concat([_norm(e.name)]); }); }
+  function reconUnpairIdx(kind,i){ const p=RECON[kind]&&RECON[kind].near[i]; if(p) reconSet(function(rc){ rc.unpaired=rc.unpaired||{}; rc.unpaired[kind]=arr(rc.unpaired[kind]).concat([_norm(p.entered.name)]); }); }
+  function reconMapNearIdx(kind,i){ const p=RECON[kind]&&RECON[kind].near[i]; if(p) reconMap(kind,p.takeoff.norm,p.entered.name); }
+
+  // The drawing's parent component, resolved from the take-off itself: find a row on this sheet
+  // that names a component, then match that name to an entered component record. Without this the
+  // new drawing lands on the project unattached to any component.
+  function reconParentComponentId(sheetValue){
+    const sn=_norm(sheetValue); let compName="";
+    arr(loadResult().rows).some(function(r){
+      if(_norm(r.source_sheet)===sn && String(r.component||"").trim()){ compName=_norm(r.component); return true; }
+      return false;
+    });
+    // Row tags are often blank; the scope line naming both is the reliable source.
+    if(!compName){ const p=scopeDrawingParent()[sn]; if(p) compName=_norm(p); }
+    if(!compName) return "";
+    const c=reconEntered('component').filter(function(x){ const n=_norm(x.name); return n===compName||n.indexOf(compName)>-1||compName.indexOf(n)>-1; })[0];
+    return c?c.id:"";
+  }
+
+  async function reconAdd(kind,value){
+    if(!params.project_id) throw new Error("No project_id — can't add to project.");
+    const body={project_id:params.project_id,kind:kind,value:value};
+    if(kind==='drawing'){ const cid=reconParentComponentId(value); if(cid) body.component_id=cid; }
+    const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
+    if(d.warning) alert("Added, but: "+d.warning);   // e.g. bidirectional link name rejected
+    PROJECT_SCOPE=PROJECT_SCOPE||{components:[],drawings:[]};
+    if(kind==='component') PROJECT_SCOPE.components.push({id:d.id,name:value});
+    else PROJECT_SCOPE.drawings.push({id:d.id,number:value});
+    return d.id;
+  }
+  async function reconAddIdx(kind,i){
+    const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(!t) return;
+    try{ await reconAdd(kind,t.value); render(); }
+    catch(e){ alert("Add to project failed: "+e.message); }
+  }
+  // Bulk add only. Components go first so drawings can attach to the records just created.
+  async function reconAddAll(kind){
+    const list=(RECON[kind]&&RECON[kind].takeoffOnly||[]).slice(); if(!list.length) return;
+    if(!confirm("Add "+list.length+" "+kind+(list.length===1?"":"s")+" to the project?")) return;
+    const failed=[];
+    for(let i=0;i<list.length;i++){ try{ await reconAdd(kind,list[i].value); }catch(e){ failed.push(list[i].value+" — "+e.message); } }
+    render();
+    if(failed.length) alert("Added "+(list.length-failed.length)+" of "+list.length+".\n\nFailed:\n"+failed.join("\n"));
+  }
+
+  // Free-text rename straight from the "On your project" box — the one control that covers
+  // "change it to something neither side proposed".
+  async function reconRenameVal(kind,id,inputId){
+    const el=document.getElementById(inputId); if(!el) return;
+    const v=String(el.value||"").trim(); if(!v) return;
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/update",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({kind:kind,id:id,value:v})});
+      const d=await r.json();
+      if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
+      const list=kind==='component'?arr(PROJECT_SCOPE.components):arr(PROJECT_SCOPE.drawings);
+      list.forEach(function(x){ if(String(x.id)===String(id)){ if(kind==='component') x.name=v; else x.number=v; } });
+      render();
+    }catch(e){ alert("Rename failed: "+e.message); }
+  }
+
+  async function reconRenameIdx(kind,i){
+    const p=RECON[kind]&&RECON[kind].near[i]; if(!p) return;
+    if(!confirm('Rename "'+p.entered.name+'" to "'+p.takeoff.value+'" on the project?')) return;
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/update",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({kind:kind,id:p.entered.id,value:p.takeoff.value})});
+      const d=await r.json();
+      if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
+      const list=kind==='component'?arr(PROJECT_SCOPE.components):arr(PROJECT_SCOPE.drawings);
+      list.forEach(function(x){ if(String(x.id)===String(p.entered.id)){ if(kind==='component') x.name=p.takeoff.value; else x.number=p.takeoff.value; } });
+      render();
+    }catch(e){ alert("Rename failed: "+e.message); }
+  }
+
+  async function reconDeleteIdx(kind,i){
+    const e=RECON[kind]&&RECON[kind].enteredOnly[i]; if(!e) return;
+    if(!confirm('Delete "'+e.name+'" from the project?\n\nThis removes the record in Zoho. It is blocked if anything is still linked to it.')) return;
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/delete",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({kind:kind,id:e.id})});
+      const d=await r.json();
+      if(r.status===409){ alert("Can't delete \""+e.name+"\".\n\n"+d.error); return; }
+      if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
+      if(kind==='component') PROJECT_SCOPE.components=arr(PROJECT_SCOPE.components).filter(function(x){return String(x.id)!==String(e.id);});
+      else PROJECT_SCOPE.drawings=arr(PROJECT_SCOPE.drawings).filter(function(x){return String(x.id)!==String(e.id);});
+      render();
+    }catch(e2){ alert("Delete failed: "+e2.message); }
+  }
+  // How much of the BOM the take-off actually tagged. When this is zero the panel has nothing to
+  // compare against, and "0 matched" reads as a matching failure when it's really an input failure
+  // — so say which one, and which fix applies.
+  function reconCoverage(){
+    const rows=arr(loadResult().rows), live=rows.filter(function(r){return (Number(r.quantity)||0)>0;});
+    const filled=function(f){ return live.filter(function(r){return String(r[f]==null?"":r[f]).trim();}).length; };
+    const keys=rows.length?Object.keys(rows[0]):[];
+    return { rows:rows.length, live:live.length, comp:filled('component'), sheet:filled('source_sheet'),
+             hasKeys:keys.indexOf('component')>-1||keys.indexOf('source_sheet')>-1 };
+  }
+  function reconNoticeHtml(){
+    const c=reconCoverage();
+    // Only when BOTH sources are empty — the Scope of Work counts as the AI having read something.
+    if(!c.rows || c.comp || c.sheet) return "";
+    if(reconTakeoff('component').length || reconTakeoff('drawing').length) return "";
+    let why;
+    if(!c.hasKeys)      why='This saved result predates the component/drawing fields — <b>re-run the take-off</b> and it will tag rows as it reads them.';
+    else if(!c.live)    why='All '+c.rows+' rows have a quantity of 0, and only rows with quantity &gt; 0 are read here — check the quantity column.';
+    else                why='The AI returned the fields empty. <b>Re-run the take-off</b> now that your components are entered, so it can tag each row as it reads.';
+    return '<div style="padding:8px 10px;border-left:3px solid #d9a441;background:#fff9ef;border-radius:4px;margin-bottom:10px;font-size:12.5px">'+
+      '<b>Nothing to reconcile against.</b> This take-off tagged <b>0 of '+c.live+'</b> priced rows with a component and <b>0</b> with a drawing, '+
+      'so everything below is just your entered list — not a mismatch. '+why+'</div>';
+  }
+
+  function reconCardHtml(){
+    if(!params.project_id || loadResult().__demo) return "";
+    if(!SCOPE_FETCH_DONE) return '<div class="card"><h2>▸ Scope Reconciliation</h2><div class="body" style="color:var(--mut);font-size:13px"><span class="spin"></span> Checking components &amp; drawings against the project…</div></div>';
+    if(!PROJECT_SCOPE || (!arr(PROJECT_SCOPE.components).length && !arr(PROJECT_SCOPE.drawings).length))
+      return '<div class="card"><h2>▸ Scope Reconciliation</h2><div class="body" style="color:var(--mut);font-size:13px">No components or drawings are entered on this project — nothing to reconcile. (The BOM is grouped by what the AI read off the sheets.)</div></div>';
+    // One table per kind: what the AI read | what's on your project | what to do about it.
+    // Ordered actionable-first (≈ rename, ➕ add, ⚠ delete) with agreed rows last.
+    const TD='padding:5px 8px;border-bottom:1px solid #eceff3;vertical-align:top;font-size:12.5px';
+    const NAMEBOX=function(kind,id,val,idx,type){
+      const eid='sc_'+kind+'_'+type+'_'+idx;
+      return '<input id="'+eid+'" value="'+escAttr(val)+'" style="font-size:12px;padding:2px 5px;border:1px solid #cdd3da;border-radius:5px;width:96%;max-width:230px" '+
+        'onkeydown="if(event.key===\'Enter\'){reconRenameVal(\''+kind+'\',\''+escAttr(id)+'\',\''+eid+'\')}"> '+
+        '<button class="applybtn" style="background:#7d8aa0;padding:1px 7px" onclick="reconRenameVal(\''+kind+'\',\''+escAttr(id)+'\',\''+eid+'\')" title="Save this name to the project">save</button>';
+    };
+    const sec=function(kind,label,noun){
+      const r=reconcile(kind); RECON[kind]=r;
+      let rows='';
+      // ≈ near — NOT counted as matched; renaming one side is what makes the link real.
+      r.near.forEach(function(p,i){
+        rows+='<tr><td style="'+TD+'"><b style="color:#6b52a8">≈</b> '+esc(p.takeoff.value)+'</td>'+
+          '<td style="'+TD+'">'+NAMEBOX(kind,p.entered.id,p.entered.name,i,'near')+'<div class="src">will not link until the names agree</div></td>'+
+          '<td style="'+TD+'; white-space:nowrap">'+
+            '<button class="applybtn" onclick="reconRenameIdx(\''+kind+'\','+i+')" title="Use the AI\'s wording">✎ use AI name</button> '+
+            '<button class="applybtn" style="background:#7d8aa0" onclick="reconMapNearIdx(\''+kind+'\','+i+')" title="Keep yours — retag the BOM rows">keep mine</button> '+
+            '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconUnpairIdx(\''+kind+'\','+i+')">not same</button></td></tr>';
+      });
+      // ➕ AI read it, not on the project. The "use existing" picker is the third option beyond
+      // add/ignore: fold this value into a record you already have, by retagging the BOM rows.
+      const entered=reconEntered(kind);
+      const optionsHtml=entered.map(function(e){return '<option value="'+escAttr(e.name)+'">'+esc(e.name)+'</option>';}).join("");
+      r.takeoffOnly.forEach(function(t,i){
+        const dd = entered.length ? '<select onchange="reconMapIdx(\''+kind+'\','+i+',this)" style="font-size:11px;padding:2px 4px;border:1px solid #cdd3da;border-radius:5px;max-width:150px"><option value="">use existing…</option>'+optionsHtml+'</select> ' : '';
+        rows+='<tr><td style="'+TD+'"><b style="color:#3a6ea5">➕</b> '+esc(t.value)+
+            (t.rows?' <span class="src">'+t.rows+' row'+(t.rows===1?'':'s')+'</span>':' <span class="src">from scope of work</span>')+'</td>'+
+          '<td style="'+TD+'"><span class="src">not on the project</span></td>'+
+          '<td style="'+TD+'; white-space:nowrap">'+dd+
+            '<button class="applybtn" onclick="reconAddIdx(\''+kind+'\','+i+')" title="Create this '+noun+' on the project">＋ add</button> '+
+            '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconIgnoreIdx(\''+kind+'\','+i+')">ignore</button></td></tr>';
+      });
+      // ⚠ on the project, AI read nothing like it
+      r.enteredOnly.forEach(function(e,i){
+        rows+='<tr><td style="'+TD+'"><span class="src">nothing read from the sheets</span></td>'+
+          '<td style="'+TD+'"><b style="color:#b6791f">⚠</b> '+NAMEBOX(kind,e.id,e.name,i,'only')+'</td>'+
+          '<td style="'+TD+'; white-space:nowrap">'+
+            '<button class="applybtn" style="background:#b4544c" onclick="reconDeleteIdx(\''+kind+'\','+i+')" title="Delete from the project">🗑 delete</button> '+
+            '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconAckIdx(\''+kind+'\','+i+')">keep</button></td></tr>';
+      });
+      // ✓ agreed
+      r.matched.forEach(function(t){
+        rows+='<tr><td style="'+TD+';background:#f8fbf9"><b style="color:#2f8049">✓</b> '+esc(t.value)+'</td>'+
+          '<td style="'+TD+';background:#f8fbf9" colspan="2"><span class="src">matches'+(t.rows?' · '+t.rows+' row'+(t.rows===1?'':'s'):'')+'</span></td></tr>';
+      });
+      if(!rows) rows='<tr><td style="'+TD+'" colspan="3"><span class="src">All '+noun+'s line up. ✓</span></td></tr>';
+      const bulk = r.takeoffOnly.length>1
+        ? ' <button class="applybtn" style="padding:1px 8px" onclick="reconAddAll(\''+kind+'\')" title="Create all of these on the project">＋ add all '+r.takeoffOnly.length+'</button>'
+        : '';
+      const hdr=label+' <span class="grp-meta">'+r.matched.length+' agree'+(r.near.length?' · '+r.near.length+' to rename':'')+(r.takeoffOnly.length?' · '+r.takeoffOnly.length+' to add':'')+(r.enteredOnly.length?' · '+r.enteredOnly.length+' unmatched':'')+'</span>'+bulk;
+      return '<div style="margin-bottom:14px"><div style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#667;margin:2px 0 6px">'+hdr+'</div>'+
+        '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">'+
+        '<thead><tr>'+
+          '<th style="'+TD+';text-align:left;color:#667;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;width:38%">AI read from sheets</th>'+
+          '<th style="'+TD+';text-align:left;color:#667;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;width:34%">On your project</th>'+
+          '<th style="'+TD+';text-align:left;color:#667;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">Action</th>'+
+        '</tr></thead><tbody>'+rows+'</tbody></table></div>'+reconDismissedHtml(kind)+'</div>';
+    };
+    return '<div class="card"><h2>▸ Scope Reconciliation <span class="lt">— what the AI read vs. what you entered</span></h2><div class="body">'+
+      reconNoticeHtml()+
+      sec('component','Components','component')+sec('drawing','Drawings','drawing')+
+      '<div class="src" style="margin-top:6px">➕ items import with a blank link unless you <b>add</b> them to the project or <b>map</b> them to an entered value. ≈ near matches will <b>not</b> link until you rename one side. 🗑 delete is blocked while drawings or BOM rows are still linked. Fixes here update the BOM before it commits.</div>'+
+      '</div></div>';
+  }
+
+  function render(){
+    // Catalog arrives async; the first render just skips the material card and re-renders once
+    // it's in. Never blocks the page on a lookup.
+    if(CATALOG===null && !CATALOG_LOADING){ CATALOG_LOADING=true; loadCatalog().then(function(){ render(); }); }
+    const _aiKeep = (document.getElementById("aiInput")||{}).value;  // preserve in-progress chat text across re-render
+    const R = loadResult();
+    const rows = arr(R.rows);
+    const s = R.synopsis || {};
+    DECISIONS = arr(s.decisions).map((d,i)=>({
+      id:"dec"+i, item:d.item||"(decision)",
+      where:d.where||"", why:d.why_flagged||"", options:arr(d.options).length?d.options:["Include","Skip"],
+      rec:d.ai_recommendation||"", sel:(d.selected!=null?d.selected:(d.ai_recommendation||null)),
+    }));
+    const sw = s.scope_of_work||{}, t=s.totals||{}, conf=s.confidence||{};
+    const fab = rows.filter(r=>(Number(r.quantity)||0)>0);
+    const gaps = arr(s.gaps), conflicts=arr(s.conflicts), comp=arr(s.compliance);
+    CONFLICTS = conflicts;
+    const overall = conf.overall!=null?conf.overall:0.7;
+
+    const _clean = function(a){ return arr(a).filter(function(x){ return String(x==null?"":x).trim(); }); };
+    const streams = [
+      ["fab","Fabricate",_clean(sw.fabricate)],["buy","Buyout",_clean(sw.buyout)],
+      ["oth","By others",_clean(sw.by_others)],["snd","Send-out",_clean(sw.send_out)],
+    ].filter(x=>x[2].length);
+
+    const editable = BOM_EXPANDED;
+    const NC = editable ? 7 : 6;  // table columns (Sheet now lives in the drawing group header)
+    const fabIdx=[]; rows.forEach(function(r,idx){ if((Number(r.quantity)||0)>0) fabIdx.push(idx); });
+
+    // Group fab rows by Component → Drawing (source_sheet), preserving first-seen order.
+    const gKey=function(v){ return (v==null?'':String(v).trim()); };
+    const compOrder=[], compMap={};
+    fabIdx.forEach(function(idx){
+      const r=rows[idx];
+      const cN=gKey(r.component)||'— Unassigned —';
+      const dN=gKey(r.source_sheet)||'— No sheet —';
+      if(!compMap[cN]){ compMap[cN]={dOrder:[],dMap:{}}; compOrder.push(cN); }
+      const g=compMap[cN];
+      if(!g.dMap[dN]){ g.dMap[dN]=[]; g.dOrder.push(dN); }
+      g.dMap[dN].push(idx);
+    });
+    const sumQty=function(ids){ return ids.reduce(function(a,i){ return a+(Number(rows[i].quantity)||0); },0); };
+
+    const memberRow=function(idx){
+      const r=rows[idx], c=Number(r.confidence)||0, cls=confClass(c);
+      const qtyCell = editable
+        ? '<input type="number" min="0" value="'+(Number(r.quantity)||0)+'" style="width:56px;padding:3px 5px;border:1px solid #cdd3da;border-radius:5px;font-size:12px;" onchange="editQty('+idx+',this.value)">'
+        : esc(r.quantity);
+      return '<tr class="'+(cls==="hi"?"":cls)+'">'+
+        '<td><span class="dot d-'+cls+'"></span>'+c.toFixed(2)+'</td>'+
+        '<td>'+esc(r.form_type)+'</td>'+
+        '<td>'+esc(r.size)+(r.galvanized?' <span class="galv">galv</span>':'')+'</td>'+
+        '<td>'+esc(r.specification)+'</td><td>'+qtyCell+'</td>'+
+        '<td style="white-space:nowrap">'+dimStr(r)+'</td>'+
+        (editable?'<td><button class="applybtn" style="background:var(--red);padding:1px 8px" title="Remove row" onclick="removeRow('+idx+')">✕</button></td>':'')+
+        '</tr>';
+    };
+    const bomRows = compOrder.map(function(cN){
+      const g=compMap[cN];
+      const cIds=[].concat.apply([], g.dOrder.map(function(d){ return g.dMap[d]; }));
+      let html='<tr class="grp-comp"><td colspan="'+NC+'">▸ '+esc(cN)+
+        ' <span class="grp-meta">'+cIds.length+' item'+(cIds.length===1?'':'s')+' · '+sumQty(cIds)+' qty</span></td></tr>';
+      g.dOrder.forEach(function(dN){
+        const ids=g.dMap[dN];
+        html+='<tr class="grp-draw"><td colspan="'+NC+'">📄 '+esc(dN)+
+          ' <span class="grp-meta">'+ids.length+' item'+(ids.length===1?'':'s')+' · '+sumQty(ids)+' qty</span></td></tr>'+
+          ids.map(memberRow).join("");
+      });
+      return html;
+    }).join("");
+
+    const isLive = haveLive();
+    document.getElementById("wrap").innerHTML =
+      (isLive ? '' :
+        '<div class="card" style="background:#fff7ed;border-color:#fcd9a8;"><div class="body" style="padding:12px 16px;color:#b45309;font-size:13px;">'+
+        '<b>⚠ Demo data</b> — this is a built-in sample, <b>not your project</b>. Open the take-off widget, upload your drawings, and click <b>Run take-off</b> to see your real project here.</div></div>') +
+      // header
+      '<div class="card hero"><div class="body">'+ confBadge(overall) +
+        '<h1>'+esc(s.project?.name||"AI Take-off")+'</h1>'+
+        '<div class="type">'+esc(s.project?.type||"")+(s.project?.summary?" — "+esc(s.project.summary):"")+'</div>'+
+        '<div class="meta">'+
+          '<span class="chip">📄 '+(arr(s.project?.sheets_read).length||"?")+' sheets/specs</span>'+
+          '<span class="chip">🧱 '+fab.length+' fab rows</span>'+
+          (t.est_weight_lb?'<span class="chip">⚖ ~'+Number(t.est_weight_lb).toLocaleString()+' lb</span>':'')+
+          (R.cost_usd!=null?'<span class="chip">💲 $'+R.cost_usd+'</span>':'')+
+          (gaps.length?'<span class="chip">◷ '+gaps.length+' gaps</span>':'')+
+        '</div></div></div>'+
+
+      // scope — view or edit (add/edit/remove the write-ups)
+      ((streams.length||SCOPE_EDIT)?'<div class="card"><h2>▸ Scope of Work'+
+        ' <span class="pillbtn" onclick="toggleScopeEdit()">'+(SCOPE_EDIT?'done':'edit')+'</span></h2><div class="body">'+
+        (SCOPE_EDIT
+          ? scopeEditHtml(sw)
+          : (streams.length
+              ? streams.map(([k,lbl,items])=>'<div class="stream"><div class="tag '+k+'">'+lbl+'</div>'+
+                  '<div class="items">'+items.map(esc).join(" · ")+
+                  (k==="buy"?' <span class="pillbtn" onclick="alert(\'Mock: builds the RFQ / outsource subform from these buyout items.\')">→ build RFQ</span>':'')+
+                  '</div></div>').join("")
+              : '<div style="color:var(--mut);font-size:13px">No scope items.</div>'))+
+        '</div></div>':'')+
+
+      // material check — rows that can't resolve against the shop's catalog, fixable here
+      materialCardHtml(rows)+
+
+      // scope reconciliation — AI-read components/drawings vs. what you entered on the project
+      reconCardHtml()+
+
+      // decisions
+      (DECISIONS.length?'<div class="card"><h2>⚠ Decisions — your call <span id="decCount" style="color:var(--ylw);font-weight:700;"></span></h2><div class="body" id="decisions"></div></div>':'')+
+
+      // gaps + conflicts
+      ((gaps.length||conflicts.length)?'<div class="card"><h2>◷ Gaps &amp; ⚡ Conflicts</h2><div class="body twoup">'+
+        (gaps.length?'<details open><summary>◷ Gaps to verify ('+gaps.length+')</summary><ul>'+
+          gaps.map((g,i)=>'<li>'+esc(g.item)+(g.where?' <span class="src">'+esc(g.where)+'</span>':'')+
+          ' <button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="dismissGap('+i+')" title="Remove this gap">✕</button>'+
+          (g.suggested_action?'<br><span class="src">→ '+esc(g.suggested_action)+'</span>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
+        (conflicts.length?'<details open><summary>⚡ Conflicts ('+conflicts.length+')</summary><ul>'+
+          conflicts.map((c,i)=>'<li><b>'+esc(c.topic)+'</b>'+
+          ' <button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="dismissConflict('+i+')" title="Remove this conflict (no change to BOM)">✕</button>'+
+          (c.drawing_says?' — drawing: '+esc(c.drawing_says):'')+(c.spec_says?' · spec: '+esc(c.spec_says):'')+
+          (c.recommendation?'<br><span class="src">→ '+esc(c.recommendation)+'</span> <button class="applybtn" onclick="applyConflict('+i+')">Apply &amp; resolve</button>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
+        '</div></div>':'')+
+
+      // compliance
+      (comp.length?'<div class="card"><h2>✓ Compliance &amp; finish</h2><div class="body">'+
+        comp.map(c=>'<div class="comp"><span class="ok">'+esc(c.topic)+'</span><span class="src">'+esc(c.note)+'</span></div>').join("")+
+        '</div></div>':'')+
+
+      // BOM
+      '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, grouped by component → drawing</span></h2><div class="body" style="padding:0;">'+
+        '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>Qty</th><th>Dimensions</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
+        (bomRows||'<tr><td colspan="'+NC+'" style="padding:14px;color:var(--mut)">No quantified rows.</td></tr>')+'</tbody></table>'+
+        ((fab.length>0)?'<div style="padding:10px 18px;font-size:12px;color:var(--mut)">'+
+          (editable
+            ? 'Editing all '+fab.length+' rows — change a Qty or remove a row (✕). <span class="pillbtn" onclick="toggleBom()">done</span> &nbsp;·&nbsp; form/spec/size are best changed via “Tell the AI” below.'
+            : 'Grouped by component (▸), then drawing (📄) — review one sheet at a time. <span class="pillbtn" onclick="toggleBom()">edit rows</span>')+
+        '</div>':'')+
+      '</div></div>'+
+
+      // tell-the-AI — conversational thread (3c)
+      '<div class="card" id="chatCard"><h2>💬 Tell the AI <span class="lt">— ask questions or request changes; it remembers the conversation</span></h2>'+
+        '<div class="body"><div id="chatThread" class="chatthread">'+chatThreadHtml()+'</div></div></div>'+
+
+      // sticky footer: chat input dock + action bar (one pinned block)
+      '<div class="footerdock">'+
+        '<div class="chatdock">'+
+          (REVISE_ATTACHMENTS.length?'<div class="achips">'+attachChipsHtml()+'</div>':'')+
+          '<div class="ai">'+
+            '<button class="iconbtn" id="attachBtn" title="Attach a BOM sheet, spec, cut list, or marked-up drawing (PDF, image, or CSV)" onclick="document.getElementById(\'reviseFile\').click()">📎</button>'+
+            '<input id="aiInput" placeholder=\'Ask or tell the AI… paste a screenshot, or e.g. "galvanize all exterior angles" · "what spec did you use?"\' onkeydown="if(event.key===\'Enter\'){event.preventDefault();sendChat();}" onpaste="handlePaste(event)" />'+
+            '<button class="btn go" id="sendBtn" onclick="sendChat()">Send</button>'+
+          '</div>'+
+          '<input type="file" id="reviseFile" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.csv,.txt" style="display:none" onchange="addReviseFiles(this)">'+
+        '</div>'+
+        '<div class="bar"><div class="left" id="barLeft"></div>'+
+          '<div style="display:flex;gap:8px;align-items:center">'+
+            (ACCOUNT?'<span class="balchip" title="Your prepaid take-off balance — Phase 0 is visual only, no charges. Each take-off draws down '+(ACCOUNT.price?'$'+Number(ACCOUNT.price.premium).toFixed(2):'the price')+'.">💳 Balance $'+Number(ACCOUNT.balance).toFixed(2)+(ACCOUNT.price?' <span class="balsub">· $'+Number(ACCOUNT.price.premium).toFixed(2)+'/take-off</span>':'')+'</span>':'')+
+            '<button class="btn ghost" onclick="downloadBom()">↓ BOM CSV</button>'+
+            '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button>'+
+          '</div></div>'+
+      '</div>'+
+      '<div class="commit" id="commit"></div>'+
+      '<div class="foot">Material Compass · AI Take-off · '+(haveLive()?'live':'sample data')+' · '+VERSION+'</div>';
+
+    if(_aiKeep){ const _ai=document.getElementById("aiInput"); if(_ai) _ai.value=_aiKeep; }  // restore typed chat text
+    renderDecisions();
+  }
+
+
+  function renderDecisions(){
+    const box=document.getElementById("decisions");
+    if(box){
+      box.innerHTML = DECISIONS.map(d=>{
+        const undec=d.sel==null;
+        return '<div class="dec '+(undec?'undec':'')+'">'+
+          '<div class="q" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'+
+            '<span>'+esc(d.item)+'</span>'+
+            '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px;flex:none" onclick="dismissDecision(\''+d.id+'\')" title="Remove this decision (it won\'t apply to the take-off)">✕</button>'+
+          '</div>'+
+          '<div class="why">'+esc(d.why)+(d.where?' <span class="src">· '+esc(d.where)+'</span>':'')+'</div>'+
+          '<div class="opts">'+d.options.map(o=>'<span class="opt '+(d.sel===o?'sel ':'')+(d.rec===o?'rec':'')+'" onclick="pick(\''+d.id+'\',\''+esc(o).replace(/\x27/g,"")+'\')">'+esc(o)+'</span>').join("")+'</div>'+
+          (undec?'<div class="decnote">★ needs your decision.</div>':'')+'</div>';
+      }).join("");
+    }
+    const made=DECISIONS.filter(d=>d.sel!=null).length, left=DECISIONS.length-made;
+    const dc=document.getElementById("decCount"); if(dc) dc.textContent = DECISIONS.length?(left?'('+left+' need a decision)':'(all set ✓)'):'';
+    const bl=document.getElementById("barLeft");
+    if(bl) bl.innerHTML = DECISIONS.length
+      ? '<b>'+made+'</b> of <b>'+DECISIONS.length+'</b> decisions · '+(left?'<span style="color:var(--ylw)">'+left+' undecided</span>':'<span style="color:var(--grn)">ready ✓</span>')
+      : '<span style="color:var(--grn)">ready ✓</span>';
+    const ap=document.getElementById("approve"); if(ap) ap.disabled = left>0;
+  }
+  function pick(id,v){
+    const d=DECISIONS.find(function(x){return x.id===id;}); if(!d) return;
+    d.sel=v; renderDecisions();
+    const idx=parseInt(String(id).replace("dec",""),10);
+    const R=loadResult();
+    if(R && R.synopsis && Array.isArray(R.synopsis.decisions) && R.synopsis.decisions[idx]){ R.synopsis.decisions[idx].selected=v; saveResult(R); }
+  }
+  // ---- Scope of Work editor — one free-text box PER category (no AI) ----------
+  function ensureScope(R){ if(!R.synopsis) R.synopsis={}; if(!R.synopsis.scope_of_work) R.synopsis.scope_of_work={}; return R; }
+  function scopeEditHtml(sw){
+    sw = sw||{};
+    return SCOPE_CATS.map(function(c){
+      const field=c[0], lbl=c[1], k=c[2];
+      const items=arr(sw[field]).filter(function(x){ return String(x==null?"":x).trim(); });
+      return '<div class="stream"><div class="tag '+k+'">'+lbl+'</div>'+
+        '<textarea id="scopeText_'+field+'" class="scopearea" spellcheck="true" onchange="commitScopeText()" placeholder="One '+esc(lbl)+' item per line…">'+esc(items.join("\n"))+'</textarea>'+
+      '</div></div>';
+    }).join("")+
+    '<div class="src" style="margin-top:8px">One item per line in each box. Saves when you click out of a box or hit <b>done</b>.</div>';
+  }
+  function commitScopeText(){
+    const R=ensureScope(loadResult());
+    let any=false;
+    SCOPE_CATS.forEach(function(c){
+      const ta=document.getElementById("scopeText_"+c[0]); if(!ta) return;
+      any=true;
+      R.synopsis.scope_of_work[c[0]] = ta.value.split(/\r?\n/).map(function(s){ return s.trim(); }).filter(Boolean);
+    });
+    if(any) saveResult(R);
+  }
+  function toggleScopeEdit(){ if(SCOPE_EDIT) commitScopeText(); SCOPE_EDIT=!SCOPE_EDIT; render(); }
+
+  // Deterministic remove of a decision (local splice; no AI). idx is encoded in the "dec<i>" id.
+  function dismissDecision(id){
+    const idx=parseInt(String(id).replace("dec",""),10);
+    const R=loadResult();
+    if(R && R.synopsis && Array.isArray(R.synopsis.decisions) && idx>=0 && idx<R.synopsis.decisions.length){
+      R.synopsis.decisions.splice(idx,1); saveResult(R); render();
+    }
+  }
+
+  // ---- BOM expand + inline edit ----------------------------------------------
+  function toggleBom(){ BOM_EXPANDED=!BOM_EXPANDED; render(); }
+  // Print the full package — expand the BOM first so every row is on the printout.
+  function printAll(){ BOM_EXPANDED=false; SCOPE_EDIT=false; render(); setTimeout(function(){ window.print(); }, 200); }
+
+  // ---- Add more drawings to THIS take-off (additive — merges, doesn't redo) ------------------
+  function readB64(f){ return new Promise(function(res,rej){ const r=new FileReader(); r.onerror=function(){rej(new Error("read failed: "+f.name));}; r.onload=function(){ res(String(r.result).split(",")[1]); }; r.readAsDataURL(f); }); }
+  function mergeList(a,b){ return (Array.isArray(a)?a:[]).concat(Array.isArray(b)?b:[]); }
+  function mergeAddon(cur, addon){
+    const out = JSON.parse(JSON.stringify(cur || {}));
+    out.rows = mergeList(cur.rows, addon.rows);
+    const cs = (cur && cur.synopsis) || {}, as = (addon && addon.synopsis) || {};
+    const sw1 = cs.scope_of_work || {}, sw2 = as.scope_of_work || {};
+    const proj = cs.project || as.project || {};
+    out.synopsis = {
+      project: Object.assign({}, proj, { sheets_read: mergeList(proj.sheets_read, as.project && as.project.sheets_read) }),
+      scope_of_work: {
+        fabricate: mergeList(sw1.fabricate, sw2.fabricate),
+        buyout:    mergeList(sw1.buyout, sw2.buyout),
+        by_others: mergeList(sw1.by_others, sw2.by_others),
+        send_out:  mergeList(sw1.send_out, sw2.send_out),
+      },
+      decisions:  mergeList(cs.decisions, as.decisions),
+      gaps:       mergeList(cs.gaps, as.gaps),
+      conflicts:  mergeList(cs.conflicts, as.conflicts),
+      compliance: mergeList(cs.compliance, as.compliance),
+      totals:     Object.assign({}, cs.totals),
+      confidence: cs.confidence || as.confidence,
+    };
+    out.cost_usd = (Number(cur.cost_usd) || 0) + (Number(addon.cost_usd) || 0);
+    return out;
+  }
+  async function addDrawings(input){
+    const files = [].slice.call(input.files).filter(function(f){ return f.type === "application/pdf"; });
+    input.value = "";
+    if(!files.length || window.__revising) return;
+    window.__revising = true;
+    document.querySelectorAll(".applybtn,#reviseBtn,#addBtn").forEach(function(b){ b.disabled = true; });
+    let secs=0; const fmt=function(){ const m=Math.floor(secs/60),s=secs%60; return m+":"+(s<10?"0":"")+s; };
+    const lbl = files.length + " more drawing" + (files.length>1?"s":"");
+    setBusy("&#10227; Reading "+lbl+"… 0:00 &nbsp;·&nbsp; please wait, don't close");
+    const tick=setInterval(function(){ secs++; setBusy("&#10227; Reading "+lbl+"… "+fmt()+" &nbsp;·&nbsp; please wait, don't close"); }, 1000);
+    const stop=function(){ clearInterval(tick); window.__revising=false; };
+    const reenable=function(){ document.querySelectorAll(".applybtn,#reviseBtn,#addBtn").forEach(function(b){ b.disabled=false; }); };
+    try{
+      const pdfs=[]; for(const f of files){ pdfs.push(await readB64(f)); }
+      const r=await fetch(RAILWAY_URL+"/api/takeoff",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,pdfs:pdfs,model:"sonnet"})});
+      const data=await r.json();
+      if(!r.ok||data.ok===false){ stop(); reenable(); setBusy("⚠ Add failed: "+esc(data.error||("HTTP "+r.status)),"err"); clearBusy(8000); return; }
+      const cur=loadResult();
+      const merged=mergeAddon(cur, data);
+      recomputeCsv(merged); saveResult(merged);
+      stop(); render(); window.scrollTo({top:0,behavior:"smooth"});
+      const added=(data.rows||[]).filter(function(x){return (Number(x.quantity)||0)>0;}).length;
+      const total=merged.rows.filter(function(x){return (Number(x.quantity)||0)>0;}).length;
+      setBusy("✓ Added "+added+" rows from "+files.length+" file"+(files.length>1?"s":"")+" — "+total+" total now (cost $"+(data.cost_usd!=null?data.cost_usd:"?")+")","ok"); clearBusy(8000);
+    }catch(e){ stop(); reenable(); setBusy("⚠ Error: "+esc(e.message),"err"); clearBusy(8000); }
+  }
+  function _cell(v){ return String(v==null?"":v).replace(/[,\r\n]+/g," ").trim(); }
+  function _pct(c){ const n=Number(c); return Number.isFinite(n)?String(Math.round(n*100)):""; }
+  function _sft(n){ const raw=Number(n)||0; const ft=Math.max(0,Math.floor(raw)); const inch=Math.round((raw-ft)*12); return inch>=12?[ft+1,0]:[ft,inch]; }
+  // Rebuild the import CSV from the (possibly edited) rows — keeps Approve/export in sync with edits.
+  function buildImportCsvJS(rows){
+    const H=["MATERIAL COMPASS - BOM Import Template (AI Take-off)","Generated by AI Take-off - review in BOM Staging",
+      "Tag,Component,Drawing Number,Form Type,Mat Type,Specification,Material,QTY,FT(L),INCH(L),FT(W),INCH(W),Galv,Surface Area,Confidence",
+      "blue = lookup ; green = direct entry ; * = required","",""];
+    const out=H.slice();
+    (rows||[]).filter(function(r){ return (Number(r.quantity)||0)>0; }).forEach(function(r,i){
+      const L=_sft(r.length_ft), W=_sft(r.width_ft);
+      const tag=_cell(r.member_mark)||("AI-"+String(i+1).padStart(3,"0"));
+      out.push([tag,_cell(r.component),_cell(r.source_sheet),_cell(r.form_type),_cell(r.material_type),_cell(r.specification),
+        _cell(r.size),_cell(r.quantity),_cell(L[0]),_cell(L[1]),_cell(W[0]),_cell(W[1]),r.galvanized?"Yes":"","",_pct(r.confidence)].join(","));
+    });
+    return out.join("\n");
+  }
+  // ---- MATERIAL CHECK ------------------------------------------------------
+  // A row whose Material is blank or isn't in the shop's catalog can't resolve on import — it
+  // shows up red here and errors in staging. The model is now given the real size list, but this
+  // is the backstop: check every row against that SAME list, and let it be fixed here, before
+  // anything is committed. Nearest sizes are offered so a fix is a click, not a hunt.
+  let CATALOG = null;                       // { "Form Type|Material Type": [size,...] }; null = not fetched yet
+  let CATALOG_LOADING = false;
+  async function loadCatalog(){
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/catalog-index");
+      const d=await r.json();
+      CATALOG=(d&&d.ok&&d.groups)?d.groups:{};
+    }catch(e){ CATALOG={}; }
+    return CATALOG;
+  }
+  // Two comparisons on purpose. _mkey is the MEMBERSHIP test: case and padding don't matter, but
+  // spacing does — "L5x3x1/4" is not the catalog's "L5 x 3 x 1/4", and that exact drift is what
+  // arrives unresolved. _mnorm ignores spacing entirely and is used only to RANK suggestions, so
+  // the correctly-spaced string is the first thing offered.
+  const _mkey=function(s){ return String(s==null?"":s).trim().toUpperCase().replace(/\s+/g," "); };
+  const _mnorm=function(s){ return String(s==null?"":s).toUpperCase().replace(/\s+/g,"").replace(/[^A-Z0-9\/\-."]/g,""); };
+  function catGroup(r){
+    if(!CATALOG) return null;
+    const f=String(r.form_type||"").trim(), m=String(r.material_type||"").trim();
+    return CATALOG[f+"|"+m] || CATALOG[f+"|any material"] || null;
+  }
+  function nearestSizes(r,n){
+    const g=catGroup(r); if(!g||!g.length) return [];
+    const want=_mnorm(r.size);
+    if(!want) return g.slice(0,n||6);
+    return g.map(function(s){
+      const a=_mnorm(s); let score=0;
+      if(a===want) score=1;
+      else if(a.indexOf(want)===0||want.indexOf(a)===0) score=0.9;
+      else{ const L=Math.max(a.length,want.length); let same=0; for(let i=0;i<Math.min(a.length,want.length);i++) if(a[i]===want[i]) same++; score=same/L; }
+      return {s:s,score:score};
+    }).sort(function(x,y){ return y.score-x.score; }).slice(0,n||6).map(function(x){ return x.s; });
+  }
+  // Problems, worst first: no material at all, then a material the catalog doesn't have.
+  function materialProblems(rows){
+    if(!CATALOG) return [];
+    const out=[];
+    (rows||[]).forEach(function(r,idx){
+      if((Number(r.quantity)||0)<=0) return;                 // gap rows are reviewed as gaps
+      const g=catGroup(r);
+      const size=String(r.size||"").trim();
+      if(!size){ out.push({idx:idx,kind:"empty",row:r,options:g||[]}); return; }
+      if(!g){ out.push({idx:idx,kind:"nogroup",row:r,options:[]}); return; }
+      const hit=g.some(function(s){ return _mkey(s)===_mkey(size); });
+      if(!hit){
+        // Same size, different spacing — call it out as the near-miss it is, not a mystery.
+        const spacing=g.some(function(s){ return _mnorm(s)===_mnorm(size); });
+        out.push({idx:idx,kind:spacing?"spacing":"unknown",row:r,options:g});
+      }
+    });
+    return out;
+  }
+  function materialCardHtml(rows){
+    const probs=materialProblems(rows);
+    if(!CATALOG||!probs.length) return "";
+    const row=function(p){
+      const r=p.row;
+      const why = p.kind==="empty" ? "No material — the take-off couldn’t put a size to this member."
+        : p.kind==="nogroup" ? "No catalog sizes for <b>"+esc(r.form_type||"(no form type)")+" · "+esc(r.material_type||"(no material type)")+
+            "</b> — fix the form/material type first (via “Tell the AI”), then pick a size."
+        : p.kind==="spacing" ? "<b>"+esc(r.size)+"</b> is your catalog’s size written differently — the import matches on the "+
+            "exact string, so take the catalog spelling below."
+        : "<b>"+esc(r.size)+"</b> isn’t in your catalog for "+esc(r.form_type)+" · "+esc(r.material_type)+".";
+      const near=nearestSizes(r,5);
+      const opts=p.options.length
+        ? '<select id="matsel'+p.idx+'">'+p.options.map(function(s){
+            return '<option value="'+esc(s)+'"'+(near[0]===s?" selected":"")+">"+esc(s)+"</option>"; }).join("")+"</select>"+
+          ' <button class="applybtn" onclick="applyMaterial('+p.idx+')">Use this</button>'
+        : "";
+      const quick=near.slice(0,3).map(function(s){
+        return '<button class="applybtn" style="background:#fff;color:var(--ink);border:1px solid #cdd3da" '+
+          "onclick=\"applyMaterialValue("+p.idx+",'"+String(s).replace(/'/g,"\\'")+"')\">"+esc(s)+"</button>"; }).join(" ");
+      return '<div class="matrow"><div><b>'+esc(r.component||"—")+"</b> · "+esc(r.source_sheet||"no sheet")+
+        " · qty "+esc(r.quantity)+'</div><div class="src">'+why+"</div>"+
+        (quick?'<div class="matquick">Nearest in your catalog: '+quick+"</div>":"")+
+        (opts?'<div class="matquick">'+opts+"</div>":"")+"</div>";
+    };
+    return '<div class="card" style="border-color:#f3c2c2"><h2 style="color:var(--red)">⚠ Material check '+
+      '<span class="lt">— '+probs.length+" row"+(probs.length===1?"":"s")+" can’t import as-is</span></h2>"+
+      '<div class="body"><div class="src" style="margin-bottom:8px">These rows have no material, or a material that isn’t in '+
+      "your catalog. Fix them here and they’ll import clean — leave them and they land in staging as errors.</div>"+
+      probs.map(row).join("")+"</div></div>";
+  }
+  function applyMaterialValue(idx,val){
+    const R=loadResult(); if(!R.rows||!R.rows[idx]) return;
+    R.rows[idx].size=val;
+    if(!(Number(R.rows[idx].confidence)>0.5)) R.rows[idx].confidence=0.5;   // a human chose it
+    recomputeCsv(R); saveResult(R); render();
+  }
+  function applyMaterial(idx){
+    const sel=document.getElementById("matsel"+idx);
+    if(sel) applyMaterialValue(idx,sel.value);
+  }
+
+  function recomputeCsv(R){ try{ R.import_csv=buildImportCsvJS(R.rows); }catch(e){} }
+  function editQty(idx, val){ const R=loadResult(); if(!R.rows||!R.rows[idx]) return; R.rows[idx].quantity=Math.max(0,Number(val)||0); recomputeCsv(R); saveResult(R); render(); }
+  function removeRow(idx){ const R=loadResult(); if(!R.rows||!R.rows[idx]) return; R.rows.splice(idx,1); recomputeCsv(R); saveResult(R); render(); }
+
+  // Download the (resolved/edited) BOM CSV — use it in the existing BOM import flow today.
+  function download(name,text){ const b=new Blob([text||""],{type:"text/csv"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(a.href);},2000); }
+  function downloadBom(){ const R=loadResult(); download("takeoff-bom-"+(params.project_id||"project")+".csv", R.import_csv); }
+
+  function setBusy(msg, cls){ const b=document.getElementById("busy"); if(!b) return; b.className="busy show"+(cls?(" "+cls):""); b.innerHTML=msg; }
+  function clearBusy(delay){ setTimeout(function(){ const b=document.getElementById("busy"); if(b) b.className="busy"; }, delay||0); }
+
+  function doRevise(){
+    const t=document.getElementById("aiInput").value.trim();
+    if(!t && !REVISE_ATTACHMENTS.length){ const e=document.getElementById("aiEcho"); if(e) e.textContent="Type an instruction (or attach a file) first."; return; }
+    // If a file is attached but no instruction, default to "reconcile against it".
+    const instr = t || "Reconcile the current take-off against the attached document(s): add any members I missed, remove extras, and correct quantities, sizes and specs to match.";
+    revise(instr, {});
+  }
+
+  // ---- Revise attachments (reference docs the AI reconciles against) ----------
+  function fileB64(f){ return new Promise(function(res,rej){ const r=new FileReader();
+    r.onload=function(){ const s=String(r.result||""); res(s.slice(s.indexOf(",")+1)); };
+    r.onerror=function(){ rej(new Error("read failed")); }; r.readAsDataURL(f); }); }
+  async function addReviseFiles(input){
+    const files=Array.prototype.slice.call(input.files||[]);
+    for(const f of files){
+      try{
+        const ext=(f.name.split(".").pop()||"").toLowerCase();
+        const isImg=/^image\//.test(f.type)||["png","jpg","jpeg","webp","gif"].indexOf(ext)>-1;
+        const isPdf=f.type==="application/pdf"||ext==="pdf";
+        const isText=["csv","txt"].indexOf(ext)>-1||/^text\//.test(f.type);
+        if(f.size>20*1024*1024){ alert("“"+f.name+"” is over 20 MB — attach a smaller file."); continue; }
+        if(isText){ REVISE_ATTACHMENTS.push({kind:"text",name:f.name,text:await f.text()}); }
+        else if(isImg){ REVISE_ATTACHMENTS.push({kind:"image",name:f.name,media_type:f.type||"image/png",data:await fileB64(f)}); }
+        else if(isPdf){ REVISE_ATTACHMENTS.push({kind:"pdf",name:f.name,media_type:"application/pdf",data:await fileB64(f)}); }
+        else { alert("“"+f.name+"” — unsupported type. Use PDF, image, or CSV/TXT. (Excel: save as PDF or CSV first.)"); }
+      }catch(e){ alert("Could not read “"+f.name+"”: "+e.message); }
+    }
+    input.value="";
+    render();
+  }
+  function removeAttach(i){ REVISE_ATTACHMENTS.splice(i,1); render(); }
+  // Paste a screenshot straight into the chat — grab image(s) off the clipboard as attachments.
+  function handlePaste(e){
+    const items=((e.clipboardData||window.clipboardData||{}).items)||[];
+    let grabbed=false;
+    for(let i=0;i<items.length;i++){
+      const it=items[i];
+      if(it && it.type && it.type.indexOf("image/")===0){ const f=it.getAsFile(); if(f){ grabbed=true; addPastedImage(f, it.type); } }
+    }
+    if(grabbed) e.preventDefault();   // don't dump the raw blob into the text box
+  }
+  async function addPastedImage(f, mime){
+    try{
+      if(f.size>20*1024*1024){ alert("Pasted image is over 20 MB — paste a smaller crop."); return; }
+      const keep=(document.getElementById("aiInput")||{}).value;
+      const data=await fileB64(f);
+      const n=REVISE_ATTACHMENTS.filter(function(a){return a.kind==="image";}).length+1;
+      REVISE_ATTACHMENTS.push({kind:"image", name:"screenshot-"+n+".png", media_type:mime||f.type||"image/png", data:data});
+      render();
+      const inp=document.getElementById("aiInput"); if(inp){ inp.value=keep||""; inp.focus(); }
+    }catch(err){ alert("Could not read pasted image: "+err.message); }
+  }
+  function attachChipsHtml(){
+    return REVISE_ATTACHMENTS.map(function(a,i){
+      const icon=a.kind==="image"?"🖼":(a.kind==="text"?"📄":"📕");
+      return '<span class="achip">'+icon+" "+esc(a.name)+' <b onclick="removeAttach('+i+')" title="Remove">✕</b></span>';
+    }).join("");
+  }
+  // Per-conflict one-click: apply the AI's recommendation, and remove that conflict deterministically.
+  function applyConflict(i){
+    const c=CONFLICTS[i]; if(!c) return;
+    revise('Resolve the conflict on "'+(c.topic||"")+'": '+(c.recommendation||"use the specification")+
+      '. Update the affected BOM rows accordingly. Do not change anything else.', { removeConflict:i });
+  }
+  // Deterministic dismiss — just remove the gap/conflict note locally (no AI, no BOM change). Instant + reliable.
+  function dismissGap(i){ const R=loadResult(); if(!R.synopsis||!Array.isArray(R.synopsis.gaps)) return; R.synopsis.gaps.splice(i,1); saveResult(R); render(); }
+  function dismissConflict(i){ const R=loadResult(); if(!R.synopsis||!Array.isArray(R.synopsis.conflicts)) return; R.synopsis.conflicts.splice(i,1); saveResult(R); render(); }
+
+  // ---- Conversational "Tell the AI" — multi-turn chat that remembers the thread ----------
+  function chatThreadHtml(){
+    const R=loadResult(); const ch=(R&&R.chat)||[];
+    if(!ch.length) return '<div class="chathint">Ask a question about the take-off, or tell me what to change — e.g. “galvanize all exterior angles,” “drop the davit cranes,” “add 4 bollards @ 6ft,” or “what spec did you use for the angles?” I’ll remember the conversation and apply edits to the BOM as we go.</div>';
+    return ch.map(function(m){
+      if(m.role==="user"){
+        return '<div class="cmsg u"><div class="bub">'+esc(m.text)+
+          (m.files&&m.files.length?'<div class="cfiles">📎 '+m.files.map(esc).join(", ")+'</div>':'')+'</div></div>';
+      }
+      const cls = m.pending?"ai pending":(m.err?"ai err":"ai");
+      const badge = m.edited?'<span class="cedit">✎ updated the take-off</span>':'';
+      const txt = m.pending?'<span class="spin"></span>AI is thinking…':esc(m.text);
+      return '<div class="cmsg '+cls+'"><div class="bub">'+txt+badge+'</div></div>';
+    }).join("");
+  }
+  function scrollChatToBottom(){ const el=document.getElementById("chatThread"); if(el) el.scrollTop=el.scrollHeight; }
+
+  // Prepaid meter (Phase 0 = visual only, no charges). Pull the shop's banked balance for the green bar.
+  async function fetchAccount(){
+    if(!params.manufacturer_id) return;
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/account/"+encodeURIComponent(params.manufacturer_id));
+      const d=await r.json();
+      if(d&&d.ok){ ACCOUNT=d; render(); }
+    }catch(e){ /* non-fatal — bar just omits the balance chip */ }
+  }
+
+  async function sendChat(){
+    if(window.__chatting) return;
+    const inp=document.getElementById("aiInput");
+    const t=(inp?inp.value:"").trim();
+    if(!t && !REVISE_ATTACHMENTS.length){ if(inp) inp.focus(); return; }
+    window.__chatting=true;
+    const atNames = REVISE_ATTACHMENTS.length?REVISE_ATTACHMENTS.map(function(a){return a.name;}):null;
+    const sentAttach = REVISE_ATTACHMENTS.slice();   // snapshot for this turn
+    const R=loadResult(); R.chat=R.chat||[];
+    R.chat.push({role:"user", text: t || "(reconcile against the attached file)", files: atNames});
+    R.chat.push({role:"ai", pending:true});
+    saveResult(R); render(); scrollChatToBottom();
+    // history for the model = prior turns + this user turn (text only; current package sent fresh below)
+    const hist=(loadResult().chat||[]).filter(function(m){return !m.pending;})
+      .map(function(m){ return {role: m.role==="ai"?"assistant":"user", text: m.text||""}; });
+    const cur=loadResult();
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,model:"sonnet",
+          messages:hist, current:{rows:cur.rows,synopsis:cur.synopsis}, attachments:sentAttach})});
+      const data=await r.json();
+      const R2=loadResult(); R2.chat=(R2.chat||[]).filter(function(m){return !m.pending;});
+      if(!r.ok||data.ok===false){
+        const m=String(data.error||("HTTP "+r.status));
+        const friendly=(m.indexOf("rate_limit")>-1||m.indexOf("429")>-1)?"Material Compass AI is rate limited — wait ~60s and try again.":m;
+        R2.chat.push({role:"ai", err:true, text:"⚠ "+friendly}); saveResult(R2); render(); scrollChatToBottom(); window.__chatting=false; return;
+      }
+      if(data.edited){
+        const merged=mergeResult(R2, data, {});               // apply rows/synopsis/csvs
+        merged.chat=R2.chat.concat([{role:"ai", edited:true, text: data.reply||data.notes||"Updated the take-off."}]);
+        saveResult(merged);
+        REVISE_ATTACHMENTS=[];                                  // consumed
+      } else {
+        R2.chat.push({role:"ai", text: data.reply||"(no reply)"}); saveResult(R2);
+      }
+      render(); scrollChatToBottom();
+    }catch(e){
+      const R3=loadResult(); R3.chat=(R3.chat||[]).filter(function(m){return !m.pending;});
+      R3.chat.push({role:"ai", err:true, text:"⚠ Network error: "+e.message}); saveResult(R3); render(); scrollChatToBottom();
+    }
+    window.__chatting=false;
+  }
+
+  // A synopsis section is kept from the revise ONLY if it came back populated; otherwise the original is
+  // preserved (the model sometimes omits unchanged sections on a small edit — never let them vanish).
+  function _has(v){ return v && (Array.isArray(v) ? v.length>0 : (typeof v==="object" ? Object.values(v).some(function(x){return Array.isArray(x)?x.length:x;}) : true)); }
+  function mergeResult(cur, data, opts){
+    const os=cur.synopsis||{}, rs=data.synopsis||{};
+    let conflicts;
+    if(opts.removeConflict!=null && Array.isArray(os.conflicts)){
+      conflicts = os.conflicts.filter(function(_,i){ return i!==opts.removeConflict; }); // deterministic removal
+    } else {
+      conflicts = (rs.conflicts!==undefined) ? rs.conflicts : (os.conflicts||[]);
+    }
+    const syn={
+      project:       _has(rs.project)?rs.project:os.project,
+      scope_of_work: _has(rs.scope_of_work)?rs.scope_of_work:os.scope_of_work,
+      decisions:     _has(rs.decisions)?rs.decisions:os.decisions,
+      gaps:          (rs.gaps!==undefined)?rs.gaps:(os.gaps||[]),  // honor an explicit [] (user cleared gaps); fall back only when omitted
+      conflicts:     conflicts,
+      compliance:    _has(rs.compliance)?rs.compliance:os.compliance,
+      totals:        _has(rs.totals)?rs.totals:os.totals,
+      confidence:    _has(rs.confidence)?rs.confidence:os.confidence,
+    };
+    return Object.assign({},cur,{rows:data.rows,synopsis:syn,import_csv:data.import_csv,verify_csv:data.verify_csv});
+  }
+
+  // The 3c revise loop — global status bar + button locking so it's obvious something is happening.
+  async function revise(instruction, opts){
+    opts = opts || {};
+    if(window.__revising) return;
+    window.__revising = true;
+    document.querySelectorAll(".applybtn,#reviseBtn").forEach(function(b){ b.disabled=true; });
+    let secs=0;
+    const fmt=function(){ const m=Math.floor(secs/60), s=secs%60; return m+":"+(s<10?"0":"")+s; };
+    const msg=function(){ return "&#10227; Revising your take-off… "+fmt()+" &nbsp;·&nbsp; large projects can take 1–2 min — please wait, don't close"; };
+    setBusy(msg());
+    const tick=setInterval(function(){ secs++; setBusy(msg()); }, 1000);
+    const stop=function(){ clearInterval(tick); window.__revising=false; };
+    const reenable=function(){ document.querySelectorAll(".applybtn,#reviseBtn").forEach(function(b){ b.disabled=false; }); };
+    const cur=loadResult();
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/revise",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,
+          instruction:instruction,model:"sonnet",current:{rows:cur.rows,synopsis:cur.synopsis},
+          attachments:REVISE_ATTACHMENTS})});
+      const data=await r.json();
+      if(!r.ok||data.ok===false){
+        stop(); reenable();
+        const m=String(data.error||("HTTP "+r.status));
+        const friendly = m.indexOf("rate_limit")>-1 || m.indexOf("429")>-1
+          ? "Material Compass AI is rate limited — wait ~60s and try again."
+          : esc(m);
+        setBusy("⚠ Revise failed: "+friendly,"err"); clearBusy(8000); return;
+      }
+      const merged=mergeResult(cur, data, opts);
+      saveResult(merged);
+      REVISE_ATTACHMENTS = [];  // consumed — clear so they don't re-send on the next revise
+      stop();
+      render(); // rebuilds the page (re-enables the buttons)
+      window.scrollTo({top:0,behavior:"smooth"});
+      const what = (data.notes && String(data.notes).trim()) ? esc(data.notes) : "package updated";
+      setBusy("✓ "+what+" &nbsp;·&nbsp; "+fmt()+", $"+(data.cost_usd!=null?data.cost_usd:"?"),"ok"); clearBusy(9000);
+    }catch(e){
+      stop(); reenable();
+      setBusy("⚠ Network error: "+esc(e.message),"err"); clearBusy(8000);
+    }
+  }
+
+  // ---- 3a Zoho write (BOM → staging) -----------------------------------------
+  // Commit via Railway — the widget runs standalone (no Creator SDK context), so the Zoho
+  // write (create record → upload CSV → set Run_Import) happens server-side using the app's OAuth.
+  async function submitToZoho(importCsv, proj, mfg){
+    const r=await fetch(RAILWAY_URL+"/api/takeoff/commit",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({project_id:proj,manufacturer_id:mfg,import_csv:importCsv})});
+    const data=await r.json();
+    if(!r.ok||data.ok===false) throw new Error(data.error||("HTTP "+r.status));
+    return data.import_id;
+  }
+  // Capture this shop's decisions so future take-offs pre-apply their preferences (Tier-3 learning).
+  function captureLearning(){
+    try{
+      if(!params.manufacturer_id) return;
+      const R=loadResult();
+      const ptype=(R.synopsis && R.synopsis.project && R.synopsis.project.type)||"";
+      const corrections=DECISIONS.filter(function(d){return d.sel;}).map(function(d){
+        return { context:d.item, ai_value:d.rec||"", human_value:d.sel, source:"decision" };
+      });
+      if(!corrections.length) return;
+      fetch(RAILWAY_URL+"/api/takeoff/learn",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ manufacturer_id:params.manufacturer_id, project_type:ptype, corrections:corrections })}).catch(function(){});
+    }catch(e){}
+  }
+
+  async function approve(){
+    const R=loadResult();
+    // Soft-gate: if the drawings reference components not on the project, they'll import with a
+    // blank Component link. Warn (don't block) — mirrors the "your call" decisions philosophy.
+    if(!R.__demo && params.project_id && PROJECT_SCOPE){
+      const un=reconcile('component').takeoffOnly;
+      if(un.length){
+        const names=un.slice(0,6).map(function(t){return "• "+t.value;}).join("\n")+(un.length>6?"\n…":"");
+        if(!confirm(un.length+" component"+(un.length===1?"":"s")+" the drawings reference aren't on your project:\n\n"+names+"\n\nTheir material will import without a component link. Map or add them first, or continue anyway?")) return;
+      }
+    }
+    // Material that can't resolve becomes an error row in staging — say so before committing.
+    const matProbs=materialProblems(arr(R.rows));
+    if(matProbs.length){
+      const list=matProbs.slice(0,6).map(function(p){
+        return "• "+(p.row.component||"—")+" · "+(p.row.form_type||"")+" · "+(p.row.size?('"'+p.row.size+'"'):"(no material)");
+      }).join("\n")+(matProbs.length>6?"\n…":"");
+      if(!confirm(matProbs.length+" row"+(matProbs.length===1?"":"s")+" have a material your catalog doesn't have:\n\n"+
+        list+"\n\nThey'll land in staging as errors. Fix them in the Material check card, or continue anyway?")) return;
+    }
+    const ap=document.getElementById("approve"); ap.disabled=true;
+    const c=document.getElementById("commit"); c.style.display="block";
+    const picks=DECISIONS.map(d=>'• '+esc(d.item)+'  →  <b>'+esc(d.sel)+'</b>').join("<br>")||"(none)";
+    if(!R.__demo && R.import_csv && params.project_id){
+      c.innerHTML='<span class="spin"></span>Committing BOM to staging…';
+      try{
+        const recId = await submitToZoho(R.import_csv, params.project_id, params.manufacturer_id);
+        captureLearning();  // store this shop's decisions for future take-offs (best-effort)
+        if(Z.REVIEW_PAGE){
+          c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks);
+          const url=Z.REVIEW_PAGE+"?import_id="+encodeURIComponent(recId||"")+"&project_id="+encodeURIComponent(params.project_id)+"&client_id="+encodeURIComponent(params.manufacturer_id||"");
+          setTimeout(()=>window.open(url,"_top"),1200);
+        } else {
+          c.innerHTML='<b>✓ BOM sent to staging review.</b> Open your project’s BOM staging to review &amp; Import Approved Rows.'+commitList(picks);
+        }
+      }catch(e){ ap.disabled=false; c.innerHTML='<b style="color:var(--red)">Commit failed:</b> '+esc(e.message); }
+    } else {
+      // standalone / SAMPLE — show what WOULD commit
+      c.innerHTML='<b>✓ Approved — this is what would commit:</b>'+commitList(picks)+
+        '<div class="src" style="margin-top:8px">(No Zoho SDK / no project_id — design preview, nothing written.)</div>';
+    }
+    c.scrollIntoView({behavior:"smooth"});
+  }
+  function commitList(picks){
+    return '<ul>'+
+      '<li><b>BOM</b> → CSV Import Tool → staging review</li>'+
+      '<li><b>Buyout</b> → outsource / RFQ subform <span class="src">(WIRE)</span></li>'+
+      '<li><b>Scope of Work</b> → project record <span class="src">(WIRE: Save_Scope_Of_Work)</span></li>'+
+      '<li><b>Gaps + conflicts</b> → project alerts / verify list <span class="src">(WIRE)</span></li>'+
+      '<li><b>Totals + confidence</b> → Takeoff_Log <span class="src">(WIRE)</span></li>'+
+      '</ul><div style="margin-top:8px">Decisions recorded:<br>'+picks+'</div>';
+  }
+
+  // ---- SAMPLE (Alden) — used when no live result is present -------------------
+  const SAMPLE = {
+    __demo:true,
+    cost_usd:0.91,
+    import_csv:"(sample — real result carries the generated CSV here)",
+    rows:[
+      {form_type:"Beam - W",size:"W12 x 26",specification:"A992",quantity:8,length_ft:24,source_sheet:"S-201",confidence:0.95},
+      {form_type:"Beam - W",size:"W8 x 24",specification:"A992",quantity:12,length_ft:6.33,source_sheet:"S-204",confidence:0.92,galvanized:true},
+      {form_type:"Angle",size:"L4 x 4 x 1/4",specification:"A36",quantity:22,length_ft:3,source_sheet:"S-205",confidence:0.90},
+      {form_type:"Channel - MC",size:"MC8 x 8.5",specification:"A36",quantity:4,length_ft:12,source_sheet:"S-203",confidence:0.62},
+      {form_type:"Plate",size:'1/2"',specification:"A36",quantity:6,length_ft:1,width_ft:1,source_sheet:"S-501",confidence:0.55},
+      {form_type:"Beam - W",size:"W16 x 40",specification:"A992",quantity:5,length_ft:28,source_sheet:"S-201",confidence:0.88},
+      {form_type:"Pipe",size:'6" SCH 80 (XS)',specification:"A53 Gr B",quantity:0,length_ft:0,source_sheet:"C-101",confidence:0.30,note:"GAP — bollard count"},
+    ],
+    synopsis:{
+      project:{name:"Alden Intermediate School",type:"K-12 / institutional",
+        sheets_read:["S-101","S-201","S-204","A-220","Spec 05 12 00","Spec 05 50 00"],
+        summary:"Structural steel + misc metals for a 2-story addition"},
+      scope_of_work:{
+        fabricate:["Primary W framing","Lintels (12)","Stair stringers & pans","Embed plates"],
+        buyout:["Bar grating + frames","Pipe railings"], by_others:["Precast plank","CIP concrete"],
+        send_out:["Hot-dip galv: 12 exterior lintels / shelf angles"]},
+      decisions:[
+        {id:"d1",item:"4 davit cranes on S-301 — in fab scope?",where:"S-301",
+          why_flagged:"Could be our fabrication or a vendor-supplied unit.",options:["Include","Skip"],ai_recommendation:"Skip"},
+        {id:"d2",item:"Masonry ledger angle — continuous or clips?",where:"S-204 / Spec 05 50 00",
+          why_flagged:"Drawing shows continuous; spec permits clip angles.",options:["Continuous","Clips"],ai_recommendation:"Continuous"},
+        {id:"d3",item:"Stainless hardware noted on A-220 — our scope?",where:"A-220",
+          why_flagged:"Hardware callout with no supplier assigned.",options:["Yes","No"],ai_recommendation:""},
+      ],
+      gaps:[
+        {item:"Loose lintels — L-schedule not in set",where:"A-601",suggested_action:"Pull arch lintel schedule"},
+        {item:"OH coiling door frames",where:"A-220",suggested_action:"Confirm frame sizes"},
+        {item:"Bollard count + length",where:"C-101",suggested_action:"Confirm from civil"},
+      ],
+      conflicts:[
+        {topic:"Lintel finish",drawing_says:"prime",spec_says:"galvanize (ext)",recommendation:"Galvanize per 05 50 00 §2.3"},
+      ],
+      compliance:[
+        {topic:"BABA / AIS",note:"Domestic content required — Spec 00 73 00 / 7 CFR 1792"},
+        {topic:"Finish",note:"Interior = shop prime · exterior = hot-dip galvanized"},
+      ],
+      totals:{fab_rows:52,est_weight_lb:2140,gap_count:6,low_conf_count:3},
+      confidence:{overall:0.84,scope:0.9,bom:0.82,gaps:0.5},
+    },
+  };
+
+  // Arriving from the uploader the result is in sessionStorage — mirror it to localStorage
+  // (keyed by project) so closing & reopening this page restores it instead of losing the run.
+  (function(){ try{ const s=sessionStorage.getItem("takeoff_result"); const k=lsKey(); if(s&&k){ const R=JSON.parse(s); if(sameProj(R)) localStorage.setItem(k,s); } }catch(e){} })();
+  // "New take-off" link → back to the uploader for this project
+  (function(){ const lk=document.getElementById("newRun"); if(lk && params.project_id){ lk.href="index.html?project_id="+encodeURIComponent(params.project_id)+"&manufacturer_id="+encodeURIComponent(params.manufacturer_id||""); } })();
+  (async function init(){
+    render();                                  // show local/sample immediately
+    fetchAccount();                            // prepaid balance for the green bar (Phase 0 visual)
+    fetchProjectScope();                       // entered components/drawings for the reconciliation panel
+    if(haveLive()){
+      scheduleZohoSave();                      // persist the freshly-arrived take-off to the project
+    } else if(params.project_id){
+      setSaveInd("loading saved…","var(--mut)");
+      try{
+        const r=await fetch(RAILWAY_URL+"/api/takeoff/saved/"+encodeURIComponent(params.project_id));
+        const d=await r.json();
+        if(d.ok && d.found && d.package && Array.isArray(d.package.rows) && d.package.rows.length){
+          const R=d.package; R.__project=params.project_id; recomputeCsv(R); window.TAKEOFF_RESULT=R;
+          try{ sessionStorage.setItem("takeoff_result",JSON.stringify(R)); const k=lsKey(); if(k) localStorage.setItem(k,JSON.stringify(R)); }catch(e){}
+          render(); setSaveInd("💾 loaded from project","var(--grn)");
+        } else { setSaveInd("",""); }
+      }catch(e){ setSaveInd("",""); }
+    }
+  })();
+</script>
+</body>
+</html>
