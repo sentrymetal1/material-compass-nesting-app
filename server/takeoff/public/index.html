@@ -398,7 +398,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.44 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.45 (2026-07-26)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -1601,8 +1601,17 @@
       // ("…-2" vs "…-2B"). Mid-number it's a different family entirely: 10B-1 is NOT 10-1, and
       // treating it as one was offering to rename a drawing into a different drawing.
       if (diff === A.length - 1 && (x.indexOf(y) === 0 || y.indexOf(x) === 0)) return 0.9;
-      const sim = similar(x, y);
-      return (sim >= 0.8 && x.length === y.length) ? sim : 0;   // a one-character typo in one segment
+      // One character apart in a MID-number segment: "10D-2" vs "10E-2" — a D read as an E. The
+      // last segment is excluded deliberately: that's the sheet number within a family, so "10-9"
+      // and "10-1", or "10E-1" and "10E-2", are two real drawings, not a misread of each other.
+      // (Short segments also make a ratio test useless — 2 of 3 characters is only 0.67 — so the
+      // differences are counted rather than scored.)
+      if (diff < A.length - 1 && x.length === y.length) {
+        let d = 0;
+        for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) d++;
+        if (d === 1) return 0.85;
+      }
+      return 0;
     }
     const NEAR = 0.8;                                      // below this it isn't a plausible typo
 
@@ -1898,9 +1907,11 @@
         if (it.state === "near") {
           return '<div class="covrow"><div class="covhd"><b>' + escHtml(it.s.number) + "</b> " +
             '<span class="apg">' + pg + "</span></div>" +
-            '<div class="covwhy">The PDF says <b>' + escHtml(it.s.number) + "</b>, your project has <b>" +
-              escHtml(it.hit.number) + "</b> under " + escHtml(it.hit.comp) + " — close, but not the same. " +
-              "Say which is right so every row ties to one number.</div>" +
+            '<div class="covwhy">The PDF says <b>' + escHtml(it.s.number) + "</b>" +
+              (it.s.title ? " (" + escHtml(it.s.title) + ")" : "") + ", your project has <b>" +
+              escHtml(it.hit.number) + "</b> under " + escHtml(it.hit.comp) +
+              (descMap[it.hit.number] ? " (" + escHtml(descMap[it.hit.number]) + ")" : "") +
+              " — close, but not the same. Say which is right so every row ties to one number.</div>" +
             '<div class="covacts">' +
               '<button type="button" class="covbtn" data-k="usepdf" data-i="' + k + '">Use the PDF’s number</button>' +
               '<button type="button" class="covbtn alt" data-k="alias" data-i="' + k + '">They’re the same — keep “' +
@@ -2160,6 +2171,26 @@
     });
 
     async function runTakeoff() {
+      // Last check before spending anything: re-read the project and make sure what's on screen is
+      // still what's on the record. Components and drawings can be edited on the project page (or
+      // by someone else) while this screen sits open, and a take-off tagged against a stale list
+      // is worse than no take-off — the rows cite drawings that no longer exist.
+      if (params.project_id) {
+        const before = JSON.stringify(buildScopeTree());
+        try {
+          await loadProject();
+          scopeFromProject(); renderScope();
+          if (JSON.stringify(buildScopeTree()) !== before) {
+            go.disabled = false;
+            window.alert("The project's components or drawings changed since this screen loaded, so " +
+              "the list has been refreshed.\n\nCheck it over and start the take-off again — this is " +
+              "the list the AI tags every BOM row against.");
+            setScopeStatus("Re-read the project — the components and drawings on screen had changed. " +
+              "Check them, then run again.");
+            return;
+          }
+        } catch (e) { /* couldn't re-check: fall through and run with what's on screen */ }
+      }
       go.disabled = true; resultBox.innerHTML = "";
       const t0 = Date.now();
       const timer = setInterval(() => {
