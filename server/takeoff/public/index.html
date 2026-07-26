@@ -386,7 +386,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.41 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.42 (2026-07-26)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -566,7 +566,7 @@
     function saveSheets() {
       try {
         localStorage.setItem(sheetKey(), JSON.stringify({ sheets: sheets, reference: referenceSheets,
-          separate: separate, aliases: aliases }));
+          separate: separate, aliases: aliases, audit: audit }));
       } catch (e) {}
     }
     const isReference = (num) => referenceSheets.some((x) => _norm(x.number) === _norm(num));
@@ -717,7 +717,11 @@
         const bits = ["<b>" + rows + "</b> drawing" + (rows === 1 ? "" : "s") + " in this take-off, across <b>" +
           scope.filter((c) => c.cid).length + "</b> component" + (scope.filter((c) => c.cid).length === 1 ? "" : "s")];
         if (referenceSheets.length) bits.push("<b>" + referenceSheets.length + "</b> reference-only");
-        if (dropped) bits.push("<b>" + dropped + "</b> ✕'d out of this run");
+        // "✕'d" was wrong: this is every project drawing not currently listed, which also covers
+        // drawings under a component that was ✕'d or merged away. Say what it is, and offer the
+        // one click that brings them all back — nothing should be strandable by accident.
+        if (dropped) bits.push("<b>" + dropped + "</b> on the project but not in this run " +
+          '(<a href="#" data-k="bringback">bring back</a>)');
         if (sheets.length) bits.push("<b>" + sheets.length + "</b> read from the PDF");
         // Two records with the same name split an assembly's drawings in half and are impossible to
         // spot in a picker. Call them out, with the fix: move the drawings across, then bin the empty one.
@@ -790,8 +794,15 @@
       if (btn) btn.click();
     });
     document.getElementById("scope").addEventListener("click", (e) => {
-      const btn = e.target.closest("button"); if (!btn) return;
+      const btn = e.target.closest("[data-k]"); if (!btn) return;   // buttons AND the bring-back link
       const k = btn.getAttribute("data-k"); if (!k) return;      // #addComp has no data-k
+      if (k === "bringback") {                                   // re-mirror the project, exclusions cleared
+        e.preventDefault();
+        excluded = { c: {}, d: {} };
+        saveScope(); scopeFromProject(); renderScope();
+        setScopeStatus("Everything on the project is back in this take-off.");
+        return;
+      }
       const ci = Number(btn.getAttribute("data-ci"));
       const di = btn.hasAttribute("data-di") ? Number(btn.getAttribute("data-di")) : null;
       if (k === "ecancel") { editing = null; renderScope(); return; }
@@ -957,8 +968,12 @@
       if (!audit || !Array.isArray(audit.docs)) return null;
       const total = audit.docs.reduce((s, a) => s + (a.pages || 0), 0);
       if (!total) return null;
-      const covered = {};                               // "doc:page" → on a kept drawing
-      detected.forEach((s) => {
+      // Count against the READ (sheets), not the pending allocation grid — `detected` is emptied
+      // once an allocation is applied, and reading from it made the banner claim 0 drawings and
+      // every page unnumbered the moment the grid closed.
+      const read = sheets.length ? sheets : detected;
+      const covered = {};                               // "doc:page" → on a drawing
+      read.forEach((s) => {
         pagesOf(s).forEach((p) => { if (p) covered[(s.doc || 1) + ":" + p] = 1; });
       });
       const notRead = (audit.pages_missing || []).map((p) => (p.doc || 1) + ":" + p.page);
@@ -973,10 +988,10 @@
       // A drawing covering several pages is legitimate, but it's also what a MISREAD number
       // looks like (two different sheets read as the same number collapse into one row), so
       // it's always called out and can be split back apart.
-      const multi = detected.map((s, k) => ({ k: k, s: s, n: pagesOf(s).length }))
+      const multi = read.map((s, k) => ({ k: k, s: s, n: pagesOf(s).length }))
         .filter((x) => x.n > 1);
       return {
-        total: total, drawings: detected.length, multi: multi,
+        total: total, drawings: read.length, multi: multi,
         onDrawing: Object.keys(covered).length,
         noNumber: noNumber,                              // read, but no title-block number (cover/index) or row dropped
         notRead: (audit.pages_missing || []),            // the model never returned these pages
@@ -1135,9 +1150,15 @@
       renderCoverage();                                    // the two panels always agree
       const host = document.getElementById("allocPanel");
       if (!detected.length && !audit) { host.innerHTML = ""; updatePanels(); return; }
-      if (!detected.length) {   // read happened but nothing usable came out — still show the tally
+      if (!detected.length) {   // allocation done (or nothing read) — the page tally still stands
         host.innerHTML = '<div class="alloc">' + auditHtml() +
-          '<div class="apg">No drawing numbers were read — type them under a component instead.</div></div>';
+          '<div class="apg">' + (sheets.length
+            ? sheets.length + " drawing" + (sheets.length === 1 ? "" : "s") + " from the last read. " +
+              "Use <b>↻ Re-read the drawings in the PDF</b> if the count looks short — a sheet read as a " +
+              "continuation of the one before it merges into a single drawing."
+            : "No drawing numbers were read — pick them under a component instead.") +
+          "</div></div>";
+        updatePanels();
         return;
       }
       const named = namedComps();
@@ -1397,6 +1418,9 @@
           referenceSheets = Array.isArray(st.reference) ? st.reference
             : (Array.isArray(st.excluded) ? st.excluded : []);
           separate = (st.separate && typeof st.separate === "object") ? st.separate : {};
+          // Keep the page↔drawing reconciliation across reloads — without it there's no way to see
+          // WHY a 27-page set read as 24 drawings.
+          if (st.audit && typeof st.audit === "object") audit = st.audit;
           aliases = (st.aliases && typeof st.aliases === "object") ? st.aliases : {};
         }
       } catch (e) {}
