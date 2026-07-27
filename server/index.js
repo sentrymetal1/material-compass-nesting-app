@@ -1167,6 +1167,23 @@ app.get('/api/bom-lookups/form-types', async (req, res) => {
 });
 
 // Diagnostic: force token refresh + raw Zoho call. Returns whatever Zoho responded.
+// A report only returns the columns it's configured with, so a field can exist on the form and be
+// invisible here — which is exactly how a null slips through unnoticed. This asks Creator for the
+// form's real field list. GET /api/bom-lookups/__fields?form=Project_Components_Form
+app.get('/api/bom-lookups/__fields', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const form = req.query.form || 'Project_Components_Form';
+    const url = 'https://www.zohoapis.com/creator/v2.1/meta/' + ZOHO.accountOwner + '/' + ZOHO.appLinkName +
+      '/form/' + form + '/fields';
+    const r = await axios.get(url, { headers: zohoHeaders(token) });
+    res.json({ ok: true, form: form, fields: r.data && r.data.fields });
+  } catch (err) {
+    res.status(500).json({ ok: false, zoho_status: err.response && err.response.status,
+      zoho_body: err.response && err.response.data, message: err.message });
+  }
+});
+
 app.get('/api/bom-lookups/__debug', async (req, res) => {
   try {
     const token = await getAccessToken(true); // force refresh
