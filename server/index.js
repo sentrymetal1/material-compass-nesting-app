@@ -220,6 +220,10 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
       // these records are read by a human. We have it; there's no reason to write the row without it.
       const desc = String((req.body && req.body.description) || '').trim();
       if (desc) data.Drawing_Description = desc;
+      // Native rows carry a date. A null date is the classic crash for a project page that formats
+      // or compares it in Deluge ("Error occurred please contact application owner"), so give the
+      // record one. Format must match the field's display format — see zohoDateToday().
+      data.Date_field = zohoDateToday();
       // Components ties the drawing to its parent component (the field /api/bom-lookups/drawings
       // filters on). Without it the drawing is orphaned — present on the project, invisible per
       // component. The caller supplies it because the take-off knows the pairing (a BOM row carries
@@ -279,6 +283,20 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
   }
 });
 
+// Zoho takes a date in the FIELD'S display format, not ISO. This form displays "Jul 21,2026", so
+// that's what's sent; the repair endpoint below proves the format against a real record and the
+// alternatives are there because a different tenant's form may be set up differently.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function zohoDateFormats(d) {
+  const dt = d || new Date();
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const yy = dt.getFullYear();
+  const mon = MONTHS[dt.getMonth()];
+  return [mon + ' ' + dd + ',' + yy, mm + '/' + dd + '/' + yy, dd + '-' + mon + '-' + yy, yy + '-' + mm + '-' + dd];
+}
+function zohoDateToday() { return zohoDateFormats()[0]; }
+
 // REPAIR — drawing records written before the project links were being set come back on the
 // project report with Project ID Number, Project ID Relationship and Drawing Description blank.
 // Patch them in place: same project, same numbers, nothing created or deleted.
@@ -301,12 +319,31 @@ app.post('/api/takeoff/project-scope/repair', async (req, res) => {
     const base = creatorApiBase();
     const out = { checked: rows.length, patched: 0, skipped: 0, failed: [] };
 
+    // Work out which date format this form accepts, once, using the first row that needs one.
+    let dateFmt = null;
+    out.date_format = null;
+    for (const r of rows) {
+      if (String(r.Date_field || '').trim()) continue;
+      for (const cand of zohoDateFormats()) {
+        try {
+          const zr = await axios.patch(base + '/report/All_Project_Drawing_Details/' + r.ID,
+            { data: { Date_field: cand } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+          if (zr.data && zr.data.code === 3000) { dateFmt = cand; break; }
+        } catch (e) { /* try the next format */ }
+      }
+      break;
+    }
+    out.date_format = dateFmt;
+
     for (const r of rows) {
       const patch = {};
       if (!String(r.Project_ID_Number || '').trim()) patch.Project_ID_Number = String(project_id);
       if (!(r.Project_ID_Relationship && r.Project_ID_Relationship.ID)) patch.Project_ID_Relationship = String(project_id);
       const d = descByKey[key(r.Drawing_Number)];
       if (d && !String(r.Drawing_Description || '').trim()) patch.Drawing_Description = d;
+      // A null date is the classic cause of "Error occurred please contact application owner" on a
+      // page that formats it — fill it with today's date where it's missing.
+      if (dateFmt && !String(r.Date_field || '').trim()) patch.Date_field = dateFmt;
       if (!Object.keys(patch).length) { out.skipped++; continue; }
       try {
         const zr = await axios.patch(base + '/report/All_Project_Drawing_Details/' + r.ID, { data: patch },
