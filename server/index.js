@@ -430,8 +430,17 @@ app.post('/api/takeoff/project-scope/delete', async (req, res) => {
     }
 
     const token = await getAccessToken();
-    const zr = await axios.delete(creatorApiBase() + '/report/' + spec.report + '?criteria=(ID==' + id + ')',
-      { headers: zohoHeaders(token) });
+    // Delete the single record by ID. The criteria form ("?criteria=(ID==123)") that was here is
+    // rejected by v2.1 with code 1060 "Invalid request parameter found - criteria" — so this
+    // endpoint had never actually deleted anything. Criteria is kept only as a fallback.
+    let zr;
+    try {
+      zr = await axios.delete(creatorApiBase() + '/report/' + spec.report + '/' + encodeURIComponent(id),
+        { headers: zohoHeaders(token) });
+    } catch (e) {
+      zr = await axios.delete(creatorApiBase() + '/report/' + spec.report +
+        '?criteria=' + encodeURIComponent('ID==' + id), { headers: zohoHeaders(token) });
+    }
     if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the delete', detail: zr.data });
     res.json({ ok: true, id: String(id) });
   } catch (err) {
