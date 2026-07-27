@@ -198,7 +198,19 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
       mcpBestEffort = true;
     } else if (kind === 'drawing') {
       form = 'Project_Drawing_Details_Form'; report = 'All_Project_Drawing_Details';
-      data = { Drawing_Number: v, MCP_Customer_Project_Form: project_id };
+      // A drawing record needs the SAME project links a natively-entered one gets, or it shows up
+      // on the project report with half its columns blank: Project_ID_Number and
+      // Project_ID_Relationship were both empty on every row the widget wrote.
+      data = {
+        Drawing_Number: v,
+        MCP_Customer_Project_Form: project_id,
+        Project_ID_Number: project_id,
+        Project_ID_Relationship: project_id,
+      };
+      // The sheet title read off the title block — the Drawing Description column, which is how
+      // these records are read by a human. We have it; there's no reason to write the row without it.
+      const desc = String((req.body && req.body.description) || '').trim();
+      if (desc) data.Drawing_Description = desc;
       // Components ties the drawing to its parent component (the field /api/bom-lookups/drawings
       // filters on). Without it the drawing is orphaned — present on the project, invisible per
       // component. The caller supplies it because the take-off knows the pairing (a BOM row carries
@@ -221,6 +233,17 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
       bidiWarning = 'Project_Bi_Directional_Lookup was rejected and omitted — the project page may error on this record. Confirm the field link name.';
       zr = await postForm(data);
     }
+    // Same idea for a drawing: the extra project columns are worth having, but not at the cost of
+    // failing the add. Retry with just the fields that always worked, and say what was dropped.
+    if (kind === 'drawing' && zr.data && zr.data.code !== 3000) {
+      const bare = { Drawing_Number: data.Drawing_Number, MCP_Customer_Project_Form: project_id };
+      if (data.Components) bare.Components = data.Components;
+      bidiWarning = 'Zoho rejected one of Project_ID_Number / Project_ID_Relationship / ' +
+        'Drawing_Description, so the drawing was written without them (' +
+        ((zr.data && zr.data.message) || 'no message') + '). Confirm those field link names.';
+      data = bare;
+      zr = await postForm(data);
+    }
     if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the add', detail: zr.data });
     const id = zr.data && zr.data.data && zr.data.data.ID;
 
@@ -233,6 +256,52 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('project-scope add error:', detail);
+    res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
+// REPAIR — drawing records written before the project links were being set come back on the
+// project report with Project ID Number, Project ID Relationship and Drawing Description blank.
+// Patch them in place: same project, same numbers, nothing created or deleted.
+// Body: { project_id, descriptions?: { "<drawing number>": "<title>" } }
+app.post('/api/takeoff/project-scope/repair', async (req, res) => {
+  try {
+    const { project_id } = req.body || {};
+    if (!project_id) return res.status(400).json({ ok: false, error: 'project_id required' });
+    const desc = (req.body && req.body.descriptions) || {};
+    const key = function (s) { return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, ''); };
+    const descByKey = {};
+    Object.keys(desc).forEach(function (k) { descByKey[key(k)] = String(desc[k] || '').trim(); });
+
+    let rows = [];
+    try {
+      rows = await fetchAllZohoPages('/report/All_Project_Drawing_Details?criteria=(MCP_Customer_Project_Form==' + project_id + ')');
+    } catch (e) { rows = []; }
+
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    const out = { checked: rows.length, patched: 0, skipped: 0, failed: [] };
+
+    for (const r of rows) {
+      const patch = {};
+      if (!String(r.Project_ID_Number || '').trim()) patch.Project_ID_Number = String(project_id);
+      if (!(r.Project_ID_Relationship && r.Project_ID_Relationship.ID)) patch.Project_ID_Relationship = String(project_id);
+      const d = descByKey[key(r.Drawing_Number)];
+      if (d && !String(r.Drawing_Description || '').trim()) patch.Drawing_Description = d;
+      if (!Object.keys(patch).length) { out.skipped++; continue; }
+      try {
+        const zr = await axios.patch(base + '/report/All_Project_Drawing_Details/' + r.ID, { data: patch },
+          { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+        if (zr.data && zr.data.code !== 3000) out.failed.push({ number: r.Drawing_Number, detail: zr.data.message || zr.data.code });
+        else out.patched++;
+      } catch (err) {
+        out.failed.push({ number: r.Drawing_Number, detail: (err.response && err.response.data && err.response.data.message) || err.message });
+      }
+    }
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('project-scope repair error:', detail);
     res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
   }
 });

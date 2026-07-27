@@ -1362,7 +1362,7 @@
       for (const it of plan.create) {
         try {
           if (!drawingOnComp(scope[it.ci].cid, it.num)) {
-            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: it.num, component_id: scope[it.ci].cid });
+            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: it.num, component_id: scope[it.ci].cid, description: (it.s && it.s.title) || "" });
           }
         }
         catch (e) { failed.push(it.num + " — " + (e.message || e)); }
@@ -1829,7 +1829,7 @@
           const rec = findDrawingByNumber(s.number);
           if (rec && !rec.owner) await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: scope[ci].cid });
           else if (!rec && !drawingOnComp(scope[ci].cid, s.number)) {
-            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: scope[ci].cid });
+            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: scope[ci].cid, description: s.title || "" });
           }
           descMap[s.number] = s.title || "";
           if (asRef) markReference(s, "Reference only — no material taken off");
@@ -1867,7 +1867,7 @@
           if (rec && !rec.owner) {                      // on the project but unfiled — file it here
             await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: cid });
           } else if (!rec && !drawingOnComp(cid, s.number)) {
-            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: cid });
+            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: cid, description: s.title || "" });
           }
           descMap[s.number] = s.title || "";
         }
@@ -2099,7 +2099,7 @@
         }
         setScopeStatus('<span class="spin"></span>Adding ' + escHtml(sheet.number) + " under " + escHtml(scope[ci].name) + "…");
         try {
-          await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: sheet.number, component_id: scope[ci].cid });
+          await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: sheet.number, component_id: scope[ci].cid, description: sheet.title || "" });
           descMap[sheet.number] = sheet.title || "";
           if (asRef) markReference(sheet, "Reference only — no material taken off");
           await loadProject(); scopeFromProject(); renderScope(); renderCoverage(); saveScope();
