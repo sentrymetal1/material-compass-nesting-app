@@ -49,8 +49,13 @@ const ROW_ITEM = {
     note:          { type: "string", description: "OPTIONAL one short phrase only (≤100 chars), e.g. 'GAP — verify with spec/PM'. Do NOT write paragraphs here — all detailed analysis goes in `synopsis` or the top-level `notes`, never per-row." },
     galvanized:    { type: "boolean", description: "true if hot-dip galvanized per spec/drawings. Galvanizing is a FINISH: keep material_type as the base steel ('Carbon Steel') so the size resolves — do NOT use a 'Carbon Steel - Galvanized' material type for fabricated shapes." },
     width_ft:      { type: "number", description: "REQUIRED for Plate / Sheet / Tread Plate (area-measured): the plate WIDTH in feet (a 12\"-wide plate = 1.0). Put thickness in `size` ('1/2\"') and the width here. Linear members omit this." },
+    disposition:   { type: "string", description: "How this member is procured: 'fabricate' (cut/weld in the shop from stock — the default), 'buyout' (bought complete: grating, handrail systems, hatches, ladders), or 'by-others' (someone else's scope). Say which — do not leave it out." },
   },
-  required: ["form_type", "material_type", "specification", "size", "length_ft", "quantity", "confidence"],
+  // component and source_sheet are REQUIRED: a row that can't be tied to a component and a drawing
+  // can't be checked, can't be grouped, and lands in staging without a link. They may be empty
+  // strings when genuinely unknown, but the model has to make that call explicitly.
+  required: ["form_type", "material_type", "specification", "size", "length_ft", "quantity",
+             "confidence", "component", "source_sheet", "disposition"],
 };
 
 const SYNOPSIS_SCHEMA = {

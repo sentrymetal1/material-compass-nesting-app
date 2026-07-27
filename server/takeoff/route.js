@@ -67,6 +67,27 @@ async function takeoffHandler(req, res, deps) {
     const out = await runTakeoff({ docs: docs, modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog });
     const rows = out.rows;
 
+    // 1a. Fill in from the confirmed scope what the model left blank. The intake established which
+    // component each drawing belongs to, so a row that cites a sheet never needs to go without a
+    // component — and a blank component is a row that can't be grouped, checked, or linked on
+    // import. Deterministic: it only ever copies the mapping the estimator already approved.
+    const fill = { component: 0, sheet_unknown: [] };
+    const drawToComp = {};
+    (Array.isArray(body.scope_tree) ? body.scope_tree : []).forEach(function (n) {
+      const comp = String((n && n.component) || "").trim();
+      (Array.isArray(n && n.drawings) ? n.drawings : []).forEach(function (d) {
+        const k = String(d == null ? "" : d).toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (k && comp) drawToComp[k] = comp;
+      });
+    });
+    rows.forEach(function (r) {
+      if (String(r.component || "").trim()) return;
+      const k = String(r.source_sheet || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (k && drawToComp[k]) { r.component = drawToComp[k]; fill.component++; }
+      else if (k && fill.sheet_unknown.indexOf(r.source_sheet) < 0) fill.sheet_unknown.push(r.source_sheet);
+    });
+    if (fill.component) console.log("[takeoff] filled component on " + fill.component + " rows from the confirmed scope");
+
     // 1b. Snap materials to the catalog's exact spelling BEFORE the CSV is built — the import
     // matches on the string, so "1.5 x 1/8" and "1-1/2 x 1/8" are not the same row to it.
     const snap = deps.catalogGroups ? snapRows(rows, deps.catalogGroups) : { snapped: [], unmatched: [] };
@@ -104,6 +125,31 @@ async function takeoffHandler(req, res, deps) {
       verify_csv: verify_csv,
       material_snapped: snap.snapped.length,
       material_unmatched: snap.unmatched.length,
+      // What the model left blank, so the review page can show it rather than the user finding out
+      // in staging. blank_* counts are AFTER the scope backfill above.
+      field_gaps: (function () {
+        const empty = function (v) { return v === undefined || v === null || String(v).trim() === ""; };
+        return {
+          component: rows.filter(function (r) { return empty(r.component); }).length,
+          source_sheet: rows.filter(function (r) { return empty(r.source_sheet); }).length,
+          member_mark: rows.filter(function (r) { return empty(r.member_mark); }).length,
+          size: rows.filter(function (r) { return empty(r.size); }).length,
+          length_ft: rows.filter(function (r) { return !(Number(r.length_ft) > 0); }).length,
+          width_needed: rows.filter(function (r) {
+            return /plate|sheet/i.test(String(r.form_type || "")) && !(Number(r.width_ft) > 0);
+          }).length,
+          component_filled_from_scope: fill.component,
+          unknown_sheets: fill.sheet_unknown.slice(0, 10),
+        };
+      })(),
+      disposition: (function () {
+        const c = { fabricate: 0, buyout: 0, "by-others": 0, unset: 0 };
+        rows.forEach(function (r) {
+          const d = String(r.disposition || "").toLowerCase().trim();
+          if (c[d] === undefined) c.unset++; else c[d]++;
+        });
+        return c;
+      })(),
       credits_left: balance ? balance.credits_left : null,
       free_left: balance ? balance.free_left : null,
     });
