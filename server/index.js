@@ -194,7 +194,16 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
       // native records have it, API records without it were BLANK, and the page threw a generic
       // "Error occurred please contact application owner" on the null. MCP is the native subform
       // link (best-effort patch below). Setting only the first two is what broke the page.
-      data = { Project_Component: v, Project_LU: project_id, Project_Bi_Directional_Lookup: project_id };
+      // A natively-entered component carries Quantity 1 and zeroed money/weight fields. Left blank,
+      // anything that multiplies by Quantity or sums those columns is working from nothing.
+      data = {
+        Project_Component: v, Project_LU: project_id, Project_Bi_Directional_Lookup: project_id,
+        Quantity: 1,
+        Material_Cost_Estimated_Per_Unit: 0,
+        Total_Structural_Allocate_Amt: 0,
+        Total_Structural_Est_Matl_Amt: 0,
+        Unit_Weight_Of_Component: 0,
+      };
       mcpBestEffort = true;
     } else if (kind === 'drawing') {
       form = 'Project_Drawing_Details_Form'; report = 'All_Project_Drawing_Details';
@@ -228,6 +237,16 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
     // If the bidirectional link name is wrong, Zoho rejects the whole create. Rather than break every
     // add, retry without it and SURFACE the miss — a silent fallback would just re-create the exact
     // blank-link records that crashed the project page.
+    // Some of those columns may be formula/rollup fields on this tenant's form, which Zoho refuses
+    // to be written. Step back one field-set at a time rather than failing the add.
+    if (kind === 'component' && zr.data && zr.data.code !== 3000 && 'Quantity' in data) {
+      const keep = { Project_Component: data.Project_Component, Project_LU: project_id,
+                     Project_Bi_Directional_Lookup: project_id, Quantity: 1 };
+      bidiWarning = 'The cost/weight columns were rejected and omitted (' +
+        ((zr.data && zr.data.message) || 'no message') + ') — they are probably formula fields.';
+      data = keep;
+      zr = await postForm(data);
+    }
     if (kind === 'component' && zr.data && zr.data.code !== 3000 && 'Project_Bi_Directional_Lookup' in data) {
       delete data.Project_Bi_Directional_Lookup;
       bidiWarning = 'Project_Bi_Directional_Lookup was rejected and omitted — the project page may error on this record. Confirm the field link name.';
@@ -298,7 +317,40 @@ app.post('/api/takeoff/project-scope/repair', async (req, res) => {
         out.failed.push({ number: r.Drawing_Number, detail: (err.response && err.response.data && err.response.data.message) || err.message });
       }
     }
-    res.json({ ok: true, ...out });
+    // Components written the same way are missing Quantity (and the zeroed cost/weight columns a
+    // native entry starts with), so anything multiplying by Quantity works from a blank.
+    const comps = { checked: 0, patched: 0, skipped: 0, failed: [] };
+    let crows = [];
+    try {
+      crows = await fetchAllZohoPages('/report/All_Project_Components?criteria=(MCP_Customer_Project_Form==' + project_id + ')');
+    } catch (e) { crows = []; }
+    comps.checked = crows.length;
+    for (const c of crows) {
+      const patch = {};
+      if (!(Number(c.Quantity) > 0)) patch.Quantity = 1;
+      ['Material_Cost_Estimated_Per_Unit', 'Total_Structural_Allocate_Amt',
+       'Total_Structural_Est_Matl_Amt', 'Unit_Weight_Of_Component'].forEach(function (f) {
+        if (String(c[f] == null ? '' : c[f]).trim() === '') patch[f] = 0;
+      });
+      if (!Object.keys(patch).length) { comps.skipped++; continue; }
+      try {
+        const zr = await axios.patch(base + '/report/All_Project_Components/' + c.ID, { data: patch },
+          { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+        if (zr.data && zr.data.code !== 3000) {
+          // Retry with just Quantity — the rest are likely formula fields on this form.
+          if (patch.Quantity) {
+            const z2 = await axios.patch(base + '/report/All_Project_Components/' + c.ID, { data: { Quantity: patch.Quantity } },
+              { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+            if (z2.data && z2.data.code === 3000) { comps.patched++; continue; }
+          }
+          comps.failed.push({ component: c.Project_Component, detail: zr.data.message || zr.data.code });
+        } else comps.patched++;
+      } catch (err) {
+        comps.failed.push({ component: c.Project_Component, detail: (err.response && err.response.data && err.response.data.message) || err.message });
+      }
+    }
+
+    res.json({ ok: true, drawings: out, components: comps });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('project-scope repair error:', detail);
