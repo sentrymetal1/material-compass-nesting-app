@@ -130,7 +130,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.42 · 2026-07-28";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.43 · 2026-07-28";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -577,7 +577,11 @@
     const frame = document.getElementById("bomEditorFrame");
     // The editor tells us when its shim is listening; only then are the rows sent.
     window.__editorRecords = arr(preview.records);
-    frame.src = "bom-editor.html?mode=takeoff&project_id="+encodeURIComponent(params.project_id)+
+    // The editor is generated into the backend's own /takeoff/ folder, so address it there rather
+    // than relatively: the GitHub Pages copy of this page has no bom-editor.html beside it and the
+    // frame would 404. Cross-origin is fine — the two talk over postMessage either way.
+    frame.src = (RAILWAY_URL||"") + (RAILWAY_URL?"/takeoff/":"") + "bom-editor.html?mode=takeoff&project_id="+
+                encodeURIComponent(params.project_id)+
                 "&Manufacture_ID="+encodeURIComponent(params.manufacturer_id||"");
   }
 
