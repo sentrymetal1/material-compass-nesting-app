@@ -4,7 +4,7 @@ const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
 const FormData = require('form-data');
-const { takeoffHandler, reviseHandler, chatHandler, indexHandler } = require('./takeoff/route');
+const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler } = require('./takeoff/route');
 
 const app = express();
 app.use(cors());
@@ -503,7 +503,8 @@ app.post('/api/takeoff', async (req, res) => {
     // reference_drawings is the current name; excluded_drawings is the old one, kept so an older
     // cached copy of the widget keeps working.
     const refs = (req.body && (req.body.reference_drawings || req.body.excluded_drawings)) || [];
-    const treeCtx = buildScopeTreeContext(tree, refs, req.body && req.body.drawing_aliases);
+    const treeCtx = buildScopeTreeContext(tree, refs, req.body && req.body.drawing_aliases,
+                                          req.body && req.body.attached_documents);
     if (treeCtx) { projectContext = treeCtx; }
     else { const pid = req.body && req.body.project_id; if (pid) projectContext = await fetchProjectContext(pid); }
   } catch (e) {}
@@ -615,8 +616,44 @@ app.get('/api/takeoff/catalog-check', async (req, res) => {
 // confirmed it, and it shows the nesting (which drawings belong to which component) so the AI tags
 // `component` and `source_sheet` consistently. Returns '' if the tree is absent/empty/malformed,
 // so the mount falls back to the Zoho-read context.
-function buildScopeTreeContext(tree, excluded, aliases) {
-  if (!Array.isArray(tree) || !tree.length) return '';
+function buildScopeTreeContext(tree, excluded, aliases, documents) {
+  // NON-DRAWING DOCUMENTS in the same upload — a bill of material, a parts/cut list, a spec section.
+  // They used to be invisible to the prompt: the model still received the PDF, but nothing told it
+  // what the file was, so a 34-page parts list read as unlabelled pages between drawings. Named
+  // here, a BOM becomes what it should be — the authoritative count the drawings are checked against.
+  const docLines = (Array.isArray(documents) ? documents : []).map(function (d) {
+    const num = String((d && d.number) == null ? '' : d.number).trim();
+    if (!num) return null;
+    const kind = String((d && d.kind) || 'other').toLowerCase();
+    const what = kind === 'bom' ? 'BILL OF MATERIAL / PARTS LIST'
+               : kind === 'spec' ? 'SPECIFICATION'
+               : kind === 'drawings' ? 'DRAWING SET' : 'REFERENCE DOCUMENT';
+    const bits = [];
+    if (d && d.file) bits.push('file "' + String(d.file).trim() + '"');
+    if (d && d.pages) bits.push(String(d.pages) + ' pages');
+    if (d && d.component) bits.push('component: ' + String(d.component).trim());
+    const sum = String((d && (d.summary || d.title)) || '').trim();
+    return '- ' + num + '  [' + what + (bits.length ? ' — ' + bits.join(', ') : '') + ']' + (sum ? '\n    ' + sum : '');
+  }).filter(Boolean);
+  const docBlock = docLines.length
+    ? 'DOCUMENTS IN THIS PACKAGE THAT ARE NOT DRAWINGS — they are part of the scope and are listed on the ' +
+      'project alongside the drawings:\n' + docLines.join('\n') + '\n\n' +
+      'HOW TO USE THEM:\n' +
+      '- READ EVERY ONE of them. A bill of material, parts list or cut list is the most reliable source in ' +
+      'the package: it gives marks, sizes, lengths and quantities that a drawing only implies. Take material ' +
+      'off it directly.\n' +
+      '- DO NOT DOUBLE-COUNT. A member listed in a parts list AND drawn on a sheet is ONE row, not two. Where ' +
+      'the two disagree, follow the parts list for quantity and length, follow the drawing for how it is used, ' +
+      'and say so once in `notes`.\n' +
+      '- When a row comes from one of these documents, set `source_sheet` to that document\'s number EXACTLY as ' +
+      'written above, and set `component` from the component it is listed under above (or the best-fitting ' +
+      'component if it covers several).\n' +
+      '- A specification is read for grades, finishes and requirements — raise no rows from it.\n\n'
+    : '';
+
+  if (!Array.isArray(tree) || !tree.length) {
+    return docBlock ? "THIS PROJECT'S CONFIRMED SCOPE:\n\n" + docBlock : '';
+  }
   const seenC = {}, nodes = [];
   tree.forEach(function (n) {
     const name = String((n && n.component) == null ? '' : n.component).trim();
@@ -631,7 +668,7 @@ function buildScopeTreeContext(tree, excluded, aliases) {
     });
     nodes.push({ name: name, draws: draws });
   });
-  if (!nodes.length) return '';
+  if (!nodes.length) return docBlock ? "THIS PROJECT'S CONFIRMED SCOPE:\n\n" + docBlock : '';
   const allDraws = [];
   const body = nodes.map(function (n) {
     n.draws.forEach(function (d) { if (allDraws.indexOf(d) < 0) allDraws.push(d); });
@@ -659,7 +696,8 @@ function buildScopeTreeContext(tree, excluded, aliases) {
 
   return "THIS PROJECT'S CONFIRMED SCOPE BREAKDOWN (the estimator arranged and approved this — it is AUTHORITATIVE):\n\n" +
     "COMPONENTS / ASSEMBLIES, each with the drawings it is detailed on:\n" + body + '\n\n' +
-    (skips.length ? "REFERENCE-ONLY SHEETS — part of the package and on the project, but no material comes off them:\n" + skips.join('\n') + '\n\n' : '') +
+    docBlock +
+    (skips.length ?"REFERENCE-ONLY SHEETS — part of the package and on the project, but no material comes off them:\n" + skips.join('\n') + '\n\n' : '') +
     (alias.length ? "DRAWING NUMBER MAPPING — same drawing, different number printed on the sheet:\n" + alias.join('\n') + '\n\n' : '') +
     "RULES:\n" +
     "- Assign EVERY quantified member's `component` to the single best-fitting name above, spelled EXACTLY as shown.\n" +
@@ -667,6 +705,7 @@ function buildScopeTreeContext(tree, excluded, aliases) {
     "- Do NOT invent new component names or drawing numbers. If a member genuinely fits none of the above, leave `component` empty and note it in the top-level `notes` — do not force-fit it.\n" +
     (skips.length ? "- READ the reference-only sheets above for context (dimensions, layouts, finishes, connections) but raise NO rows from them. If one clearly carries a fabricated member the estimator may have misjudged, say so once in `notes` rather than adding the row.\n" : '') +
     (alias.length ? "- Apply the drawing number mapping above to `source_sheet` — report the project's number, never the one printed on the sheet.\n" : '') +
+    (docLines.length ? "- Every file in this upload is listed above — drawings AND non-drawings. Use all of them; if you find content that fits none of the entries listed, take it off anyway and flag it in `notes`.\n" : '') +
     "- The scope above covers every sheet in the documents. If you find a sheet that is neither listed nor excluded, take it off and flag it in `notes` — it means the intake missed it.\n" +
     (allDraws.length ? "- The full confirmed drawing set: " + allDraws.join(', ') + '.\n' : '');
 }
@@ -695,6 +734,7 @@ async function fetchProjectContext(projectId) {
 app.post('/api/takeoff/revise', (req, res) => reviseHandler(req, res, {}));
 app.post('/api/takeoff/chat', (req, res) => chatHandler(req, res, {}));
 app.post('/api/takeoff/index', (req, res) => indexHandler(req, res)); // intake: read sheet numbers + page ranges
+app.post('/api/takeoff/ask', (req, res) => askHandler(req, res));     // intake: ask about the uploaded documents
 
 // AI take-off COMMIT — write the reviewed BOM CSV into Import_BOM_Form (Zoho) server-side.
 // The widget runs standalone (no Creator SDK context), so the Zoho write happens here using the

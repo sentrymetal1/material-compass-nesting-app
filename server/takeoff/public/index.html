@@ -296,16 +296,43 @@
     .preflight .pflist { font-size:11.5px; }
     .status { font-size:13px; }
     .result { font-size:13px; }
+
+    /* A file that isn't a drawing — a parts list, a spec — carries a tag wherever it's listed, so
+       it's never mistaken for a misread drawing number. */
+    .dtag { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:9px; font-size:10px;
+            font-weight:700; letter-spacing:.02em; text-transform:uppercase; background:#eef1f5; color:#5b6675;
+            border:1px solid #dde3ea; vertical-align:middle; }
+    .dtag.bom { background:#eef7ee; color:#2f6b39; border-color:#cfe6d3; }
+
+    /* Ask-the-AI at intake: same conversation the review page has, one step earlier — about the
+       documents themselves, before a run is spent. */
+    .askbox { margin:0 0 16px; padding:11px 13px; background:#fbfcfe; border:1px solid #e3e8ef; border-radius:8px; }
+    .askbox .secttl { margin-bottom:8px; }
+    .askhint { font-size:11px; color:#8893a0; font-weight:400; }
+    .askthread { max-height:280px; overflow:auto; margin-bottom:8px; }
+    .askthread:empty { display:none; }
+    .askq, .aska { font-size:12.5px; line-height:1.5; padding:7px 10px; border-radius:7px; margin-bottom:6px; }
+    .askq { background:#eef4fb; color:#2c3e52; font-weight:600; }
+    .aska { background:#fff; border:1px solid #e6eaf0; color:#333c48; white-space:pre-wrap; }
+    .aska .askcost { display:block; margin-top:5px; font-size:10.5px; color:#98a2b0; }
+    .askrow { display:flex; gap:8px; }
+    .askrow input { flex:1; padding:8px 10px; border:1px solid #d5dbe3; border-radius:6px; font-size:12.5px; font-family:inherit; }
+    .askbtn { padding:8px 16px; border:0; border-radius:6px; background:var(--blue); color:#fff;
+              font-size:12.5px; font-weight:600; cursor:pointer; }
+    .askbtn:disabled { opacity:.55; cursor:default; }
+    .askex { margin-top:7px; font-size:11.5px; color:#8893a0; }
+    .askex a { color:var(--blue); text-decoration:none; margin-right:10px; }
   </style>
 </head>
 <body>
   <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off</span></div>
   <div class="card">
     <h1>AI Material Take-off</h1>
-    <p class="sub">Upload the project drawings + Division-05 spec (PDF — you can select several:
-       S sheets, A sheets, and the Metals spec). As soon as they're in, Material Compass AI reads the
-       title blocks and suggests how the drawings break down into components — take it, edit it, or
-       ignore it. Nothing is taken off until you start the run. Keep the combined size under ~32 MB.</p>
+    <p class="sub">Upload everything the job comes with (PDF — select several at once): drawings,
+       bills of material and parts lists, and the Division-05 spec. Every file is listed below, whether
+       or not it has title blocks, and Material Compass AI suggests how it all breaks down into
+       components — take it, edit it, or ignore it. Ask it questions before you commit. Nothing is taken
+       off until you start the run. Keep the combined size under ~32 MB.</p>
 
     <div id="resume" style="display:none;margin:0 0 16px;padding:11px 13px;background:#f0f6fc;
          border:1px solid #cfe0f2;border-radius:8px;font-size:13px;color:#334;">
@@ -349,6 +376,21 @@
     </div>
     <div id="preflight"></div>
 
+    <!-- Questions BEFORE the run, not just after it. The review page can be asked anything about the
+         finished package; this is the same conversation one step earlier, about the documents on the
+         screen — what a file is, what's on a sheet, whether something is covered anywhere. It only
+         answers: it never edits the scope, and it doesn't consume a take-off. -->
+    <div class="askbox" id="askBox" style="display:none">
+      <div class="secttl"><span>Ask about these documents</span>
+        <span class="askhint">answers only — nothing is changed, and no take-off is spent</span></div>
+      <div class="askthread" id="askThread"></div>
+      <div class="askrow">
+        <input type="text" id="askInput" placeholder="e.g. what is in the 34-page BOM file? · which sheets carry no material? · is the handrail covered anywhere?" />
+        <button type="button" class="askbtn" id="askSend">Ask</button>
+      </div>
+      <div class="askex" id="askEx"></div>
+    </div>
+
     <div class="cols">
       <div class="scope" id="scope">
         <div class="secttl">
@@ -381,7 +423,7 @@
       <!-- In line with the rest: it's the source list the other three are checked against, so
            having to scroll to the bottom of the page to see it defeated the purpose. -->
       <div class="panel" id="allocCol">
-        <div class="ptl">Drawings found in the PDF</div>
+        <div class="ptl">Drawings &amp; documents found</div>
         <div class="pbody" id="allocPanel"></div>
       </div>
     </div>
@@ -394,7 +436,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.46 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.47 (2026-07-28)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -470,6 +512,12 @@
     const statusEl = document.getElementById("status");
     const resultBox = document.getElementById("resultBox");
     let docs = [];        // [{ name, b64, mb }]
+    // One record per UPLOADED FILE, drawings or not. A bill of material, a parts list or a spec has
+    // no title block on any page, so it produced no drawing and the whole file used to vanish from
+    // this screen. Every file is now listed, gets an entry among the drawings, goes on a component,
+    // and is named to the AI at run time — nothing in the upload is left unaccounted for.
+    let docList = [];     // [{doc,name,pages,kind,label,summary,entry_number}] — from the intake read
+    const isDoc = (s) => !!s && s.kind === "document";
 
     drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("over"));
@@ -517,7 +565,7 @@
     // it's stale — throw it away rather than show a count that no longer matches the PDFs.
     function invalidateScan() {
       if (!audit && !detected.length) return;
-      audit = null; detected = [];
+      audit = null; detected = []; docList = [];
       docs.forEach((d) => { d.pages = 0; });
       renderAlloc();
       setScopeStatus("Files changed — read the drawings from the PDF again to re-check the count.");
@@ -528,12 +576,18 @@
     function renderFiles() {
       const totalMb = docs.reduce((s, d) => s + d.mb, 0);
       const over = totalMb > MAX_MB;
-      const rows = docs.map((d, i) =>
-        '<div class="frow"><span class="fname">• ' + escHtml(d.name) +
+      const rows = docs.map((d, i) => {
+        // Once read, say what each file IS on the file itself — a 34-page parts list looked
+        // identical to a 34-page drawing set here, which is how it went unnoticed.
+        const m = docList.find((x) => Number(x.doc) === i + 1);
+        const kind = m && (m.kind === "bom" ? "parts list" : m.kind === "spec" ? "spec"
+                        : m.kind === "drawings" ? "drawings" : "");
+        return '<div class="frow"><span class="fname">• ' + escHtml(d.name) +
           '  <span class="fmb">(' + d.mb.toFixed(1) + ' MB' +
-            (d.pages ? ' · ' + d.pages + ' page' + (d.pages === 1 ? '' : 's') : '') + ')</span></span>' +
-          '<button type="button" class="fx" data-i="' + i + '" title="Remove this file" aria-label="Remove">✕</button></div>'
-      ).join("");
+            (d.pages ? ' · ' + d.pages + ' page' + (d.pages === 1 ? '' : 's') : '') + ')</span>' +
+          (kind ? '<span class="dtag' + (m.kind === "bom" ? " bom" : "") + '">' + kind + "</span>" : "") + "</span>" +
+          '<button type="button" class="fx" data-i="' + i + '" title="Remove this file" aria-label="Remove">✕</button></div>';
+      }).join("");
       const totalPages = docs.reduce((s, d) => s + (d.pages || 0), 0);
       document.getElementById("fileList").innerHTML = docs.length
         ? rows + '<div class="' + (over ? "big" : "") + '"><b>Total: ' + totalMb.toFixed(1) + " MB" +
@@ -542,6 +596,7 @@
         : '<div class="fmb" style="padding:6px 2px">No files yet — choose or drop PDFs above.</div>';
       go.disabled = over || docs.length === 0;
       updateScanBtn();
+      renderAsk();          // the question box belongs to the files that are actually loaded
     }
 
     // ---- PROJECT SCOPE — RECORD-BOUND (components ▸ drawings) ---------------
@@ -575,7 +630,7 @@
     function saveSheets() {
       try {
         localStorage.setItem(sheetKey(), JSON.stringify({ sheets: sheets, reference: referenceSheets,
-          separate: separate, aliases: aliases, audit: audit, readMeta: readMeta }));
+          separate: separate, aliases: aliases, audit: audit, readMeta: readMeta, docList: docList }));
       } catch (e) {}
     }
     const isReference = (num) => referenceSheets.some((x) => _norm(x.number) === _norm(num));
@@ -1072,10 +1127,14 @@
       // A drawing covering several pages is legitimate, but it's also what a MISREAD number
       // looks like (two different sheets read as the same number collapse into one row), so
       // it's always called out and can be split back apart.
+      // A document entry is MEANT to span its whole file — 34 pages of parts list is one document,
+      // not 34 misread drawings — so it never joins the "check this drawing" list.
       const multi = read.map((s, k) => ({ k: k, s: s, n: pagesOf(s).length }))
-        .filter((x) => x.n > 1);
+        .filter((x) => x.n > 1 && !isDoc(x.s));
+      const docRows = read.filter(isDoc);
       return {
-        total: total, drawings: read.length, multi: multi,
+        total: total, drawings: read.length - docRows.length, docs: docRows, multi: multi,
+        onDoc: docRows.reduce((n, s) => n + pagesOf(s).length, 0),
         onDrawing: Object.keys(covered).length,
         noNumber: noNumber,                              // read, but no title-block number (cover/index) or row dropped
         notRead: (audit.pages_missing || []),            // the model never returned these pages
@@ -1103,7 +1162,8 @@
           " drawing" + (detected.length === 1 ? "" : "s") + " below could not be checked against it. Review the list by eye.</div>";
       }
       const head = "<b>" + t.total + " page" + (t.total === 1 ? "" : "s") + "</b> in the PDF → <b>" +
-        t.drawings + " drawing" + (t.drawings === 1 ? "" : "s") + "</b>";
+        t.drawings + " drawing" + (t.drawings === 1 ? "" : "s") + "</b>" +
+        (t.docs.length ? " + <b>" + t.docs.length + " other document" + (t.docs.length === 1 ? "" : "s") + "</b>" : "");
       const bad = [];
       if (t.notRead.length) bad.push(t.notRead.length + " page" + (t.notRead.length === 1 ? "" : "s") +
         " never came back from the read (" + pageLabels(t.notRead) + ")");
@@ -1113,6 +1173,17 @@
         ? '<span class="sub2">' + t.noNumber.length + " page" + (t.noNumber.length === 1 ? "" : "s") +
           " carry no drawing number (" + pageLabels(t.noNumber) + ") — normal for cover, index and notes pages.</span>"
         : "";
+      // The files that aren't drawing sets, spelled out. This is the answer to "why isn't my BOM in
+      // the list?" — it IS in the list, as one entry covering its whole page range.
+      if (t.docs.length) {
+        extra += '<span class="sub2">📄 ' + t.onDoc + " page" + (t.onDoc === 1 ? "" : "s") + " belong to " +
+          t.docs.length + " document" + (t.docs.length === 1 ? "" : "s") + " that " +
+          (t.docs.length === 1 ? "isn't a drawing" : "aren't drawings") + " — " +
+          t.docs.map((s) => "<b>" + escHtml(s.number) + "</b>" +
+            (s.docKind === "bom" ? " (parts list)" : s.docKind === "spec" ? " (spec)" : "") +
+            " p." + pagesOf(s)[0] + "–" + pagesOf(s).slice(-1)[0]).join(", ") +
+          ". Each one is an entry below: put it on a component and the take-off reads it by name.</span>";
+      }
       if (t.multi.length) {
         extra += '<span class="sub2">⚑ ' + t.multi.length + (t.multi.length === 1 ? " drawing covers" : " drawings cover") +
           " more than one page — <b>if your set has more drawings than the count above, this is why</b> (" +
@@ -1121,7 +1192,9 @@
       }
       if (!bad.length) {
         return '<div class="aud ok">✓ ' + head + " — all " + t.total + " pages accounted for: " +
-          t.onDrawing + " on a drawing" + (t.noNumber.length ? ", " + t.noNumber.length + " without a number" : "") + "." +
+          (t.onDrawing - t.onDoc) + " on a drawing" +
+          (t.onDoc ? ", " + t.onDoc + " on a document" : "") +
+          (t.noNumber.length ? ", " + t.noNumber.length + " without a number" : "") + "." +
           extra + "</div>";
       }
       return '<div class="aud warn">⚠ ' + head + " — " + bad.join("; ") +
@@ -1175,6 +1248,8 @@
         const d = await r.json();
         if (!r.ok || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
         const readSheets = Array.isArray(d.sheets) ? d.sheets : [];
+        // Set before renderFiles() below — the file list labels each file from this.
+        docList = Array.isArray(d.documents) ? d.documents : [];
         // The server parses the real page count out of each PDF — show it on the files.
         audit = d.audit || null;
         if (audit && Array.isArray(audit.docs)) {
@@ -1192,6 +1267,12 @@
           pageList: Array.isArray(s.page_list) ? s.page_list.map(Number) : null,
           confidence: (s.confidence == null ? null : Number(s.confidence)),
           suggestion: String(s.suggested_component || "").trim(),   // AI's proposed component for this sheet
+          // A file with no title blocks (a BOM, a parts list, a spec) comes back as ONE entry for the
+          // file itself, so it can be placed on a component and named to the AI like any drawing.
+          kind: s.kind === "document" ? "document" : "drawing",
+          docKind: String(s.doc_kind || "").trim(),
+          file: String(s.file || "").trim(),
+          summary: String(s.summary || "").trim(),
           compIdx: guessComp(String(s.number || "")),
         })).filter((s) => s.number));
         // Coverage tracks the same objects, so edits and drops in the grid follow through.
@@ -1202,8 +1283,10 @@
           setScopeStatus("No drawing numbers found in the PDF — type them under a component instead.");
           return;
         }
+        const nDoc = detected.filter(isDoc).length, nDwg = detected.length - nDoc;
         setScopeStatus("Read " + (audit && audit.page_count ? audit.page_count + " page" + (audit.page_count === 1 ? "" : "s") + " → " : "") +
-          detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
+          nDwg + " drawing" + (nDwg === 1 ? "" : "s") +
+          (nDoc ? " + " + nDoc + " other document" + (nDoc === 1 ? "" : "s") + " (BOM / parts list / spec)" : "") +
           (d.cost_usd != null ? " ($" + d.cost_usd + ")" : "") + ". Confirm how they're allocated below.");
       } catch (e) {
         setScopeStatus("Couldn’t read the PDF (" + (e.message || e) + "). Use ↻ to try again, or pick the " +
@@ -1270,11 +1353,16 @@
             "</select>"
           : '<span class="apg">name a component first</span>';
         const span = pagesOf(s).length;
+        const tag = isDoc(s)
+          ? '<span class="dtag' + (s.docKind === "bom" ? " bom" : "") + '">' +
+              (s.docKind === "bom" ? "parts list" : s.docKind === "spec" ? "spec" : "document") + "</span>"
+          : "";
         return '<div class="' + low + '"><input type="text" class="anum" data-num="' + k + '" value="' +
-            escAttr(s.number) + '" title="Correct the drawing number if it was misread" /></div>' +
-          '<div class="adesc" title="' + escAttr(s.title || "") + '">' + escHtml(s.title || "") + "</div>" +
+            escAttr(s.number) + '" title="Correct the drawing number if it was misread" />' + tag + "</div>" +
+          '<div class="adesc" title="' + escAttr(s.summary || s.title || "") + '">' + escHtml(s.title || "") + "</div>" +
           '<div class="apg">' + pg +
-            (span > 1 ? ' <button type="button" class="asplit" data-split="' + k +
+            // Splitting is for two drawings read as one number. A document is one file by design.
+            (span > 1 && !isDoc(s) ? ' <button type="button" class="asplit" data-split="' + k +
               '" title="Split into one row per page — use if two drawings were read as one number">Split</button>' : "") +
           "</div>" +
           '<div class="arrow">→</div>' +
@@ -1283,10 +1371,15 @@
       }).join("");
       host.innerHTML = '<div class="alloc">' +
         auditHtml() + planHtml() +
-        '<div class="ahd">Detected ' + detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
-          " in the PDF — confirm how they go into the take-off:</div>" +
+        (function () {
+          const nd = detected.filter(isDoc).length, nw = detected.length - nd;
+          return '<div class="ahd">Detected ' + nw + " drawing" + (nw === 1 ? "" : "s") +
+            (nd ? " and " + nd + " other document" + (nd === 1 ? "" : "s") : "") +
+            " in the PDF — confirm how they go into the take-off:</div>";
+        })() +
         '<div class="ahint">Numbers are editable — fix a misread one in place, <b>Split</b> a row that ' +
-          'covers two drawings, ✕ a row that isn’t a drawing.</div>' +
+          'covers two drawings, ✕ a row that isn’t part of this job. A <b>parts list</b> or <b>spec</b> ' +
+          'is listed here too: put it on a component and the run reads it by name.</div>' +
         '<div class="agrid">' +
           '<div class="acolhd">Drawing no.</div><div class="acolhd">Title</div><div class="acolhd">Pages</div>' +
           '<div class="acolhd"></div><div class="acolhd">Component</div><div class="acolhd"></div>' +
@@ -1529,6 +1622,7 @@
           // WHY a 27-page set read as 24 drawings.
           if (st.audit && typeof st.audit === "object") audit = st.audit;
           if (st.readMeta && typeof st.readMeta === "object") readMeta = st.readMeta;
+          if (Array.isArray(st.docList)) docList = st.docList;
           aliases = (st.aliases && typeof st.aliases === "object") ? st.aliases : {};
         }
       } catch (e) {}
@@ -1927,13 +2021,25 @@
                 '">Different drawing — add it</button>' +
             "</div></div>";
         }
-        return '<div class="covrow"><div class="covhd"><b>' + escHtml(it.s.number) + "</b> " +
-          '<span class="adesc">' + escHtml(it.s.title || "") + '</span> <span class="apg">' + pg + "</span></div>" +
-          '<div class="covwhy">This sheet isn’t on any component yet. Put it under one — it’s added to the ' +
+        const why = isDoc(it.s)
+          ? "This is <b>" + (it.s.docKind === "bom" ? "a parts list / bill of material" :
+              it.s.docKind === "spec" ? "a specification" : "a document") + "</b>, not a drawing — " +
+            (it.s.file ? "the file <b>" + escHtml(it.s.file) + "</b>" : "one of your files") +
+            ". It isn’t on any component yet. Put it under one and the take-off is told exactly what it is" +
+            (it.s.docKind === "bom" ? " — a parts list is the most reliable source in the package, so material " +
+              "IS taken off it." : ". A spec is read for grades and finishes; no rows come off it, so " +
+              "<b>reference only</b> fits.") +
+            (sug ? " Suggested component: <b>" + escHtml(sug) + "</b>." : "")
+          : "This sheet isn’t on any component yet. Put it under one — it’s added to the " +
             "project with this exact number. If it carries no material to take off (a layout, a section, a " +
             "general note), add it as <b>reference only</b>: it still goes on the component, the take-off just " +
             "doesn’t raise rows from it." +
-            (sug ? " The title suggests a component called <b>" + escHtml(sug) + "</b>." : "") + "</div>" +
+            (sug ? " The title suggests a component called <b>" + escHtml(sug) + "</b>." : "");
+        return '<div class="covrow"><div class="covhd"><b>' + escHtml(it.s.number) + "</b> " +
+          (isDoc(it.s) ? '<span class="dtag' + (it.s.docKind === "bom" ? " bom" : "") + '">' +
+            (it.s.docKind === "bom" ? "parts list" : it.s.docKind === "spec" ? "spec" : "document") + "</span> " : "") +
+          '<span class="adesc">' + escHtml(it.s.title || "") + '</span> <span class="apg">' + pg + "</span></div>" +
+          '<div class="covwhy">' + why + "</div>" +
           '<div class="covacts">' +
             (namedComps().length
               ? compChoices(namedComps()[0].i) +
@@ -1995,9 +2101,11 @@
       };
       const checklist = cov.items.slice().sort((a, b) => natCmp(a.s.number, b.s.number)).map((it) => {
         const st = stateOf(it);
-        return '<div class="ckrow ' + st.cls + '"><span class="ckmark">' + st.mark + "</span>" +
+        return '<div class="ckrow ' + st.cls + '"><span class="ckmark">' + (isDoc(it.s) ? "📄" : st.mark) + "</span>" +
           '<span class="cknum">' + escHtml(it.s.number) + "</span>" +
-          '<span class="ckwhere">' + escHtml(st.where) + "</span></div>";
+          '<span class="ckwhere">' + escHtml(st.where) +
+            (isDoc(it.s) ? " · " + (it.s.docKind === "bom" ? "parts list" : it.s.docKind === "spec" ? "spec" : "document") : "") +
+          "</span></div>";
       }).join("");
       const missingFromPdf = cov.extras.slice().sort(byNumber).map((x) =>
         '<div class="ckrow warn"><span class="ckmark">!</span><span class="cknum">' + escHtml(x.number) + "</span>" +
@@ -2109,6 +2217,116 @@
       }
     });
 
+    // ---- ASK ABOUT THE DOCUMENTS -------------------------------------------
+    // The review page can be asked anything about a finished take-off. This is the same thing before
+    // the run: the estimator can interrogate the uploaded files while deciding how they break down —
+    // "what's in the 34-page file", "is the handrail covered anywhere", "which sheets carry no
+    // material". It answers only. It cannot touch the scope or the project, so a question can never
+    // quietly change what the run is about to read, and it doesn't consume a take-off.
+    let askThread = [], asking = false;
+    function askContext() {
+      const parts = [];
+      if (sheets.length) {
+        parts.push("WHAT THE INTAKE READ OUT OF THESE FILES:\n" + sheets.map((s) => {
+          const pg = pagesOf(s);
+          return "- " + s.number +
+            (isDoc(s) ? "  [" + (s.docKind === "bom" ? "parts list / bill of material"
+                               : s.docKind === "spec" ? "specification" : "document") +
+                        (s.file ? ", file: " + s.file : "") + "]" : "") +
+            (s.title ? "  — " + s.title : "") +
+            (pg.length ? "  (p." + pg[0] + (pg.length > 1 ? "–" + pg[pg.length - 1] : "") + ")" : "");
+        }).join("\n"));
+      }
+      const tree = buildScopeTree();
+      if (tree.length) {
+        parts.push("THE ESTIMATOR'S CONFIRMED SCOPE SO FAR — component → drawings:\n" +
+          tree.map((c) => "- " + c.component + ": " +
+            (c.drawings.length ? c.drawings.join(", ") : "(no drawings placed yet)")).join("\n"));
+      }
+      if (sheets.length) {
+        const open = coverage().open.map((x) => x.s.number);
+        if (open.length) parts.push("NOT YET PLACED ON A COMPONENT: " + open.join(", "));
+      }
+      if (referenceSheets.length) {
+        parts.push("MARKED REFERENCE-ONLY (read for context, no BOM rows): " +
+          referenceSheets.map((x) => x.number).join(", "));
+      }
+      return parts.join("\n\n");
+    }
+    const ASK_EXAMPLES = [
+      "What is in each file I uploaded?",
+      "Which sheets carry no material to take off?",
+      "Does the parts list cover everything on the drawings?",
+    ];
+    function renderAsk() {
+      const box = document.getElementById("askBox");
+      if (!box) return;
+      box.style.display = docs.length ? "block" : "none";
+      const th = document.getElementById("askThread");
+      th.innerHTML = askThread.map((m) => m.role === "user"
+        ? '<div class="askq">' + escHtml(m.text) + "</div>"
+        : '<div class="aska">' + escHtml(m.text) +
+          (m.cost != null ? '<span class="askcost">$' + m.cost + "</span>" : "") + "</div>").join("");
+      th.scrollTop = th.scrollHeight;
+      document.getElementById("askEx").innerHTML = askThread.length ? "" :
+        "Try: " + ASK_EXAMPLES.map((q, i) => '<a href="#" data-ex="' + i + '">' + escHtml(q) + "</a>").join("");
+    }
+    async function sendAsk(text) {
+      if (asking || !docs.length) return;
+      const q = String(text || "").trim();
+      if (!q) return;
+      asking = true;
+      const btn = document.getElementById("askSend"), inp = document.getElementById("askInput");
+      btn.disabled = true; inp.value = "";
+      askThread.push({ role: "user", text: q });
+      askThread.push({ role: "assistant", text: "…reading your documents", pending: true });
+      renderAsk();
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/takeoff/ask", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pdfs: docs.map((d) => d.b64), names: docs.map((d) => d.name),
+            // Only the real turns — the pending placeholder isn't part of the conversation.
+            messages: askThread.filter((m) => !m.pending).map((m) => ({ role: m.role, text: m.text })),
+            context: askContext(),
+            model: (document.getElementById("model") || {}).value || "sonnet",
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
+        askThread[askThread.length - 1] = { role: "assistant", text: d.reply || "(no answer)", cost: d.cost_usd };
+      } catch (e) {
+        askThread[askThread.length - 1] = { role: "assistant",
+          text: "Couldn't answer that: " + (e.message || e) + "\nThe documents are still loaded — try again." };
+      } finally {
+        asking = false; btn.disabled = false; renderAsk(); inp.focus();
+      }
+    }
+    document.getElementById("askSend").addEventListener("click", () =>
+      sendAsk(document.getElementById("askInput").value));
+    document.getElementById("askInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); sendAsk(e.target.value); }
+    });
+    document.getElementById("askEx").addEventListener("click", (e) => {
+      const a = e.target.closest("[data-ex]"); if (!a) return;
+      e.preventDefault();
+      sendAsk(ASK_EXAMPLES[Number(a.getAttribute("data-ex"))]);
+    });
+
+    // The non-drawing files, as the run needs to hear about them: what each one IS, which component
+    // it was placed under, and the number to cite when a row comes off it. Without this the model
+    // still receives the PDF but has no idea a 34-page file is a parts list.
+    function attachedDocs() {
+      const idx = scopeDrawIndex();
+      return sheets.filter(isDoc).map((s) => {
+        const use = aliases[_norm(s.number)] || s.number;
+        const hit = idx.find((x) => _norm(x.number) === _norm(use));
+        return { number: use, title: s.title || "", kind: s.docKind || "other",
+                 file: s.file || "", pages: pagesOf(s).length, summary: s.summary || "",
+                 component: hit ? hit.comp : "", reference_only: isReference(s.number) };
+      });
+    }
+
     // ---- PRE-FLIGHT ---------------------------------------------------------
     // The full take-off costs money and takes a minute, and it can only be as good as the scope it
     // is handed. So "Run" doesn't run: it lays out exactly what is about to be sent — the drawings
@@ -2150,7 +2368,8 @@
         '<div class="pfrow">' +
           "<span><b>" + docs.length + "</b> file" + (docs.length === 1 ? "" : "s") + "</span>" +
           (pages ? "<span><b>" + pages + "</b> pages</span>" : "") +
-          (sheets.length ? "<span><b>" + sheets.length + "</b> drawings in the PDF</span>" : "") +
+          (sheets.length ? "<span><b>" + (sheets.length - sheets.filter(isDoc).length) + "</b> drawings in the PDF</span>" : "") +
+          (sheets.filter(isDoc).length ? "<span><b>" + sheets.filter(isDoc).length + "</b> other documents</span>" : "") +
           "<span><b>" + tree.length + "</b> component" + (tree.length === 1 ? "" : "s") + "</span>" +
           "<span><b>" + drawings + "</b> drawings in scope</span>" +
           (referenceSheets.length ? "<span><b>" + referenceSheets.length + "</b> reference only</span>" : "") +
@@ -2160,6 +2379,13 @@
         "<ul class=\"pflist\">" + list + (tree.length > 12 ? "<li>…</li>" : "") + "</ul>" +
         (referenceSheets.length ? '<div class="pfex">Reference only — on the project, read for context, no BOM rows: ' +
           escHtml(referenceSheets.slice(0, 8).map((x) => x.number).join(", ")) + "</div>" : "") +
+        (function () {
+          const ad = attachedDocs();
+          return ad.length ? '<div class="pfex">Documents that aren’t drawings, sent by name: ' +
+            ad.map((d) => "<b>" + escHtml(d.number) + "</b> (" +
+              (d.kind === "bom" ? "parts list" : d.kind === "spec" ? "spec" : "document") +
+              (d.component ? " → " + escHtml(d.component) : ", not on a component") + ")").join(" · ") + "</div>" : "";
+        })() +
         (blockers.length
           ? '<div class="pfalt"><a href="#" id="goCancel">close and resolve them above</a></div>'
           : '<button type="button" class="go" id="goConfirm" style="margin-top:10px">▶ Start the full take-off</button>' +
@@ -2225,6 +2451,9 @@
             // Everything the estimator decided about coverage travels with the run: which sheets to
             // skip and why, and any sheet whose number on the drawing differs from the project's.
             reference_drawings: referenceSheets.map((x) => ({ number: x.number, title: x.title, reason: x.reason })),
+            // Every uploaded file that isn't a drawing set — named, classified and tied to a component
+            // so a parts list is read AS a parts list instead of as unlabelled pages.
+            attached_documents: attachedDocs(),
             drawing_aliases: Object.keys(aliases).map((k) => {
               const s = sheets.find((z) => _norm(z.number) === k);
               return { pdf_number: s ? s.number : k, use_number: aliases[k] };

@@ -499,6 +499,21 @@ const SHEET_INDEX_TOOL = {
           required: ["page", "number"],
         },
       },
+      documents: {
+        type: "array",
+        description: "One entry per ATTACHED DOCUMENT, in attachment order — including documents that are not drawings at all (a bill of material, parts list, cut list, spec section, vendor cut sheet). Every attached document gets an entry, no exceptions.",
+        items: {
+          type: "object",
+          properties: {
+            doc:   { type: "integer", description: "1-based index of the attached document." },
+            kind:  { type: "string",  description: "What this document IS: 'drawings' (sheets with title blocks), 'bom' (bill of material / parts list / cut list / material summary), 'spec' (specification section, written requirements), or 'other'." },
+            label: { type: "string",  description: "The document's own identifying number or title, read from inside it (e.g. 'AAP3805291-00504', 'Bill of Material Rev C', 'Section 05 12 00'). Empty if it carries none." },
+            summary: { type: "string", description: "ONE short line: what this document contains and what an estimator would use it for (e.g. 'Parts list for the platform assembly — 84 line items with marks, sizes and cut lengths.')." },
+            suggested_component: { type: "string", description: "If the whole document relates to ONE assembly, the same short component name used for the sheets; else empty." },
+          },
+          required: ["doc", "kind"],
+        },
+      },
     },
     required: ["pages"],
   },
@@ -522,6 +537,11 @@ const SHEET_SYSTEM =
   "detail the SAME assembly must carry the IDENTICAL string so they group under one component; a sheet " +
   "family sharing a number stem (…-10A-2A, …-10A-2B, …-10A-3) is usually one assembly. Leave it empty for " +
   "cover, index and notes pages. Do NOT invent an assembly the title block doesn't support.\n" +
+  "(7) ALSO return `documents` — ONE entry for EVERY attached document, in order, including documents that " +
+  "are NOT drawings (a bill of material / parts list / cut list, a spec section, a vendor cut sheet). Say " +
+  "what each one IS (`kind`), the number or title printed inside it (`label`), and one line on what it " +
+  "contains (`summary`). Never skip a document because it has no title blocks — a BOM or parts list is one " +
+  "of the most valuable documents in the package and it must be reported, not ignored.\n" +
   "Return via submit_sheet_index.";
 
 // GROUND TRUTH — the page count comes from the PDF file itself, never from the model.
@@ -543,6 +563,26 @@ async function pdfPageCount(b64) {
 // Derive SHEETS from the per-page reads: consecutive pages carrying the same title-block
 // number are one drawing. A number that reappears after a gap is still ONE drawing (its
 // page list keeps both runs) but is reported in `split` so it can be shown as unusual.
+// What an attached file can be. A package is rarely all drawings — the BOM/parts list and the spec
+// arrive in the same upload and have to be carried through the same way.
+const DOC_KINDS = ["drawings", "bom", "spec", "other"];
+function fileStem(nm) { return String(nm == null ? "" : nm).replace(/\.[A-Za-z0-9]+$/, "").trim(); }
+function normNum(n) { return String(n == null ? "" : n).toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+// The most-repeated non-empty title across a set of pages — a BOM's pages usually all carry the
+// same header, so this names the entry from the document itself rather than from the file name.
+function commonTitle(entries, doc, pages) {
+  const want = {}; pages.forEach(function (p) { want[p] = 1; });
+  const tally = {};
+  entries.forEach(function (e) {
+    if (e.doc !== doc || !want[e.page]) return;
+    const t = String(e.title || "").trim();
+    if (t) tally[t] = (tally[t] || 0) + 1;
+  });
+  let best = "", n = 0;
+  Object.keys(tally).forEach(function (t) { if (tally[t] > n) { n = tally[t]; best = t; } });
+  return best;
+}
+
 function groupPagesIntoSheets(entries) {
   const key = function (n) { return String(n).toUpperCase().replace(/[^A-Z0-9]/g, ""); };
   const sorted = entries.slice().sort(function (a, b) { return (a.doc - b.doc) || (a.page - b.page); });
@@ -649,6 +689,72 @@ async function readSheetIndex(opts) {
   });
 
   const grouped = groupPagesIntoSheets(entries);
+  grouped.sheets.forEach(function (s) { s.kind = "drawing"; });
+
+  // ---- ONE ENTRY PER ATTACHED FILE, DRAWING OR NOT ------------------------
+  // A bill of material, a parts list or a spec section carries no title-block number on any page, so
+  // the grouping above returns NOTHING for it and the whole file used to disappear from the
+  // estimator's list — 62 of 68 pages counted as "no drawing number" and never seen again. Every page
+  // that isn't on a drawing is now gathered into ONE entry per file, tagged kind:"document", so each
+  // uploaded file is represented, can be put on a component, and travels into the take-off by name.
+  const modelDocs = unwrap(toolUse ? toolUse.input.documents : [], []);
+  const docMeta = {};
+  (Array.isArray(modelDocs) ? modelDocs : []).forEach(function (d) {
+    const i = parseInt(d && d.doc, 10);
+    if (!i || i < 1 || i > docs.length) return;
+    const k = String((d && d.kind) || "").toLowerCase().trim();
+    docMeta[i] = {
+      kind: DOC_KINDS.indexOf(k) > -1 ? k : "",
+      label: String((d && d.label) == null ? "" : d.label).trim(),
+      summary: String((d && d.summary) == null ? "" : d.summary).trim(),
+      suggested_component: String((d && d.suggested_component) == null ? "" : d.suggested_component).trim(),
+    };
+  });
+
+  const usedNums = {};
+  grouped.sheets.forEach(function (s) { usedNums[normNum(s.number)] = 1; });
+  const documents = [], docSheets = [];
+  for (let i = 1; i <= docs.length; i++) {
+    const meta = docMeta[i] || { kind: "", label: "", summary: "", suggested_component: "" };
+    const onSheet = {};
+    grouped.sheets.forEach(function (s) {
+      if (s.doc === i) (s.page_list || []).forEach(function (p) { onSheet[p] = 1; });
+    });
+    // Pages the model READ but that carry no drawing number. Pages it never returned stay in
+    // pages_missing — those are a read failure to fix, not a document to file.
+    const loose = entries.filter(function (e) { return e.doc === i && !e.number && !onSheet[e.page]; })
+      .map(function (e) { return e.page; })
+      .sort(function (a, b) { return a - b; });
+    const namedPages = Object.keys(onSheet).length;
+    const kind = meta.kind || (namedPages ? "drawings" : "other");
+    const rec = { doc: i, name: names[i - 1] || null, pages: docPages[i - 1],
+                  pages_on_drawings: namedPages, pages_loose: loose.length,
+                  kind: kind, label: meta.label, summary: meta.summary, entry_number: null };
+    if (loose.length) {
+      // Named from the FILE first: that's the name the estimator uploaded and recognises. The
+      // number the model read from inside it is the fallback, and a clash with a real drawing
+      // number is disambiguated rather than allowed to collide.
+      let num = fileStem(names[i - 1]) || meta.label || ("Document " + i);
+      if (usedNums[normNum(num)]) num = num + (kind === "bom" ? " (BOM)" : " (doc)");
+      usedNums[normNum(num)] = 1;
+      docSheets.push({
+        doc: i, number: num,
+        title: commonTitle(entries, i, loose) || meta.summary ||
+               (kind === "bom" ? "Bill of material / parts list" : kind === "spec" ? "Specification" : "Reference document"),
+        pages: [loose[0], loose[loose.length - 1]], page_list: loose, confidence: null,
+        suggested_component: meta.suggested_component || "",
+        kind: "document", doc_kind: kind, file: names[i - 1] || null, summary: meta.summary,
+      });
+      rec.entry_number = num;
+    }
+    documents.push(rec);
+  }
+  // Keep file order: each file's drawings, then that file's document entry.
+  const allSheets = [];
+  for (let i = 1; i <= docs.length; i++) {
+    grouped.sheets.forEach(function (s) { if (s.doc === i) allSheets.push(s); });
+    docSheets.forEach(function (s) { if (s.doc === i) allSheets.push(s); });
+  }
 
   // Reconcile against the real page count: every page either belongs to a drawing, has no
   // drawing number (cover/index/notes), or was never reported. All three are reported.
@@ -666,6 +772,8 @@ async function readSheetIndex(opts) {
       return { doc: i + 1, name: names[i] || null, pages: n,
                pages_named: entries.filter(function (e) { return e.doc === i + 1 && e.number; }).length };
     }),
+    documents: documents,                         // one row per attached file, drawings or not
+    doc_entries: docSheets.length,                // how many of those became a non-drawing entry
     sheets: grouped.sheets.length,
     pages_named: named,
     pages_blank: blank,                           // real pages with no title-block number
@@ -678,7 +786,8 @@ async function readSheetIndex(opts) {
   };
 
   return {
-    sheets: grouped.sheets,
+    sheets: allSheets,
+    documents: documents,
     pages: entries,
     audit: audit,
     cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
@@ -688,4 +797,70 @@ async function readSheetIndex(opts) {
   };
 }
 
-module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, pdfPageCount, groupPagesIntoSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
+// -----------------------------------------------------------------------------
+//  askDocuments — QUESTIONS AT INTAKE. The review page has a conversation about the
+//  finished package; this is the same thing one step earlier, about the DOCUMENTS
+//  themselves, before a take-off is spent: "what's in file 2?", "does the BOM cover
+//  the handrail?", "which sheets have no material on them?". Answers only — it never
+//  edits the scope, so it can't quietly change what the run is about to read.
+//  The uploaded PDFs are the cached prefix, so a follow-up question costs a fraction
+//  of the first one.
+// -----------------------------------------------------------------------------
+const ASK_SYSTEM =
+  "You are Material Compass AI, helping a steel estimator SET UP a material take-off. The estimator has " +
+  "uploaded the documents attached below and is deciding how they break into components and drawings " +
+  "before spending a take-off run.\n" +
+  "Answer their questions about THESE documents: what a file is, what a sheet shows, which sheets carry " +
+  "material and which are layouts/notes, what a bill of material lists, whether something appears anywhere " +
+  "in the set, how the sheets group into assemblies.\n" +
+  "RULES: (1) Ground every answer in the attached documents and cite where — file name, drawing number, " +
+  "page. (2) If the documents don't say, say so plainly; never guess a number, a size or a quantity into " +
+  "existence. (3) Be brief — a few sentences or a short list, no headings, no preamble. (4) You are NOT " +
+  "doing the take-off: don't list out a full BOM even if asked — say which drawings it would come from and " +
+  "that the run will produce it. (5) If the estimator's confirmed scope is included below, use it to answer " +
+  "coverage questions (what's placed, what isn't) and point at what to fix on this screen. (6) Plain text only.";
+
+async function askDocuments(opts) {
+  opts = opts || {};
+  const docs = Array.isArray(opts.docs) ? opts.docs : [];
+  const names = Array.isArray(opts.names) ? opts.names : [];
+  const thread = Array.isArray(opts.messages) ? opts.messages : [];
+  if (!thread.length) throw new Error("askDocuments: messages[] required");
+  const model = MODELS[opts.modelKey] || MODELS.sonnet;
+  const anthropic = opts.client || new Anthropic();
+
+  // The documents are the stable prefix of every turn — cache-marked so question 2 onward is cheap.
+  const head = docs.map(function (d, i) {
+    const b = { type: "document", source: { type: "base64", media_type: "application/pdf", data: d } };
+    if (i === docs.length - 1) b.cache_control = { type: "ephemeral" };
+    return b;
+  });
+  head.push({ type: "text", text:
+    (docs.length ? "THE ATTACHED DOCUMENTS, in order:\n" + docs.map(function (d, i) {
+      return (i + 1) + ". " + (names[i] || ("Document " + (i + 1)));
+    }).join("\n") + "\n\n" : "") +
+    (opts.context ? String(opts.context) + "\n\n" : "") +
+    "(The estimator's question follows.)" });
+
+  const msgs = [];
+  thread.forEach(function (m, i) {
+    const role = m.role === "assistant" ? "assistant" : "user";
+    const text = String(m.text == null ? "" : m.text);
+    if (i === 0) msgs.push({ role: "user", content: head.concat([{ type: "text", text: text }]) });
+    else msgs.push({ role: role, content: [{ type: "text", text: text }] });
+  });
+  if (msgs[msgs.length - 1].role !== "user") msgs.push({ role: "user", content: [{ type: "text", text: "(continue)" }] });
+
+  const resp = await anthropic.messages.create({
+    model: model.id,
+    max_tokens: 1500,
+    system: [{ type: "text", text: ASK_SYSTEM }],
+    messages: msgs,
+  });
+  const reply = resp.content.filter(function (b) { return b.type === "text"; })
+    .map(function (b) { return b.text; }).join("\n").trim();
+  return { reply: reply || "(no reply)", cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
+           usage: resp.usage, modelId: model.id };
+}
+
+module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, pdfPageCount, groupPagesIntoSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };

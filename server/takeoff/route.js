@@ -15,7 +15,7 @@
 //              cost_usd, import_csv, verify_csv, credits_left, free_left }
 // =============================================================================
 
-const { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, LOW_CONF } = require("./engine");
+const { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, LOW_CONF } = require("./engine");
 const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
 const { snapRows } = require("./snap");
@@ -251,12 +251,35 @@ async function indexHandler(req, res) {
       knownComponents: Array.isArray(body.components) ? body.components : [],
       modelKey: body.model || "sonnet",
     });
-    return res.json({ ok: true, sheets: out.sheets, pages: out.pages, audit: out.audit,
-                      cost_usd: out.cost_usd, model: out.modelId });
+    return res.json({ ok: true, sheets: out.sheets, documents: out.documents, pages: out.pages,
+                      audit: out.audit, cost_usd: out.cost_usd, model: out.modelId });
   } catch (err) {
     console.error("takeoff index error", err);
     return res.status(500).json({ ok: false, error: outward(err) });
   }
 }
 
-module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler };
+// POST /api/takeoff/ask — questions about the UPLOADED DOCUMENTS at intake, before the run.
+// Body: { pdfs[] | pdf_base64, names?, messages:[{role,text}], context?, model? } → { ok, reply, cost_usd }.
+// Answers only: it never edits the scope or the project. Not metered — like index/chat/revise.
+async function askHandler(req, res) {
+  try {
+    const body = req.body || {};
+    const messages = body.messages;
+    if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ ok: false, error: "messages[] required" });
+    const docs = (Array.isArray(body.pdfs) && body.pdfs.length) ? body.pdfs : (body.pdf_base64 ? [body.pdf_base64] : []);
+    const out = await askDocuments({
+      docs: docs,
+      names: Array.isArray(body.names) ? body.names : [],
+      messages: messages,
+      context: body.context ? String(body.context) : "",
+      modelKey: body.model || "sonnet",
+    });
+    return res.json({ ok: true, reply: out.reply, cost_usd: out.cost_usd, model: out.modelId });
+  } catch (err) {
+    console.error("takeoff ask error", err);
+    return res.status(500).json({ ok: false, error: outward(err) });
+  }
+}
+
+module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler };
