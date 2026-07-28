@@ -1,0 +1,2565 @@
+<!DOCTYPE html>
+<!-- GENERATED FILE — do not edit. Source: bom-editor/index.html, built by tools/make-takeoff-bom-editor.js. Edit the editor and re-run the build. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BOM Editor</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://unpkg.com/tabulator-tables@5.5.2/dist/css/tabulator_simple.min.css" rel="stylesheet">
+<script src="https://unpkg.com/tabulator-tables@5.5.2/dist/js/tabulator.min.js"></script>
+<!-- widget SDK removed: take-off mode supplies its own ZOHO shim -->
+<style>
+  body {
+    margin: 0;
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    background: #f4f6f8;
+    color: #1A1D23;
+    font-size: 13px;
+  }
+  .header {
+    background: #5F94CE;
+    color: #fff;
+    padding: 14px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+  .header .sub { font-size: 12px; opacity: 0.85; margin-top: 4px; }
+  .stats {
+    display: flex;
+    gap: 0;
+    font-size: 12px;
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .stats .stat {
+    padding: 7px 16px;
+    border-right: 1px solid rgba(255,255,255,0.18);
+    text-align: center;
+  }
+  .stats .stat:last-child { border-right: none; }
+  .stats .stat .label { opacity: 0.8; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .stats .stat .val { font-weight: 600; font-size: 14px; margin-top: 2px; }
+
+  .toolbar {
+    background: #fff;
+    padding: 10px 24px;
+    border-bottom: 2px solid #c0c0c0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .bulk-toolbar {
+    background: #f7f9fc;
+    padding: 8px 24px;
+    border-bottom: 1px solid #e0e0e0;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 11px;
+  }
+  .bulk-label { color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .bulk-group { display: inline-flex; gap: 4px; align-items: center; }
+  .bulk-field { color: #444; font-weight: 600; margin-right: 2px; }
+  .btn-bulk {
+    border: 1px solid #c8d0db;
+    background: #fff;
+    color: #333;
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-bulk:hover { background: #eef2f7; border-color: #93a3b8; }
+  .bulk-select {
+    border: 1px solid #c8d0db;
+    background: #fff;
+    color: #333;
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .bulk-select:hover { background: #eef2f7; }
+  .row-action-btn.delete-perm {
+    background: #c62828;
+    border: 1px solid #b71c1c;
+    color: #fff;
+    margin-left: 2px;
+    padding: 1px 4px;
+    font-size: 12px;
+    line-height: 1;
+    min-width: 18px;
+  }
+  .row-action-btn.delete-perm:hover { background: #b71c1c; }
+
+  /* Custom confirm modal — replaces native confirm() so the dialog doesn't carry
+     the "An embedded page at sentrymetal1.github.io says" browser branding. */
+  .confirm-modal {
+    position: fixed; inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 10000;
+  }
+  .confirm-modal.show { display: flex; }
+  .confirm-modal-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.45);
+  }
+  .confirm-modal-box {
+    position: relative;
+    background: #fff;
+    border-radius: 6px;
+    padding: 20px 24px;
+    min-width: 340px;
+    max-width: 480px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    font-family: 'DM Sans', sans-serif;
+  }
+  .confirm-modal-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1a3a5f;
+    margin-bottom: 8px;
+    letter-spacing: 0.02em;
+  }
+  .confirm-modal-msg {
+    font-size: 13px;
+    color: #333;
+    line-height: 1.5;
+    margin-bottom: 18px;
+    white-space: pre-line;  /* honor \n in multi-line alert messages */
+  }
+  .confirm-modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .btn {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .btn-ghost { background: #fff; color: #444; border: 1px solid #d0d0d0; }
+  .btn-ghost:hover { background: #e8e8e8; }
+
+  .view-select {
+    border: 1px solid #d0d0d0;
+    background: #fff;
+    color: #444;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 7px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 8px;
+  }
+  .view-select:hover { background: #f4f4f4; }
+  .view-toggle {
+    display: inline-flex;
+    background: #f0f0f0;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    padding: 2px;
+    margin-left: 8px;
+  }
+  .view-toggle button {
+    border: none;
+    background: transparent;
+    padding: 5px 12px;
+    font-size: 11px;
+    font-family: inherit;
+    color: #444;
+    cursor: pointer;
+    border-radius: 3px;
+    font-weight: 500;
+  }
+  .view-toggle button:hover { background: #e8e8e8; color: #1A1D23; }
+  .view-toggle button.active { background: #5F94CE; color: #fff; }
+
+  .filter-input {
+    margin-left: auto;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    padding: 7px 10px;
+    font-size: 12px;
+    width: 200px;
+    font-family: inherit;
+    color: #1A1D23;
+  }
+  .filter-input:focus { outline: none; border-color: #5F94CE; }
+
+  #bom-table {
+    margin: 14px 24px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+  }
+  .tabulator { font-size: 12px; border: none; font-family: inherit; }
+  .tabulator .tabulator-header { background: #fafbfc; border-bottom: 1px solid #d0d0d0; }
+  .tabulator .tabulator-header .tabulator-col {
+    background: #fafbfc;
+    color: #555;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 9px 10px;
+    border-right: 1px solid #ececec;
+  }
+  .tabulator-row { border-bottom: 1px solid #f0f0f0; }
+  .tabulator-row:hover { background: #e8e8e8 !important; }
+  .tabulator-row.tabulator-row-even { background: #fafbfc; }
+  .tabulator-cell { padding: 7px 10px !important; vertical-align: middle; border-right: 1px solid #f6f6f6; }
+
+  .tabulator .tabulator-row.tabulator-group {
+    background: #5F94CE !important;
+    color: #fff;
+    font-weight: 600;
+    padding: 6px 12px;
+    border: none;
+    text-decoration: none !important;
+  }
+  .tabulator .tabulator-row.tabulator-group span { color: #fff !important; }
+
+  .lookup-cell {
+    background: #f4f7fb;
+    border: 1px solid #e0e8f3;
+    border-radius: 3px;
+    padding: 2px 7px;
+    display: inline-block;
+    color: #1a4a82;
+    font-weight: 500;
+    font-size: 11px;
+  }
+  .calc-cell { color: #666; }
+  .desc-cell { color: #444; font-size: 11px; }
+
+  .footer-note {
+    text-align: center;
+    padding: 14px;
+    font-size: 11px;
+    color: #888;
+  }
+
+  .tabulator-cell.editable-cell {
+    background: #fffae6;
+    cursor: pointer;
+  }
+  .tabulator-cell.editable-cell:hover { background: #fff1a8; }
+
+  .tabulator-row.row-edited { box-shadow: inset 3px 0 0 0 #5F94CE; }
+
+  /* View-only "verified against drawing" tint. Defined BEFORE row-deleted so a
+     deleted row's grey still wins when a row is both verified and deleted. */
+  .tabulator-row.row-verified { background: #f1f8f1 !important; }
+  .tabulator-row.row-verified:hover { background: #e4f1e4 !important; }
+  .verify-check { width: 15px; height: 15px; cursor: pointer; accent-color: #2f7d3b; vertical-align: middle; margin: 0; }
+
+  .tabulator-row.row-deleted .tabulator-cell {
+    color: #888 !important;
+    text-decoration: line-through;
+  }
+  .tabulator-row.row-deleted { background: #fafafa !important; opacity: 0.7; }
+  .tabulator-row.row-deleted:hover { opacity: 0.85; }
+
+  .row-action-btn {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 1px 4px;
+    font: 500 13px inherit;
+    font-family: 'DM Sans', sans-serif;
+    cursor: pointer;
+    text-decoration: none !important;
+    min-width: 18px;
+    line-height: 1;
+  }
+  .row-action-btn.delete  { color: #bc0f0f; }
+  .row-action-btn.restore { color: #2f7d3b; }
+  .row-action-btn:hover { background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.12); }
+  .row-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-ghost.active { background: #e8e8e8; border-color: #b0b0b0; }
+
+  .btn-primary {
+    background: #5F94CE;
+    color: #fff;
+    border: 1px solid #4a7eb8;
+  }
+  .btn-primary:hover  { background: #4a7eb8; }
+  .btn-primary:disabled {
+    background: #cdd5df;
+    border-color: #cdd5df;
+    color: #fff;
+    cursor: not-allowed;
+  }
+  .btn-primary .spinner { border-color: rgba(255,255,255,0.4); border-top-color: #fff; }
+  .btn-danger {
+    background: #fff;
+    color: #bc0f0f;
+    border: 1px solid #e0a0a0;
+  }
+  .btn-danger:hover           { background: #fdeaea; border-color: #bc0f0f; }
+  .btn-danger:disabled        { color: #cdd5df; border-color: #e8e8e8; cursor: not-allowed; background: #fafafa; }
+  .btn-danger .spinner        { border-color: rgba(188,15,15,0.3); border-top-color: #bc0f0f; }
+
+  .grid-lock {
+    position: fixed;
+    inset: 0;
+    background: rgba(255,255,255,0.55);
+    backdrop-filter: blur(1px);
+    z-index: 9000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 13px;
+    color: #1A1D23;
+    font-weight: 500;
+  }
+  .grid-lock.show { display: flex; }
+  .grid-lock .big-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid #d0d0d0;
+    border-top-color: #5F94CE;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes flashGreen {
+    0%   { background-color: #cdeccd; }
+    100% { background-color: transparent; }
+  }
+  @keyframes flashRed {
+    0%   { background-color: #f5c8c8; }
+    100% { background-color: transparent; }
+  }
+  .tabulator-row.flash-success { animation: flashGreen 1.2s ease-out; }
+  .tabulator-row.flash-error   { animation: flashRed   1.2s ease-out; }
+
+  .toast {
+    position: fixed;
+    top: 20px;
+    right: 24px;
+    padding: 10px 16px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    opacity: 0;
+    transition: opacity 0.25s;
+    pointer-events: none;
+    z-index: 9999;
+    max-width: 360px;
+  }
+  .toast.show    { opacity: 1; }
+  .toast.success { background: #2f7d3b; }
+  .toast.error   { background: #bc0f0f; }
+
+  .state-msg {
+    margin: 40px 24px;
+    padding: 20px;
+    text-align: center;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #555;
+  }
+  .state-msg.error {
+    border-left: 4px solid #bc0f0f;
+    color: #6e1414;
+    text-align: left;
+    font-family: 'DM Sans', monospace;
+    white-space: pre-wrap;
+  }
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #d0d0d0;
+    border-top-color: #5F94CE;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin-right: 8px;
+    vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+<script>
+/* ---------------------------------------------------------------------------
+   TAKE-OFF MODE (?mode=takeoff) — injected by tools/make-takeoff-bom-editor.js.
+   Stands in for the Zoho widget SDK so this editor can work a take-off that has
+   not been committed yet. Every "save" lands in memory and is posted to the
+   parent page; nothing reaches Zoho until the estimator approves. Without the
+   flag the file behaves exactly as the widget always did.
+--------------------------------------------------------------------------- */
+(function () {
+  var qs = new URLSearchParams(location.search);
+  if (qs.get("mode") !== "takeoff") return;
+
+  var rows = [], project = null, seq = 0, resolveReady;
+  var ready = new Promise(function (r) { resolveReady = r; });
+
+  function post(type, extra) {
+    var msg = { type: type };
+    if (extra) for (var k in extra) msg[k] = extra[k];
+    try { parent.postMessage(msg, "*"); } catch (e) {}
+  }
+  function changed() { post("takeoff:changed", { records: rows }); }
+  function byId(id) {
+    for (var i = 0; i < rows.length; i++) if (String(rows[i].ID) === String(id)) return rows[i];
+    return null;
+  }
+  // deleteRecord is given criteria ("ID == 123"), never a bare id — same as the real SDK.
+  function idFromCriteria(c) {
+    var m = String(c || "").match(/ID\s*==\s*([A-Za-z0-9_]+)/);
+    return m ? m[1] : "";
+  }
+
+  window.addEventListener("message", function (ev) {
+    var m = ev.data || {};
+    if (m.type !== "takeoff:rows") return;
+    rows = Array.isArray(m.records) ? m.records : [];
+    project = m.project || null;
+    resolveReady(true);
+  });
+  post("takeoff:ready");                      // the parent waits for this before sending rows
+
+  var OK = { code: 3000, result: "success" };
+  window.ZOHO = {
+    CREATOR: {
+      init: function () { return ready; },    // boots only once the rows are in
+      UTIL: {
+        getQueryParams: function () { var o = {}; qs.forEach(function (v, k) { o[k] = v; }); return o; },
+        // The editor's Back button navigates the host page; here it's the parent's call.
+        navigateParentURL: function (url) { post("takeoff:navigate", { url: url }); },
+      },
+      API: {
+        getAllRecords: function () { return Promise.resolve({ code: 3000, data: rows.slice() }); },
+        getRecordById: function () { return Promise.resolve({ code: 3000, data: project || {} }); },
+        updateRecord: function (a) {
+          var r = byId(a && a.id), d = (a && a.data && a.data.data) || {};
+          if (!r) return Promise.reject(new Error("no such row: " + (a && a.id)));
+          for (var k in d) r[k] = d[k];
+          changed();
+          return Promise.resolve(OK);
+        },
+        addRecord: function (a) {
+          var d = (a && a.data && a.data.data) || {};
+          var rec = { ID: "T-new-" + (++seq) };
+          for (var k in d) rec[k] = d[k];
+          rows.push(rec);
+          changed();
+          return Promise.resolve({ code: 3000, data: rec });
+        },
+        deleteRecord: function (a) {
+          var id = idFromCriteria(a && a.criteria);
+          var i = rows.findIndex(function (r) { return String(r.ID) === String(id); });
+          if (i >= 0) rows.splice(i, 1);
+          changed();
+          return Promise.resolve(OK);
+        },
+        uploadFile: function () { return Promise.resolve(OK); },
+        // Force the Railway lookup path — the custom-API shortcut only exists inside Zoho.
+        invokeCustomApi: function () { return Promise.reject(new Error("custom API unavailable in take-off mode")); },
+      },
+    },
+  };
+})();
+</script>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1 id="header-title">BOM EDITOR</h1>
+    <div class="sub" id="header-sub">Loading project context...</div>
+  </div>
+  <div class="stats">
+    <div class="stat">
+      <div class="label">Rows</div>
+      <div class="val" id="stat-rows">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">Total Weight</div>
+      <div class="val" id="stat-weight">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">Surface Area</div>
+      <div class="val" id="stat-area">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">Galv Weight</div>
+      <div class="val" id="stat-galv">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">Allocated $</div>
+      <div class="val" id="stat-dollars">—</div>
+    </div>
+  </div>
+</div>
+
+<div class="toolbar">
+  <button class="btn btn-ghost" id="back">← Back to Project</button>
+  <button class="btn btn-ghost" id="add-row" title="Add a new BOM row at top, carrying forward Form / Mat Type / Spec / Material / Component / Drawing / Supplied / Finish from your last added row">+ Add Row</button>
+  <select id="view-mode" class="view-select" title="Group rows by Tag prefix, Form Type, or Component">
+    <option value="flat">View: Flat</option>
+    <option value="tag">Group by Tag</option>
+    <option value="form">Group by Form</option>
+    <option value="component">Group by Component</option>
+  </select>
+  <button class="btn btn-ghost" id="toggle-hide-deleted" title="Hide rows marked for deletion">Hide deleted</button>
+  <button class="btn btn-danger" id="delete-marked" title="Permanently delete every row currently marked for delete — cannot be undone">Delete all marked</button>
+  <input type="text" class="filter-input" id="filter-input" placeholder="Filter rows...">
+  <button class="btn btn-primary" id="save-project" disabled title="Commit pending changes and recalculate project totals">Save to Project</button>
+</div>
+
+<div class="bulk-toolbar">
+  <span class="bulk-label">Bulk apply to filtered rows:</span>
+  <span class="bulk-group">
+    <span class="bulk-field">Delete:</span>
+    <button class="btn-bulk" data-bulk-field="delete" data-bulk-value="true"  title="Mark ALL visible rows for delete, then click 'Delete all marked' to remove them">✓ All</button>
+    <button class="btn-bulk" data-bulk-field="delete" data-bulk-value="false" title="Clear the delete mark on all visible rows">✗ None</button>
+  </span>
+  <span class="bulk-group">
+    <span class="bulk-field">SA:</span>
+    <button class="btn-bulk" data-bulk-field="sa" data-bulk-value="true"  title="Check SA for all currently visible rows">✓ All</button>
+    <button class="btn-bulk" data-bulk-field="sa" data-bulk-value="false" title="Uncheck SA for all currently visible rows">✗ None</button>
+  </span>
+  <span class="bulk-group">
+    <span class="bulk-field">Galv:</span>
+    <button class="btn-bulk" data-bulk-field="galv" data-bulk-value="true"  title="Check Galv for all currently visible rows">✓ All</button>
+    <button class="btn-bulk" data-bulk-field="galv" data-bulk-value="false" title="Uncheck Galv for all currently visible rows">✗ None</button>
+  </span>
+  <span class="bulk-group">
+    <span class="bulk-field">Supplied:</span>
+    <select class="bulk-select" data-bulk-field="supplied" title="Set Supplied for all currently visible rows">
+      <option value="">— set to —</option>
+      <option value="Manufacture">Manufacture</option>
+      <option value="Client">Client</option>
+    </select>
+  </span>
+  <span class="bulk-group">
+    <span class="bulk-field">Finish:</span>
+    <select class="bulk-select" data-bulk-field="finish" title="Set Finish for all currently visible rows">
+      <option value="">— set to —</option>
+      <option value="Anodize">Anodize</option>
+      <option value="Blast Only">Blast Only</option>
+      <option value="Blast &amp; Paint">Blast &amp; Paint</option>
+      <option value="Galvanize">Galvanize</option>
+      <option value="Paint Only">Paint Only</option>
+      <option value="Plain">Plain</option>
+      <option value="Powder Coat">Powder Coat</option>
+    </select>
+  </span>
+</div>
+
+<div id="loading" class="state-msg"><span class="spinner"></span>Loading BOM rows...</div>
+<div id="error" class="state-msg error" style="display:none;"></div>
+<div id="quota-banner" style="display:none; background:#fdecea; border-top:1px solid #f5c2c0; border-bottom:1px solid #f5c2c0; color:#7a1f1a; padding:8px 16px; font-size:13px;">
+  <strong>Zoho API daily quota reached.</strong> Lookup dropdowns (Form / Mat Type / Spec / Material) cannot fetch new options until the limit resets at midnight UTC. Existing cell values display normally. Upgrade Zoho plan for higher limits.
+</div>
+<div id="bom-table" style="display:none;"></div>
+
+<div class="footer-note">
+  <span id="build-tag-display">v2.23.0</span> — Added a view-only ✓ checklist column (first column) to check off rows verified against the drawing; checked rows tint green (not saved to Zoho). v2.22.0: Delete column now has a "DELETE" header above the ✕.
+</div>
+
+<div id="toast" class="toast"></div>
+
+<div id="confirm-modal" class="confirm-modal" aria-hidden="true">
+  <div class="confirm-modal-backdrop"></div>
+  <div class="confirm-modal-box" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div id="confirm-title" class="confirm-modal-title">BOM Editor</div>
+    <div id="confirm-msg"   class="confirm-modal-msg"></div>
+    <div class="confirm-modal-actions">
+      <button type="button" id="confirm-cancel" class="btn btn-ghost">Cancel</button>
+      <button type="button" id="confirm-ok"     class="btn btn-primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<div id="grid-lock" class="grid-lock">
+  <div class="big-spinner"></div>
+  <div id="grid-lock-msg">Saving to project & recalculating totals…</div>
+</div>
+
+<script>
+const BUILD_TAG = "v2.24.7 (2026-07-20)";
+console.log('[BOM Editor] build:', BUILD_TAG);
+
+const APP_NAME            = "type-formsheet-2-18-21";
+const REPORT_NAME         = "Project_Bill_Of_Material_Detail_Form_Report";
+const PROJECT_REPORT_NAME = "All_Mcp_customer_Projects";
+const PORTAL_BASE         = "https://customer.materialcompassportal.com";
+
+let projectId      = null;
+let manufactureId  = null;
+let projectDescription = '';   // resolved from the project record for the Back-to-Project URL
+let clientId       = '';       // MFG_Client_Form id, ditto
+let bomData        = [];
+let table          = null;
+let currentView    = 'flat';
+let hideDeleted    = false;
+const recentlyEdited = new Set();
+const pendingCells   = new Set();
+// View-only "verified against drawing" checklist. Keyed by row id, NOT saved to
+// Zoho — purely a review aid. Survives cell edits, reformats, and post-save
+// reloads (ids are stable), but resets when the widget is reopened.
+const verifiedRows   = new Set();
+
+function cellKey(cell) {
+  return cell.getRow().getData().id + '|' + cell.getColumn().getField();
+}
+
+const LOOKUP_INCH         = 'All_Length_Inch_Lookups';
+const LOOKUP_PLATE_FT_W   = 'All_Plate_Standard_Sizes';
+const LOOKUP_FORM_TYPE    = 'Form_Types_Report';
+const LOOKUP_MAT_TYPE     = 'Material_Types_Report';
+const LOOKUP_MFD          = 'Material_Form_Detail_Report';
+const LOOKUP_MATERIAL     = 'Beam_Channel_Tee_Lookup_Report';
+const LOOKUP_COMPONENT    = 'Project_Components';
+const lookupCache = {
+  [LOOKUP_INCH]:       { byId: {}, displayField: null, optionsList: [] },
+  [LOOKUP_PLATE_FT_W]: { byId: {}, displayField: null, optionsList: [] },
+  [LOOKUP_FORM_TYPE]:  { byId: {}, optionsList: [] },
+  [LOOKUP_MAT_TYPE]:   { byId: {}, optionsList: [] },
+  [LOOKUP_MFD]:        { byId: {}, records: [] },
+  [LOOKUP_MATERIAL]:   { byId: {}, records: [] },
+  [LOOKUP_COMPONENT]:  { byId: {}, optionsList: [] },
+};
+
+// Per-combo cache for spec + material dropdowns. Keyed by "formTypeId|matTypeId".
+// Populated on demand via /api/bom-lookups/material-form-detail and /api/bom-lookups/materials
+// with form_type_id + material_type_id query params. Avoids preloading 100k+ rows.
+const comboCache = {};
+function comboKey(formTypeId, matTypeId) {
+  return (formTypeId || '') + '|' + (matTypeId || '');
+}
+async function ensureComboLoaded(formTypeId, matTypeId) {
+  if (!formTypeId || !matTypeId) return null;
+  const key = comboKey(formTypeId, matTypeId);
+  if (comboCache[key]) return comboCache[key];
+  comboCache[key] = { specs: [], materials: [], loading: true };
+  try {
+    const qs = '?form_type_id=' + encodeURIComponent(formTypeId) + '&material_type_id=' + encodeURIComponent(matTypeId);
+    const [specRows, matRows] = await Promise.all([
+      fetchRailwayLookup('/api/bom-lookups/material-form-detail' + qs),
+      fetchRailwayLookup('/api/bom-lookups/materials' + qs),
+    ]);
+    const specs = specRows.map(r => ({label: String(r.typeDetail ?? ''), value: String(r.id)}))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+    const materials = matRows.map(r => ({
+      label: String(r.description ?? ''),
+      value: String(r.id),
+      specId: String(r.specId ?? '')
+    })).sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+    // Capture weight / dim / surface-area-per-ft metadata for client-side calc.
+    for (const r of matRows) {
+      materialMetaById[String(r.id)] = {
+        weight_per_ft:       Number(r.weightPerFt)       || 0,
+        dim1:                Number(r.dim1)              || 0,
+        surface_area_per_ft: Number(r.surfaceAreaPerFt)  || 0,
+      };
+    }
+    comboCache[key] = { specs, materials, loading: false };
+    // Mirror into lookupCache byId so existing formatters keep working
+    for (const r of specRows) lookupCache[LOOKUP_MFD].byId[String(r.id)] = String(r.typeDetail ?? '');
+    for (const r of matRows)  lookupCache[LOOKUP_MATERIAL].byId[String(r.id)] = String(r.description ?? '');
+    console.log('[BOM Editor] combo', key, '→', specs.length, 'specs,', materials.length, 'materials');
+    return comboCache[key];
+  } catch (err) {
+    console.error('[BOM Editor] combo load failed', key, err);
+    delete comboCache[key];
+    return null;
+  }
+}
+
+const SYSTEM_FIELD_PREFIXES = ['ID', 'Added_Time', 'Added_User', 'Modified_Time', 'Modified_User', 'zc_'];
+function pickDisplayField(record) {
+  for (const key of Object.keys(record)) {
+    if (SYSTEM_FIELD_PREFIXES.some(p => key === p || key.startsWith(p))) continue;
+    const val = record[key];
+    if (typeof val === 'string' && val.trim() !== '') return key;
+    if (typeof val === 'number') return key;
+  }
+  return null;
+}
+
+function readLookupId(field) {
+  if (field === null || field === undefined || field === '') return '';
+  if (typeof field === 'object') return String(field.ID || field.id || '');
+  return String(field);
+}
+
+function lookupDisplay(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'object') return v.display_value ?? '';
+  return v;
+}
+
+function getTagPrefix(tag) {
+  if (!tag) return '(no tag)';
+  const parts = String(tag).split('-');
+  if (parts.length >= 3 && /^\d+$/.test(parts[1])) return parts[0] + '-' + parts[1];
+  return parts[0];
+}
+
+function mapRecord(r, idx) {
+  return {
+    id:           r.ID,
+    recordId:     r.ID,
+    lineItem:     Number(r.Line_Item) || idx + 1,
+    tag:          r.BOM_Item || '',
+    component:    readLookupId(r.Component),
+    componentLbl: lookupDisplay(r.Component),
+    drawing:      readLookupId(r.Scope_LU),
+    drawingLbl:   lookupDisplay(r.Scope_LU),
+    formType:     readLookupId(r.Form_Type),
+    formTypeLbl:  lookupDisplay(r.Form_Type),
+    matType:      readLookupId(r.Material_Type),
+    matTypeLbl:   lookupDisplay(r.Material_Type),
+    spec:         readLookupId(r.Specification),
+    specLbl:      lookupDisplay(r.Specification),
+    material:     readLookupId(r.Material),
+    materialLbl:  lookupDisplay(r.Material),
+    qty:          Number(r.Quantity) || 0,
+    ftL:          Number(r.Length_FT) || 0,
+    inchL:        readLookupId(r.Length_INCH),
+    ftW:          readLookupId(r.Width_FT),
+    inchW:        readLookupId(r.Width_INCH),
+    materialDesc: r.Material_Description_And_Dimension || '',
+    unitWt:       Number(r.Unit_Weight) || 0,
+    totWt:        Number(r.CalcWeight) || 0,
+    area:         Number(r.Area) || 0,
+    sa:           r.Plate_SA === true || r.Plate_SA === 'true',
+    galv:         r.Galv === true || r.Galv === 'true',
+    galvLb:       Number(r.Galv_LB) || 0,
+    supplied:     lookupDisplay(r.Supplied),
+    finish:       lookupDisplay(r.Finish),
+    allocatedAmt: Number(r.Total_Allotted_Line_Amount) || 0,
+    assemblyGroup: getTagPrefix(r.BOM_Item),
+    deleted:      r.DELETE_field === true || r.DELETE_field === 'true',
+  };
+}
+
+let toastTimer = null;
+function showToast(msg, kind) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (kind || 'success');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 4000);
+}
+
+function flashRow(row, kind) {
+  const el = row.getElement();
+  el.classList.remove('flash-success', 'flash-error');
+  void el.offsetWidth;
+  el.classList.add(kind === 'error' ? 'flash-error' : 'flash-success');
+}
+
+const nonNegNumber = v => Number.isFinite(Number(v)) && Number(v) >= 0;
+const boolToApi    = v => String(Boolean(v));
+
+// Custom confirm modal — returns Promise<boolean>. Replaces native confirm()
+// so dialogs don't carry "An embedded page at sentrymetal1.github.io says" branding.
+function customConfirm(message, opts) {
+  opts = opts || {};
+  return new Promise(resolve => {
+    const modal     = document.getElementById('confirm-modal');
+    const titleEl   = document.getElementById('confirm-title');
+    const msgEl     = document.getElementById('confirm-msg');
+    const okBtn     = document.getElementById('confirm-ok');
+    const cancelBtn = document.getElementById('confirm-cancel');
+    titleEl.textContent = opts.title  || 'BOM Editor';
+    msgEl.textContent   = message;
+    okBtn.textContent     = opts.okText     || 'OK';
+    cancelBtn.textContent = opts.cancelText || 'Cancel';
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
+    function cleanup(result) {
+      modal.classList.remove('show');
+      modal.setAttribute('aria-hidden', 'true');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    }
+    function onOk()     { cleanup(true);  }
+    function onCancel() { cleanup(false); }
+    function onKey(e)   {
+      if (e.key === 'Enter')   onOk();
+      if (e.key === 'Escape')  onCancel();
+    }
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    document.addEventListener('keydown', onKey);
+    setTimeout(() => okBtn.focus(), 0);
+  });
+}
+
+// Single-OK modal — same dialog as customConfirm but no Cancel button. For
+// important results the user must acknowledge (e.g. "N rows kept"), which a
+// 3-second toast is too easy to miss. Stays on screen until OK is clicked.
+function customAlert(message, opts) {
+  opts = opts || {};
+  return new Promise(resolve => {
+    const modal     = document.getElementById('confirm-modal');
+    const titleEl   = document.getElementById('confirm-title');
+    const msgEl     = document.getElementById('confirm-msg');
+    const okBtn     = document.getElementById('confirm-ok');
+    const cancelBtn = document.getElementById('confirm-cancel');
+    titleEl.textContent = opts.title || 'BOM Editor';
+    msgEl.textContent   = message;
+    okBtn.textContent   = opts.okText || 'OK';
+    cancelBtn.style.display = 'none';   // alert mode: hide Cancel
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
+    function cleanup() {
+      modal.classList.remove('show');
+      modal.setAttribute('aria-hidden', 'true');
+      cancelBtn.style.display = '';     // restore for future confirms
+      okBtn.removeEventListener('click', onOk);
+      document.removeEventListener('keydown', onKey);
+      resolve(true);
+    }
+    function onOk()   { cleanup(); }
+    function onKey(e) { if (e.key === 'Enter' || e.key === 'Escape') onOk(); }
+    okBtn.addEventListener('click', onOk);
+    document.addEventListener('keydown', onKey);
+    setTimeout(() => okBtn.focus(), 0);
+  });
+}
+
+// Custom Tabulator editor that auto-toggles a boolean cell value on a SINGLE click.
+// Replaces editor: 'tickCross' which requires two clicks (open editor, then toggle).
+// Pattern: Tabulator calls the editor function on click, we immediately call success()
+// with the inverted value. cellEdited fires; save handler runs. Returns an empty
+// placeholder element (Tabulator requires a DOM node return value, even if unused).
+function autoToggleEditor(cell, onRendered, success /*, cancel, editorParams */) {
+  const newValue = !cell.getValue();
+  setTimeout(() => success(newValue), 0);  // defer so cell finishes entering edit mode first
+  const placeholder = document.createElement('span');
+  placeholder.style.display = 'none';
+  return placeholder;
+}
+
+async function refetchAndUpdateRow(row, recordId) {
+  const resp = await ZOHO.CREATOR.API.getRecordById({
+    appName:    APP_NAME,
+    reportName: REPORT_NAME,
+    id:         recordId
+  });
+  if (!resp || (resp.code !== 3000 && !resp.data)) {
+    throw new Error('Bad refetch response: ' + JSON.stringify(resp));
+  }
+  const recordData = resp.data;
+  if (!recordData || typeof recordData !== 'object') {
+    throw new Error('Unexpected getRecordById data: ' + JSON.stringify(resp));
+  }
+  const lineItem = row.getData().lineItem;
+  const fresh    = mapRecord(recordData, lineItem - 1);
+  const idx      = bomData.findIndex(r => r.id === recordId);
+  if (idx >= 0) bomData[idx] = fresh;
+  row.update(fresh);
+  renumberRows();   // fresh carries Zoho's gappy Line_Item; re-collapse to 1..N
+  updateStats();
+}
+
+function updateSaveButtonState() {
+  const btn = document.getElementById('save-project');
+  const n   = recentlyEdited.size;
+  btn.disabled    = n === 0;
+  btn.textContent = n === 0 ? 'Save to Project' : `Save to Project (${n})`;
+}
+
+// Force-commit any open Tabulator cell editor and wait for in-flight cell
+// saves to finish. Tabulator only fires cellEdited on Enter/Tab/blur — clicking
+// a toolbar button can land before the blur, dropping the edit silently.
+async function awaitPendingCellEdits(maxWaitMs = 8000) {
+  const active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) {
+    active.blur();
+    await new Promise(r => setTimeout(r, 50)); // give cellEdited a tick to queue
+  }
+  const start = Date.now();
+  while (pendingCells.size > 0 && Date.now() - start < maxWaitMs) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+}
+
+async function commitChanges() {
+  const btn  = document.getElementById('save-project');
+  const lock = document.getElementById('grid-lock');
+  btn.disabled = true;
+  lock.classList.add('show');
+
+  // Commit any cell still being edited (e.g. user typed in FT and clicked
+  // Save without pressing Tab/Enter) before we kick the project-level recalc.
+  await awaitPendingCellEdits();
+
+  // Mandatory gate: Supplied and Finish must be set on every kept row.
+  const missing = bomData.filter(r => !r.deleted && (!r.supplied || !r.finish));
+  if (missing.length) {
+    lock.classList.remove('show');
+    updateSaveButtonState();  // re-enable the button (edits still pending)
+    missing.forEach(m => { const tr = table.getRow(m.id); if (tr) flashRow(tr, 'error'); });
+    if (missing[0]) { const tr = table.getRow(missing[0].id); if (tr) table.scrollToRow(missing[0].id, 'top', false); }
+    showToast(`Cannot save — ${missing.length} row(s) missing Supplied or Finish. Fill the highlighted rows, then Save.`, 'error');
+    return;
+  }
+
+  if (recentlyEdited.size === 0) {
+    lock.classList.remove('show');
+    updateSaveButtonState();
+    return;
+  }
+
+  // Snapshot which rows were marked for delete BEFORE the commit,
+  // so we can detect ones that survived (allocations block hard-delete)
+  const beforeMarked = new Set(bomData.filter(r => r.deleted).map(r => r.id));
+
+  try {
+    const resp = await ZOHO.CREATOR.API.updateRecord({
+      appName:    APP_NAME,
+      reportName: PROJECT_REPORT_NAME,
+      id:         projectId,
+      data:       { data: { BOM_Recalc_Trigger: Math.floor(Date.now() / 1000) % 10000 } }
+    });
+    if (!resp || (resp.code !== 3000 && !resp.result)) {
+      throw new Error('Bad response: ' + JSON.stringify(resp));
+    }
+
+    // Workflow #9 may have hard-deleted orphans; reload everything.
+    await loadBOM();
+
+    // Detect rows that were marked but survived (allocations blocked delete).
+    const afterMarked = new Set(bomData.filter(r => r.deleted).map(r => r.id));
+    const survived    = [...beforeMarked].filter(id => afterMarked.has(id));
+
+    recentlyEdited.clear();
+    updateSaveButtonState();
+    lock.classList.remove('show');  // drop overlay before the dialog so it isn't behind it
+
+    if (survived.length > 0) {
+      await customAlert(
+        `Saved — totals recalculated.\n\n${survived.length} row(s) marked for delete were NOT removed. Zoho still reports them as tied to purchasing/allocated material, so the delete-protection kept them.\n\nIf the project's Purchase Material tab is empty, that count is stale — turn on "Show deleted" and use the red ✕ to permanently delete those rows.`,
+        {title: 'Save complete — some rows kept', okText: 'Got it'}
+      );
+    } else {
+      showToast('Saved to project. Totals recalculated.', 'success');
+    }
+  } catch (err) {
+    const detail = err?.responseText || err?.message || JSON.stringify(err);
+    console.error('[BOM Editor] commitChanges failed', err);
+    updateSaveButtonState();
+    lock.classList.remove('show');
+    await customAlert('Save to project failed:\n\n' + detail, {title: 'Save failed', okText: 'OK'});
+  } finally {
+    lock.classList.remove('show');
+  }
+}
+
+async function toggleDelete(row, makeDeleted) {
+  const data    = row.getData();
+  const apiVal  = String(makeDeleted);
+  const verb    = makeDeleted ? 'Marked for delete' : 'Restored';
+
+  try {
+    const resp = await ZOHO.CREATOR.API.updateRecord({
+      appName:    APP_NAME,
+      reportName: REPORT_NAME,
+      id:         data.id,
+      data:       { data: { DELETE_field: apiVal } }
+    });
+    if (!resp || (resp.code !== 3000 && !resp.result)) {
+      throw new Error('Bad response: ' + JSON.stringify(resp));
+    }
+
+    try {
+      await refetchAndUpdateRow(row, data.id);
+    } catch (refetchErr) {
+      console.warn('[BOM Editor] Save OK but refetch failed:', refetchErr);
+      const item = bomData.find(r => r.id === data.id);
+      if (item) item.deleted = makeDeleted;
+      row.update({deleted: makeDeleted});
+    }
+
+    recentlyEdited.add(data.id);
+    renumberRows();   // marked rows drop out of the count; kept rows go 1..N
+    row.reformat();
+    updateSaveButtonState();
+    flashRow(row, 'success');
+    showToast(`${verb}${data.tag ? ' — ' + data.tag : ''}.`, 'success');
+  } catch (err) {
+    flashRow(row, 'error');
+    const detail = err?.responseText || err?.message || JSON.stringify(err);
+    showToast('Action failed: ' + detail, 'error');
+    console.error('[BOM Editor] toggleDelete failed', err);
+  }
+}
+
+function makeEditHandler(fieldLinkName, dataKey, opts) {
+  opts = opts || {};
+  return async function(cell) {
+    const key = cellKey(cell);
+    if (pendingCells.has(key)) return;
+    const row    = cell.getRow();
+    const data   = row.getData();
+    const rawNew = cell.getValue() ?? '';
+    const rawOld = cell.getOldValue() ?? '';
+    if (rawNew === rawOld) return;
+
+    if (opts.validate && !opts.validate(rawNew)) {
+      showToast('Invalid value for ' + (opts.label || fieldLinkName) + '. Row not saved — re-edit to fix.', 'error');
+      flashRow(row, 'error');
+      return;
+    }
+
+    const apiValue = opts.toApi ? opts.toApi(rawNew) : rawNew;
+    const payload  = { [fieldLinkName]: apiValue };
+
+    // Path B: when this edit affects derived values, send rounded calcs in the
+    // same payload so the widget owns the math. Stops Zoho workflows from
+    // writing decimal Galv_LB into a 0-decimal field (which fails save),
+    // and keeps Length_Nest/Width_Nest (read by the nesting app) in sync.
+    let calc = null;
+    if (opts.recomputeCalcs) {
+      const nest = computeNestDims(row.getData());
+      payload.Length_Nest = nest.lengthNest;
+      payload.Width_Nest  = nest.widthNest;
+
+      calc = computeBomCalcs(row.getData());
+      if (calc) {
+        payload.Unit_Weight   = calc.unitWt;
+        payload.CalcWeight    = calc.totWt;
+        payload.Area          = calc.area;
+        payload.Galv_LB       = calc.galvLb;
+        payload.Weight_Per_Ft = calc.weightPerFt;
+      }
+    }
+    pendingCells.add(key);
+
+    try {
+      const resp = await ZOHO.CREATOR.API.updateRecord({
+        appName:    APP_NAME,
+        reportName: REPORT_NAME,
+        id:         data.id,
+        data:       { data: payload }
+      });
+      if (!resp || (resp.code !== 3000 && !resp.result)) {
+        throw new Error('Bad response: ' + JSON.stringify(resp));
+      }
+
+      if (opts.skipRefetch) {
+        // Path B: compute calcs client-side, update cell display, no refetch round-trip.
+        const item = bomData.find(r => r.id === data.id);
+        if (item) item[dataKey] = rawNew;
+        if (calc) {
+          row.update({unitWt: calc.unitWt, totWt: calc.totWt, area: calc.area, galvLb: calc.galvLb});
+          if (item) {
+            item.unitWt = calc.unitWt;
+            item.totWt  = calc.totWt;
+            item.area   = calc.area;
+            item.galvLb = calc.galvLb;
+          }
+        }
+        updateStats();
+      } else {
+        try {
+          await refetchAndUpdateRow(row, data.id);
+        } catch (refetchErr) {
+          console.warn('[BOM Editor] Save OK but refetch failed:', refetchErr);
+          const item = bomData.find(r => r.id === data.id);
+          if (item) item[dataKey] = rawNew;
+          updateStats();
+        }
+      }
+
+      recentlyEdited.add(data.id);
+      row.reformat();
+      updateSaveButtonState();
+      flashRow(row, 'success');
+      showToast(`Saved ${opts.label || fieldLinkName} on row ${data.lineItem}.`, 'success');
+      // Optional post-save hook (e.g. Galv edit cascades Finish=Galvanize).
+      if (opts.afterSave) {
+        try { await opts.afterSave(row, rawNew, data); }
+        catch (hookErr) { console.warn('[BOM Editor] afterSave hook failed', hookErr); }
+      }
+    } catch (err) {
+      flashRow(row, 'error');
+      const detail = err?.responseText || err?.message || JSON.stringify(err);
+      showToast('Save failed: ' + detail + ' — re-edit to retry.', 'error');
+      console.error('[BOM Editor] updateRecord failed', err);
+    } finally {
+      pendingCells.delete(key);
+    }
+  };
+}
+
+// Business rule: Galv drives Finish. When Galv is turned ON, Finish is forced to
+// 'Galvanize' (and the Finish cell is locked while Galv stays on — see column def).
+// When Galv is turned OFF, a previously-forced 'Galvanize' reverts to 'Plain';
+// any other finish the user had chosen is left untouched.
+async function syncFinishToGalv(row, galvOn) {
+  const data   = row.getData();
+  const target = galvOn ? 'Galvanize'
+               : (data.finish === 'Galvanize' ? 'Plain' : data.finish);
+  if (!target || target === data.finish) return;
+  try {
+    const resp = await ZOHO.CREATOR.API.updateRecord({
+      appName: APP_NAME, reportName: REPORT_NAME, id: data.id,
+      data: { data: { Finish: target } }
+    });
+    if (!resp || (resp.code !== 3000 && !resp.result)) {
+      throw new Error('Bad response: ' + JSON.stringify(resp));
+    }
+    row.update({ finish: target });
+    row.reformat();  // re-evaluate Finish editable/lock state
+    const item = bomData.find(r => r.id === data.id);
+    if (item) item.finish = target;
+    recentlyEdited.add(data.id);
+    updateSaveButtonState();
+  } catch (err) {
+    showToast('Galv set, but auto-updating Finish failed: ' +
+      (err.message || JSON.stringify(err)), 'error');
+    console.error('[BOM Editor] syncFinishToGalv failed', err);
+  }
+}
+
+function makeCascadeEditHandler(fieldLinkName, dataKey, downstream, opts) {
+  opts = opts || {};
+  return async function(cell) {
+    const key = cellKey(cell);
+    if (pendingCells.has(key)) return;
+    const row    = cell.getRow();
+    const data   = row.getData();
+    const rawNew = cell.getValue() ?? '';
+    const rawOld = cell.getOldValue() ?? '';
+    if (rawNew === rawOld) return;
+
+    const payload = { [fieldLinkName]: rawNew || '' };
+    const clearedDataKeys = [];
+    for (const ds of downstream) {
+      if (data[ds.dataKey]) {
+        payload[ds.fieldLinkName] = '';
+        clearedDataKeys.push(ds.dataKey);
+      }
+    }
+
+    // Form_Type changed → sync Nest_Type to the new form's measurement so the
+    // nesting app routes the row to the correct 1D/2D algorithm (it reads
+    // Nest_Type directly, not the Form_Type's measurement). Also clear width
+    // fields when going to Linear so leftover plate widths don't carry through.
+    if (fieldLinkName === 'Form_Type') {
+      const newMeasurement = lookupCache[LOOKUP_FORM_TYPE].measurementById?.[rawNew] || '';
+      if (newMeasurement === 'Linear' || newMeasurement === 'Panel') {
+        payload.Nest_Type = newMeasurement;
+      }
+      if (newMeasurement !== 'Panel') {
+        if (data.ftW)   { payload.Width_FT   = ''; clearedDataKeys.push('ftW'); }
+        if (data.inchW) { payload.Width_INCH = ''; clearedDataKeys.push('inchW'); }
+      }
+    }
+
+    // Path B: when this cascade affects derived values (Material change, or
+    // any change that clears Material downstream), send rounded calcs in the
+    // same payload so the Zoho workflow doesn't write decimal Galv_LB, and
+    // keep Length_Nest/Width_Nest (read by the nesting app) in sync.
+    let calc = null;
+    if (opts.recomputeCalcs) {
+      const provisional = { ...data };
+      for (const k of clearedDataKeys) provisional[k] = '';
+
+      // Nest dims don't depend on Material, always safe to compute.
+      const nest = computeNestDims(provisional);
+      payload.Length_Nest = nest.lengthNest;
+      payload.Width_Nest  = nest.widthNest;
+
+      calc = computeBomCalcs(provisional);
+      if (calc) {
+        payload.Unit_Weight   = calc.unitWt;
+        payload.CalcWeight    = calc.totWt;
+        payload.Area          = calc.area;
+        payload.Galv_LB       = calc.galvLb;
+        payload.Weight_Per_Ft = calc.weightPerFt;
+      } else {
+        // Material cleared (or never set) — zero out calcs so stale values
+        // don't linger and so workflow has nothing fractional to re-compute.
+        payload.Unit_Weight   = 0;
+        payload.CalcWeight    = 0;
+        payload.Area          = 0;
+        payload.Galv_LB       = 0;
+        payload.Weight_Per_Ft = 0;
+      }
+    }
+
+    pendingCells.add(key);
+    try {
+      const resp = await ZOHO.CREATOR.API.updateRecord({
+        appName:    APP_NAME,
+        reportName: REPORT_NAME,
+        id:         data.id,
+        data:       { data: payload }
+      });
+      if (!resp || (resp.code !== 3000 && !resp.result)) {
+        throw new Error('Bad response: ' + JSON.stringify(resp));
+      }
+
+      try {
+        await refetchAndUpdateRow(row, data.id);
+      } catch (refetchErr) {
+        console.warn('[BOM Editor] Save OK but refetch failed:', refetchErr);
+        const item = bomData.find(r => r.id === data.id);
+        if (item) {
+          item[dataKey] = rawNew;
+          for (const k of clearedDataKeys) item[k] = '';
+        }
+        const localPatch = {[dataKey]: rawNew};
+        for (const k of clearedDataKeys) localPatch[k] = '';
+        if (opts.recomputeCalcs) {
+          const calcVals = calc || {unitWt: 0, totWt: 0, area: 0, galvLb: 0};
+          localPatch.unitWt = calcVals.unitWt;
+          localPatch.totWt  = calcVals.totWt;
+          localPatch.area   = calcVals.area;
+          localPatch.galvLb = calcVals.galvLb;
+          if (item) {
+            item.unitWt = calcVals.unitWt;
+            item.totWt  = calcVals.totWt;
+            item.area   = calcVals.area;
+            item.galvLb = calcVals.galvLb;
+          }
+        }
+        row.update(localPatch);
+        updateStats();
+      }
+
+      recentlyEdited.add(data.id);
+      row.reformat();
+      updateSaveButtonState();
+      flashRow(row, 'success');
+      const tail = clearedDataKeys.length ? ` (cleared ${clearedDataKeys.length} downstream field${clearedDataKeys.length>1?'s':''})` : '';
+      showToast(`Saved ${opts.label || fieldLinkName} on row ${data.lineItem}${tail}.`, 'success');
+      // Pre-fetch the new Form+MatType combo's specs+materials so the next dropdown is ready.
+      if (dataKey === 'formType' || dataKey === 'matType') {
+        const fresh = row.getData();
+        if (fresh.formType && fresh.matType) {
+          ensureComboLoaded(fresh.formType, fresh.matType).then(() => row.reformat());
+        }
+      }
+    } catch (err) {
+      flashRow(row, 'error');
+      const detail = err?.responseText || err?.message || JSON.stringify(err);
+      showToast('Save failed: ' + detail + ' — re-edit to retry.', 'error');
+      console.error('[BOM Editor] cascade updateRecord failed', err);
+    } finally {
+      pendingCells.delete(key);
+    }
+  };
+}
+
+function showError(msg, err) {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('bom-table').style.display = 'none';
+  const el = document.getElementById('error');
+  el.style.display = 'block';
+  el.textContent = msg + (err ? '\n\n' + (err.message || JSON.stringify(err, null, 2)) : '');
+  console.error('[BOM Editor]', msg, err);
+}
+
+async function loadOneLookup(reportName) {
+  const resp = await ZOHO.CREATOR.API.getAllRecords({
+    appName:    APP_NAME,
+    reportName: reportName,
+    pageSize:   200
+  });
+  const rows = Array.isArray(resp?.data) ? resp.data : Array.isArray(resp) ? resp : [];
+  if (rows.length === 0) {
+    console.warn('[BOM Editor] Lookup', reportName, 'returned 0 rows');
+    return;
+  }
+  const displayField = pickDisplayField(rows[0]);
+  if (!displayField) {
+    console.error('[BOM Editor] Could not auto-detect display field for', reportName, '— record keys:', Object.keys(rows[0]));
+    return;
+  }
+  console.log('[BOM Editor] Lookup', reportName, 'using display field:', displayField);
+
+  const cache = lookupCache[reportName];
+  cache.displayField = displayField;
+  cache.byId         = {};
+  cache.optionsList  = [];
+  cache.recordsById  = {};  // Full Zoho record kept by ID so we can read numeric fields like Result / Width
+  for (const r of rows) {
+    const id  = String(r.ID);
+    const lbl = String(r[displayField] ?? '');
+    cache.byId[id] = lbl;
+    cache.recordsById[id] = r;
+    cache.optionsList.push({label: lbl, value: id});
+  }
+  cache.optionsList.sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+}
+
+async function fetchAllPages(reportName, criteria) {
+  const all = [];
+  let page = 1;
+  const pageSize = 1000;
+  while (true) {
+    const params = { appName: APP_NAME, reportName: reportName, page: page, pageSize: pageSize };
+    if (criteria) params.criteria = criteria;
+    const resp = await ZOHO.CREATOR.API.getAllRecords(params);
+    const rows = Array.isArray(resp?.data) ? resp.data : Array.isArray(resp) ? resp : [];
+    if (rows.length === 0) break;
+    all.push(...rows);
+    if (rows.length < pageSize) break;
+    page += 1;
+    if (page > 50) {
+      console.warn('[BOM Editor] fetchAllPages safety stop at page 50 for', reportName);
+      break;
+    }
+  }
+  return all;
+}
+
+const RAILWAY_BASE = 'https://material-compass-nesting-app-production.up.railway.app';
+
+// Tracks whether the Zoho daily API quota has been hit — surfaced once via toast + banner,
+// then re-suppressed for further failing calls in the same session to avoid spam.
+let zohoQuotaExhausted = false;
+
+async function fetchRailwayLookup(path) {
+  const resp = await fetch(RAILWAY_BASE + path);
+  if (resp.status === 503) {
+    let body = null;
+    try { body = await resp.json(); } catch (_) {}
+    if (body?.zoho_code === 4000 && !zohoQuotaExhausted) {
+      zohoQuotaExhausted = true;
+      showToast('Zoho daily API quota reached. Dropdowns will repopulate after midnight UTC.', 'error');
+      const banner = document.getElementById('quota-banner');
+      if (banner) banner.style.display = 'block';
+    }
+    throw new Error('Zoho quota exhausted on ' + path);
+  }
+  if (!resp.ok) throw new Error('HTTP ' + resp.status + ' on ' + path);
+  return await resp.json();
+}
+
+async function loadFormTypes() {
+  const rows = await fetchRailwayLookup('/api/bom-lookups/form-types');
+  const cache = lookupCache[LOOKUP_FORM_TYPE];
+  cache.byId = {};
+  cache.measurementById = {};  // formTypeId -> "Linear" | "Panel"
+  cache.optionsList = [];
+  for (const r of rows) {
+    const id  = String(r.id);
+    const lbl = String(r.label ?? '');
+    cache.byId[id] = lbl;
+    cache.measurementById[id] = String(r.measurement ?? '');
+    cache.optionsList.push({label: lbl, value: id});
+  }
+  cache.optionsList.sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+  console.log('[BOM Editor]', LOOKUP_FORM_TYPE, '(via Railway) →', cache.optionsList.length, 'active form types');
+}
+
+// Width fields (FT W, INCH W) are only editable for "Panel" form types (Plate, Sheet, etc.).
+// Linear form types (Beam, Channel, Angle, Tube, etc.) only need length, no width.
+function isPanelRow(rowData) {
+  if (!rowData?.formType) return false;
+  return lookupCache[LOOKUP_FORM_TYPE].measurementById?.[rowData.formType] === 'Panel';
+}
+
+// Material metadata for client-side weight calculation.
+// Keyed by material id; populated from Railway /api/bom-lookups/materials response.
+const materialMetaById = {};
+
+// Read numeric Result (decimal inches) from a Length_INCH_Lookups record by ID.
+// Mirrors Zoho workflow's row.Length_INCH.Result / row.Width_INCH.Result.
+function inchResultById(inchId) {
+  if (!inchId) return 0;
+  const rec = lookupCache[LOOKUP_INCH]?.recordsById?.[inchId];
+  if (!rec) return 0;
+  // Field is named "Result" on the lookup form per the Zoho recalc workflow.
+  return Number(rec.Result) || 0;
+}
+
+// Read numeric Width (in feet) from a Plate_Standard_Sizes record by ID.
+// Mirrors Zoho workflow's row.Width_FT.Width.
+function plateFtWidthById(ftwId) {
+  if (!ftwId) return 0;
+  const rec = lookupCache[LOOKUP_PLATE_FT_W]?.recordsById?.[ftwId];
+  if (!rec) return 0;
+  return Number(rec.Width) || 0;
+}
+
+// Length_Nest / Width_Nest are the total-inch snapshot fields the nesting
+// program reads (material-compass-nesting-app/server/index.js:82). They do
+// not depend on Material, so this is computed separately from computeBomCalcs
+// and is safe to call even when Material is unset.
+//   Length_Nest = Length_FT * 12 + Length_INCH.Result
+//   Width_Nest  = Panel ? Width_FT.Width * 12 + Width_INCH.Result : 0
+// Rounded to integers — the Zoho field displays as integer in all observed
+// data; tighten to 2-decimals if a fractional-inch row gets rejected.
+function computeNestDims(row) {
+  const lengthFt    = Number(row.ftL) || 0;
+  const lengthInRes = inchResultById(row.inchL);
+  const lengthNest  = lengthFt * 12 + lengthInRes;
+
+  let widthNest = 0;
+  if (isPanelRow(row)) {
+    const widthFt    = plateFtWidthById(row.ftW);
+    const widthInRes = inchResultById(row.inchW);
+    widthNest        = widthFt * 12 + widthInRes;
+  }
+
+  return {
+    lengthNest: Math.round(lengthNest),
+    widthNest:  Math.round(widthNest),
+  };
+}
+
+// Client-side calc for Unit_Weight / CalcWeight (Tot WT) / Area / Galv_LB.
+// Mirrors the Zoho Bill_Of_Material recalc workflow:
+//   Linear: Unit_Weight = Weight_Per_Ft × (Length_FT + Length_INCH.Result / 12)
+//   Panel:  Unit_Weight = Weight_Per_Ft × ((Length_FT × 12 + Length_INCH.Result) × (Width_FT.Width × 12 + Width_INCH.Result)) / 144
+//   CalcWeight = Quantity × Unit_Weight
+//   Panel Area (if SA):  ((L_in × W_in) / 144) × 2 × Quantity   (top + bottom faces)
+//   Linear Area (if SA): Quantity × Surface_Area_Per_Ft × (Length_FT + Length_INCH.Result / 12)
+//   Galv_LB = CalcWeight when Galv ticked, else 0
+//     (NB: Zoho workflow has bug `if (row.Galv = true)` — assignment, not comparison.
+//      That makes Galv_LB always set even when unchecked. Widget uses correct
+//      boolean check; if you ever want to mirror the buggy behavior, ping me.)
+// (Zoho workflow gates the whole unit-weight block behind `if CalcWeight != 0` —
+//  chicken-and-egg for new rows. Widget always computes, no gate.)
+function computeBomCalcs(row) {
+  if (!row?.material) return null;
+  const meta = materialMetaById[row.material];
+  if (!meta || !meta.weight_per_ft) return null;
+  const wpf = meta.weight_per_ft;
+  const sapf = meta.surface_area_per_ft || 0;
+
+  const lengthFt    = Number(row.ftL) || 0;
+  const lengthInRes = inchResultById(row.inchL);
+  const qty         = Number(row.qty) || 0;
+  const totalLenFt  = lengthFt + lengthInRes / 12;   // total length in feet
+
+  let unitWt, areaOneSidedSqFt;
+  if (isPanelRow(row)) {
+    const widthFt    = plateFtWidthById(row.ftW);
+    const widthInRes = inchResultById(row.inchW);
+    const lengthIn   = lengthFt * 12 + lengthInRes;
+    const widthIn    = widthFt  * 12 + widthInRes;
+    unitWt           = wpf * (lengthIn * widthIn) / 144;
+    areaOneSidedSqFt = (lengthIn * widthIn) / 144;
+  } else {
+    unitWt           = wpf * totalLenFt;
+    areaOneSidedSqFt = 0;  // Linear uses Surface_Area_Per_Ft × length, not 2-sided area
+  }
+  const totWt = unitWt * qty;
+
+  // Area — only meaningful if SA checkbox is on; per Zoho workflow.
+  let area = 0;
+  if (row.sa === true) {
+    if (isPanelRow(row)) {
+      area = areaOneSidedSqFt * 2 * qty;   // top + bottom faces
+    } else {
+      area = qty * sapf * totalLenFt;
+    }
+  }
+
+  // Galv_LB — only set if Galv checkbox is on.
+  const galvLb = row.galv === true ? totWt : 0;
+
+  return {
+    unitWt: Math.round(unitWt * 100) / 100,
+    totWt:  Math.round(totWt  * 100) / 100,
+    area:   Math.round(area   * 100) / 100,
+    // Galv_LB Zoho field is configured for 0 decimal places — must be integer.
+    galvLb: Math.round(galvLb),
+    // Per-foot weight from the material catalog. Persisted to the BOM's
+    // Weight_Per_Ft field so the nesting app can read it (it computes stock
+    // weight = Weight_Per_Ft × stock length). The Zoho recalc workflow leaves
+    // this field blank, so the widget must write it — see memory
+    // feedback_bom_weight_per_ft_blank.
+    weightPerFt: Math.round(wpf * 10000) / 10000,
+  };
+}
+
+// Per-component drawings cache. Keyed by componentId.
+// Project_Drawing_Details records are filtered by Components == componentId.
+const drawingsByComponent = {};
+async function ensureDrawingsLoaded(componentId) {
+  if (!componentId) return null;
+  if (drawingsByComponent[componentId]) return drawingsByComponent[componentId];
+  drawingsByComponent[componentId] = { options: [], loading: true };
+  try {
+    const rows = await fetchRailwayLookup('/api/bom-lookups/drawings?component_id=' + encodeURIComponent(componentId));
+    const options = rows
+      .map(r => ({label: String(r.label ?? ''), value: String(r.id)}))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+    drawingsByComponent[componentId] = { options, loading: false };
+    // Mirror labels into a separate byId map for the Drawing cell formatter
+    for (const r of rows) drawingDisplayById[String(r.id)] = String(r.label ?? '');
+    console.log('[BOM Editor] drawings for component', componentId, '→', options.length);
+    return drawingsByComponent[componentId];
+  } catch (err) {
+    console.error('[BOM Editor] drawings load failed for component', componentId, err);
+    delete drawingsByComponent[componentId];
+    return null;
+  }
+}
+const drawingDisplayById = {};
+
+async function loadComponentsForProject(pid) {
+  const rows = await fetchRailwayLookup('/api/bom-lookups/components?project_id=' + encodeURIComponent(pid));
+  const cache = lookupCache[LOOKUP_COMPONENT];
+  cache.byId = {};
+  cache.optionsList = [];
+  for (const r of rows) {
+    const id = String(r.id);
+    const lbl = String(r.label ?? '');
+    cache.byId[id] = lbl;
+    cache.optionsList.push({label: lbl, value: id});
+  }
+  cache.optionsList.sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+  console.log('[BOM Editor]', LOOKUP_COMPONENT, '(via Railway) →', cache.optionsList.length, 'components for this project');
+}
+
+async function loadMaterialTypes() {
+  const rows = await fetchRailwayLookup('/api/bom-lookups/material-types');
+  const cache = lookupCache[LOOKUP_MAT_TYPE];
+  cache.byId = {};
+  cache.optionsList = [];
+  for (const r of rows) {
+    const id  = String(r.id);
+    const lbl = String(r.label ?? '');
+    cache.byId[id] = lbl;
+    cache.optionsList.push({label: lbl, value: id});
+  }
+  cache.optionsList.sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+  console.log('[BOM Editor]', LOOKUP_MAT_TYPE, '(via Railway) →', cache.optionsList.length, 'material types');
+}
+
+async function loadMaterialFormDetail() {
+  const rows = await fetchRailwayLookup('/api/bom-lookups/material-form-detail');
+  const cache = lookupCache[LOOKUP_MFD];
+  cache.byId    = {};
+  cache.records = [];
+  for (const r of rows) {
+    const id         = String(r.id);
+    const formTypeId = String(r.formTypeId ?? '');
+    const matTypeId  = String(r.matTypeId ?? '');
+    const typeDetail = String(r.typeDetail ?? '');
+    cache.byId[id] = typeDetail;
+    cache.records.push({id, formTypeId, matTypeId, typeDetail});
+  }
+  console.log('[BOM Editor]', LOOKUP_MFD, '(via Railway) →', cache.records.length, 'spec combos');
+}
+
+async function loadMaterialCatalog() {
+  const rows = await fetchRailwayLookup('/api/bom-lookups/materials');
+  const cache = lookupCache[LOOKUP_MATERIAL];
+  cache.byId    = {};
+  cache.records = [];
+  for (const r of rows) {
+    const id          = String(r.id);
+    const formTypeId  = String(r.formTypeId ?? '');
+    const matTypeId   = String(r.matTypeId ?? '');
+    const description = String(r.description ?? '');
+    cache.byId[id] = description;
+    cache.records.push({id, formTypeId, matTypeId, description});
+  }
+  console.log('[BOM Editor]', LOOKUP_MATERIAL, '(via Railway) →', cache.records.length, 'material rows');
+}
+
+async function loadBomEditorLookupsViaCustomApi() {
+  const resp = await ZOHO.CREATOR.API.invokeCustomApi({
+    appName:        APP_NAME,
+    customApiName:  'getBomEditorLookups',
+    payload:        {}
+  });
+
+  // The Deluge function returns its map either as `resp.response` or directly as `resp`.
+  // Accept either shape.
+  const data = resp?.response ?? resp?.data ?? resp ?? {};
+  console.log('[BOM Editor] getBomEditorLookups raw response keys:', Object.keys(data || {}));
+
+  // Form Types
+  const ftCache = lookupCache[LOOKUP_FORM_TYPE];
+  ftCache.byId = {};
+  ftCache.optionsList = [];
+  for (const item of (data.formTypes || [])) {
+    const id  = String(item.id);
+    const lbl = String(item.label ?? '');
+    ftCache.byId[id] = lbl;
+    ftCache.optionsList.push({label: lbl, value: id});
+  }
+  ftCache.optionsList.sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+  console.log('[BOM Editor]', LOOKUP_FORM_TYPE, '(via custom API) →', ftCache.optionsList.length, 'active form types');
+
+  // Material Types
+  const mtCache = lookupCache[LOOKUP_MAT_TYPE];
+  mtCache.byId = {};
+  mtCache.optionsList = [];
+  for (const item of (data.matTypes || [])) {
+    const id  = String(item.id);
+    const lbl = String(item.label ?? '');
+    mtCache.byId[id] = lbl;
+    mtCache.optionsList.push({label: lbl, value: id});
+  }
+  mtCache.optionsList.sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+  console.log('[BOM Editor]', LOOKUP_MAT_TYPE, '(via custom API) →', mtCache.optionsList.length, 'material types');
+
+  // Spec combos
+  const mfdCache = lookupCache[LOOKUP_MFD];
+  mfdCache.byId    = {};
+  mfdCache.records = [];
+  for (const item of (data.specs || [])) {
+    const id         = String(item.id);
+    const formTypeId = String(item.formTypeId ?? '');
+    const matTypeId  = String(item.matTypeId ?? '');
+    const typeDetail = String(item.typeDetail ?? '');
+    mfdCache.byId[id] = typeDetail;
+    mfdCache.records.push({id, formTypeId, matTypeId, typeDetail});
+  }
+  console.log('[BOM Editor]', LOOKUP_MFD, '(via custom API) →', mfdCache.records.length, 'spec combos');
+
+  // Material catalog
+  const matCache = lookupCache[LOOKUP_MATERIAL];
+  matCache.byId    = {};
+  matCache.records = [];
+  for (const item of (data.materials || [])) {
+    const id          = String(item.id);
+    const formTypeId  = String(item.formTypeId ?? '');
+    const matTypeId   = String(item.matTypeId ?? '');
+    const description = String(item.description ?? '');
+    matCache.byId[id] = description;
+    matCache.records.push({id, formTypeId, matTypeId, description});
+  }
+  console.log('[BOM Editor]', LOOKUP_MATERIAL, '(via custom API) →', matCache.records.length, 'material rows');
+}
+
+async function loadLookups() {
+  await Promise.all([
+    loadOneLookup(LOOKUP_INCH).catch(err          => console.error('[BOM Editor]', LOOKUP_INCH, 'fetch failed:', err)),
+    loadOneLookup(LOOKUP_PLATE_FT_W).catch(err    => console.error('[BOM Editor]', LOOKUP_PLATE_FT_W, 'fetch failed:', err)),
+    loadFormTypes().catch(err                     => console.error('[BOM Editor]', LOOKUP_FORM_TYPE, 'fetch failed:', err)),
+    loadMaterialTypes().catch(err                 => console.error('[BOM Editor]', LOOKUP_MAT_TYPE, 'fetch failed:', err)),
+    loadComponentsForProject(projectId).catch(err => console.error('[BOM Editor]', LOOKUP_COMPONENT, 'fetch failed:', err)),
+  ]);
+  // material-form-detail + materials are NOT preloaded — they're huge (>10k rows total
+  // across all form types). Instead they're fetched on demand per Form+MatType combo via
+  // ensureComboLoaded — see preloadCombosFromBOM() called after BOM rows render.
+  // Drawings are similarly per-component, fetched on demand via ensureDrawingsLoaded.
+}
+
+async function preloadDrawingsFromBOM() {
+  if (!Array.isArray(bomData)) return;
+  const seen = new Set();
+  const componentIds = [];
+  for (const row of bomData) {
+    if (row.component && !seen.has(row.component)) {
+      seen.add(row.component);
+      componentIds.push(row.component);
+    }
+  }
+  if (!componentIds.length) return;
+  console.log('[BOM Editor] preloading drawings for', componentIds.length, 'unique component(s)');
+  const CONCURRENCY = 3;
+  let idx = 0;
+  async function worker() {
+    while (idx < componentIds.length) {
+      const c = componentIds[idx++];
+      try { await ensureDrawingsLoaded(c); } catch (e) { /* logged inside */ }
+    }
+  }
+  await Promise.all(Array.from({length: CONCURRENCY}, () => worker()));
+  if (table) table.redraw(true);
+}
+
+async function preloadCombosFromBOM() {
+  if (!Array.isArray(bomData)) return;
+  const seen = new Set();
+  const combos = [];
+  for (const row of bomData) {
+    if (row.formType && row.matType) {
+      const k = comboKey(row.formType, row.matType);
+      if (!seen.has(k)) { seen.add(k); combos.push([row.formType, row.matType]); }
+    }
+  }
+  if (!combos.length) return;
+  console.log('[BOM Editor] preloading', combos.length, 'Form+MatType combo(s) for current BOM');
+  // Concurrency limit: each combo fires 2 fetches (specs + materials). At 12 combos
+  // unlimited, that's 24 simultaneous Zoho calls which trips Zoho's per-minute throttle
+  // (returns 400 "too many requests continuously"). Cap at 3 in-flight combos.
+  const CONCURRENCY = 3;
+  let idx = 0;
+  async function worker() {
+    while (idx < combos.length) {
+      const myIdx = idx++;
+      const [f, m] = combos[myIdx];
+      try { await ensureComboLoaded(f, m); } catch (e) { /* ensureComboLoaded already logs */ }
+    }
+  }
+  await Promise.all(Array.from({length: CONCURRENCY}, () => worker()));
+  // Refresh cells so existing Spec/Material labels resolve from newly populated byId cache
+  if (table) table.redraw(true);
+}
+
+async function loadBOM() {
+  try {
+    const [resp] = await Promise.all([
+      ZOHO.CREATOR.API.getAllRecords({
+        appName:    APP_NAME,
+        reportName: REPORT_NAME,
+        criteria:   `MCP_Customer_Project_Form == ${projectId}`,
+        pageSize:   200
+      }),
+      loadLookups()
+    ]);
+
+    const rows = Array.isArray(resp?.data) ? resp.data
+              : Array.isArray(resp)        ? resp
+              : [];
+
+    bomData = rows.map(mapRecord).sort((a, b) => a.lineItem - b.lineItem);
+    // Backfill mandatory Supplied/Finish on rows imported before these defaults
+    // existed. Fills BLANKS only (never overrides a chosen value), in-memory first
+    // so the grid renders populated, then persists them one time in the background.
+    const backfilled = applySuppliedFinishDefaults(bomData);
+    renumberRows();   // collapse any gaps from previously-deleted rows -> 1..N
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('bom-table').style.display = 'block';
+    renderGrid();
+    if (backfilled.length) persistBackfill(backfilled);
+    preloadCombosFromBOM().catch(err => console.error('[BOM Editor] preloadCombosFromBOM failed:', err));
+    preloadDrawingsFromBOM().catch(err => console.error('[BOM Editor] preloadDrawingsFromBOM failed:', err));
+  } catch (err) {
+    // Zoho throws 404 / code 3100 ("No records found for the given criteria")
+    // when zero rows match — an EMPTY BOM, not a failure. Happens on a brand-new
+    // project, or after an import wiped/failed and left no rows. Render an empty
+    // editable grid so the estimator can Add Row instead of hitting a dead end.
+    if (isNoRecordsError(err)) {
+      bomData = [];
+      try { await loadLookups(); }
+      catch (luErr) { console.error('[BOM Editor] loadLookups failed on empty BOM:', luErr); }
+      renumberRows();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('bom-table').style.display = 'block';
+      renderGrid();
+    } else {
+      showError('Failed to load BOM rows.', err);
+    }
+  }
+}
+
+// True when Zoho's getAllRecords rejected simply because nothing matched the
+// criteria (empty result), vs. a real transport/permission failure.
+function isNoRecordsError(err) {
+  if (!err) return false;
+  if (err.status === 404 || err.code === 3100) return true;
+  const raw = String(err.responseText || err.message || err);
+  return raw.indexOf('"code":3100') !== -1 || raw.indexOf('No records found') !== -1;
+}
+
+// Fill blank Supplied/Finish in-memory (Supplied->Manufacture; Finish->Galvanize
+// if Galv else Plain). BLANKS ONLY — never overrides a value the estimator chose.
+// Returns [{id, patch}] for the rows that changed, so they can be persisted once.
+function applySuppliedFinishDefaults(rows) {
+  const patched = [];
+  rows.forEach(r => {
+    if (r.deleted) return;
+    const patch = {};
+    if (!r.supplied) { r.supplied = 'Manufacture'; patch.Supplied = 'Manufacture'; }
+    if (!r.finish)   { const f = r.galv ? 'Galvanize' : 'Plain'; r.finish = f; patch.Finish = f; }
+    if (Object.keys(patch).length) patched.push({ id: r.id, patch });
+  });
+  return patched;
+}
+
+// One-time background persist of the load-time backfill (concurrency-capped so it
+// doesn't spike Zoho calls). After it runs once for a project, later loads find no
+// blanks and do nothing.
+async function persistBackfill(list) {
+  const CONCURRENCY = 3;
+  let i = 0, ok = 0;
+  async function worker() {
+    while (i < list.length) {
+      const { id, patch } = list[i++];
+      try {
+        await ZOHO.CREATOR.API.updateRecord({
+          appName: APP_NAME, reportName: REPORT_NAME, id, data: { data: patch }
+        });
+        ok++;
+      } catch (err) {
+        console.error('[BOM Editor] backfill persist failed for', id, err);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  if (ok) showToast(`Defaulted ${ok} blank Supplied/Finish value(s) and saved to project.`, 'success');
+}
+
+function updateStats() {
+  // Totals reflect the rows that will REMAIN — exclude soft-deleted rows.
+  const kept = bomData.filter(r => !r.deleted);
+  document.getElementById('stat-rows').textContent = kept.length;
+  const totalWt    = kept.reduce((s,r) => s + (r.totWt   || 0), 0);
+  const totalArea  = kept.reduce((s,r) => s + (r.area    || 0), 0);
+  const totalGalv  = kept.reduce((s,r) => s + (r.galvLb  || 0), 0);
+  const totalAlloc = kept.reduce((s,r) => s + (r.allocatedAmt || 0), 0);
+  document.getElementById('stat-weight').textContent  = Math.round(totalWt).toLocaleString() + ' lbs';
+  document.getElementById('stat-area').textContent    = totalArea.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ft²';
+  document.getElementById('stat-galv').textContent    = Math.round(totalGalv).toLocaleString() + ' lbs';
+  document.getElementById('stat-dollars').textContent = '$' + totalAlloc.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+// Renumber the # column so kept rows read 1..N in display order. Rows marked
+// for delete (deleted === true) are skipped — they drop out of the count and
+// show a blank #, so the sequence reflects only the rows that will remain.
+// Display-only: does NOT write Line_Item back to Zoho. Updates bomData + live rows.
+function renumberRows() {
+  let n = 0;
+  bomData.forEach((item) => {
+    const val = item.deleted ? null : (++n);
+    if (item.lineItem !== val) {
+      item.lineItem = val;
+      const row = table ? table.getRow(item.id) : null;
+      if (row) row.update({lineItem: val});
+    }
+  });
+}
+
+function renderGrid() {
+  updateStats();
+
+  table = new Tabulator('#bom-table', {
+    data: bomData,
+    height: 'calc(100vh - 240px)',
+    layout: 'fitColumns',   // fill the width; only text columns grow (widthGrow below), numerics + ✕ stay fixed
+    columnDefaults: { widthGrow: 0, widthShrink: 0 },   // opt-out by default: nothing grows/shrinks unless a column sets widthGrow
+    virtualDom: true,
+    rowHeight: 34,
+    columns: [
+      {title: '✓', field: '_verify', width: 44, minWidth: 44, hozAlign: 'center', headerHozAlign: 'center',
+        headerSort: false, frozen: true, resizable: false,
+        titleFormatter: () => '<span title="Review checklist — check off each row once you\'ve confirmed it against the drawing. View-only, not saved.">✓</span>',
+        formatter: (cell) => {
+          const id = cell.getRow().getData().id;
+          return `<input type="checkbox" class="verify-check" tabindex="-1" ${verifiedRows.has(id) ? 'checked' : ''}>`;
+        },
+        cellClick: (e, cell) => {
+          const id = cell.getRow().getData().id;
+          if (verifiedRows.has(id)) verifiedRows.delete(id); else verifiedRows.add(id);
+          cell.getRow().reformat();   // re-render from the Set (source of truth) + apply row-verified tint
+        }},
+      {title: '#',        field: 'lineItem',  width: 50,  hozAlign: 'center', frozen: true},
+      {title: 'Tag',      field: 'tag',       width: 110, frozen: true, widthGrow: 1,
+        editor: 'input',
+        cellEdited: makeEditHandler('BOM_Item', 'tag', {label: 'Tag'}),
+        cssClass: 'editable-cell'},
+      {title: 'Component',field: 'component', width: 160, widthGrow: 2,
+        formatter: (c) => {
+          const lbl = lookupCache[LOOKUP_COMPONENT].byId[c.getValue()] || c.getRow().getData().componentLbl || '';
+          return lbl ? `<span class="lookup-cell">${lbl}</span>` : '';
+        },
+        editor: 'list',
+        editorParams: {values: lookupCache[LOOKUP_COMPONENT].optionsList, autocomplete: true, listOnEmpty: true},
+        cellEdited: makeCascadeEditHandler('Component', 'component', [
+          {dataKey: 'drawing', fieldLinkName: 'Scope_LU'},
+        ], {label: 'Component'}),
+        cssClass: 'editable-cell'},
+      {title: 'Drawing',  field: 'drawing',   width: 140, widthGrow: 2,
+        formatter: (c) => {
+          const lbl = drawingDisplayById[c.getValue()] || c.getRow().getData().drawingLbl || '';
+          return lbl ? `<span class="lookup-cell">${lbl}</span>` : '';
+        },
+        editor: 'list',
+        editorParams: function(cell) {
+          const d = cell.getRow().getData();
+          if (!d.component) return {values: []};
+          const entry = drawingsByComponent[d.component];
+          if (!entry) {
+            ensureDrawingsLoaded(d.component).then(() => cell.getRow().reformat());
+            return {values: []};
+          }
+          return {values: entry.options || [], autocomplete: true, listOnEmpty: true};
+        },
+        cellEdited: makeEditHandler('Scope_LU', 'drawing', {label: 'Drawing'}),
+        cssClass: 'editable-cell'},
+      {title: 'Form',     field: 'formType',  width: 110, widthGrow: 1,
+        formatter: (c) => {
+          const lbl = lookupCache[LOOKUP_FORM_TYPE].byId[c.getValue()] || c.getRow().getData().formTypeLbl || '';
+          return lbl ? `<span class="lookup-cell">${lbl}</span>` : '';
+        },
+        editor: 'list',
+        editorParams: {values: lookupCache[LOOKUP_FORM_TYPE].optionsList, autocomplete: true, listOnEmpty: true},
+        cellEdited: makeCascadeEditHandler('Form_Type', 'formType', [
+          {dataKey: 'matType',  fieldLinkName: 'Material_Type'},
+          {dataKey: 'spec',     fieldLinkName: 'Specification'},
+          {dataKey: 'material', fieldLinkName: 'Material'},
+        ], {label: 'Form', recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'Mat Type', field: 'matType',   width: 140, widthGrow: 1,
+        formatter: (c) => {
+          const lbl = lookupCache[LOOKUP_MAT_TYPE].byId[c.getValue()] || c.getRow().getData().matTypeLbl || '';
+          return lbl ? `<span class="lookup-cell">${lbl}</span>` : '';
+        },
+        editor: 'list',
+        editorParams: {values: lookupCache[LOOKUP_MAT_TYPE].optionsList, autocomplete: true, listOnEmpty: true},
+        cellEdited: makeCascadeEditHandler('Material_Type', 'matType', [
+          {dataKey: 'spec',     fieldLinkName: 'Specification'},
+          {dataKey: 'material', fieldLinkName: 'Material'},
+        ], {label: 'Mat Type', recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'Spec',     field: 'spec',      width: 115, widthGrow: 1,
+        formatter: (c) => {
+          const lbl = lookupCache[LOOKUP_MFD].byId[c.getValue()] || c.getRow().getData().specLbl || '';
+          return lbl ? `<span class="lookup-cell">${lbl}</span>` : '';
+        },
+        editor: 'list',
+        editorParams: function(cell) {
+          const d = cell.getRow().getData();
+          if (!d.formType || !d.matType) return {values: []};
+          const combo = comboCache[comboKey(d.formType, d.matType)];
+          if (!combo) {
+            ensureComboLoaded(d.formType, d.matType).then(() => cell.getRow().reformat());
+            return {values: []};
+          }
+          return {values: combo.specs || [], autocomplete: true, listOnEmpty: true};
+        },
+        cellEdited: makeCascadeEditHandler('Specification', 'spec', [
+          {dataKey: 'material', fieldLinkName: 'Material'},
+        ], {label: 'Spec', recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'Material', field: 'material',  width: 210, widthGrow: 3,
+        formatter: (c) => {
+          const lbl = lookupCache[LOOKUP_MATERIAL].byId[c.getValue()] || c.getRow().getData().materialLbl || '';
+          return lbl ? `<span class="lookup-cell">${lbl}</span>` : '';
+        },
+        editor: 'list',
+        editorParams: function(cell) {
+          const d = cell.getRow().getData();
+          if (!d.formType || !d.matType) return {values: []};
+          const combo = comboCache[comboKey(d.formType, d.matType)];
+          if (!combo) {
+            ensureComboLoaded(d.formType, d.matType).then(() => cell.getRow().reformat());
+            return {values: []};
+          }
+          // Dedupe by description: catalog has many records per visible size (one per
+          // dim variant / weight / finish / spec). User only needs to see each size once.
+          // No spec filter — Beam_Channel_Tee_Lookup's Specification field is
+          // inconsistently populated (most records have it empty, a few have it set),
+          // so filtering by it yields misleading results.
+          const seen = new Set();
+          const deduped = [];
+          for (const m of (combo.materials || [])) {
+            if (!seen.has(m.label)) {
+              seen.add(m.label);
+              deduped.push({label: m.label, value: m.value});
+            }
+          }
+          return {values: deduped, autocomplete: true, listOnEmpty: true};
+        },
+        cellEdited: makeCascadeEditHandler('Material', 'material', [], {label: 'Material', recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'QTY',      field: 'qty',       width: 75,  hozAlign: 'right',
+        formatter: (c) => c.getValue() != null && c.getValue() !== '' ? c.getValue() : '0',
+        editor: 'number', editorParams: {min: 0, step: 1},
+        cellEdited: makeEditHandler('Quantity', 'qty', {label: 'QTY', validate: nonNegNumber, skipRefetch: true, recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'FT (L)',   field: 'ftL',       width: 80,  hozAlign: 'right',
+        formatter: (c) => c.getValue() != null && c.getValue() !== '' ? c.getValue() : '0',
+        editor: 'number', editorParams: {min: 0, step: 1},
+        cellEdited: makeEditHandler('Length_FT', 'ftL', {label: 'FT (L)', validate: nonNegNumber, skipRefetch: true, recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'INCH (L)', field: 'inchL',     width: 100,
+        formatter: (cell) => {
+          const v = cell.getValue();
+          if (!v) return '0';
+          return lookupCache[LOOKUP_INCH].byId[v] || '0';
+        },
+        editor: 'list',
+        editorParams: {values: lookupCache[LOOKUP_INCH].optionsList},
+        cellEdited: makeEditHandler('Length_INCH', 'inchL', {label: 'INCH (L)', skipRefetch: true, recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'FT (W)',   field: 'ftW',       width: 80,
+        formatter: (cell) => {
+          const v = cell.getValue();
+          if (!v) return '0';
+          return lookupCache[LOOKUP_PLATE_FT_W].byId[v] || '0';
+        },
+        editor: 'list',
+        editorParams: {values: lookupCache[LOOKUP_PLATE_FT_W].optionsList},
+        editable: (cell) => isPanelRow(cell.getRow().getData()),
+        cellEdited: makeEditHandler('Width_FT', 'ftW', {label: 'FT (W)', skipRefetch: true, recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'INCH (W)', field: 'inchW',     width: 100,
+        formatter: (cell) => {
+          const v = cell.getValue();
+          if (!v) return '0';
+          return lookupCache[LOOKUP_INCH].byId[v] || '0';
+        },
+        editor: 'list',
+        editorParams: {values: lookupCache[LOOKUP_INCH].optionsList},
+        editable: (cell) => isPanelRow(cell.getRow().getData()),
+        cellEdited: makeEditHandler('Width_INCH', 'inchW', {label: 'INCH (W)', skipRefetch: true, recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'Unit WT',  field: 'unitWt',    width: 100, hozAlign: 'right', formatter: (c) => `<span class="calc-cell">${(c.getValue()||0).toFixed(2)}</span>`},
+      {title: 'Tot WT',   field: 'totWt',     width: 110, hozAlign: 'right', formatter: (c) => `<span class="calc-cell">${(c.getValue()||0).toFixed(2)}</span>`},
+      {title: 'Area',     field: 'area',      width: 90,  hozAlign: 'right', formatter: (c) => `<span class="calc-cell">${(c.getValue()||0).toFixed(2)}</span>`},
+      {title: 'SA',       field: 'sa',        width: 64,  minWidth: 64, hozAlign: 'center', headerHozAlign: 'center', headerSort: false, formatter: 'tickCross',
+        editor: autoToggleEditor,
+        cellEdited: makeEditHandler('Plate_SA', 'sa', {label: 'SA', toApi: boolToApi, skipRefetch: true, recomputeCalcs: true}),
+        cssClass: 'editable-cell'},
+      {title: 'Galv',     field: 'galv',      width: 78,  minWidth: 78, hozAlign: 'center', headerHozAlign: 'center', headerSort: false, formatter: 'tickCross',
+        editor: autoToggleEditor,
+        cellEdited: makeEditHandler('Galv', 'galv', {label: 'Galv', toApi: boolToApi, skipRefetch: true, recomputeCalcs: true,
+          afterSave: (row, rawNew) => syncFinishToGalv(row, rawNew === true || rawNew === 'true')}),
+        cssClass: 'editable-cell'},
+      {title: 'Galv LB',  field: 'galvLb',    width: 95,  hozAlign: 'right', formatter: (c) => `<span class="calc-cell">${(c.getValue()||0).toFixed(2)}</span>`},
+      {title: 'Supplied', field: 'supplied',  width: 130, widthGrow: 1,
+        editor: 'list',
+        editorParams: {values: [
+          {label: 'Manufacture', value: 'Manufacture'},
+          {label: 'Client',      value: 'Client'},
+        ]},
+        cellEdited: makeEditHandler('Supplied', 'supplied', {label: 'Supplied'}),
+        cssClass: 'editable-cell'},
+      {title: 'Finish',   field: 'finish',    width: 120, widthGrow: 1,
+        // Locked to 'Galvanize' while Galv is on (Galv drives Finish). Editable otherwise.
+        editable: (cell) => !cell.getData().galv,
+        editor: 'list',
+        editorParams: {values: [
+          {label: 'Anodize',       value: 'Anodize'},
+          {label: 'Blast Only',    value: 'Blast Only'},
+          {label: 'Blast & Paint', value: 'Blast & Paint'},
+          {label: 'Galvanize',     value: 'Galvanize'},
+          {label: 'Paint Only',    value: 'Paint Only'},
+          {label: 'Plain',         value: 'Plain'},
+          {label: 'Powder Coat',   value: 'Powder Coat'},
+        ]},
+        cellEdited: makeEditHandler('Finish', 'finish', {label: 'Finish'}),
+        formatter: (cell) => {
+          const d = cell.getData();
+          const v = cell.getValue() || '';
+          return d.galv ? `<span title="Locked — Galv is Yes">🔒 ${v}</span>` : v;
+        },
+        cssClass: 'editable-cell'},
+      {title: 'Allocated',field: 'allocatedAmt', visible: false, width: 105, hozAlign: 'right', formatter: (c) => `$${(c.getValue()||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`},
+      {title: 'DELETE', field: 'deleted', width: 82, minWidth: 82, hozAlign: 'center', headerHozAlign: 'center', headerSort: false, frozen: true, resizable: false,
+        formatter: (cell) => {
+          const d = cell.getData();
+          return d.deleted
+            ? '<button class="row-action-btn restore" data-action="restore" title="Restore row">↺</button><button class="row-action-btn delete-perm" data-action="hard-delete" title="Permanently delete — cannot be undone">✕</button>'
+            : '<button class="row-action-btn delete"  data-action="delete" title="Mark row for delete (soft)">✕</button>';
+        },
+        cellClick: (e, cell) => {
+          const btn = e.target.closest('button[data-action]');
+          if (!btn) return;
+          e.stopPropagation();
+          const action = btn.dataset.action;
+          if (action === 'delete')      toggleDelete(cell.getRow(), true);
+          else if (action === 'restore') toggleDelete(cell.getRow(), false);
+          else if (action === 'hard-delete') hardDeleteRow(cell.getRow());
+        }},
+    ],
+    rowFormatter: function(row) {
+      const data = row.getData();
+      const el   = row.getElement();
+      el.classList.toggle('row-deleted',  data.deleted === true);
+      el.classList.toggle('row-edited',   recentlyEdited.has(data.id));
+      el.classList.toggle('row-verified', verifiedRows.has(data.id));
+    },
+  });
+}
+
+function groupKeyForRow(row, mode) {
+  if (mode === 'tag') {
+    return row.assemblyGroup || '(no tag)';
+  }
+  if (mode === 'form') {
+    return lookupCache[LOOKUP_FORM_TYPE].byId[row.formType] || row.formTypeLbl || '(no form)';
+  }
+  if (mode === 'component') {
+    return lookupCache[LOOKUP_COMPONENT].byId[row.component] || row.componentLbl || '(no component)';
+  }
+  return null;
+}
+
+function applyView(view) {
+  if (!table) return;
+  currentView = view;
+  const sel = document.getElementById('view-mode');
+  if (sel && sel.value !== view) sel.value = view;
+  if (view === 'flat') {
+    table.setGroupBy(false);
+    return;
+  }
+  table.setGroupBy(row => groupKeyForRow(row, view));
+  table.setGroupHeader(function(value, count, data) {
+    const groupWt = data.reduce((s,r) => s + (r.totWt || 0), 0);
+    return `${value} &nbsp;<span style="opacity:0.85; font-weight:400; font-size:11px;">— ${count} rows, ${Math.round(groupWt).toLocaleString()} lbs</span>`;
+  });
+}
+
+document.getElementById('view-mode').addEventListener('change', (e) => applyView(e.target.value));
+
+function applyAllFilters() {
+  if (!table) return;
+  const text = (document.getElementById('filter-input').value || '').toLowerCase().trim();
+  table.setFilter((data) => {
+    if (hideDeleted && data.deleted) return false;
+    if (!text) return true;
+    const hay = [data.tag, data.component, data.material, data.materialDesc, data.assemblyGroup]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(text);
+  });
+}
+
+document.getElementById('filter-input').addEventListener('input', applyAllFilters);
+
+document.getElementById('toggle-hide-deleted').addEventListener('click', (e) => {
+  hideDeleted = !hideDeleted;
+  e.currentTarget.textContent = hideDeleted ? 'Show deleted' : 'Hide deleted';
+  e.currentTarget.classList.toggle('active', hideDeleted);
+  applyAllFilters();
+});
+
+document.getElementById('delete-marked').addEventListener('click', hardDeleteAllMarked);
+
+document.getElementById('save-project').addEventListener('click', commitChanges);
+
+document.getElementById('back').addEventListener('click', () => {
+  // Match the FULL param set the project launchers use — the dashboard's
+  // form-embed reads description / client_id / manufacture from the URL, so
+  // omitting them blanks Client + Project Description on arrival.
+  const parts = [`project_id=${projectId}`];
+  if (projectDescription) parts.push('description=' + encodeURIComponent(projectDescription));
+  if (clientId)           parts.push('client_id=' + clientId);
+  if (manufactureId)      parts.push('manufacture=' + manufactureId);
+  const hash = `#Page:Project_Dashboard?${parts.join('&')}`;
+  const url  = `${PORTAL_BASE}/${hash}`;
+  // Primary: navigate the top Creator frame directly. The widget is served
+  // same-origin when embedded, so this works (and works standalone too).
+  // navigateParentURL is tried only if direct nav is blocked, because when it
+  // exists but silently no-ops the old code never reached the fallback.
+  try {
+    if (window.top && window.top.location) {
+      window.top.location.href = url;
+      return;
+    }
+  } catch (e) {
+    console.warn('[BOM Editor] top-frame nav blocked, falling back to SDK', e);
+  }
+  if (window.ZOHO?.CREATOR?.UTIL?.navigateParentURL) {
+    ZOHO.CREATOR.UTIL.navigateParentURL(hash);
+  } else {
+    window.location.href = url;
+  }
+});
+
+document.getElementById('add-row').addEventListener('click', addNewBomRow);
+
+// Bulk-apply controls (SA/Galv buttons, Supplied/Finish dropdowns)
+document.querySelectorAll('.btn-bulk').forEach(b => {
+  b.addEventListener('click', () => {
+    const field = b.dataset.bulkField;
+    const value = b.dataset.bulkValue === 'true' ? true : b.dataset.bulkValue === 'false' ? false : b.dataset.bulkValue;
+    if (field === 'sa')     bulkApplyField('Plate_SA', 'sa',   value, 'SA',   boolToApi);
+    if (field === 'galv')   bulkApplyField('Galv', 'galv', value, 'Galv', boolToApi).then(applied => {
+      // Galv drives Finish: ON -> force Finish=Galvanize on the same rows;
+      // OFF -> revert only the rows that were 'Galvanize' back to 'Plain'.
+      if (applied === false) return;
+      if (value === true) bulkApplyField('Finish', 'finish', 'Galvanize', 'Finish', null, {silent: true});
+      else                bulkApplyField('Finish', 'finish', 'Plain',     'Finish', null, {silent: true, rowFilter: d => d.finish === 'Galvanize'});
+    });
+    if (field === 'delete') markAllFiltered(value);
+  });
+});
+document.querySelectorAll('.bulk-select').forEach(sel => {
+  sel.addEventListener('change', () => {
+    const v = sel.value;
+    if (!v) return;
+    const field = sel.dataset.bulkField;
+    if (field === 'supplied') bulkApplyField('Supplied', 'supplied', v, 'Supplied');
+    // Finish is locked to Galvanize on Galv rows — bulk-set only touches non-galv rows.
+    if (field === 'finish')   bulkApplyField('Finish',   'finish',   v, 'Finish', null, {rowFilter: d => !d.galv});
+    sel.value = '';  // reset the dropdown so user can re-trigger if needed
+  });
+});
+
+// Bulk-mark all currently-filtered rows for delete (or clear marks) — LOCAL only,
+// no API write. A staging selection: rows go grey/reversible, then "Delete all
+// marked" permanently removes them. (The per-row ✕ still writes DELETE_field for
+// a persistent soft-delete; this is just fast all-or-none selection.)
+function markAllFiltered(makeDeleted) {
+  if (!table) return;
+  const rows = table.getRows('active');   // 'active' = passes current filter
+  if (rows.length === 0) { showToast('No visible rows to mark.', 'error'); return; }
+  let changed = 0;
+  rows.forEach(row => {
+    if (row.getData().deleted !== makeDeleted) {
+      const item = bomData.find(r => r.id === row.getData().id);
+      if (item) item.deleted = makeDeleted;
+      row.update({deleted: makeDeleted});
+      row.reformat();
+      changed++;
+    }
+  });
+  renumberRows();
+  updateSaveButtonState();
+  showToast(makeDeleted
+    ? `Marked ${changed} row(s) for delete — click "Delete all marked" to remove them.`
+    : `Cleared delete mark on ${changed} row(s).`, 'success');
+}
+
+// Track the most-recently-added row in this session so the next Add can carry
+// forward its classification fields (Form / Mat Type / Spec / Material / Component /
+// Drawing / Supplied / Finish). Dimensions + Tag + QTY stay blank.
+let lastAddedRowId = null;
+
+async function hardDeleteRow(row) {
+  const data = row.getData();
+  const label = data.tag ? `${data.tag} (line ${data.lineItem})` : `row ${data.lineItem}`;
+  if (!(await customConfirm(`Permanently delete ${label}? This cannot be undone.`, {title: 'Permanently delete row', okText: 'Delete'}))) return;
+  try {
+    // NOTE: the widget SDK's deleteRecord takes `criteria`, not `id` (unlike
+    // updateRecord). Passing id throws "Invalid Configuration". Delete by ID==.
+    const resp = await ZOHO.CREATOR.API.deleteRecord({
+      appName:    APP_NAME,
+      reportName: REPORT_NAME,
+      criteria:   `ID == ${data.id}`,
+    });
+    if (!resp || (resp.code !== 3000 && !resp.result)) {
+      throw new Error('Bad deleteRecord response: ' + JSON.stringify(resp));
+    }
+    const idx = bomData.findIndex(r => r.id === data.id);
+    if (idx >= 0) bomData.splice(idx, 1);
+    recentlyEdited.delete(data.id);
+    row.delete();
+    renumberRows();
+    updateStats();
+    updateSaveButtonState();
+    showToast(`Permanently deleted ${label}.`, 'success');
+  } catch (err) {
+    showToast('Permanent delete failed: ' + (err.message || JSON.stringify(err)), 'error');
+    console.error('[BOM Editor] hard delete failed', err);
+  }
+}
+
+// Permanently delete EVERY row currently marked for delete (DELETE_field === true),
+// in one action. Same deleteRecord API as hardDeleteRow (bypasses the stale
+// Number_of_Entries delete-protection), just looped with a concurrency cap.
+// Cannot be undone, so it sits behind a count confirm + a result dialog.
+async function hardDeleteAllMarked() {
+  const btn  = document.getElementById('delete-marked');
+  const lock = document.getElementById('grid-lock');
+  const marked = bomData.filter(r => r.deleted);
+  if (marked.length === 0) {
+    await customAlert('No rows are marked for delete. Mark rows with the ✕ button first (they turn grey), then use this to clear them all.', {title: 'Nothing to delete'});
+    return;
+  }
+  if (!(await customConfirm(
+        `Permanently delete ${marked.length} row(s) marked for delete? This calls Zoho's record-delete directly and CANNOT be undone.`,
+        {title: 'Permanently delete all marked', okText: `Delete ${marked.length}`}))) return;
+
+  btn.disabled = true;
+  lock.classList.add('show');
+
+  const CONCURRENCY = 3;
+  let idx = 0, ok = 0, failed = 0;
+  let firstErrDetail = '';   // raw Zoho response/error from the first failure, for diagnosis
+  async function worker() {
+    while (idx < marked.length) {
+      const data  = marked[idx++];
+      try {
+        // deleteRecord needs `criteria`, not `id` (see hardDeleteRow note).
+        const resp = await ZOHO.CREATOR.API.deleteRecord({
+          appName:    APP_NAME,
+          reportName: REPORT_NAME,
+          criteria:   `ID == ${data.id}`,
+        });
+        if (!resp || (resp.code !== 3000 && !resp.result)) {
+          throw new Error('Bad deleteRecord response: ' + JSON.stringify(resp));
+        }
+        const i = bomData.findIndex(r => r.id === data.id);
+        if (i >= 0) bomData.splice(i, 1);
+        recentlyEdited.delete(data.id);
+        const tableRow = table.getRow(data.id);
+        if (tableRow) tableRow.delete();
+        ok++;
+      } catch (err) {
+        failed++;
+        if (!firstErrDetail) {
+          // Prefer the raw object Zoho rejected with (has .code/.message), fall back to err message.
+          firstErrDetail = (err && err.responseText) || (err && err.message) ||
+                           (typeof err === 'object' ? JSON.stringify(err) : String(err));
+        }
+        console.error('[BOM Editor] bulk hard delete failed for row', data.id, err);
+      }
+    }
+  }
+  await Promise.all(Array.from({length: CONCURRENCY}, () => worker()));
+
+  renumberRows();
+  updateStats();
+  updateSaveButtonState();
+  lock.classList.remove('show');
+  btn.disabled = false;
+
+  if (failed === 0) {
+    await customAlert(`Permanently deleted ${ok} row(s).`, {title: 'Done'});
+  } else if (ok === 0) {
+    // EVERY call failed -> systemic (permission, API method, or a deny workflow), not per-row.
+    await customAlert(
+      `All ${failed} deletes failed — none succeeded.\n\nThis is a single root cause, not row-by-row blocking (delete permission, API call, or a deny workflow).\n\nExact error Zoho returned:\n${firstErrDetail}`,
+      {title: 'Delete failed', okText: 'OK'});
+  } else {
+    await customAlert(
+      `${ok} row(s) deleted, ${failed} failed.\n\nThe failed rows are likely still tied to purchasing/allocated material in Zoho.\n\nFirst error:\n${firstErrDetail}`,
+      {title: 'Partly done'});
+  }
+}
+
+// Bulk-apply a single field's value to all currently-filtered (visible) rows.
+// Uses individual updateRecord calls with concurrency cap (avoid Zoho rate-limit).
+async function bulkApplyField(fieldLinkName, dataKey, newValue, displayLabel, toApi, opts) {
+  opts = opts || {};
+  if (!table) return false;
+  let visibleRows = table.getRows('active');  // 'active' = passes current filter
+  // Optional row filter (e.g. Galv-off cascade only reverts rows currently 'Galvanize').
+  if (opts.rowFilter) visibleRows = visibleRows.filter(r => opts.rowFilter(r.getData()));
+  if (visibleRows.length === 0) {
+    if (!opts.silent) showToast('No visible rows to update.', 'error');
+    return false;
+  }
+  // silent = cascade call (e.g. Galv already confirmed) — skip the extra confirm.
+  if (!opts.silent && !(await customConfirm(`Set ${displayLabel} to "${newValue}" for ${visibleRows.length} visible row(s)? Changes save immediately.`, {title: 'Bulk apply', okText: 'Apply'}))) return false;
+
+  const apiValue = toApi ? toApi(newValue) : newValue;
+  showToast(`Updating ${visibleRows.length} row(s)…`, 'success');
+
+  const CONCURRENCY = 3;
+  let idx = 0;
+  let ok = 0, failed = 0;
+  async function worker() {
+    while (idx < visibleRows.length) {
+      const row = visibleRows[idx++];
+      const data = row.getData();
+      if (data[dataKey] === newValue) { ok++; continue; }  // already matches, skip the call
+
+      // For SA/Galv toggles, recompute calcs with the proposed new value
+      // and include them in the payload so Zoho doesn't write decimal Galv_LB.
+      let calc = null;
+      const payload = { [fieldLinkName]: apiValue };
+      if (dataKey === 'sa' || dataKey === 'galv') {
+        const provisional = { ...data, [dataKey]: newValue };
+        calc = computeBomCalcs(provisional);
+        if (calc) {
+          payload.Unit_Weight = calc.unitWt;
+          payload.CalcWeight  = calc.totWt;
+          payload.Area        = calc.area;
+          payload.Galv_LB     = calc.galvLb;
+        }
+      }
+
+      try {
+        const resp = await ZOHO.CREATOR.API.updateRecord({
+          appName:    APP_NAME,
+          reportName: REPORT_NAME,
+          id:         data.id,
+          data:       { data: payload }
+        });
+        if (!resp || (resp.code !== 3000 && !resp.result)) throw new Error('Bad response');
+        // Local-only update — skip refetch
+        row.update({[dataKey]: newValue});
+        const item = bomData.find(r => r.id === data.id);
+        if (item) item[dataKey] = newValue;
+        if (calc) {
+          row.update({unitWt: calc.unitWt, totWt: calc.totWt, area: calc.area, galvLb: calc.galvLb});
+          if (item) {
+            item.unitWt = calc.unitWt; item.totWt = calc.totWt;
+            item.area   = calc.area;   item.galvLb = calc.galvLb;
+          }
+        }
+        recentlyEdited.add(data.id);
+        ok++;
+      } catch (err) {
+        failed++;
+        console.error('[BOM Editor] bulk update failed for row', data.id, err);
+      }
+    }
+  }
+  await Promise.all(Array.from({length: CONCURRENCY}, () => worker()));
+  updateStats();
+  updateSaveButtonState();
+  if (opts.silent) {
+    // cascade call — stay quiet unless something failed
+    if (failed) showToast(`Finish cascade: ${ok} ok, ${failed} failed. Check console.`, 'error');
+  } else if (failed === 0) {
+    showToast(`Bulk update done: ${ok} row(s) updated.`, 'success');
+  } else {
+    showToast(`Bulk update: ${ok} succeeded, ${failed} failed. Check console.`, 'error');
+  }
+  return failed === 0;
+}
+
+async function addNewBomRow() {
+  const btn = document.getElementById('add-row');
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = 'Adding...';
+  try {
+    const nextLineItem = Math.max(0, ...bomData.map(r => Number(r.lineItem) || 0)) + 1;
+    const payload = {
+      MCP_Customer_Project_Form: projectId,
+      // Bi-directional lookup must be set explicitly for API-inserted rows
+      // to appear in the parent project form's native subform. Field link
+      // name on this form is Bi_Directional_Project_ID (matches CSV import
+      // at BOM_Import_From_Staging.txt:293). NOT the same name as the
+      // bi-directional field on Project_Material_Allocated_Detail_Form.
+      Bi_Directional_Project_ID: projectId,
+      Line_Item: nextLineItem,
+      // Mandatory-field defaults. New rows start non-galv, so Finish defaults to
+      // 'Plain'; carry-forward below overrides these if the last row had values.
+      Supplied: 'Manufacture',
+      Finish: 'Plain',
+    };
+    // Carry-forward from last-added row's CURRENT state — saves re-picking material every add.
+    if (lastAddedRowId) {
+      const prev = bomData.find(r => r.id === lastAddedRowId);
+      if (prev) {
+        if (prev.formType)  payload.Form_Type     = prev.formType;
+        if (prev.matType)   payload.Material_Type = prev.matType;
+        if (prev.spec)      payload.Specification = prev.spec;
+        if (prev.material)  payload.Material      = prev.material;
+        // Weight_Per_Ft is dimension-independent (just the material's per-ft
+        // weight), so carry it forward immediately with the material — even
+        // before the new row's dimensions are entered. Keeps the field
+        // populated for the nesting app. See feedback_bom_weight_per_ft_blank.
+        if (prev.material) {
+          const prevMeta = materialMetaById[prev.material];
+          if (prevMeta && prevMeta.weight_per_ft) {
+            payload.Weight_Per_Ft = Math.round(prevMeta.weight_per_ft * 10000) / 10000;
+          }
+        }
+        if (prev.component) payload.Component     = prev.component;
+        if (prev.drawing)   payload.Scope_LU      = prev.drawing;
+        if (prev.supplied)  payload.Supplied      = prev.supplied;
+        if (prev.finish)    payload.Finish        = prev.finish;
+        // Derive Nest_Type from the carried Form_Type so the new row is
+        // nest-eligible without needing a second Form_Type edit to fire the
+        // cascade. Without this, carry-forward rows land with empty Nest_Type
+        // and get silently skipped by the nesting widget.
+        if (prev.formType) {
+          const measurement = lookupCache[LOOKUP_FORM_TYPE].measurementById?.[prev.formType] || '';
+          if (measurement === 'Linear' || measurement === 'Panel') {
+            payload.Nest_Type = measurement;
+          }
+        }
+      }
+    }
+    const resp = await ZOHO.CREATOR.API.addRecord({
+      appName:  APP_NAME,
+      formName: 'Project_Bill_Of_Material_Detail_Form',
+      data: { data: payload }
+    });
+    if (!resp || (resp.code !== 3000 && !resp.data && !resp.result)) {
+      throw new Error('Bad addRecord response: ' + JSON.stringify(resp));
+    }
+    const newRecord = resp.data || resp.result?.data || resp.result;
+    if (!newRecord || !newRecord.ID) {
+      throw new Error('addRecord response missing record ID: ' + JSON.stringify(resp));
+    }
+    const newRow = mapRecord(newRecord, nextLineItem - 1);
+    bomData.unshift(newRow);  // top of bomData
+    if (table) {
+      table.addRow(newRow, true);  // true = add to TOP
+      table.scrollToRow(newRow.id, 'top', false);
+    }
+    lastAddedRowId = newRow.id;
+    recentlyEdited.add(newRow.id);
+    renumberRows();   // new row is at top -> becomes #1, push the rest down
+    updateStats();
+    updateSaveButtonState();
+    const carriedNote = lastAddedRowId && bomData.find(r => r.id === lastAddedRowId && (r.formType || r.material))
+      ? ' (carried Form/Mat/Spec/Material from previous add — fill in Tag + dimensions)'
+      : ' — fill in Tag / Form / Mat Type / etc.';
+    showToast(`Added new row at top${carriedNote}`, 'success');
+  } catch (err) {
+    showToast('Add row failed: ' + (err.message || JSON.stringify(err)), 'error');
+    console.error('[BOM Editor] addRecord failed', err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+ZOHO.CREATOR.init().then(function() {
+  const params = ZOHO.CREATOR.UTIL.getQueryParams();
+  projectId     = params.project_id;
+  manufactureId = params.Manufacture_ID;
+
+  if (!projectId) {
+    showError('Missing required URL param: project_id', null);
+    return;
+  }
+
+  // Start with neutral text (no raw IDs), then upgrade to the project + mfg
+  // NAMES once the lookup resolves.
+  document.getElementById('header-title').textContent = 'BOM EDITOR';
+  document.getElementById('header-sub').textContent   = 'Loading project…';
+  setProjectHeaderText();
+
+  loadBOM();
+}).catch(function(err) {
+  showError('ZOHO.CREATOR.init() failed.', err);
+});
+
+// Resolve the project name (Project_Description) and manufacturer name
+// (MANUFACTURE lookup display) from the All_Projects report, and show those in
+// the header instead of raw record IDs. Falls back to a neutral label on error.
+async function setProjectHeaderText() {
+  try {
+    const resp = await ZOHO.CREATOR.API.getRecordById({
+      appName: APP_NAME, reportName: PROJECT_REPORT_NAME, id: projectId
+    });
+    const rec = resp && resp.data;
+    if (!rec || typeof rec !== 'object') return;
+    const projName = String(rec.Project_Description || '').trim();
+    const mfgName  = String(lookupDisplay(rec.MANUFACTURE) || '').trim();
+    document.getElementById('header-title').textContent = projName ? ('BOM EDITOR — ' + projName) : 'BOM EDITOR';
+    document.getElementById('header-sub').textContent   = mfgName || '';
+    // Capture the params the Project_Dashboard form-embed needs so Back-to-Project
+    // doesn't blank the Client / Project Description (they're driven by URL params).
+    projectDescription = projName;
+    clientId = readLookupId(rec.MFG_Client_Form) || '';
+  } catch (e) {
+    console.warn('[BOM Editor] project header lookup failed; keeping neutral label', e);
+    document.getElementById('header-sub').textContent = '';
+  }
+}
+</script>
+
+</body>
+</html>

@@ -130,7 +130,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.40 · 2026-07-28";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.41 · 2026-07-28";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -484,6 +484,119 @@
       'so everything below is just your entered list — not a mismatch. '+why+'</div>';
   }
 
+  // ---- THE BOM EDITOR, ON AN UNCOMMITTED TAKE-OFF -------------------------
+  // The estimator already has a BOM grid they know — catalog cascade, live weights,
+  // bulk apply, add/delete. Rather than growing a second, worse one here, the same
+  // editor is embedded and fed the take-off's rows: /api/takeoff/bom-preview resolves
+  // the AI's NAMES to the catalog's record IDs, the editor runs against an in-memory
+  // stand-in for Zoho (see tools/make-takeoff-bom-editor.js), and every edit comes
+  // back here. NOTHING is written to the project until Approve & Submit — the same
+  // gate as before.
+  let EDITOR_OPEN = false, EDITOR_UNRESOLVED = [], EDITOR_DIRTY = 0;
+
+  function bomEditorCardHtml(){
+    const R = loadResult();
+    if (R.__demo) return "";
+    const un = EDITOR_UNRESOLVED.length;
+    return '<div class="card" id="editorCard"><h2>▤ Edit in the BOM Editor '+
+        '<span class="lt">— the same grid as the project, on this take-off, before anything is committed</span></h2>'+
+      '<div class="body" id="editorBody">'+
+        (EDITOR_OPEN
+          ? '<div class="meta" style="margin-bottom:8px">'+
+              '<span class="chip">edits apply to this take-off only</span>'+
+              (EDITOR_DIRTY?'<span class="chip">'+EDITOR_DIRTY+' change'+(EDITOR_DIRTY===1?'':'s')+' applied</span>':'')+
+              (un?'<span class="chip" style="color:var(--ylw)">'+un+' cell'+(un===1?'':'s')+' the catalog didn\'t match — pick them in the grid</span>':'')+
+              '<span class="pillbtn" onclick="closeBomEditor()">done editing</span>'+
+            '</div>'+
+            '<iframe id="bomEditorFrame" style="width:100%;height:620px;border:1px solid #dde3ea;border-radius:8px;background:#fff"></iframe>'
+          : '<div style="font-size:13px;color:var(--mut)">Open the full grid to fix materials, dimensions, quantities and '+
+            'finishes with the catalog behind them — weights recalculate as you type. Changes stay in this take-off '+
+            'until you approve it.<br><button class="applybtn" style="margin-top:9px" onclick="openBomEditor()">▤ Open the BOM Editor</button></div>')+
+      '</div></div>';
+  }
+
+  async function openBomEditor(){
+    const R = loadResult();
+    const body = document.getElementById("editorBody");
+    if (!params.project_id){ body.innerHTML = '<div style="font-size:13px;color:var(--red)">Open the take-off from the project page — the editor needs project_id to load the catalog.</div>'; return; }
+    body.innerHTML = '<div style="font-size:13px;color:var(--mut)"><span class="spin"></span> Matching the take-off to your catalog…</div>';
+    let preview;
+    try{
+      const r = await fetch(RAILWAY_URL+"/api/takeoff/bom-preview",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id, rows:arr(R.rows).filter(function(x){ return !x.deleted; })})});
+      preview = await r.json();
+      if(!r.ok || preview.ok===false) throw new Error((preview&&preview.error)||("HTTP "+r.status));
+    }catch(e){
+      body.innerHTML = '<div style="font-size:13px;color:var(--red)">Couldn\'t prepare the grid: '+esc(e.message||e)+
+        '<br><button class="applybtn" style="margin-top:8px" onclick="openBomEditor()">try again</button></div>';
+      return;
+    }
+    EDITOR_UNRESOLVED = arr(preview.unresolved);
+    EDITOR_OPEN = true; EDITOR_DIRTY = 0;
+    document.getElementById("editorCard").outerHTML = bomEditorCardHtml();
+    const frame = document.getElementById("bomEditorFrame");
+    // The editor tells us when its shim is listening; only then are the rows sent.
+    window.__editorRecords = arr(preview.records);
+    frame.src = "bom-editor.html?mode=takeoff&project_id="+encodeURIComponent(params.project_id)+
+                "&Manufacture_ID="+encodeURIComponent(params.manufacturer_id||"");
+  }
+
+  function closeBomEditor(){ EDITOR_OPEN = false; render(); }
+
+  window.addEventListener("message", function(ev){
+    const m = ev.data||{};
+    if(m.type==="takeoff:ready"){
+      const frame=document.getElementById("bomEditorFrame");
+      if(frame&&frame.contentWindow) frame.contentWindow.postMessage({type:"takeoff:rows",
+        records: window.__editorRecords||[],
+        project: {Project_Description:"AI take-off — not yet committed"}},"*");
+      return;
+    }
+    if(m.type==="takeoff:changed"){ applyEditorRecords(arr(m.records)); return; }
+  });
+
+  // Editor records → take-off rows. Only fields the editor actually owns are copied
+  // back; anything it doesn't touch (confidence, cross-check, notes, disposition) is
+  // left exactly as the take-off produced it.
+  function applyEditorRecords(records){
+    const R = loadResult();
+    const rows = arr(R.rows);
+    const dv = function(v){ return (v&&typeof v==="object") ? (v.display_value||v.zc_display_value||"") : (v||""); };
+    const kept = [];
+    records.forEach(function(rec){
+      const i = Number(rec._takeoff_index);
+      const base = (Number.isFinite(i)&&rows[i]) ? Object.assign({},rows[i]) : {confidence:1,cross_check:"",disposition:"fabricate"};
+      const units = Math.max(1, Math.round(Number(rec._units)||Number(base.units)||1));
+      const total = Number(rec.Quantity)||0;
+      base.units = units;
+      base.quantity_total = total;
+      base.quantity = units>1 ? Math.round((total/units)*10000)/10000 : total;   // the editor edits the TOTAL
+      base.qty_per_unit = base.quantity;
+      // Length/width come back as the editor's nest dimensions (inches) when it recomputed
+      // them; otherwise the take-off's own value stands.
+      if(rec.Length_Nest!=null && rec.Length_Nest!=="") base.length_ft = Math.round((Number(rec.Length_Nest)/12)*10000)/10000;
+      if(rec.Width_Nest!=null && rec.Width_Nest!=="")  base.width_ft  = Math.round((Number(rec.Width_Nest)/12)*10000)/10000;
+      const f=dv(rec.Form_Type), mt=dv(rec.Material_Type), sp=dv(rec.Specification), mz=dv(rec.Material),
+            cp=dv(rec.Component), dw=dv(rec.Scope_LU);
+      if(f) base.form_type=f; if(mt) base.material_type=mt; if(sp) base.specification=sp;
+      if(mz) base.size=mz;    if(cp) base.component=cp;     if(dw) base.source_sheet=dw;
+      if(rec.BOM_Item) base.member_mark=rec.BOM_Item;
+      base.galvanized = rec.Galv===true||rec.Galv==="true";
+      base.deleted    = rec.DELETE_field===true||rec.DELETE_field==="true";
+      base.unit_weight = Number(rec.Unit_Weight)||0;
+      base.total_weight = Number(rec.CalcWeight)||0;
+      base.weight_per_ft = Number(rec.Weight_Per_Ft)||0;
+      kept.push(base);
+    });
+    R.rows = kept;
+    recomputeCsv(R);
+    saveResult(R);
+    EDITOR_DIRTY++;
+    // Don't re-render: that would tear down the iframe mid-edit. Just update the counter.
+    const chips=document.querySelectorAll("#editorBody .chip");
+    if(chips&&chips[1]) chips[1].textContent = EDITOR_DIRTY+" change"+(EDITOR_DIRTY===1?"":"s")+" applied";
+  }
+
   // ---- LIST vs DRAWINGS ---------------------------------------------------
   // The cross-check, front and centre: what the parts lists said, what the sheets showed, and every
   // place the two didn't agree. Something DRAWN but missing from the shop's own list is the single
@@ -622,7 +735,8 @@
       rec:d.ai_recommendation||"", sel:(d.selected!=null?d.selected:(d.ai_recommendation||null)),
     }));
     const sw = s.scope_of_work||{}, t=s.totals||{}, conf=s.confidence||{};
-    const fab = rows.filter(r=>(Number(r.quantity)||0)>0);
+    const live = function(r){ return !r.deleted; };            // rows the editor marked for delete are out of the BOM
+    const fab = rows.filter(function(r){ return (Number(r.quantity)||0)>0 && live(r); });
     const gaps = arr(s.gaps), conflicts=arr(s.conflicts), comp=arr(s.compliance);
     CONFLICTS = conflicts;
     const overall = conf.overall!=null?conf.overall:0.7;
@@ -635,7 +749,7 @@
 
     const editable = BOM_EXPANDED;
     const NC = editable ? 7 : 6;  // table columns (Sheet now lives in the drawing group header)
-    const fabIdx=[]; rows.forEach(function(r,idx){ if((Number(r.quantity)||0)>0) fabIdx.push(idx); });
+    const fabIdx=[]; rows.forEach(function(r,idx){ if((Number(r.quantity)||0)>0 && live(r)) fabIdx.push(idx); });
 
     // Group fab rows by Component → Drawing (source_sheet), preserving first-seen order.
     const gKey=function(v){ return (v==null?'':String(v).trim()); };
@@ -780,6 +894,9 @@
             : 'Grouped by component (▸), then drawing (📄) — review one sheet at a time. <span class="pillbtn" onclick="toggleBom()">edit rows</span>')+
         '</div>':'')+
       '</div></div>'+
+
+      // the real grid, on these rows, before they are committed
+      bomEditorCardHtml()+
 
       // tell-the-AI — conversational thread (3c)
       '<div class="card" id="chatCard"><h2>💬 Tell the AI <span class="lt">— ask questions or request changes; it remembers the conversation</span></h2>'+
@@ -943,7 +1060,7 @@
       "Tag,Component,Drawing Number,Form Type,Mat Type,Specification,Material,QTY,FT(L),INCH(L),FT(W),INCH(W),Galv,Surface Area,Confidence",
       "blue = lookup ; green = direct entry ; * = required","",""];
     const out=H.slice();
-    (rows||[]).filter(function(r){ return (Number(r.quantity)||0)>0; }).forEach(function(r,i){
+    (rows||[]).filter(function(r){ return (Number(r.quantity)||0)>0 && !r.deleted; }).forEach(function(r,i){
       const L=_sft(r.length_ft), W=_sft(r.width_ft);
       const tag=_cell(r.member_mark)||("AI-"+String(i+1).padStart(3,"0"));
       // The BOM carries the JOB total (per unit × units built) — the project's own rollups divide

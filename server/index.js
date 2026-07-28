@@ -763,6 +763,174 @@ async function fetchProjectContext(projectId) {
 // AI take-off revise (3c) — current package + instruction in, revised package out.
 app.post('/api/takeoff/revise', (req, res) => reviseHandler(req, res, {}));
 app.post('/api/takeoff/chat', (req, res) => chatHandler(req, res, {}));
+// ---------------------------------------------------------------------------
+//  BOM PREVIEW — take-off rows, shaped exactly like the BOM records the BOM
+//  Editor already knows how to render and edit.
+// ---------------------------------------------------------------------------
+//  The take-off's rows are NAMES ("Angle", "A36", "L4 x 4 x 1/4"); the editor's
+//  grid is bound to record IDs. This resolves one to the other against the same
+//  lookups the editor loads, so the estimator can work the take-off in the real
+//  BOM grid — with live weights, the catalog cascade and bulk apply — BEFORE
+//  anything is written to Zoho. Nothing here writes: it is a read-and-map.
+//
+//  Names are matched loosely (case, spacing and punctuation ignored) because a
+//  model writes "Beam - W" where the catalog says "Beam- W"; anything that does
+//  not resolve comes back in `unresolved` and lands in the grid as a blank cell
+//  the estimator picks from the dropdown — never as a silent wrong ID.
+const _rk = s => String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+function _pickBy(list, name, keyFn) {
+  const k = _rk(name);
+  if (!k) return null;
+  return list.find(x => _rk(keyFn(x)) === k) || null;
+}
+// Mirrors the editor's computeBomCalcs so the grid opens with weights already in it.
+function _bomCalcs(o) {
+  const wpf = Number(o.weightPerFt) || 0;
+  if (!wpf) return { unitWt: 0, totWt: 0, area: 0, galvLb: 0 };
+  const lenFt = (Number(o.ftL) || 0) + (Number(o.inchLres) || 0) / 12;
+  const qty = Number(o.qty) || 0;
+  let unitWt, oneSide = 0;
+  if (o.panel) {
+    const lengthIn = (Number(o.ftL) || 0) * 12 + (Number(o.inchLres) || 0);
+    const widthIn = (Number(o.ftWres) || 0) * 12 + (Number(o.inchWres) || 0);
+    unitWt = wpf * (lengthIn * widthIn) / 144;
+    oneSide = (lengthIn * widthIn) / 144;
+  } else {
+    unitWt = wpf * lenFt;
+  }
+  const totWt = unitWt * qty;
+  let area = 0;
+  if (o.sa) area = o.panel ? oneSide * 2 * qty : qty * (Number(o.saPerFt) || 0) * lenFt;
+  return { unitWt: Math.round(unitWt * 100) / 100, totWt: Math.round(totWt * 100) / 100,
+           area: Math.round(area * 100) / 100, galvLb: o.galv ? Math.round(totWt) : 0 };
+}
+// feet+inches out of a decimal-feet length, the way the BOM stores it (INCH is a lookup).
+function _splitFt(n) {
+  const raw = Number(n) || 0;
+  const ft = Math.max(0, Math.floor(raw));
+  const inch = Math.round((raw - ft) * 12);
+  return inch >= 12 ? [ft + 1, 0] : [ft, inch];
+}
+const _lk = (id, label) => (id ? { ID: String(id), display_value: String(label || ''), zc_display_value: String(label || '') } : '');
+
+app.post('/api/takeoff/bom-preview', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const pid = body.project_id;
+    const rows = Array.isArray(body.rows) ? body.rows : [];
+    if (!pid) return res.status(400).json({ ok: false, error: 'project_id required' });
+
+    const token = await getAccessToken();
+    const [formTypes, matTypes, specs, materials, comps, draws, tables] = await Promise.all([
+      cachedLookup('bom-lookups:form-types', 60 * 60 * 1000, async () => {
+        const r = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
+        return r.map(x => ({ id: String(x.ID), name: String(x.Form_Type || '').trim(),
+                             measurement: String(x.Measurement || '').trim() }));
+      }),
+      cachedLookup('bom-lookups:material-types', 60 * 60 * 1000, async () => {
+        const r = await fetchAllZohoPages('/report/Material_Types_Report');
+        return r.map(x => ({ id: String(x.ID), name: String(x.Material_Type || '').trim() }));
+      }),
+      cachedLookup('bom-lookups:material-form-detail:*|*', 15 * 60 * 1000, async () => {
+        const r = await fetchAllZohoPages('/report/Material_Form_Detail_Report');
+        return r.map(x => ({ id: String(x.ID), formTypeId: String((x.Form_Type && x.Form_Type.ID) || ''),
+                             matTypeId: String((x.Material_Type && x.Material_Type.ID) || ''),
+                             typeDetail: String(x.Type_Detail || '').trim() }));
+      }),
+      cachedLookup('bom-lookups:materials:*|*', 15 * 60 * 1000, async () => {
+        const r = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report');
+        return r.map(x => ({ id: String(x.ID), description: String(x.Description || '').trim(),
+                             formTypeId: String((x.Form_Types && x.Form_Types.ID) || ''),
+                             matTypeId: String((x.Material_Types && x.Material_Types.ID) || ''),
+                             specId: String((x.Specification && x.Specification.ID) || ''),
+                             weightPerFt: parseFloat(x.Weight_Lb_Ft) || 0,
+                             saPerFt: parseFloat(x.Surface_Area_Per_FT) || 0 }));
+      }),
+      fetchAllZohoPages('/report/All_Project_Components?criteria=(MCP_Customer_Project_Form==' + pid + ')')
+        .then(r => r.map(x => ({ id: String(x.ID), name: String(x.Project_Component || '').trim() })))
+        .catch(() => []),
+      fetchAllZohoPages('/report/All_Project_Drawing_Details?criteria=(MCP_Customer_Project_Form==' + pid + ')')
+        .then(r => r.map(x => ({ id: String(x.ID), number: String(x.Drawing_Number || '').trim() })))
+        .catch(() => []),
+      fetchLookupTables(token),
+    ]);
+
+    const unresolved = [];
+    const note = (i, what, value) => { if (value) unresolved.push({ row: i + 1, field: what, value: String(value) }); };
+
+    const records = rows.map(function (r, i) {
+      const ft = _pickBy(formTypes, r.form_type, x => x.name);
+      const mt = _pickBy(matTypes, r.material_type, x => x.name);
+      if (!ft) note(i, 'Form', r.form_type);
+      if (!mt) note(i, 'Mat Type', r.material_type);
+      // Spec and Material are only meaningful within their Form × Material Type pair — the same
+      // string exists under several, and picking the wrong one is what breaks the cascade.
+      const specPool = specs.filter(s => (!ft || s.formTypeId === ft.id) && (!mt || s.matTypeId === mt.id));
+      const sp = _pickBy(specPool.length ? specPool : specs, r.specification, x => x.typeDetail);
+      if (!sp) note(i, 'Spec', r.specification);
+      const matPool = materials.filter(m => (!ft || m.formTypeId === ft.id) && (!mt || m.matTypeId === mt.id));
+      const mat = _pickBy(matPool.length ? matPool : materials, r.size, x => x.description);
+      if (!mat) note(i, 'Material', r.size);
+
+      const comp = _pickBy(comps, r.component, x => x.name);
+      if (!comp) note(i, 'Component', r.component);
+      const dwg = _pickBy(draws, r.source_sheet, x => x.number);
+      if (!dwg) note(i, 'Drawing', r.source_sheet);
+
+      const L = _splitFt(r.length_ft), W = _splitFt(r.width_ft);
+      const inchL = findLengthInchId(tables.lengthInch, L[1]);
+      const inchW = findLengthInchId(tables.lengthInch, W[1]);
+      const ftW = W[0] ? findWidthFtId(tables.plateWidthFt, W[0]) : null;
+      const inchLres = L[1], inchWres = W[1];
+      const panel = /plate|sheet/i.test(String(r.form_type || ''));
+      const qty = Number(r.quantity_total) > 0 ? Number(r.quantity_total) : (Number(r.quantity) || 0);
+      const calcs = _bomCalcs({ weightPerFt: mat ? mat.weightPerFt : 0, saPerFt: mat ? mat.saPerFt : 0,
+        ftL: L[0], inchLres: inchLres, ftWres: W[0], inchWres: inchWres, qty: qty,
+        panel: panel, sa: false, galv: !!r.galvanized });
+
+      return {
+        ID: 'T' + (i + 1),                       // preview id — no Zoho record exists yet
+        Line_Item: i + 1,
+        BOM_Item: String(r.member_mark || '').trim() || ('AI-' + String(i + 1).padStart(3, '0')),
+        Component: _lk(comp && comp.id, (comp && comp.name) || r.component),
+        Scope_LU: _lk(dwg && dwg.id, (dwg && dwg.number) || r.source_sheet),
+        Form_Type: _lk(ft && ft.id, (ft && ft.name) || r.form_type),
+        Material_Type: _lk(mt && mt.id, (mt && mt.name) || r.material_type),
+        Specification: _lk(sp && sp.id, (sp && sp.typeDetail) || r.specification),
+        Material: _lk(mat && mat.id, (mat && mat.description) || r.size),
+        Quantity: qty,
+        Length_FT: L[0],
+        Length_INCH: _lk(inchL, String(inchL ? L[1] : '')),
+        Width_FT: _lk(ftW, ftW ? String(W[0]) : ''),
+        Width_INCH: _lk(inchW, String(inchW ? W[1] : '')),
+        Material_Description_And_Dimension: [String(r.size || ''), String(r.specification || '')].filter(Boolean).join(' '),
+        Unit_Weight: calcs.unitWt,
+        CalcWeight: calcs.totWt,
+        Weight_Per_Ft: mat ? mat.weightPerFt : 0,
+        Area: calcs.area,
+        Plate_SA: false,
+        Galv: !!r.galvanized,
+        Galv_LB: calcs.galvLb,
+        Supplied: 'Manufacture',
+        Finish: r.galvanized ? 'Galvanize' : 'Plain',
+        Total_Allotted_Line_Amount: 0,
+        DELETE_field: false,
+        // carried through so the review page can map an edited row back to the take-off package
+        _takeoff_index: i,
+        _cross_check: String(r.cross_check || ''),
+        _units: Math.max(1, Math.round(Number(r.units) || 1)),
+        _qty_per_unit: Number(r.qty_per_unit != null ? r.qty_per_unit : r.quantity) || 0,
+      };
+    });
+
+    res.json({ ok: true, records: records, unresolved: unresolved,
+               counts: { rows: records.length, unresolved: unresolved.length } });
+  } catch (err) {
+    console.error('bom-preview error', err && (err.message || err));
+    res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+  }
+});
+
 app.post('/api/takeoff/index', (req, res) => indexHandler(req, res)); // intake: read sheet numbers + page ranges
 app.post('/api/takeoff/ask', (req, res) => askHandler(req, res));     // intake: ask about the uploaded documents
 
