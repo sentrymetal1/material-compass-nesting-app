@@ -88,6 +88,28 @@ async function takeoffHandler(req, res, deps) {
     });
     if (fill.component) console.log("[takeoff] filled component on " + fill.component + " rows from the confirmed scope");
 
+    // 1a-ii. MULTIPLY UP BY THE COMPONENT'S UNIT COUNT. The model reads ONE unit — four identical
+    // platforms are drawn once — so the job total is arithmetic done here, deterministically, where
+    // it can be shown and undone. `quantity` stays PER UNIT (that's what the drawing says and what
+    // the estimator checks); `quantity_total` is what gets ordered, and it's what the CSV writes,
+    // because the project's own rollups divide BOM sums by Component.Quantity to get per-unit cost.
+    const unitsOf = {};
+    (Array.isArray(body.scope_tree) ? body.scope_tree : []).forEach(function (n) {
+      const nm = String((n && n.component) || "").trim().toLowerCase();
+      const u = Math.max(1, Math.round(Number(n && (n.units != null ? n.units : n.quantity)) || 1));
+      if (nm) unitsOf[nm] = u;
+    });
+    let multiplied = 0;
+    rows.forEach(function (r) {
+      const u = unitsOf[String(r.component || "").trim().toLowerCase()] || 1;
+      const per = Number(r.quantity) || 0;
+      r.units = u;
+      r.qty_per_unit = per;
+      r.quantity_total = per * u;
+      if (u > 1 && per > 0) multiplied++;
+    });
+    if (multiplied) console.log("[takeoff] multiplied " + multiplied + " rows up by their component's unit count");
+
     // 1b. Snap materials to the catalog's exact spelling BEFORE the CSV is built — the import
     // matches on the string, so "1.5 x 1/8" and "1-1/2 x 1/8" are not the same row to it.
     const snap = deps.catalogGroups ? snapRows(rows, deps.catalogGroups) : { snapped: [], unmatched: [] };

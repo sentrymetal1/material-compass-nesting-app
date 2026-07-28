@@ -124,6 +124,12 @@
     .comp .ddesc { font-size:11px; color:#8893a0; margin:2px 0 0 4px; }
     .comp .ccount { font-size:10.5px; color:#66707c; background:#eef2f6; border-radius:10px;
                     padding:2px 7px; white-space:nowrap; flex:0 0 auto; }
+    /* How many of this component the job builds — the drawings detail one of them. */
+    .comp .cqty { font-size:10.5px; color:#3d6ea8; background:#eef4fb; border:1px solid #d7e5f5;
+                  border-radius:10px; padding:1px 6px; white-space:nowrap; flex:0 0 auto; font-weight:600; }
+    .comp .cqty input { width:34px; border:0; background:transparent; font-size:11.5px; font-weight:700;
+                        color:#2c5c96; font-family:inherit; text-align:center; padding:1px 0; }
+    .comp .cqty input:focus { outline:1px solid var(--blue); border-radius:3px; background:#fff; }
     .scopesum { font-size:11px; color:#556; background:#f7fafd; border:1px solid #e3ecf6;
                 border-radius:6px; padding:6px 9px; margin-bottom:9px; line-height:1.6; }
     .scopedup { margin-top:5px; padding-top:5px; border-top:1px solid #e3ecf6; color:#8a4b09; }
@@ -196,6 +202,7 @@
     .preflight .pfstop { background:#fdeeee; border:1px solid #f3c2c2; color:#a12727; border-radius:6px;
                          padding:8px 10px; font-size:12px; line-height:1.5; margin-bottom:8px; }
     .preflight .pfex { font-size:11.5px; color:#66707c; margin-top:7px; }
+    .preflight .pfx { color:#3d6ea8; font-weight:700; }
     .preflight .pflist { margin:0; padding-left:18px; font-size:12px; color:#445; }
     .preflight .pflist li { margin:2px 0; }
     .preflight .pfalt { margin-top:7px; text-align:center; font-size:11.5px; }
@@ -449,7 +456,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.48 (2026-07-28)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.49 (2026-07-28)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -710,7 +717,7 @@
       scope = project.components.filter((c) => !excluded.c[String(c.id)])
         .slice().sort((a, b) => natCmp(a.name, b.name))          // components A→Z
         .map((c) => ({
-          cid: String(c.id), name: c.name,
+          cid: String(c.id), name: c.name, qty: Math.max(1, Number(c.qty) || 1),
           drawings: c.drawings.filter((d) => !excluded.d[String(d.id)])
             .map((d) => ({ id: String(d.id), number: d.number }))
             .sort(byNumber),                                     // drawings in drawing-number order
@@ -855,7 +862,14 @@
             ? editCell("component", c.cid, c.name, ci, null)
             : '<select data-k="csel" data-ci="' + ci + '">' + compOptions(c.cid) + "</select>";
         const nd = (c.drawings || []).filter((d) => d && d.number).length;
-        return '<div class="comp"><div class="crow">' + ccell +
+        // HOW MANY of this component the job builds. The drawings detail ONE; the take-off reads one
+        // unit and the BOM is multiplied up, so this number has to be right before the run.
+        const qty = Math.max(1, Number(c.qty) || 1);
+        const qcell = c.cid
+          ? '<span class="cqty" title="How many of this component the job builds — the drawings detail one">×' +
+              '<input type="number" min="1" step="1" data-k="cqty" data-ci="' + ci + '" value="' + qty + '" />ea</span>'
+          : "";
+        return '<div class="comp"><div class="crow">' + ccell + qcell +
           '<span class="ccount">' + nd + " dwg" + (nd === 1 ? "" : "s") + "</span>" +
           rowBtns("component", ci, null, c.cid) + "</div>" +
           '<div class="draws">' + rows +
@@ -874,6 +888,29 @@
     // ---- scope edits (all of these hit the project) -------------------------
     document.getElementById("scope").addEventListener("change", async (e) => {
       const t = e.target;
+      // The unit count writes straight to the component record — same as a rename. Everything
+      // downstream (the prompt, the multiply-up, the BOM totals) reads it from the project.
+      if (t.getAttribute && t.getAttribute("data-k") === "cqty") {
+        const ci = Number(t.getAttribute("data-ci"));
+        const c = scope[ci];
+        if (!c || !c.cid) return;
+        const q = Math.max(1, Math.round(Number(t.value) || 1));
+        t.value = q;
+        if (q === Number(c.qty)) return;
+        const was = c.qty;
+        c.qty = q;
+        const rec = compById(c.cid); if (rec) rec.qty = q;
+        renderSummary();
+        try {
+          await scopeApi("update", { kind: "component", id: c.cid, quantity: q });
+          setScopeStatus("“" + escHtml(c.name) + "” is now <b>" + q + " unit" + (q === 1 ? "" : "s") +
+            "</b> on the project. The take-off reads one unit and multiplies the BOM up by " + q + ".");
+        } catch (err) {
+          c.qty = was; if (rec) rec.qty = was; renderScope();
+          setScopeStatus("Could not save the unit count: " + escHtml(err.message || err));
+        }
+        return;
+      }
       if (t.tagName !== "SELECT") return;
       const k = t.getAttribute("data-k"), ci = Number(t.getAttribute("data-ci"));
       if (!scope[ci]) return;
@@ -1566,6 +1603,10 @@
     function buildScopeTree() {
       return scope.map((c) => ({
         component: String(c.name || "").trim(),
+        // How many of this component the job builds. The take-off reads ONE unit; the server
+        // multiplies up, so this travels with the scope and is part of the "did anything change?"
+        // check before a run.
+        units: Math.max(1, Number(c.qty) || 1),
         drawings: (c.drawings || []).map((d) => String((d && d.number) || "").trim()).filter(Boolean),
       })).filter((n) => n.component);
     }
@@ -1581,6 +1622,7 @@
       project = {
         components: (Array.isArray(d.tree) ? d.tree : []).map((n) => ({
           id: String(n.component_id), name: String((n && n.component) || "").trim(),
+          qty: Math.max(1, Math.round(Number(n && n.quantity) || 1)),   // units the job builds
           drawings: (Array.isArray(n && n.drawings) ? n.drawings : [])
             .map((x) => ({ id: String(x.id), number: String((x && x.number) || "").trim() }))
             .filter((x) => x.number),
@@ -2392,9 +2434,11 @@
         (empties.length > 5 ? " and others" : "") + " have no drawings selected");
       if (!tree.length) warn.push("<b>No components are selected</b> — the AI will have nothing to tag its rows to.");
 
-      const list = tree.slice(0, 12).map((c) => "<li><b>" + escHtml(c.component) + "</b> — " +
+      const list = tree.slice(0, 12).map((c) => "<li><b>" + escHtml(c.component) + "</b>" +
+        (c.units > 1 ? ' <span class="pfx">× ' + c.units + " units</span>" : "") + " — " +
         (c.drawings.length ? escHtml(c.drawings.slice(0, 6).join(", ")) + (c.drawings.length > 6 ? " …" : "") : "no drawings")
         + "</li>").join("");
+      const multi = tree.filter((c) => c.units > 1);
 
       return '<div class="preflight">' +
         '<div class="pfhd">' + (blockers.length ? "Not ready yet" : "Ready to run") +
@@ -2411,6 +2455,10 @@
         (blockers.length ? '<div class="pfstop">' + blockers.map((b) => "<div>⛔ " + b + "</div>").join("") + "</div>" : "") +
         (warn.length ? '<div class="pfwarn">' + warn.map((w) => "<div>⚠ " + w + "</div>").join("") + "</div>" : "") +
         "<ul class=\"pflist\">" + list + (tree.length > 12 ? "<li>…</li>" : "") + "</ul>" +
+        (multi.length ? '<div class="pfex">Built more than once: ' +
+          multi.map((c) => "<b>" + escHtml(c.component) + " × " + c.units + "</b>").join(" · ") +
+          " — the AI reads <b>one</b> unit off the drawings and the BOM is multiplied up, so it shows " +
+          "both per-unit and total quantities.</div>" : "") +
         (referenceSheets.length ? '<div class="pfex">Reference only — on the project, read for context, no BOM rows: ' +
           escHtml(referenceSheets.slice(0, 8).map((x) => x.number).join(", ")) + "</div>" : "") +
         (function () {

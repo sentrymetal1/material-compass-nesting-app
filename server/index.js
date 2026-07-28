@@ -127,7 +127,11 @@ app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
     try {
       const rc = await axios.get(base + '/report/All_Project_Components?criteria=(MCP_Customer_Project_Form==' + pid + ')&limit=200', { headers: zohoHeaders(token) });
       components = ((rc.data && rc.data.data) || [])
-        .map(function (x) { return { id: x.ID, name: String(x.Project_Component || '').trim() }; })
+        // Quantity = HOW MANY OF THIS COMPONENT the job builds. The drawings detail ONE of them, so
+        // the take-off reads per-unit and the BOM is multiplied up — the project's own rollups
+        // divide BOM sums by this number to get per-unit cost, so it has to travel with the scope.
+        .map(function (x) { return { id: x.ID, name: String(x.Project_Component || '').trim(),
+                                     quantity: Math.max(1, Math.round(Number(x.Quantity) || 1)) }; })
         .filter(function (c) { return c.name; });
     } catch (e) { /* none entered */ }
     try {
@@ -158,7 +162,8 @@ app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
 
     // Nest drawings under their component; drawings with no/unknown parent go to unassigned.
     const byId = {};
-    components.forEach(function (c) { byId[String(c.id)] = { component_id: String(c.id), component: c.name, drawings: [] }; });
+    components.forEach(function (c) { byId[String(c.id)] = { component_id: String(c.id), component: c.name,
+                                                             quantity: c.quantity, drawings: [] }; });
     const unassigned = [];
     drawings.forEach(function (d) {
       const node = d.component_id ? byId[String(d.component_id)] : null;
@@ -411,18 +416,27 @@ app.post('/api/takeoff/project-scope/update', async (req, res) => {
     const spec = SCOPE_FORMS[kind];
     if (!spec) return res.status(400).json({ ok: false, error: "kind must be 'component' or 'drawing'" });
     if (!id) return res.status(400).json({ ok: false, error: 'id required' });
+    // How many of this component the job builds — sent on its own (no rename) when the estimator
+    // changes the unit count on the intake screen.
+    const qtyOnly = (kind === 'component' && req.body.quantity != null && (value == null || value === ''));
     const v = String(value || '').trim();
-    if (!v) return res.status(400).json({ ok: false, error: 'value required' });
+    if (!v && !qtyOnly) return res.status(400).json({ ok: false, error: 'value required' });
 
     const token = await getAccessToken();
-    const data = {}; data[spec.field] = v;
+    const data = {};
+    if (v) data[spec.field] = v;
+    if (kind === 'component' && req.body.quantity != null) {
+      const q = Math.round(Number(req.body.quantity));
+      if (!(q >= 1)) return res.status(400).json({ ok: false, error: 'quantity must be 1 or more' });
+      data.Quantity = q;                       // whole units — the field takes no decimals
+    }
     // A drawing can also be RE-PARENTED here: the intake screen lets the estimator pick a drawing
     // that sits on the project with no component and file it under one, which is the same PATCH.
     if (kind === 'drawing' && req.body.component_id) data.Components = String(req.body.component_id);
     const zr = await axios.patch(creatorApiBase() + '/report/' + spec.report + '/' + id,
       { data: data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the rename', detail: zr.data });
-    res.json({ ok: true, id: String(id), value: v });
+    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the update', detail: zr.data });
+    res.json({ ok: true, id: String(id), value: v, quantity: data.Quantity });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('project-scope update error:', detail);
@@ -666,14 +680,29 @@ function buildScopeTreeContext(tree, excluded, aliases, documents) {
       const dv = String(d == null ? '' : d).trim(); if (!dv) return;
       const dk = dv.toLowerCase(); if (seenD[dk]) return; seenD[dk] = 1; draws.push(dv);
     });
-    nodes.push({ name: name, draws: draws });
+    const units = Math.max(1, Math.round(Number((n && (n.units != null ? n.units : n.quantity))) || 1));
+    nodes.push({ name: name, draws: draws, units: units });
   });
   if (!nodes.length) return docBlock ? "THIS PROJECT'S CONFIRMED SCOPE:\n\n" + docBlock : '';
   const allDraws = [];
   const body = nodes.map(function (n) {
     n.draws.forEach(function (d) { if (allDraws.indexOf(d) < 0) allDraws.push(d); });
-    return '- ' + n.name + (n.draws.length ? '  [drawings: ' + n.draws.join(', ') + ']' : '  [no drawings listed]');
+    return '- ' + n.name + (n.units > 1 ? '  — the job builds ' + n.units + ' of these' : '') +
+      (n.draws.length ? '  [drawings: ' + n.draws.join(', ') + ']' : '  [no drawings listed]');
   }).join('\n');
+  // Multiplying up is arithmetic and belongs in code, not in a model's head: it does it silently,
+  // inconsistently, and the per-unit figure is then unrecoverable. So the model reads ONE unit and
+  // the server multiplies.
+  const multi = nodes.filter(function (n) { return n.units > 1; });
+  const unitsRule = multi.length
+    ? '\nHOW MANY OF EACH — READ ONE, NEVER MULTIPLY:\n' +
+      multi.map(function (n) { return '- ' + n.name + ': the job builds ' + n.units + ' of them'; }).join('\n') +
+      '\nThe drawings detail ONE unit of a component. Report `quantity` for a SINGLE unit — if one platform ' +
+      'takes 4 angles, that row is quantity 4, NOT ' + (4 * (multi[0].units || 2)) + '. The multiplication to the ' +
+      'job total is done downstream, so multiplying here double-counts the whole component. The ONLY exception ' +
+      'is a member the drawing itself states is shared across all units (a common base frame) — put that in its ' +
+      'own row, use the real count, and say so in the row `note`.\n'
+    : '';
   // Reference-only sheets. They are ON the project like every other drawing — nothing is dropped —
   // but they carry no material to take off (layouts, sections, general notes). READ them for
   // context; just don't raise BOM rows from them.
@@ -695,7 +724,8 @@ function buildScopeTreeContext(tree, excluded, aliases, documents) {
     }).filter(Boolean);
 
   return "THIS PROJECT'S CONFIRMED SCOPE BREAKDOWN (the estimator arranged and approved this — it is AUTHORITATIVE):\n\n" +
-    "COMPONENTS / ASSEMBLIES, each with the drawings it is detailed on:\n" + body + '\n\n' +
+    "COMPONENTS / ASSEMBLIES, each with the drawings it is detailed on:\n" + body + '\n' +
+    unitsRule + '\n' +
     docBlock +
     (skips.length ?"REFERENCE-ONLY SHEETS — part of the package and on the project, but no material comes off them:\n" + skips.join('\n') + '\n\n' : '') +
     (alias.length ? "DRAWING NUMBER MAPPING — same drawing, different number printed on the sheet:\n" + alias.join('\n') + '\n\n' : '') +

@@ -29,6 +29,16 @@ function normalizeRows(rows) {
 
 const isQuantified = function (r) { return (Number(r.quantity) || 0) > 0; };
 
+// WHAT GETS ORDERED. `quantity` is per ONE unit of the component (that's what the drawing shows);
+// `quantity_total` is that times how many of the component the job builds. The BOM must carry the
+// TOTAL: the project's own Deluge divides BOM sums by Component.Quantity to get per-unit cost, so a
+// per-unit BOM would under-order the steel AND under-report every unit cost. Falls back to
+// `quantity` when nothing multiplied it (single-unit components, or an older caller).
+function orderQty(r) {
+  const total = Number(r.quantity_total);
+  return Number.isFinite(total) && total > 0 ? total : (Number(r.quantity) || 0);
+}
+
 function splitFt(n) {
   const raw = Number(n) || 0;
   const ft = Math.max(0, Math.floor(raw));
@@ -51,7 +61,7 @@ function buildImportCsv(rows) {
       cell(r.material_type),     // 4  Mat Type
       cell(r.specification),     // 5  Specification
       cell(r.size),              // 6  Material
-      cell(r.quantity),          // 7  QTY
+      cell(orderQty(r)),         // 7  QTY — the JOB total (per unit × units built)
       cell(ftPair[0]),           // 8  FT(L)   — dimensions are 0 when empty, never blank
       cell(ftPair[1]),           // 9  INCH(L)
       cell(wPair[0]),            // 10 FT(W)

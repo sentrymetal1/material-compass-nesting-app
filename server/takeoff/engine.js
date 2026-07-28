@@ -41,7 +41,7 @@ const ROW_ITEM = {
     specification: { type: "string", description: "Spec valid for that Form+Material per §1: e.g. '6061-T6'/'6063-T6'/'6061-B308' (aluminum), 'A36'/'A992'/'A572 Gr 50'/'A500 Gr B' (carbon), 'A36 Galvanized' (galv), '304'/'316'/'A240 304/316' (stainless)." },
     size:          { type: "string", description: "Material = exact catalog size format from §1 — SPACES around x, correct prefix: 'L4 x 4 x 1/4', 'C10 x 15.3', 'C 12 x 8.274' (alum), 'MC8 x 8.5', 'W12 x 26', '6\" SCH 80 (XS)' (pipe, no 'PIPE'), '1/2\"' (plate, no 'PL'), '4 x 1/4' (square tube, no 'HSS')." },
     length_ft:     { type: "number", description: "Length per piece in feet (estimate if scaled)." },
-    quantity:      { type: "number", description: "Number of pieces of this exact size/length." },
+    quantity:      { type: "number", description: "Number of pieces of this exact size/length in ONE unit of the component. If the job builds several of a component, do NOT multiply — read one unit; the multiplication to the job total is done downstream." },
     source_sheet:  { type: "string", description: "Sheet number the member was read from, e.g. 'S-201'." },
     member_mark:   { type: "string", description: "Member mark/tag if shown, e.g. 'B-12'. Empty if none." },
     component:     { type: "string", description: "The project COMPONENT/ASSEMBLY this member belongs to. If a PROJECT COMPONENTS list is provided in context, use the EXACT matching name from it; otherwise infer a short assembly name (e.g. 'Loading Dock Frame', 'Stair S1'). Empty only if none applies." },

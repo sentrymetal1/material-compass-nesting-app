@@ -72,6 +72,7 @@
   .d-hi{background:var(--grn);} .d-md{background:var(--ylw);} .d-lo{background:var(--red);}
   .galv{font-size:10px;background:#eef6ee;color:var(--grn);border-radius:4px;padding:1px 5px;}
   tr.grp-comp td{background:#eef2f7;color:#1f3a5f;font-weight:700;font-size:13px;padding:9px 12px;border-top:2px solid #cdd8e6;border-bottom:1px solid #d7e0ec;}
+  .grp-units{background:#dbe8f7;color:#2c5c96;border-radius:9px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:4px;}
   tr.grp-draw td{background:#f7f9fb;color:#46566b;font-weight:600;font-size:12px;padding:5px 12px 5px 24px;border-bottom:1px solid #eef1f4;}
   .grp-meta{font-weight:500;color:#8493a4;font-size:11px;margin-left:8px;}
   .pillbtn{font-size:11px;color:var(--blue);border:1px solid #cfe0f2;background:#f3f8fd;border-radius:5px;padding:1px 7px;margin-left:6px;cursor:pointer;}
@@ -129,7 +130,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.38 · 2026-07-25";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.40 · 2026-07-28";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -649,6 +650,8 @@
       g.dMap[dN].push(idx);
     });
     const sumQty=function(ids){ return ids.reduce(function(a,i){ return a+(Number(rows[i].quantity)||0); },0); };
+    // Group headers count the JOB total — that's the number an estimator is looking for.
+    const sumTot=function(ids){ return ids.reduce(function(a,i){ return a+totalOf(rows[i]); },0); };
 
     // Where the row's evidence came from, on the row itself — two sources agreeing is worth more
     // than one, and a row nobody's list mentions is worth a second look.
@@ -661,11 +664,22 @@
       const x=XC[k]; if(!x) return "";
       return ' <span title="'+escAttr(x[1])+'" style="font-size:10px;font-weight:700;color:'+x[2]+'">'+x[0]+'</span>';
     };
+    // Per unit vs job total. `quantity` is what one unit of the component takes — that's what you
+    // check against the drawing. `quantity_total` is what gets ordered. Showing only one of them is
+    // how a 4-off job ends up ordering a quarter of the steel (or four times the cost per unit).
+    const unitsOf=function(r){ return Math.max(1, Math.round(Number(r.units)||1)); };
+    const totalOf=function(r){ const t=Number(r.quantity_total);
+      return (Number.isFinite(t)&&t>0)?t:(Number(r.quantity)||0)*unitsOf(r); };
+    const anyMulti = rows.some(function(r){ return unitsOf(r)>1; });
     const memberRow=function(idx){
       const r=rows[idx], c=Number(r.confidence)||0, cls=confClass(c);
+      const u=unitsOf(r);
       const qtyCell = editable
-        ? '<input type="number" min="0" value="'+(Number(r.quantity)||0)+'" style="width:56px;padding:3px 5px;border:1px solid #cdd3da;border-radius:5px;font-size:12px;" onchange="editQty('+idx+',this.value)">'
-        : esc(r.quantity);
+        ? '<input type="number" min="0" value="'+(Number(r.quantity)||0)+'" style="width:56px;padding:3px 5px;border:1px solid #cdd3da;border-radius:5px;font-size:12px;" onchange="editQty('+idx+',this.value)">'+
+          (u>1?'<div class="src">×'+u+' = <b>'+totalOf(r)+'</b></div>':'')
+        : (u>1
+            ? esc(r.quantity)+' <span class="src">×'+u+'</span> <b>= '+totalOf(r)+'</b>'
+            : esc(r.quantity));
       return '<tr class="'+(cls==="hi"?"":cls)+'">'+
         '<td><span class="dot d-'+cls+'"></span>'+c.toFixed(2)+xcTag(r)+'</td>'+
         '<td>'+esc(r.form_type)+'</td>'+
@@ -678,12 +692,19 @@
     const bomRows = compOrder.map(function(cN){
       const g=compMap[cN];
       const cIds=[].concat.apply([], g.dOrder.map(function(d){ return g.dMap[d]; }));
+      const cU=Math.max.apply(null,[1].concat(cIds.map(function(i){ return unitsOf(rows[i]); })));
       let html='<tr class="grp-comp"><td colspan="'+NC+'">▸ '+esc(cN)+
-        ' <span class="grp-meta">'+cIds.length+' item'+(cIds.length===1?'':'s')+' · '+sumQty(cIds)+' qty</span></td></tr>';
+        (cU>1?' <span class="grp-units">× '+cU+' units</span>':'')+
+        ' <span class="grp-meta">'+cIds.length+' item'+(cIds.length===1?'':'s')+' · '+
+        (cU>1 ? sumQty(cIds)+' per unit · <b>'+sumTot(cIds)+' total</b>' : sumQty(cIds)+' qty')+
+        '</span></td></tr>';
       g.dOrder.forEach(function(dN){
         const ids=g.dMap[dN];
         html+='<tr class="grp-draw"><td colspan="'+NC+'">📄 '+esc(dN)+
-          ' <span class="grp-meta">'+ids.length+' item'+(ids.length===1?'':'s')+' · '+sumQty(ids)+' qty</span></td></tr>'+
+          ' <span class="grp-meta">'+ids.length+' item'+(ids.length===1?'':'s')+' · '+
+          (Math.max.apply(null,[1].concat(ids.map(function(i){ return unitsOf(rows[i]); })))>1
+            ? sumQty(ids)+' per unit · <b>'+sumTot(ids)+' total</b>' : sumQty(ids)+' qty')+
+          '</span></td></tr>'+
           ids.map(memberRow).join("");
       });
       return html;
@@ -751,7 +772,7 @@
 
       // BOM
       '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, grouped by component → drawing</span></h2><div class="body" style="padding:0;">'+
-        '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>Qty</th><th>Dimensions</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
+        '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Dimensions</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
         (bomRows||'<tr><td colspan="'+NC+'" style="padding:14px;color:var(--mut)">No quantified rows.</td></tr>')+'</tbody></table>'+
         ((fab.length>0)?'<div style="padding:10px 18px;font-size:12px;color:var(--mut)">'+
           (editable
@@ -925,8 +946,13 @@
     (rows||[]).filter(function(r){ return (Number(r.quantity)||0)>0; }).forEach(function(r,i){
       const L=_sft(r.length_ft), W=_sft(r.width_ft);
       const tag=_cell(r.member_mark)||("AI-"+String(i+1).padStart(3,"0"));
+      // The BOM carries the JOB total (per unit × units built) — the project's own rollups divide
+      // BOM sums by Component.Quantity to get per-unit cost. Same rule as the server's builder.
+      const u=Math.max(1,Math.round(Number(r.units)||1));
+      const tot=Number(r.quantity_total);
+      const qty=(Number.isFinite(tot)&&tot>0)?tot:(Number(r.quantity)||0)*u;
       out.push([tag,_cell(r.component),_cell(r.source_sheet),_cell(r.form_type),_cell(r.material_type),_cell(r.specification),
-        _cell(r.size),_cell(r.quantity),_cell(L[0]),_cell(L[1]),_cell(W[0]),_cell(W[1]),r.galvanized?"Yes":"","",_pct(r.confidence)].join(","));
+        _cell(r.size),_cell(qty),_cell(L[0]),_cell(L[1]),_cell(W[0]),_cell(W[1]),r.galvanized?"Yes":"","",_pct(r.confidence)].join(","));
     });
     return out.join("\n");
   }
@@ -1030,7 +1056,12 @@
   }
 
   function recomputeCsv(R){ try{ R.import_csv=buildImportCsvJS(R.rows); }catch(e){} }
-  function editQty(idx, val){ const R=loadResult(); if(!R.rows||!R.rows[idx]) return; R.rows[idx].quantity=Math.max(0,Number(val)||0); recomputeCsv(R); saveResult(R); render(); }
+  // Editing edits the PER-UNIT quantity — the number you read off the drawing. The job total is
+  // derived, never typed, so the two can't drift apart.
+  function editQty(idx, val){ const R=loadResult(); if(!R.rows||!R.rows[idx]) return;
+    const r=R.rows[idx], u=Math.max(1,Math.round(Number(r.units)||1));
+    r.quantity=Math.max(0,Number(val)||0); r.qty_per_unit=r.quantity; r.quantity_total=r.quantity*u;
+    recomputeCsv(R); saveResult(R); render(); }
   function removeRow(idx){ const R=loadResult(); if(!R.rows||!R.rows[idx]) return; R.rows.splice(idx,1); recomputeCsv(R); saveResult(R); render(); }
 
   // Download the (resolved/edited) BOM CSV — use it in the existing BOM import flow today.
