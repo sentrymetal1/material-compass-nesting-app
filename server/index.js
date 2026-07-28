@@ -649,13 +649,35 @@ async function buildFittingsCatalogContext() {
     'invented value cannot.\n';
 }
 
-// What the take-off is told about fittings — checkable without spending a run.
+// What the take-off is told about fittings — checkable without spending a run. Plain text by
+// default because the point is to READ it: this is the exact vocabulary the model is held to, and
+// a wrong or missing end type here is a wrong fitting on a quote. ?json=1 for the machine version.
 app.get('/api/takeoff/fittings-catalog-check', async (req, res) => {
   try {
     const txt = await buildFittingsCatalogContext();
-    res.json({ ok: true, built: !!txt, approx_tokens: Math.round(txt.length / 4), head: txt.slice(0, 900) });
+    if (req.query.json) {
+      return res.json({ ok: true, built: !!txt, approx_tokens: Math.round(txt.length / 4), text: txt });
+    }
+    res.type('text/plain; charset=utf-8').send(
+      (txt ? '' : '(EMPTY — the fittings catalog could not be read, so no fittings will be extracted.)\n\n') +
+      '# This is exactly what the AI is told about fittings.\n' +
+      '# A fitting it reads off a drawing must be described using these values and no others.\n' +
+      '# ~' + Math.round(txt.length / 4) + ' tokens, cached 12h and prompt-cached — it costs almost nothing per run.\n' +
+      '# Add ?json=1 for JSON.\n\n' + txt);
   } catch (err) {
-    res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    res.status(500).type('text/plain').send('Could not build the fittings catalog: ' + String((err && err.message) || err));
+  }
+});
+
+// The same for the STRUCTURAL size catalog, in the same readable form — the two are checked together.
+app.get('/api/takeoff/catalog-check-text', async (req, res) => {
+  try {
+    const txt = await buildLiveCatalogContext();
+    res.type('text/plain; charset=utf-8').send(
+      '# This is exactly what the AI is told about material sizes.\n' +
+      '# ~' + Math.round(txt.length / 4) + ' tokens, cached 12h and prompt-cached.\n\n' + txt);
+  } catch (err) {
+    res.status(500).type('text/plain').send('Could not build the size catalog: ' + String((err && err.message) || err));
   }
 });
 
