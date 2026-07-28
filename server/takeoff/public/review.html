@@ -483,6 +483,58 @@
       'so everything below is just your entered list — not a mismatch. '+why+'</div>';
   }
 
+  // ---- LIST vs DRAWINGS ---------------------------------------------------
+  // The cross-check, front and centre: what the parts lists said, what the sheets showed, and every
+  // place the two didn't agree. Something DRAWN but missing from the shop's own list is the single
+  // most valuable thing a take-off can find — it's steel that wouldn't have been ordered.
+  function crossCardHtml(rows, rec){
+    rec = rec || {};
+    const only_list = arr(rec.only_in_list), only_dwg = arr(rec.only_on_drawings), mism = arr(rec.mismatches);
+    const tally = { both:0, list_only:0, drawing_only:0, corrected:0, no_list:0, unset:0 };
+    arr(rows).forEach(function(r){
+      if((Number(r.quantity)||0)<=0) return;                       // gaps are reviewed as gaps
+      const k = String(r.cross_check||"").toLowerCase().trim().replace(/[\s-]+/g,"_");
+      if(tally[k]===undefined) tally.unset++; else tally[k]++;
+    });
+    const checked = tally.both + tally.list_only + tally.drawing_only + tally.corrected;
+    // Nothing to show if the package had no list at all and the model reported nothing.
+    if(!rec.performed && !only_list.length && !only_dwg.length && !mism.length && !checked) return "";
+    const TD='padding:5px 8px;border-bottom:1px solid #eceff3;vertical-align:top;font-size:12.5px';
+    const tbl=function(title, colour, items, cells){
+      if(!items.length) return "";
+      return '<details open style="margin-bottom:10px"><summary style="color:'+colour+';font-weight:700">'+
+        title+' ('+items.length+')</summary><table style="width:100%;border-collapse:collapse;margin-top:6px">'+
+        items.map(function(x){ return '<tr>'+cells(x).map(function(c){ return '<td style="'+TD+'">'+c+'</td>'; }).join("")+'</tr>'; }).join("")+
+        '</table></details>';
+    };
+    const pill=function(n,label,cls){ return n?'<span class="chip'+(cls?' '+cls:'')+'">'+n+' '+label+'</span>':''; };
+    return '<div class="card"><h2>⚖ Parts list vs drawings <span class="lt">— what was checked against what</span></h2><div class="body">'+
+      (arr(rec.sources).length
+        ? '<div style="font-size:12.5px;color:var(--mut);margin-bottom:8px">Checked against: <b>'+
+            arr(rec.sources).map(esc).join("</b>, <b>")+'</b></div>'
+        : (rec.performed===false
+            ? '<div style="font-size:12.5px;color:var(--mut);margin-bottom:8px">No parts list or material table was found in this package — the BOM is read from the drawings alone.</div>'
+            : ''))+
+      '<div class="meta" style="margin-bottom:10px">'+
+        pill(tally.both,'confirmed by both')+pill(tally.corrected,'corrected')+
+        pill(tally.drawing_only,'drawn, not listed')+pill(tally.list_only,'listed, not drawn')+
+        pill(tally.no_list,'no list to check')+pill(tally.unset,'unchecked')+
+      '</div>'+
+      tbl('⚠ Drawn or scheduled but MISSING from the parts list','#b45309',only_dwg,function(x){
+        return ['<b>'+esc(x.item)+'</b>', esc(x.where||''), '<span class="src">'+esc(x.why_it_matters||'')+'</span>']; })+
+      tbl('⚡ In both, but they disagree','#b45309',mism,function(x){
+        return ['<b>'+esc(x.item)+'</b>',
+                '<span class="src">list: '+esc(x.list_says||'—')+'<br>drawing: '+esc(x.drawings_say||'—')+'</span>',
+                'used <b>'+esc(x.used||'—')+'</b><br><span class="src">'+esc(x.why||'')+'</span>']; })+
+      tbl('◷ On the parts list but not found drawn','#7d8aa0',only_list,function(x){
+        return ['<b>'+esc(x.item)+'</b>', esc(x.where||''),
+                '<span class="src">'+esc(x.quantity?('qty '+x.quantity+' · '):'')+esc(x.action||'kept in the BOM')+'</span>']; })+
+      ((only_dwg.length||mism.length||only_list.length)
+        ? '<div style="font-size:12px;color:var(--mut)">Everything above is already in the BOM below — this section is the audit trail, not a to-do list. Use <b>Tell the AI</b> if you want any of it changed.</div>'
+        : (checked?'<div style="font-size:12.5px;color:var(--grn)">✓ The parts list and the drawings agree throughout — no discrepancies found.</div>':''))+
+    '</div></div>';
+  }
+
   function reconCardHtml(){
     if(!params.project_id || loadResult().__demo) return "";
     if(!SCOPE_FETCH_DONE) return '<div class="card"><h2>▸ Scope Reconciliation</h2><div class="body" style="color:var(--mut);font-size:13px"><span class="spin"></span> Checking components &amp; drawings against the project…</div></div>';
@@ -598,13 +650,24 @@
     });
     const sumQty=function(ids){ return ids.reduce(function(a,i){ return a+(Number(rows[i].quantity)||0); },0); };
 
+    // Where the row's evidence came from, on the row itself — two sources agreeing is worth more
+    // than one, and a row nobody's list mentions is worth a second look.
+    const XC={ both:["✓✓","confirmed by both the parts list and the drawings","var(--grn)"],
+               corrected:["≠","the list and the drawing disagreed — see Parts list vs drawings","#b45309"],
+               drawing_only:["dwg","drawn or scheduled, but NOT on the parts list","#b45309"],
+               list_only:["list","on the parts list, not found drawn","#7d8aa0"] };
+    const xcTag=function(r){
+      const k=String(r.cross_check||"").toLowerCase().trim().replace(/[\s-]+/g,"_");
+      const x=XC[k]; if(!x) return "";
+      return ' <span title="'+escAttr(x[1])+'" style="font-size:10px;font-weight:700;color:'+x[2]+'">'+x[0]+'</span>';
+    };
     const memberRow=function(idx){
       const r=rows[idx], c=Number(r.confidence)||0, cls=confClass(c);
       const qtyCell = editable
         ? '<input type="number" min="0" value="'+(Number(r.quantity)||0)+'" style="width:56px;padding:3px 5px;border:1px solid #cdd3da;border-radius:5px;font-size:12px;" onchange="editQty('+idx+',this.value)">'
         : esc(r.quantity);
       return '<tr class="'+(cls==="hi"?"":cls)+'">'+
-        '<td><span class="dot d-'+cls+'"></span>'+c.toFixed(2)+'</td>'+
+        '<td><span class="dot d-'+cls+'"></span>'+c.toFixed(2)+xcTag(r)+'</td>'+
         '<td>'+esc(r.form_type)+'</td>'+
         '<td>'+esc(r.size)+(r.galvanized?' <span class="galv">galv</span>':'')+'</td>'+
         '<td>'+esc(r.specification)+'</td><td>'+qtyCell+'</td>'+
@@ -658,6 +721,9 @@
 
       // material check — rows that can't resolve against the shop's catalog, fixable here
       materialCardHtml(rows)+
+
+      // the cross-check: parts lists / drawing material tables vs what the sheets actually show
+      crossCardHtml(rows, s.reconciliation)+
 
       // scope reconciliation — AI-read components/drawings vs. what you entered on the project
       reconCardHtml()+
@@ -1127,6 +1193,7 @@
       project:       _has(rs.project)?rs.project:os.project,
       scope_of_work: _has(rs.scope_of_work)?rs.scope_of_work:os.scope_of_work,
       decisions:     _has(rs.decisions)?rs.decisions:os.decisions,
+      reconciliation:_has(rs.reconciliation)?rs.reconciliation:os.reconciliation,
       gaps:          (rs.gaps!==undefined)?rs.gaps:(os.gaps||[]),  // honor an explicit [] (user cleared gaps); fall back only when omitted
       conflicts:     conflicts,
       compliance:    _has(rs.compliance)?rs.compliance:os.compliance,

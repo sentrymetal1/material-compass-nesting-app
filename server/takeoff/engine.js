@@ -50,12 +50,13 @@ const ROW_ITEM = {
     galvanized:    { type: "boolean", description: "true if hot-dip galvanized per spec/drawings. Galvanizing is a FINISH: keep material_type as the base steel ('Carbon Steel') so the size resolves — do NOT use a 'Carbon Steel - Galvanized' material type for fabricated shapes." },
     width_ft:      { type: "number", description: "REQUIRED for Plate / Sheet / Tread Plate (area-measured): the plate WIDTH in feet (a 12\"-wide plate = 1.0). Put thickness in `size` ('1/2\"') and the width here. Linear members omit this." },
     disposition:   { type: "string", description: "How this member is procured: 'fabricate' (cut/weld in the shop from stock — the default), 'buyout' (bought complete: grating, handrail systems, hatches, ladders), or 'by-others' (someone else's scope). Say which — do not leave it out." },
+    cross_check:   { type: "string", description: "Where this row's evidence came from, once you have reconciled the lists against the drawings. EXACTLY one of: 'both' (it is on a parts list/BOM table AND shown on a drawing — the two agree), 'list_only' (listed but you could not find it drawn), 'drawing_only' (drawn or scheduled but absent from the parts list), 'corrected' (the list and the drawing disagreed and you took one over the other — say which in `note`), or 'no_list' (this package has no parts list covering it, so there was nothing to check against). Never guess: 'both' means you actually saw it in both places." },
   },
   // component and source_sheet are REQUIRED: a row that can't be tied to a component and a drawing
   // can't be checked, can't be grouped, and lands in staging without a link. They may be empty
   // strings when genuinely unknown, but the model has to make that call explicitly.
   required: ["form_type", "material_type", "specification", "size", "length_ft", "quantity",
-             "confidence", "component", "source_sheet", "disposition"],
+             "confidence", "component", "source_sheet", "disposition", "cross_check"],
 };
 
 const SYNOPSIS_SCHEMA = {
@@ -94,6 +95,38 @@ const SYNOPSIS_SCHEMA = {
           options:           { type: "array", items: { type: "string" }, description: "The 2 (rarely 3) answer choices, e.g. ['Include','Skip']." },
         },
         required: ["id", "item", "options"],
+      },
+    },
+    reconciliation: {
+      type: "object",
+      description: "THE CROSS-CHECK: every parts list / BOM table in the package worked against what the drawings actually show. Fill this in whenever the package contains a bill of material, a parts list, a cut list, or a material table on a drawing. If there is no such list anywhere, set performed=false and leave the arrays empty.",
+      properties: {
+        performed: { type: "boolean", description: "true if you actually reconciled a list against the drawings." },
+        sources:   { type: "array", items: { type: "string" }, description: "What you reconciled — document numbers and/or sheets whose title-block material tables you used, e.g. ['AAP3805291-00504 BOM','S-201 material table']." },
+        agreed:    { type: "number", description: "How many line items matched the drawings on size, quantity and length." },
+        only_in_list: {
+          type: "array", description: "On a parts list but you could NOT find it drawn or detailed. These are still real material — keep them in the BOM — but the estimator must know they were unverified.",
+          items: { type: "object", properties: {
+            item: { type: "string" }, where: { type: "string", description: "Which list and line." },
+            quantity: { type: "string" }, action: { type: "string", description: "What you did — kept it, or why not." },
+          }, required: ["item"] },
+        },
+        only_on_drawings: {
+          type: "array", description: "Drawn, dimensioned or scheduled but MISSING from the parts list. This is the highest-value finding in the whole take-off — an omission from the shop's own list.",
+          items: { type: "object", properties: {
+            item: { type: "string" }, where: { type: "string", description: "Sheet and detail." },
+            why_it_matters: { type: "string" },
+          }, required: ["item"] },
+        },
+        mismatches: {
+          type: "array", description: "Present in BOTH but they disagree — quantity, length, size, grade or finish.",
+          items: { type: "object", properties: {
+            item: { type: "string" },
+            list_says: { type: "string" }, drawings_say: { type: "string" },
+            used: { type: "string", description: "Which value you put in the BOM row." },
+            why: { type: "string", description: "One line on why you took that one." },
+          }, required: ["item"] },
+        },
       },
     },
     gaps: {
@@ -179,7 +212,26 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "spec/PM'. A flagged gap is far more useful than a silent omission.\n\n" +
     "CAPTURE FINISH (galvanized / prime / mill) and flag spec-driven finishes. Note if domestic-content " +
     "(BABA/AIS) appears to apply. When a value isn't legible, lower confidence. Group identical " +
-    "size+length+spec members into one row with a quantity. Always cite the source sheet.\n\n";
+    "size+length+spec members into one row with a quantity. Always cite the source sheet.\n\n" +
+    "READ THE LISTS AS DATA, NOT AS DECORATION. Two kinds of list appear in these packages and BOTH are " +
+    "primary sources: (a) a standalone bill of material / parts list / cut list document, and (b) the " +
+    "MATERIAL TABLE printed on a drawing itself — usually beside or above the title block, with item " +
+    "numbers, marks, sizes, lengths and quantities, keyed to balloons on the view. Read every one of them " +
+    "line by line. They are usually more precise than scaling a view.\n\n" +
+    "THEN RECONCILE THE LISTS AGAINST THE DRAWINGS — this is a required step, not an optional one. Work " +
+    "each list against what the sheets actually show, and account for every line three ways:\n" +
+    "  • in BOTH and agreeing → one row, cross_check 'both', higher confidence.\n" +
+    "  • on the LIST but you cannot find it drawn → keep the row (the list is real material), cross_check " +
+    "'list_only', and record it in synopsis.reconciliation.only_in_list.\n" +
+    "  • DRAWN or scheduled but MISSING from the list → add the row, cross_check 'drawing_only', and record " +
+    "it in synopsis.reconciliation.only_on_drawings. This is the most valuable thing you can find — an " +
+    "omission from the shop's own list becomes missing steel on the floor.\n" +
+    "  • they DISAGREE on quantity, length, size, grade or finish → ONE row using the value you judge " +
+    "correct (default to the list for count and length, the drawing for how the member is used), " +
+    "cross_check 'corrected', and record both values in synopsis.reconciliation.mismatches.\n" +
+    "NEVER DOUBLE-COUNT: a member that is both listed and drawn is ONE row, never two. If the package has " +
+    "no list of any kind, set reconciliation.performed=false and use cross_check 'no_list' — do not " +
+    "pretend a check happened.\n\n";
 
   const outputBOM =
     "OUTPUT DISCIPLINE (critical): Return `rows` as a real JSON ARRAY of row objects — NEVER a " +
@@ -188,6 +240,9 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
 
   const outputSynopsis = includeSynopsis
     ? " Put ALL detailed analysis in the structured `synopsis` object (NOT in prose, NOT per-row): " +
+      "fill in `reconciliation` (what you checked the drawings against, what agreed, what was listed but " +
+      "not drawn, what was drawn but not listed, and every disagreement with both values) — an estimator " +
+      "reads that section before anything else; " +
       "classify scope into fabricate/buyout/by_others/send_out; surface genuine judgment calls as " +
       "`decisions` (each a clear question + 2 answer options + your recommendation) — these are scope/" +
       "finish ambiguities a human must confirm, not data entry; list `gaps`, drawing-vs-spec " +

@@ -142,6 +142,17 @@ async function takeoffHandler(req, res, deps) {
           unknown_sheets: fill.sheet_unknown.slice(0, 10),
         };
       })(),
+      // How much of the BOM was actually corroborated against a parts list, rather than read off a
+      // drawing alone. The review page leads with this — it's the difference between "the AI says so"
+      // and "two independent sources say so".
+      cross_check: (function () {
+        const c = { both: 0, list_only: 0, drawing_only: 0, corrected: 0, no_list: 0, unset: 0 };
+        rows.forEach(function (r) {
+          const k = String(r.cross_check || "").toLowerCase().trim().replace(/[\s-]+/g, "_");
+          if (c[k] === undefined) c.unset++; else c[k]++;
+        });
+        return c;
+      })(),
       disposition: (function () {
         const c = { fabricate: 0, buyout: 0, "by-others": 0, unset: 0 };
         rows.forEach(function (r) {
