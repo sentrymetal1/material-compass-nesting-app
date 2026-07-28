@@ -230,8 +230,11 @@
        panel instead of overflowing it. The number keeps the largest share — it's the identity. */
     .alloc .agrid { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1.1fr) max-content 10px minmax(88px,1fr) max-content;
                     align-items:center; column-gap:8px; }
-    /* number + its "parts list" tag on one line, the input taking whatever's left */
-    .alloc .anumcell { display:flex; align-items:center; gap:2px; min-width:0; }
+    /* number + its "parts list" tag on one line. The input keeps a floor so the tag can't squeeze
+       it to nothing (which is what hid the drawing numbers); the tag wraps under it if it must. */
+    .alloc .anumcell { display:flex; align-items:center; gap:2px; min-width:0; flex-wrap:wrap; }
+    .alloc .anumcell input.anum { min-width:11ch; }
+    .alloc .anumcell .dtag { flex:0 0 auto; margin-left:2px; }
     .alloc .acolhd { font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; color:#8893a0;
                      padding-bottom:6px; border-bottom:1px solid #dde8f4; }
     .alloc .agrid > div { padding:6px 0; border-bottom:1px solid #e6eef7; min-width:0; }
@@ -457,7 +460,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.50 (2026-07-28)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.51 (2026-07-28)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -1457,7 +1460,12 @@
           rows +
         "</div>" +
         (named.length
-          ? '<button type="button" class="aapply" id="applyAlloc">✓ Use this allocation</button>'
+          ? '<div class="ahint" style="margin-top:10px">Everything above is already read. <b>Use this allocation</b> ' +
+              'files it on the project: any drawing or document the project doesn\'t have yet is created, and ' +
+              'anything sitting there unfiled is linked to the component you picked. It shows you exactly what ' +
+              'it will change before it does anything, and offers a "this take-off only" option that leaves the ' +
+              'project alone. It does <b>not</b> start the take-off.</div>' +
+            '<button type="button" class="aapply" id="applyAlloc">✓ Use this allocation</button>'
           : '<div class="apg" style="margin-top:8px">Add or name a component above, then re-read.</div>') +
       "</div>";
       updatePanels();
@@ -2062,7 +2070,27 @@
         return has;
       };
       show("suggest"); show("coverage"); show("allocPanel");   // all four live in the working row now
+      layoutCols();
     }
+
+    // A CSS grid keeps a column's TRACK even when the item in it is display:none — so hiding the
+    // suggestions panel left a quarter of the row empty and squeezed the table beside it into a
+    // scrollbar. Rebuild the template from the panels that are actually showing, so the space goes
+    // to the one that needs it most (the drawings table, which carries six columns of its own).
+    const COL_W = [["scope", "minmax(290px,1fr)"], ["sugCol", "minmax(220px,0.8fr)"],
+                   ["covCol", "minmax(250px,0.95fr)"], ["allocCol", "minmax(430px,1.7fr)"]];
+    function layoutCols() {
+      const cols = document.querySelector(".cols");
+      if (!cols) return;
+      // Below 1500px the stylesheet stacks these into 2 columns / 1 column — don't fight it.
+      if (!window.matchMedia("(min-width:1501px)").matches) { cols.style.gridTemplateColumns = ""; return; }
+      const on = COL_W.filter(function (c) {
+        const el = document.getElementById(c[0]);
+        return el && el.style.display !== "none";
+      });
+      cols.style.gridTemplateColumns = on.map(function (c) { return c[1]; }).join(" ");
+    }
+    window.addEventListener("resize", layoutCols);
 
     function renderCoverage() {
       renderSuggestions();
