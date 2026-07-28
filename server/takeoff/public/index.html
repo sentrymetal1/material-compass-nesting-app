@@ -460,7 +460,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.51 (2026-07-28)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.52 (2026-07-28)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -2077,18 +2077,24 @@
     // suggestions panel left a quarter of the row empty and squeezed the table beside it into a
     // scrollbar. Rebuild the template from the panels that are actually showing, so the space goes
     // to the one that needs it most (the drawings table, which carries six columns of its own).
-    const COL_W = [["scope", "minmax(290px,1fr)"], ["sugCol", "minmax(220px,0.8fr)"],
-                   ["covCol", "minmax(250px,0.95fr)"], ["allocCol", "minmax(430px,1.7fr)"]];
+    // Each column has a floor AND a ceiling. The ceiling matters as much: with only two panels
+    // showing, equal shares of a 2,000px screen gave an 800px-wide component dropdown. Columns take
+    // what they need up to a sensible width and any leftover sits at the end of the row.
+    const COL_W = [["scope", "minmax(290px,540px)"], ["sugCol", "minmax(220px,420px)"],
+                   ["covCol", "minmax(250px,560px)"], ["allocCol", "minmax(430px,980px)"]];
     function layoutCols() {
       const cols = document.querySelector(".cols");
       if (!cols) return;
       // Below 1500px the stylesheet stacks these into 2 columns / 1 column — don't fight it.
-      if (!window.matchMedia("(min-width:1501px)").matches) { cols.style.gridTemplateColumns = ""; return; }
+      if (!window.matchMedia("(min-width:1501px)").matches) {
+        cols.style.gridTemplateColumns = ""; cols.style.justifyContent = ""; return;
+      }
       const on = COL_W.filter(function (c) {
         const el = document.getElementById(c[0]);
         return el && el.style.display !== "none";
       });
       cols.style.gridTemplateColumns = on.map(function (c) { return c[1]; }).join(" ");
+      cols.style.justifyContent = "start";
     }
     window.addEventListener("resize", layoutCols);
 
