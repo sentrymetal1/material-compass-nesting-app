@@ -436,7 +436,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.47 (2026-07-28)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.47a (2026-07-28)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -2261,15 +2261,25 @@
     function renderAsk() {
       const box = document.getElementById("askBox");
       if (!box) return;
-      box.style.display = docs.length ? "block" : "none";
+      // Always on screen, even before a file is picked — hiding it meant nobody found it. With no
+      // documents loaded there's nothing to ask ABOUT, so it says so instead of disappearing.
+      box.style.display = "block";
+      const inp = document.getElementById("askInput"), snd = document.getElementById("askSend");
+      inp.disabled = snd.disabled = !docs.length;
+      inp.placeholder = docs.length
+        ? "e.g. what is in the 34-page BOM file? · which sheets carry no material? · is the handrail covered anywhere?"
+        : "Load your PDFs above first — then ask anything about them.";
       const th = document.getElementById("askThread");
       th.innerHTML = askThread.map((m) => m.role === "user"
         ? '<div class="askq">' + escHtml(m.text) + "</div>"
         : '<div class="aska">' + escHtml(m.text) +
           (m.cost != null ? '<span class="askcost">$' + m.cost + "</span>" : "") + "</div>").join("");
       th.scrollTop = th.scrollHeight;
-      document.getElementById("askEx").innerHTML = askThread.length ? "" :
-        "Try: " + ASK_EXAMPLES.map((q, i) => '<a href="#" data-ex="' + i + '">' + escHtml(q) + "</a>").join("");
+      document.getElementById("askEx").innerHTML = askThread.length ? ""
+        : docs.length
+          ? "Try: " + ASK_EXAMPLES.map((q, i) => '<a href="#" data-ex="' + i + '">' + escHtml(q) + "</a>").join("")
+          : "Once your documents are loaded you can ask what's in each file, which sheets carry no " +
+            "material, or whether something is covered anywhere in the set — before you spend a take-off.";
     }
     async function sendAsk(text) {
       if (asking || !docs.length) return;
@@ -2312,6 +2322,7 @@
       e.preventDefault();
       sendAsk(ASK_EXAMPLES[Number(a.getAttribute("data-ex"))]);
     });
+    renderAsk();          // on screen from the start, not only after a file lands
 
     // The non-drawing files, as the run needs to hear about them: what each one IS, which component
     // it was placed under, and the number to cite when a row comes off it. Without this the model
