@@ -389,8 +389,9 @@
       <div class="panel">
         <div class="secttl"><span>Run</span></div>
         <button class="go" id="go" disabled>Run take-off →</button>
-        <div class="colhint">You'll get a summary to check before anything is read — nothing is
-          spent until you confirm it.</div>
+        <!-- A disabled button with no reason is a dead end. renderFiles() keeps this line saying
+             exactly what is missing. -->
+        <div class="colhint" id="runHint">Load at least one PDF under <b>Documents</b> to enable this.</div>
       </div>
     </div>
     <div id="preflight"></div>
@@ -456,7 +457,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.49 (2026-07-28)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.50 (2026-07-28)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -621,6 +622,20 @@
             (over ? "  — over " + MAX_MB + " MB, trim before running" : "") + "</b></div>"
         : '<div class="fmb" style="padding:6px 2px">No files yet — choose or drop PDFs above.</div>';
       go.disabled = over || docs.length === 0;
+      // Say WHY it's disabled, on the button and beside it.
+      const hint = document.getElementById("runHint");
+      if (!docs.length) {
+        go.title = "Load at least one PDF first";
+        if (hint) hint.innerHTML = "Load at least one PDF under <b>Documents</b> to enable this.";
+      } else if (over) {
+        go.title = "The documents total more than " + MAX_MB + " MB";
+        if (hint) hint.innerHTML = "<b>" + totalMb.toFixed(1) + " MB loaded — over the ~" + MAX_MB +
+          " MB limit.</b> Remove a file (✕) or split the set and run it in two passes.";
+      } else {
+        go.title = "";
+        if (hint) hint.innerHTML = "You'll get a summary to check before anything is read — nothing is " +
+          "spent until you confirm it.";
+      }
       updateScanBtn();
       renderAsk();          // the question box belongs to the files that are actually loaded
     }
