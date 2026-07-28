@@ -47,6 +47,24 @@ function signature(size) {
 }
 function sameSig(x, y) { return !!x && !!y && x.n === y.n && x.a === y.a && x.g === y.g; }
 
+// SQUARE TUBE IS WRITTEN TWICE OVER. Steel drawings use the HSS convention and spell both
+// faces — "6 x 6 x 3/16" — while this catalog, like most stock lists, drops the repeat because
+// the faces are equal by definition: "6 x 3/16". Same steel, and a signature comparison can
+// never see it, because one has three numbers and the other has two. Real cost: four square-tube
+// rows out of 58 on a live take-off resolved to nothing, and a job full of tube would lose the lot.
+// So for square tube ONLY, and ONLY when the first two numbers are identical, offer the collapsed
+// form as a second candidate. Rectangular tube is left alone — there the two faces differ and
+// dropping one would be losing a dimension.
+function squareTubeCollapse(size, formType) {
+  if (!/tube/i.test(String(formType || "")) || !/square/i.test(String(formType || ""))) return null;
+  const s = String(size == null ? "" : size).trim();
+  const parts = s.split(/\s*[xX×]\s*/).map(function (p) { return p.trim(); }).filter(Boolean);
+  if (parts.length !== 3) return null;
+  const a = toNum(parts[0]), b = toNum(parts[1]);
+  if (a == null || b == null || a !== b) return null;
+  return parts[0] + " x " + parts[2];
+}
+
 // rows: the take-off's rows (mutated in place). groups: { "Form|Material": [size,...] }.
 // Returns what changed and what couldn't be resolved — both worth surfacing.
 function snapRows(rows, groups) {
@@ -81,7 +99,14 @@ function snapRows(rows, groups) {
     if (!size) { out.unmatched.push({ size: "", form: form, material: mat }); return; }
 
     const sig = signature(size);
-    const matches = entries.filter(function (e) { return sameSig(e.sig, sig); });
+    let matches = entries.filter(function (e) { return sameSig(e.sig, sig); });
+    if (!matches.length) {
+      const collapsed = squareTubeCollapse(size, form);
+      if (collapsed) {
+        const csig = signature(collapsed);
+        matches = entries.filter(function (e) { return sameSig(e.sig, csig); });
+      }
+    }
     if (matches.length === 1) {
       out.snapped.push({ from: r.size, to: matches[0].size, form: form });
       r.size = matches[0].size;
@@ -94,4 +119,4 @@ function snapRows(rows, groups) {
   return out;
 }
 
-module.exports = { snapRows, signature, toNum };
+module.exports = { snapRows, signature, toNum, sameSig, squareTubeCollapse };

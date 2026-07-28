@@ -5,6 +5,7 @@ const axios = require('axios');
 const path = require('path');
 const FormData = require('form-data');
 const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler } = require('./takeoff/route');
+const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
 
 const app = express();
 app.use(cors());
@@ -869,7 +870,23 @@ app.post('/api/takeoff/bom-preview', async (req, res) => {
       const sp = _pickBy(specPool.length ? specPool : specs, r.specification, x => x.typeDetail);
       if (!sp) note(i, 'Spec', r.specification);
       const matPool = materials.filter(m => (!ft || m.formTypeId === ft.id) && (!mt || m.matTypeId === mt.id));
-      const mat = _pickBy(matPool.length ? matPool : materials, r.size, x => x.description);
+      const pool = matPool.length ? matPool : materials;
+      // Exact text first, then MEANING — the same signature match the post-run snapper uses, so a
+      // size the model wrote its own way ("1.5 x 1/8", or square tube as "6 x 6 x 3/16" where the
+      // catalog says "6 x 3/16") still finds its record instead of arriving as a blank cell.
+      let mat = _pickBy(pool, r.size, x => x.description);
+      if (!mat && r.size) {
+        const want = takeoffSnap.signature(r.size);
+        let hits = pool.filter(x => takeoffSnap.sameSig(takeoffSnap.signature(x.description), want));
+        if (!hits.length) {
+          const collapsed = takeoffSnap.squareTubeCollapse(r.size, r.form_type);
+          if (collapsed) {
+            const cs = takeoffSnap.signature(collapsed);
+            hits = pool.filter(x => takeoffSnap.sameSig(takeoffSnap.signature(x.description), cs));
+          }
+        }
+        if (hits.length === 1) mat = hits[0];      // one unambiguous match only — never a guess
+      }
       if (!mat) note(i, 'Material', r.size);
 
       const comp = _pickBy(comps, r.component, x => x.name);
