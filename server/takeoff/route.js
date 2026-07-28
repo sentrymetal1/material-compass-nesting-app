@@ -64,8 +64,11 @@ async function takeoffHandler(req, res, deps) {
     }
 
     // 1. Proven engine.
-    const out = await runTakeoff({ docs: docs, modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog });
+    const out = await runTakeoff({ docs: docs, modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog, fittingsCatalog: deps.fittingsCatalog });
     const rows = out.rows;
+    // Pipe fittings come back in their own stream: bought complete, quoted separately, and kept OUT
+    // of the BOM CSV on purpose — they belong to the project's fittings quote, not the BOM.
+    const fittings = Array.isArray(out.fittings) ? out.fittings : [];
 
     // 1a. Fill in from the confirmed scope what the model left blank. The intake established which
     // component each drawing belongs to, so a row that cites a sheet never needs to go without a
@@ -109,6 +112,13 @@ async function takeoffHandler(req, res, deps) {
       if (u > 1 && per > 0) multiplied++;
     });
     if (multiplied) console.log("[takeoff] multiplied " + multiplied + " rows up by their component's unit count");
+    // Fittings are counted per unit too, so they get the same treatment — four skids means four
+    // sets of elbows.
+    fittings.forEach(function (f) {
+      const u = unitsOf[String(f.component || "").trim().toLowerCase()] || 1;
+      const per = Number(f.quantity) || 0;
+      f.units = u; f.qty_per_unit = per; f.quantity_total = per * u;
+    });
 
     // 1b. Snap materials to the catalog's exact spelling BEFORE the CSV is built — the import
     // matches on the string, so "1.5 x 1/8" and "1-1/2 x 1/8" are not the same row to it.
@@ -140,6 +150,8 @@ async function takeoffHandler(req, res, deps) {
       gap_count: gap_count,
       low_confidence: low_confidence,
       rows: rows,
+      fittings: fittings,
+      fitting_count: fittings.length,
       notes: out.notes,
       synopsis: out.synopsis,
       cost_usd: out.cost_usd,

@@ -130,7 +130,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.41 · 2026-07-28";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.42 · 2026-07-28";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -482,6 +482,46 @@
     return '<div style="padding:8px 10px;border-left:3px solid #d9a441;background:#fff9ef;border-radius:4px;margin-bottom:10px;font-size:12.5px">'+
       '<b>Nothing to reconcile against.</b> This take-off tagged <b>0 of '+c.live+'</b> priced rows with a component and <b>0</b> with a drawing, '+
       'so everything below is just your entered list — not a mismatch. '+why+'</div>';
+  }
+
+  // ---- PIPE FITTINGS ------------------------------------------------------
+  // Fittings are bought complete, quoted separately and rolled up on the component apart from
+  // steel (Unit_Fittings_*), so they are deliberately NOT in the BOM or its CSV. Before this they
+  // were simply lost: the schema had nowhere to put an elbow, so it either vanished or was forced
+  // into a structural form type and arrived in the BOM as steel to fabricate.
+  function fittingsCardHtml(list){
+    const f = arr(list);
+    if(!f.length) return "";
+    const anyMulti = f.some(function(x){ return (Number(x.units)||1) > 1; });
+    const tot = function(x){ const t=Number(x.quantity_total);
+      return (Number.isFinite(t)&&t>0)?t:(Number(x.quantity)||0)*Math.max(1,Number(x.units)||1); };
+    const TD='padding:5px 9px;border-bottom:1px solid #eceff3;font-size:12.5px;vertical-align:top';
+    const rows = f.slice().sort(function(a,b){
+      return String(a.component||"").localeCompare(String(b.component||"")) ||
+             String(a.fitting_type||"").localeCompare(String(b.fitting_type||"")); })
+      .map(function(x){
+        const c=Number(x.confidence)||0;
+        const spec=[x.fitting_make,x.specification].filter(Boolean).join(' · ');
+        const how=[x.end_type,x.connection_type].filter(Boolean).join(' · ');
+        return '<tr><td style="'+TD+'"><span class="dot d-'+confClass(c)+'"></span>'+c.toFixed(2)+'</td>'+
+          '<td style="'+TD+'"><b>'+esc(x.fitting_type||'?')+'</b></td>'+
+          '<td style="'+TD+'">'+esc(x.size||'')+(x.schedule_or_class?' <span class="src">'+esc(x.schedule_or_class)+'</span>':'')+'</td>'+
+          '<td style="'+TD+'">'+esc(how||'—')+'</td>'+
+          '<td style="'+TD+'">'+esc(spec||'—')+'</td>'+
+          '<td style="'+TD+'">'+(Number(x.units)>1
+              ? esc(x.quantity)+' <span class="src">×'+x.units+'</span> <b>= '+tot(x)+'</b>'
+              : esc(x.quantity))+'</td>'+
+          '<td style="'+TD+'"><span class="src">'+esc(x.component||'')+(x.source_sheet?' · '+esc(x.source_sheet):'')+
+            (x.note?'<br>'+esc(x.note):'')+'</span></td></tr>';
+      }).join("");
+    return '<div class="card"><h2>⌇ Pipe fittings <span class="lt">— '+f.length+' item'+(f.length===1?'':'s')+
+        ', quoted separately from the BOM</span></h2><div class="body" style="padding:0">'+
+      '<table><thead><tr><th>Conf</th><th>Type</th><th>Size</th><th>End · connection</th><th>Make · spec</th>'+
+      '<th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Where</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+      '<div style="padding:10px 18px;font-size:12px;color:var(--mut)">These are <b>not</b> in the BOM or its CSV — '+
+      'fittings are bought complete and roll up separately on the component. Writing them onto the project\'s '+
+      'fittings quote is the next step; for now use this list to build the quote, or ask <b>Tell the AI</b> to '+
+      'change anything above.</div></div></div>';
   }
 
   // ---- THE BOM EDITOR, ON AN UNCOMMITTED TAKE-OFF -------------------------
@@ -897,6 +937,9 @@
 
       // the real grid, on these rows, before they are committed
       bomEditorCardHtml()+
+
+      // pipe fittings — their own stream, deliberately outside the BOM
+      fittingsCardHtml(R.fittings)+
 
       // tell-the-AI — conversational thread (3c)
       '<div class="card" id="chatCard"><h2>💬 Tell the AI <span class="lt">— ask questions or request changes; it remembers the conversation</span></h2>'+

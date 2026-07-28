@@ -539,14 +539,19 @@ app.post('/api/takeoff', async (req, res) => {
 
   // The shop's real size list. Best-effort: if the lookup read fails the take-off still runs on
   // knowledge.md's format rules — degraded, not blocked.
-  let liveCatalog = '', catalogGroups = null;
+  let liveCatalog = '', catalogGroups = null, fittingsCatalog = '';
   try {
     liveCatalog = await buildLiveCatalogContext();
     catalogGroups = await buildCatalogGroups();   // same cached object; used to snap sizes post-run
   } catch (e) { console.error('live catalog unavailable, falling back to knowledge.md formats:', e.message || e); }
+  // Fittings are a separate vocabulary and a separate destination on the project. Best-effort like
+  // the size catalog: no fittings catalog just means no fittings stream, not a failed take-off.
+  try { fittingsCatalog = await buildFittingsCatalogContext(); }
+  catch (e) { console.error('fittings catalog unavailable — fittings will not be extracted:', e.message || e); }
 
   return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge,
-    projectContext: projectContext, liveCatalog: liveCatalog, catalogGroups: catalogGroups });
+    projectContext: projectContext, liveCatalog: liveCatalog, catalogGroups: catalogGroups,
+    fittingsCatalog: fittingsCatalog });
 });
 
 // LIVE MATERIAL CATALOG for the take-off prompt — the shop's ACTUAL Form Type × Material Type ×
@@ -599,6 +604,60 @@ async function buildLiveCatalogContext() {
     "verbatim. They are grouped as `Form Type | Material Type`; pick the size from the group that " +
     "matches the row's form and material.\n\n" + body + '\n';
 }
+
+// THE SHOP'S FITTING VOCABULARY, rendered for the take-off prompt. Unlike the size catalog this is
+// small (12 types, 18 makes, ~54 ends, ~45 connections, 192 specs), so the whole thing goes in and
+// the model can copy values verbatim instead of inventing "90 ELL BW". Ends and connections are
+// listed under the fitting type they belong to, and specs under their make, because that is how the
+// project's own cascade filters them — offering the full list flat would invite invalid combinations.
+async function buildFittingsCatalogContext() {
+  const cat = await cachedLookup('takeoff:fittings-catalog', 12 * 60 * 60 * 1000, async () => {
+    const lkId = (r, f) => String((r && r[f] && (r[f].ID || r[f].id)) || '');
+    const [types, makes, ends, conns, specs] = await Promise.all([
+      fetchAllZohoPages('/report/Fitting_Type_Report'),
+      fetchAllZohoPages('/report/Fitting_Make_Report'),
+      fetchAllZohoPages('/report/End_Type_Report'),
+      fetchAllZohoPages('/report/Connection_Type_Report'),
+      fetchAllZohoPages('/report/Fitting_Specification_Report'),
+    ]);
+    return {
+      types: (types || []).map(r => ({ id: String(r.ID), name: String(r.Fitting_Type || '').trim() })).filter(x => x.name),
+      makes: (makes || []).map(r => ({ id: String(r.ID), name: String(r.Fitting_Make || '').trim() })).filter(x => x.name),
+      ends: (ends || []).map(r => ({ name: String(r.End_Type || '').trim(), typeId: lkId(r, 'Fitting_Type') })).filter(x => x.name),
+      connections: (conns || []).map(r => ({ name: String(r.Connection_Type || '').trim(), typeId: lkId(r, 'Fitting_Type') })).filter(x => x.name),
+      specs: (specs || []).map(r => ({ name: String(r.Fitting_Specification || '').trim(), makeId: lkId(r, 'Fitting_Make') })).filter(x => x.name),
+    };
+  });
+  if (!cat.types.length) return '';
+  const uniq = a => Array.from(new Set(a));
+  const perType = cat.types.map(t => {
+    const e = uniq(cat.ends.filter(x => x.typeId === t.id).map(x => x.name));
+    const c = uniq(cat.connections.filter(x => x.typeId === t.id).map(x => x.name));
+    if (!e.length && !c.length) return '- ' + t.name;
+    return '- ' + t.name + '\n    end types: ' + (e.join(' · ') || '(none listed)') +
+           '\n    connections: ' + (c.join(' · ') || '(none listed)');
+  }).join('\n');
+  const perMake = cat.makes.map(m => {
+    const s = uniq(cat.specs.filter(x => x.makeId === m.id).map(x => x.name));
+    return '- ' + m.name + (s.length ? ': ' + s.join(' · ') : ': (no specifications listed)');
+  }).join('\n');
+  return "THIS SHOP'S FITTING CATALOG — the ONLY values allowed in a `fittings` entry. Copy them verbatim.\n\n" +
+    'FITTING TYPES, each with the end types and connections that belong to it:\n' + perType + '\n\n' +
+    'FITTING MAKES, each with its specifications:\n' + perMake + '\n\n' +
+    'If a fitting on the drawings fits none of these combinations, choose the closest, set confidence ≤ 0.3, ' +
+    'and say what the drawing actually called for in the `note` — a flagged near-miss can be corrected, an ' +
+    'invented value cannot.\n';
+}
+
+// What the take-off is told about fittings — checkable without spending a run.
+app.get('/api/takeoff/fittings-catalog-check', async (req, res) => {
+  try {
+    const txt = await buildFittingsCatalogContext();
+    res.json({ ok: true, built: !!txt, approx_tokens: Math.round(txt.length / 4), head: txt.slice(0, 900) });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+  }
+});
 
 // The review page's material check reads the SAME list the model was given.
 app.get('/api/takeoff/catalog-index', async (req, res) => {

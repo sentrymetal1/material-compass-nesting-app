@@ -59,6 +59,31 @@ const ROW_ITEM = {
              "confidence", "component", "source_sheet", "disposition", "cross_check"],
 };
 
+// PIPE FITTINGS are a different animal from structural steel and live in a different place on the
+// project (the fittings quote subform, rolled up separately as Unit_Fittings_*). They are bought
+// complete, identified by a type × make × end × connection × spec vocabulary rather than a size
+// string, and they must NEVER land in the structural BOM — which is exactly what happened when the
+// schema gave the model nowhere else to put an elbow.
+const FITTING_ITEM = {
+  type: "object",
+  properties: {
+    fitting_type:    { type: "string", description: "WHAT it is — copied verbatim from the FITTING TYPES list in the catalog block (Elbow, Tee, Flange, Reducer, Cap, Coupling, Cross, Nipple, Union, Olet, Stub End, Bushing)." },
+    fitting_make:    { type: "string", description: "The material family, verbatim from FITTING MAKES (e.g. 'Carbon Steel', 'Stainless Steel', 'Wrought - Carbon Steel', 'Iron - Malleable')." },
+    end_type:        { type: "string", description: "How it joins, verbatim from the END TYPES listed for that fitting type (e.g. 'Butt Weld', 'Socket Weld', 'Threaded - NPT', 'Weld Neck', 'Slip On', 'Blind', 'Weldolet')." },
+    connection_type: { type: "string", description: "The geometry/face, verbatim from CONNECTION TYPES (e.g. '90° (Long Radius)', '45° (Long Radius)', 'Concentric', 'Eccentric', 'Raised Face', 'Flat Face', 'Equal', 'Reducing', 'Standard')." },
+    specification:   { type: "string", description: "Grade/spec verbatim from the SPECIFICATIONS listed for that make (e.g. 'WPB | ASTM A234', 'A105 | ASTM A105', 'F304L | ASTM A182')." },
+    size:            { type: "string", description: "Nominal size as written on the drawing — '6\"', '2-1/2\"'; for reducers and reducing tees give both, largest first: '6\" x 4\"'." },
+    schedule_or_class: { type: "string", description: "Wall or pressure rating as written: 'SCH 40', 'SCH 80', 'STD', 'XS', 'Class 150', 'Class 300', '3000#', '6000#'. Empty only if the documents genuinely never state it." },
+    quantity:        { type: "number", description: "Pieces in ONE unit of the component — same rule as the BOM: never multiply by how many of the component the job builds." },
+    component:       { type: "string", description: "The component/assembly this fitting belongs to, spelled EXACTLY as in the project's confirmed scope." },
+    source_sheet:    { type: "string", description: "The drawing or document number it was read from — a P&ID, an iso, a piping plan, or a parts list." },
+    confidence:      { type: "number", description: "0.0–1.0. Be honest: a fitting inferred from a line callout rather than a schedule is a guess." },
+    note:            { type: "string", description: "OPTIONAL one short phrase (≤100 chars), e.g. 'schedule not stated — assumed to match line'." },
+    cross_check:     { type: "string", description: "Same rule as BOM rows: 'both', 'list_only', 'drawing_only', 'corrected' or 'no_list'." },
+  },
+  required: ["fitting_type", "size", "quantity", "component", "source_sheet", "confidence"],
+};
+
 const SYNOPSIS_SCHEMA = {
   type: "object",
   description: "Structured project review for the estimator's approval page — the full bid-package analysis.",
@@ -184,7 +209,8 @@ const SYNOPSIS_SCHEMA = {
 function buildTakeoffTool(includeSynopsis) {
   if (includeSynopsis === undefined) includeSynopsis = true;
   const properties = {
-    rows: { type: "array", description: "One row per distinct member size/length/spec combination.", items: ROW_ITEM },
+    rows: { type: "array", description: "One row per distinct member size/length/spec combination. STRUCTURAL AND MISC-METAL MEMBERS ONLY — pipe fittings go in `fittings`, never here.", items: ROW_ITEM },
+    fittings: { type: "array", description: "Pipe fittings (elbows, tees, flanges, reducers, caps, couplings, olets, unions, nipples). One entry per distinct type+size+schedule+spec. Empty array if the package has none.", items: FITTING_ITEM },
     notes: { type: "string", description: "Anything ambiguous/illegible/assumed not captured elsewhere — for the human reviewer." },
   };
   if (includeSynopsis) properties.synopsis = SYNOPSIS_SCHEMA;
@@ -197,7 +223,7 @@ function buildTakeoffTool(includeSynopsis) {
 
 const TAKEOFF_TOOL = buildTakeoffTool(true);
 
-function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, projectContext, liveCatalog) {
+function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, projectContext, liveCatalog, fittingsCatalog) {
   const base =
     "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
     "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
@@ -262,10 +288,27 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
       "a blank cannot.\n"
     : "";
 
+  // Fittings are quoted and bought, not cut and welded, and the shop tracks them in their own
+  // vocabulary. Without this the model either ignores an elbow or forces it into a structural
+  // form type, which is worse — it lands in the BOM as steel to fabricate.
+  const fittingsRule = fittingsCatalog
+    ? "\n\nPIPE FITTINGS GO IN `fittings`, NEVER IN `rows`. An elbow, tee, flange, reducer, cap, coupling, " +
+      "cross, nipple, union, olet, stub end or bushing is a BOUGHT item identified by type × make × end " +
+      "type × connection × specification — not by a size string — so it belongs in the `fittings` array, " +
+      "with every value copied VERBATIM from the fittings catalog block below. The PIPE ITSELF is " +
+      "structural: a run of 6\" SCH 40 pipe is a `rows` entry with form type Pipe; the elbows and flanges " +
+      "on that run are `fittings`. Read piping plans, isometrics, P&IDs and any valve/fitting schedule. " +
+      "Give each fitting a size and a schedule or class — if the documents state neither, say so in the " +
+      "`note` rather than inventing one, and lower confidence. Count fittings per ONE unit of the " +
+      "component, exactly like BOM rows.\n"
+    : "";
+
   const blocks = [
-    { type: "text", text: base + outputBOM + outputSynopsis + sizeRule + " Then call submit_takeoff. Do not reply in prose." },
+    { type: "text", text: base + outputBOM + outputSynopsis + sizeRule + fittingsRule + " Then call submit_takeoff. Do not reply in prose." },
     { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
   ];
+  // The shop's fitting vocabulary — small and stable ⇒ prompt-cached beside the size catalog.
+  if (fittingsCatalog && String(fittingsCatalog).trim()) blocks.push({ type: "text", text: String(fittingsCatalog), cache_control: { type: "ephemeral" } });
   // The shop's live Form Type × Material Type × size catalog — big and stable ⇒ prompt-cached.
   if (liveCatalog && String(liveCatalog).trim()) blocks.push({ type: "text", text: String(liveCatalog), cache_control: { type: "ephemeral" } });
   // Universal learned knowledge (Tier 1) — same for all shops → cached.
@@ -303,7 +346,7 @@ async function runTakeoff(opts) {
   const resp = await anthropic.messages.create({
     model: model.id,
     max_tokens: 16000,
-    system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge, opts.projectContext, opts.liveCatalog),
+    system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge, opts.projectContext, opts.liveCatalog, opts.fittingsCatalog),
     tools: [buildTakeoffTool(includeSynopsis)],
     tool_choice: { type: "tool", name: "submit_takeoff" },
     messages: [{
@@ -320,10 +363,14 @@ async function runTakeoff(opts) {
 
   result.rows = unwrap(result.rows, []);
   if (!Array.isArray(result.rows)) result.rows = [];
+  // The string-instead-of-array quirk applies to every array the model returns, not just rows.
+  result.fittings = unwrap(result.fittings, []);
+  if (!Array.isArray(result.fittings)) result.fittings = [];
   const synopsis = includeSynopsis ? unwrap(result.synopsis, null) : null;
 
   return {
     rows: result.rows,
+    fittings: result.fittings,
     notes: result.notes || "",
     synopsis: synopsis,
     cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
