@@ -2430,6 +2430,11 @@ export default function App() {
                     disabled={!cts.enabled}
                     onChange={e => setCts(p => ({ ...p, utilThresholdPct: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 100) }))}
                   />
+                  <p className="hint">
+                    Picks <em>which</em> pieces convert, not how small they are — a converted
+                    piece is always the smallest it can be. Lower = fewer conversions and more
+                    full stock. Higher = more pieces bought cut, more cut charges.
+                  </p>
                 </div>
                 <div className="field">
                   <label>Linear square-up allowance (in)</label>
@@ -2438,6 +2443,10 @@ export default function App() {
                     value={cts.trimLinearIn}
                     onChange={e => setCts(p => ({ ...p, trimLinearIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
+                  <p className="hint">
+                    Extra length so you can face off the supplier's cut ends and still hit the
+                    finished dimension. Set to 0 if you order to exact length and take their cut as-is.
+                  </p>
                 </div>
                 <div className="field">
                   <label>Plate edge trim, per side (in)</label>
@@ -2446,6 +2455,10 @@ export default function App() {
                     value={cts.trimPanelIn}
                     onChange={e => setCts(p => ({ ...p, trimPanelIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
+                  <p className="hint">
+                    Added to all four edges, so a 9" × 6" part buys 11" × 8". Covers mill edge
+                    condition and burn kerf. Set to 0 to buy the exact part size.
+                  </p>
                 </div>
                 <div className="field">
                   <label>Round buy sizes up to (in)</label>
@@ -2454,6 +2467,7 @@ export default function App() {
                     value={cts.roundToIn}
                     onChange={e => setCts(p => ({ ...p, roundToIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
+                  <p className="hint">Keeps buy sizes orderable — nobody cuts 9.0313".</p>
                 </div>
                 <div className="field">
                   <label>Supplier minimum — cut length (in)</label>
@@ -2462,6 +2476,10 @@ export default function App() {
                     value={cts.minLinearBuyIn}
                     onChange={e => setCts(p => ({ ...p, minLinearBuyIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
+                  <p className="hint">
+                    Shortest piece your supplier will cut and sell. A 6" part buys this length
+                    if it's longer. Set to 0 if they'll cut any length.
+                  </p>
                 </div>
                 <div className="field">
                   <label>Supplier minimum — plate dimension (in)</label>
@@ -2470,29 +2488,83 @@ export default function App() {
                     value={cts.minPanelDimIn}
                     onChange={e => setCts(p => ({ ...p, minPanelDimIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
+                  <p className="hint">
+                    Narrowest strip your supplier will shear or burn. At 6", a 9" × 2" part buys
+                    11" × 6" instead of 11" × 4". Set to 0 to buy exactly part + trim.
+                  </p>
                 </div>
               </div>
               <div className="config-section">
-                <h3>Grain Direction (2D Panels)</h3>
-                {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').map(item => (
-                  <div key={item.id} className="field">
-                    <label>
-                      Mark {item.bom_item} — {item.form_type_name} | {item.material_type_name} | {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"
-                    </label>
-                    <select
-                      value={grainDirections[item.id] || 'none'}
-                      onChange={e => setGrainDirections(prev => ({ ...prev, [item.id]: e.target.value }))}
-                      className="input"
-                    >
-                      <option value="none">None (allow rotation)</option>
-                      <option value="length">Length</option>
-                      <option value="width">Width</option>
-                    </select>
-                  </div>
-                ))}
-                {bom.filter(b => selected.has(b.id) && b.nest_type === 'Panel').length === 0 && (
-                  <p className="hint">No 2D panels selected</p>
-                )}
+                {(() => {
+                  // Only panels that actually go to the nester — grain is meaningless
+                  // for an item bought cut to size.
+                  const grainPanels = nestBom.filter(b => b.nest_type === 'Panel');
+                  const MODES = [['none', 'None'], ['length', 'Length'], ['width', 'Width']];
+                  return (
+                    <>
+                      <div className="stock-header">
+                        <h3>Grain Direction (2D Panels)</h3>
+                        {grainPanels.length > 0 && (
+                          <div className="stock-controls">
+                            <div className="filter-tabs">
+                              <span className="hint" style={{ margin: 0, alignSelf: 'center' }}>Set all:</span>
+                              {MODES.map(([val, label]) => (
+                                <button
+                                  key={val}
+                                  className="filter-btn"
+                                  onClick={() => setGrainDirections(prev => {
+                                    const next = { ...prev };
+                                    grainPanels.forEach(p => { next[p.id] = val; });
+                                    return next;
+                                  })}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      {grainPanels.length === 0 ? (
+                        <p className="hint">No 2D panels going to the nester</p>
+                      ) : (
+                        <>
+                          <p className="hint">None allows the part to rotate 90° when nesting.</p>
+                          {grainPanels.map(item => {
+                            const current = grainDirections[item.id] || 'none';
+                            return (
+                              <div
+                                key={item.id}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: 10,
+                                  padding: '4px 0', borderBottom: '1px solid var(--gray-300)',
+                                }}
+                              >
+                                <span style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  <span className="mono" style={{ fontWeight: 600 }}>{item.bom_item}</span>
+                                  <span style={{ color: 'var(--gray-600)', marginLeft: 8 }}>
+                                    {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"
+                                  </span>
+                                </span>
+                                <div className="filter-tabs">
+                                  {MODES.map(([val, label]) => (
+                                    <button
+                                      key={val}
+                                      className={`filter-btn ${current === val ? 'active' : ''}`}
+                                      onClick={() => setGrainDirections(prev => ({ ...prev, [item.id]: val }))}
+                                    >
+                                      {label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="config-section config-full">
@@ -3299,7 +3371,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.8 — pick cut-to-size items on Configure</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.9 — grain pills, self-explaining cut-to-size fields</span></footer>
     </div>
   );
 }
