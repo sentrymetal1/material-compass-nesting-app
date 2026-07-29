@@ -575,7 +575,7 @@
 <div id="loading" class="state-msg"><span class="spinner"></span>Loading BOM rows...</div>
 <div id="error" class="state-msg error" style="display:none;"></div>
 <div id="quota-banner" style="display:none; background:#fdecea; border-top:1px solid #f5c2c0; border-bottom:1px solid #f5c2c0; color:#7a1f1a; padding:8px 16px; font-size:13px;">
-  <strong>Zoho API daily quota reached.</strong> Lookup dropdowns (Form / Mat Type / Spec / Material) cannot fetch new options until the limit resets at midnight UTC. Existing cell values display normally. Upgrade Zoho plan for higher limits.
+  <strong>Daily data limit reached.</strong> Lookup dropdowns (Form / Mat Type / Spec / Material) cannot fetch new options until the allowance resets overnight. Existing cell values display normally.
 </div>
 <div id="bom-table" style="display:none;"></div>
 
@@ -1353,11 +1353,11 @@ async function fetchRailwayLookup(path) {
     try { body = await resp.json(); } catch (_) {}
     if (body?.zoho_code === 4000 && !zohoQuotaExhausted) {
       zohoQuotaExhausted = true;
-      showToast('Zoho daily API quota reached. Dropdowns will repopulate after midnight UTC.', 'error');
+      showToast('Daily data limit reached. Dropdowns will repopulate after it resets overnight.', 'error');
       const banner = document.getElementById('quota-banner');
       if (banner) banner.style.display = 'block';
     }
-    throw new Error('Zoho quota exhausted on ' + path);
+    throw new Error('Daily data limit reached while loading ' + path);
   }
   if (!resp.ok) throw new Error('HTTP ' + resp.status + ' on ' + path);
   return await resp.json();
@@ -2280,7 +2280,7 @@ async function hardDeleteAllMarked() {
     return;
   }
   if (!(await customConfirm(
-        `Permanently delete ${marked.length} row(s) marked for delete? This calls Zoho's record-delete directly and CANNOT be undone.`,
+        `Permanently delete ${marked.length} row(s) marked for delete? This deletes the records directly and CANNOT be undone.`,
         {title: 'Permanently delete all marked', okText: `Delete ${marked.length}`}))) return;
 
   btn.disabled = true;

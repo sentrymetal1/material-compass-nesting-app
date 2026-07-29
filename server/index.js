@@ -267,13 +267,13 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
     if (kind === 'drawing' && zr.data && zr.data.code !== 3000) {
       const bare = { Drawing_Number: data.Drawing_Number, MCP_Customer_Project_Form: project_id };
       if (data.Components) bare.Components = data.Components;
-      bidiWarning = 'Zoho rejected one of Project_ID_Number / Project_ID_Relationship / ' +
+      bidiWarning = 'The data service rejected one of Project_ID_Number / Project_ID_Relationship / ' +
         'Drawing_Description, so the drawing was written without them (' +
         ((zr.data && zr.data.message) || 'no message') + '). Confirm those field link names.';
       data = bare;
       zr = await postForm(data);
     }
-    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the add', detail: zr.data });
+    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'The data service rejected the add', detail: zr.data });
     const id = zr.data && zr.data.data && zr.data.data.ID;
 
     if (id && mcpBestEffort) {
@@ -436,7 +436,7 @@ app.post('/api/takeoff/project-scope/update', async (req, res) => {
     if (kind === 'drawing' && req.body.component_id) data.Components = String(req.body.component_id);
     const zr = await axios.patch(creatorApiBase() + '/report/' + spec.report + '/' + id,
       { data: data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the update', detail: zr.data });
+    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'The data service rejected the update', detail: zr.data });
     res.json({ ok: true, id: String(id), value: v, quantity: data.Quantity });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
@@ -493,7 +493,7 @@ app.post('/api/takeoff/project-scope/delete', async (req, res) => {
       zr = await axios.delete(creatorApiBase() + '/report/' + spec.report +
         '?criteria=' + encodeURIComponent('ID==' + id), { headers: zohoHeaders(token) });
     }
-    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho rejected the delete', detail: zr.data });
+    if (zr.data && zr.data.code !== 3000) return res.status(502).json({ ok: false, error: 'The data service rejected the delete', detail: zr.data });
     res.json({ ok: true, id: String(id) });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
@@ -727,7 +727,7 @@ app.get('/api/takeoff/learning-check', async (req, res) => {
     return res.type('text/plain; charset=utf-8').send(
       'THE LEARNING STORE IS NOT READABLE.\n\n' +
       'Tried: /report/Takeoff_Correction_Report' + (mfg ? ' for manufacturer ' + mfg : '') + '\n' +
-      'Zoho said: ' + (code || '') + ' ' + String((err && err.message) || err) + '\n\n' +
+      'The data service said: ' + (code || '') + ' ' + String((err && err.message) || err) + '\n\n' +
       'If the form or report does not exist yet, corrections are being posted and dropped. It needs a\n' +
       'form `Takeoff_Correction` with fields: Manufacture_ID, Context, AI_Value, Human_Value,\n' +
       'Project_Type, Source, Created — and a report `Takeoff_Correction_Report` exposing all of them\n' +
@@ -1197,7 +1197,7 @@ app.post('/api/takeoff/save', async (req, res) => {
       zr = await axios.post(base + '/form/AI_Takeoff_Saved', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     }
     if (zr.data && zr.data.code !== 3000) {
-      return res.status(502).json({ ok: false, error: 'Zoho rejected the save', detail: zr.data });
+      return res.status(502).json({ ok: false, error: 'The data service rejected the save', detail: zr.data });
     }
     const recId = (zr.data && zr.data.data && zr.data.data.ID) || (existing && existing.ID) || null;
     // best-effort: set the relational lookup so the take-off relates to the project natively.
@@ -1435,13 +1435,13 @@ app.get('/api/project/:id', async (req, res) => {
     let resp = await axios.get(creatorApiBase()+'/report/All_Projects?criteria=(ID=='+req.params.id+')', { headers: zohoHeaders(token) });
     // Zoho returns HTTP 200 with {code:4000} when the daily API quota is gone,
     // and no data[] — which otherwise reads as a misleading "Project not found".
-    if (resp.data?.code === 4000) return res.status(429).json({ error: 'Zoho API daily quota exhausted — try again after it resets (midnight in your Zoho data-center timezone).', code: 4000 });
+    if (resp.data?.code === 4000) return res.status(429).json({ error: 'Daily data limit reached. This resets overnight; try again then.', code: 4000 });
     if (!resp.data.data?.length) {
       console.log('Project not found on first attempt, forcing token refresh and retrying...');
       token = await getAccessToken(true);
       resp = await axios.get(creatorApiBase()+'/report/All_Projects?criteria=(ID=='+req.params.id+')', { headers: zohoHeaders(token) });
     }
-    if (resp.data?.code === 4000) return res.status(429).json({ error: 'Zoho API daily quota exhausted — try again after it resets (midnight in your Zoho data-center timezone).', code: 4000 });
+    if (resp.data?.code === 4000) return res.status(429).json({ error: 'Daily data limit reached. This resets overnight; try again then.', code: 4000 });
     if (!resp.data.data?.length) return res.status(404).json({ error: 'Project not found' });
     res.json(resp.data.data[0]);
   } catch (err) { res.status(500).json({ error: 'Failed', details: err.response?.data || err.message }); }
@@ -1614,18 +1614,37 @@ app.get('/api/lookups/truncation', (req, res) => {
   res.json({ ok: true, cap: PAGE_CAP, truncated: list, healthy: list.length === 0 });
 });
 
+// Backend errors get shown to tenants verbatim and they name the data platform.
+// The product is Material Compass, so rewrite them on the way out. The raw text
+// still goes to the server log, where it's needed for debugging. Mirrors
+// takeoff/route.js `outward()`, which does the same for the model vendor.
+function outward(text) {
+  if (text == null) return text;
+  return String(text)
+    .replace(/\bZoho (?:Creator |Developer )?API\b/gi, 'the data service')
+    .replace(/\bZoho Creator\b/gi, 'the data service')
+    .replace(/\bZoho\b/gi, 'the data service');
+}
+
 function sendZohoAwareError(res, err) {
   if (err instanceof ZohoApiError) {
-    // 503 Service Unavailable is the closest HTTP semantic for "Zoho exhausted my daily quota"
+    // 503 Service Unavailable is the closest HTTP semantic for "the platform
+    // exhausted my daily quota"
     const status = err.zohoCode === 4000 ? 503 : 502;
+    if (err.zohoCode === 4000) console.error('Zoho quota exhausted (code 4000):', err.zohoMessage);
     return res.status(status).json({
-      error: 'Zoho API error',
+      error: err.zohoCode === 4000 ? 'Daily data limit reached' : 'Data service error',
       zoho_code: err.zohoCode,
-      zoho_message: err.zohoMessage,
-      hint: err.zohoCode === 4000 ? 'Daily Zoho Developer API quota exhausted. Resets at midnight UTC. Upgrade plan for higher limits.' : null,
+      zoho_message: outward(err.zohoMessage),
+      hint: err.zohoCode === 4000
+        ? 'The daily read/write allowance is used up. It resets overnight — try again then.'
+        : null,
     });
   }
-  res.status(500).json({ error: 'Failed', details: err.response?.data || err.message });
+  // Keep `details` the same type callers already handle — scrub strings in place,
+  // leave the platform's own JSON body as an object.
+  const details = err.response?.data ?? err.message;
+  res.status(500).json({ error: 'Failed', details: typeof details === 'string' ? outward(details) : details });
 }
 
 app.get('/api/bom-lookups/form-types', async (req, res) => {
@@ -2052,7 +2071,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     try {
       var existingResp = await axios.get(creatorApiBase()+'/report/Project_Material_Allocated_Detail_Form_Report?criteria=(MCP_Customer_Project_Form=='+projectId+')&limit=200', { headers: zohoHeaders(token) });
       if (existingResp.data && existingResp.data.code === 4000) {
-        return res.status(429).json({ error: 'Zoho API daily quota exhausted — purchase list NOT saved. Try again after the quota resets.', code: 4000 });
+        return res.status(429).json({ error: 'Daily data limit reached — purchase list NOT saved. This resets overnight; try again then.', code: 4000 });
       }
       var existingRows = (existingResp.data && existingResp.data.data) || [];
       console.log('Deleting ' + existingRows.length + ' existing rows before re-insert...');
@@ -2062,7 +2081,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         } catch (delErr) {
           var dd = delErr.response && delErr.response.data;
           if (dd && dd.code === 4000) {
-            return res.status(429).json({ error: 'Zoho API daily quota exhausted while clearing old rows — purchase list NOT saved (would duplicate). Try again after the quota resets.', code: 4000 });
+            return res.status(429).json({ error: 'Daily data limit reached while clearing old rows — purchase list NOT saved (would duplicate). This resets overnight; try again then.', code: 4000 });
           }
           deleteFailed = true;
           console.error('Failed to delete row ' + existingRows[d].ID + ':', dd || delErr.message);
@@ -2071,7 +2090,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     } catch (fetchErr) {
       var fd = fetchErr.response && fetchErr.response.data;
       if (fd && fd.code === 4000) {
-        return res.status(429).json({ error: 'Zoho API daily quota exhausted — purchase list NOT saved. Try again after the quota resets.', code: 4000 });
+        return res.status(429).json({ error: 'Daily data limit reached — purchase list NOT saved. This resets overnight; try again then.', code: 4000 });
       }
       if (!fd || fd.code !== 9280) { deleteFailed = true; console.error('Error fetching existing rows:', fd || fetchErr.message); }
     }
@@ -2095,7 +2114,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         var body = postResp.data || {};
         // Whole-request failure (e.g. quota 4000) — no per-record result array.
         if (body.code === 4000) {
-          return res.status(429).json({ error: 'Zoho API daily quota exhausted — purchase list partially saved (' + saved + '). Try again after the quota resets.', code: 4000, items_saved: saved, items_attempted: subformRows.length });
+          return res.status(429).json({ error: 'Daily data limit reached — purchase list partially saved (' + saved + '). This resets overnight; try again then.', code: 4000, items_saved: saved, items_attempted: subformRows.length });
         }
         var result = body.result || [];
         for (var i = 0; i < batch.length; i++) {
@@ -2115,7 +2134,7 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       } catch (postErr) {
         var ed = postErr.response && postErr.response.data;
         if (ed && ed.code === 4000) {
-          return res.status(429).json({ error: 'Zoho API daily quota exhausted — purchase list partially saved (' + saved + '). Try again after the quota resets.', code: 4000, items_saved: saved, items_attempted: subformRows.length });
+          return res.status(429).json({ error: 'Daily data limit reached — purchase list partially saved (' + saved + '). This resets overnight; try again then.', code: 4000, items_saved: saved, items_attempted: subformRows.length });
         }
         for (var j = 0; j < batch.length; j++) {
           failures.push({ line: c + j + 1, description: batch[j].Item_Description || ('row ' + (c + j + 1)), code: ed && ed.code, message: ed ? JSON.stringify(ed) : postErr.message });

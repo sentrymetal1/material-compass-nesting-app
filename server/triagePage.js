@@ -190,7 +190,7 @@ function renderTriagePage() {
     fetch('/api/triage/opportunities?status='+encodeURIComponent(status)+(MFG?'&manufacture='+encodeURIComponent(MFG):''))
       .then(function(r){return r.json()})
       .then(function(d){
-        if(d.quota){ all=[]; document.getElementById('list').innerHTML=''; document.getElementById('count').textContent='—'; var st=document.getElementById('state'); st.style.display='block'; st.textContent='⚠️ '+(d.error||'Zoho API daily limit reached — try again after it resets.'); return; }
+        if(d.quota){ all=[]; document.getElementById('list').innerHTML=''; document.getElementById('count').textContent='—'; var st=document.getElementById('state'); st.style.display='block'; st.textContent='⚠️ '+(d.error||'Daily data limit reached — try again after it resets overnight.'); return; }
         all=d.opportunities||[]; document.getElementById('mfg').textContent=d.manufacture_label||'';
         lastSyncedIso = d.last_synced || '';
         var ls=document.getElementById('lastScan');
@@ -276,7 +276,7 @@ function renderTriagePage() {
           clearInterval(iv);
           if(s.error){ ov('Scan failed', (typeof s.error==='string'?s.error:JSON.stringify(s.error)), true); setTimeout(function(){closeOv(btn);},3500); return; }
           var r=(s.results&&s.results[0])||{};
-          if(r.quota || (r.errors&&r.errors.some(function(x){return /quota|daily limit/i.test(x);}))){ ov('Zoho API limit reached','The daily Zoho API quota is used up. It resets at midnight in your Zoho data-center timezone — scan again after that.',true); setTimeout(function(){closeOv(btn);},4000); return; }
+          if(r.quota || (r.errors&&r.errors.some(function(x){return /quota|daily limit/i.test(x);}))){ ov('Daily data limit reached','The daily read allowance is used up. It resets overnight — scan again after that.',true); setTimeout(function(){closeOv(btn);},4000); return; }
           var found=(r.written||0)+(r.updated||0); var known=(r.skipped_dupe||0)+(r.skipped_project||0);
           ov('✓ Scan complete','Scanned '+(r.scanned||0)+' messages · '+found+' new opportunit'+(found===1?'y':'ies')+' added'+(known?' · '+known+' already known':'')+'.',true);
           setTimeout(function(){ closeOv(btn); setActiveTab('New'); load(); },1600);

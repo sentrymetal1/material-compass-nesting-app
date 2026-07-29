@@ -1539,10 +1539,11 @@ export default function App() {
         console.error('Purchase list rows rejected by Zoho:', failures);
         const codes = [...new Set(failures.map(f => f.code).filter(c => c != null))];
         const names = failures.map(f => `#${f.line} ${f.description || ''}`).join('; ');
-        // Surface Zoho's raw field-level error from the first rejected row so
-        // the offending field is visible on-screen (no need to open dev tools).
-        const firstMsg = failures.find(f => f.message)?.message || '';
-        failMsg = ` — WARNING: ${failures.length} of ${attempted} row(s) were REJECTED and not saved${codes.length ? ` (Zoho code ${codes.join(', ')})` : ''}: ${names}.${firstMsg ? ` [Zoho says: ${firstMsg}]` : ''}`;
+        // Surface the raw field-level error from the first rejected row so the
+        // offending field is visible on-screen (no need to open dev tools), with
+        // the data platform's name scrubbed — tenants shouldn't see the vendor.
+        const firstMsg = (failures.find(f => f.message)?.message || '').replace(/\bZoho\b/gi, 'the data service');
+        failMsg = ` — WARNING: ${failures.length} of ${attempted} row(s) were REJECTED and not saved${codes.length ? ` (error code ${codes.join(', ')})` : ''}: ${names}.${firstMsg ? ` [Reason: ${firstMsg}]` : ''}`;
       }
       const prefix = failures.length > 0 ? 'Error' : '';
       // Full success → offer to return to the project page (a fresh reload there
@@ -3374,7 +3375,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.10 — trim fields state they are not kerf</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.11 — vendor naming scrubbed from user-facing errors</span></footer>
     </div>
   );
 }
