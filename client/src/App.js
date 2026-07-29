@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import './App.css';
 
 const API = '';
@@ -125,6 +125,170 @@ function calcUnitWeight(weightPerFt, lengthIn, widthIn) {
   return wpf * (l / 12);
 }
 
+// ─── Cut to size ────────────────────────────────────────────────────────────
+// Every stock piece in the plan is a purchase decision. Nesting six 87"
+// channels out of a 20' bar is a real answer; burning a 24' pipe for one 6"
+// nipple is not — nobody buys that. Any stock piece using less than
+// `utilThresholdPct` of its stock gets re-quoted as "buy a piece cut to this
+// size" instead.
+//
+// No re-packing is needed. The API already reports remnant per stock piece, and
+// utilization is exactly (stock - remnant) / stock — which is 100 minus the
+// reported waste_percentage. So this is a pure transform over the returned
+// plan, and the packing algorithm is left alone.
+const CTS_DEFAULTS = {
+  enabled: true,
+  utilThresholdPct: 35,   // convert a piece using less than this % of its stock
+  trimLinearIn: 2,        // square-up allowance added to a linear buy length
+  trimPanelIn: 1,         // burn/shear edge allowance per side on a plate buy
+  roundToIn: 1,           // buy dims round up to this increment (no 9.0313" cuts)
+  minLinearBuyIn: 12,     // supplier minimum on a cut length
+  minPanelDimIn: 6,       // supplier minimum on a cut plate dimension
+  skipAtPctOfStock: 90,   // buy size this close to full stock — just take the stock
+};
+
+function roundUpTo(val, inc) {
+  const v = parseFloat(val) || 0;
+  const i = parseFloat(inc) || 0;
+  if (i <= 0) return Math.round(v * 10000) / 10000;
+  return Math.round(Math.ceil(v / i) * i * 10000) / 10000;
+}
+
+const r4 = v => Math.round((parseFloat(v) || 0) * 10000) / 10000;
+const r2 = v => Math.round((parseFloat(v) || 0) * 100) / 100;
+
+/** Stable per-stock-piece id for manual overrides. stock_sequence is assigned
+ *  sequentially across all pieces within results_1d / results_2d. */
+function ctsPieceKey(result) {
+  const dim = result.stock_width_in && parseFloat(result.stock_width_in) > 0 ? '2d' : '1d';
+  return `${dim}-${result.stock_sequence}`;
+}
+
+/** Buy dims for a linear piece: what got used, plus a square-up allowance.
+ *  `force` is set when the user asked for this explicitly, which bypasses the
+ *  not-worth-it guard — otherwise the button would appear to do nothing. */
+function ctsLinearBuy(r, o, force) {
+  const stockL = parseFloat(r.stock_length_in) || 0;
+  if (stockL <= 0) return null;
+  // remnant_length_in is stock minus every cut *and* its kerf, so this is the
+  // real consumed length — same definition the API used for waste_percentage.
+  const used = stockL - (parseFloat(r.remnant_length_in) || 0);
+  if (used <= 0) return null;
+  const buyL = roundUpTo(Math.max(used + o.trimLinearIn, o.minLinearBuyIn), o.roundToIn);
+  if (!force && buyL >= stockL * (o.skipAtPctOfStock / 100)) return null;
+  const remnant = Math.max(buyL - used, 0);
+  return {
+    stock_length_in: buyL,
+    remnant_length_in: r4(remnant),
+    waste_percentage: r2((remnant / buyL) * 100),
+    cts_used_in: r4(used),
+  };
+}
+
+/** Buy dims for a panel: bounding box of the nest plus edge trim all around.
+ *  Requires per-placement records — `cuts` is consolidated by (mark, L, W) and
+ *  keeps only one position, so its bounding box would be wrong. Saved runs
+ *  reconstructed without placements are left as full-sheet buys. */
+function ctsPanelBuy(r, o, force) {
+  const stockL = parseFloat(r.stock_length_in) || 0;
+  const stockW = parseFloat(r.stock_width_in) || 0;
+  const places = r.placements;
+  if (stockL <= 0 || stockW <= 0 || !places || places.length === 0) return null;
+  let maxX = 0, maxY = 0, usedArea = 0;
+  for (const c of places) {
+    const l = parseFloat(c.cut_length) || 0;
+    const w = parseFloat(c.cut_width) || 0;
+    maxX = Math.max(maxX, (parseFloat(c.x_position) || 0) + l);
+    maxY = Math.max(maxY, (parseFloat(c.y_position) || 0) + w);
+    usedArea += l * w;
+  }
+  if (maxX <= 0 || maxY <= 0) return null;
+  const buyL = Math.min(roundUpTo(Math.max(maxX + 2 * o.trimPanelIn, o.minPanelDimIn), o.roundToIn), stockL);
+  const buyW = Math.min(roundUpTo(Math.max(maxY + 2 * o.trimPanelIn, o.minPanelDimIn), o.roundToIn), stockW);
+  const buyArea = buyL * buyW;
+  if (!force && buyArea >= stockL * stockW * (o.skipAtPctOfStock / 100)) return null;
+  // Centre the nest in the smaller plate so trim shows on all four edges, but
+  // never shift a part past the buy edge when rounding clamped the buy dims.
+  const shiftX = Math.max(Math.min(o.trimPanelIn, (buyL - maxX) / 2), 0);
+  const shiftY = Math.max(Math.min(o.trimPanelIn, (buyW - maxY) / 2), 0);
+  const shift = c => ({
+    ...c,
+    x_position: r4((parseFloat(c.x_position) || 0) + shiftX),
+    y_position: r4((parseFloat(c.y_position) || 0) + shiftY),
+  });
+  const remnantArea = Math.max(buyArea - usedArea, 0);
+  return {
+    stock_length_in: buyL,
+    stock_width_in: buyW,
+    remnant_length_in: r4(Math.max(buyL - maxX - shiftX, 0)),
+    remnant_width_in: r4(Math.max(buyW - maxY - shiftY, 0)),
+    remnant_area_in2: r4(remnantArea),
+    waste_percentage: r2((remnantArea / buyArea) * 100),
+    cts_used_in2: r4(usedArea),
+    placements: places.map(shift),
+    cuts: (r.cuts || []).map(shift),
+    svg_layout: null, // server SVG was drawn against the full sheet
+  };
+}
+
+/**
+ * Re-quote low-utilization stock pieces as cut-to-size buys.
+ * Pure — never mutates `data`, so it can be re-derived whenever settings change.
+ * @param overrides map of ctsPieceKey -> true (force cut to size) / false (force nest)
+ */
+function applyCutToSize(data, opts, overrides) {
+  if (!data) return data;
+  const o = { ...CTS_DEFAULTS, ...(opts || {}) };
+  const ov = overrides || {};
+  const convert = (r, is2D) => {
+    if (!r || r.error) return r;
+    const forced = ov[ctsPieceKey(r)];
+    if (forced === false) return r;
+    if (!o.enabled && forced !== true) return r;
+    const utilPct = 100 - (parseFloat(r.waste_percentage) || 0);
+    if (forced !== true && utilPct >= o.utilThresholdPct) return r;
+    const buy = is2D ? ctsPanelBuy(r, o, forced === true) : ctsLinearBuy(r, o, forced === true);
+    if (!buy) return r;
+    return {
+      ...r,
+      ...buy,
+      cut_to_size: true,
+      cts_forced: forced === true,
+      original_stock_length_in: r.stock_length_in,
+      original_stock_width_in: r.stock_width_in ?? null,
+      original_waste_percentage: r.waste_percentage,
+    };
+  };
+  const results_1d = (data.results_1d || []).map(r => convert(r, false));
+  const results_2d = (data.results_2d || []).map(r => convert(r, true));
+  const ok1 = results_1d.filter(r => !r.error);
+  const ok2 = results_2d.filter(r => !r.error);
+  // The API's summary describes the pre-conversion plan, so it has to be
+  // rebuilt here. Weighted by stock consumed rather than averaged across
+  // pieces — an unweighted mean lets a 6" offcut outvote a 40' bar.
+  const sum = (arr, f) => arr.reduce((t, x) => t + (parseFloat(f(x)) || 0), 0);
+  const stockLen1d = sum(ok1, r => r.stock_length_in);
+  const remnLen1d = sum(ok1, r => r.remnant_length_in);
+  const stockArea2d = sum(ok2, r => (parseFloat(r.stock_length_in) || 0) * (parseFloat(r.stock_width_in) || 0));
+  const remnArea2d = sum(ok2, r => r.remnant_area_in2);
+  return {
+    ...data,
+    results_1d,
+    results_2d,
+    _ctsCount: [...ok1, ...ok2].filter(r => r.cut_to_size).length,
+    summary: {
+      ...(data.summary || {}),
+      total_stock_pieces: ok1.length + ok2.length,
+      total_1d_stock_pieces: ok1.length,
+      total_2d_stock_pieces: ok2.length,
+      total_remnant_length_in: r4(remnLen1d),
+      total_remnant_area_in2: r4(remnArea2d),
+      avg_waste_pct_1d: stockLen1d > 0 ? r2((remnLen1d / stockLen1d) * 100) : 0,
+      avg_waste_pct_2d: stockArea2d > 0 ? r2((remnArea2d / stockArea2d) * 100) : 0,
+    },
+  };
+}
+
 function groupResults(results, nameLookup) {
   if (!results || results.length === 0) return [];
   const materialGroups = {};
@@ -134,13 +298,16 @@ function groupResults(results, nameLookup) {
     // form/origin/length get their own group (algorithm now locks each
     // bin/sheet to one material, so this matches reality).
     const matKey = r.material_name || '';
-    const key = `${r.form_type}|${r.material_origin}|${matKey}|${r.stock_length_in}|${r.stock_width_in || 0}`;
+    // cut_to_size in the key so a cut-to-size buy never merges into a group of
+    // full-stock pieces that happen to share its length.
+    const key = `${r.form_type}|${r.material_origin}|${matKey}|${r.stock_length_in}|${r.stock_width_in || 0}|${r.cut_to_size ? 'cts' : 'nest'}`;
     if (!materialGroups[key]) {
       materialGroups[key] = {
         form_type: r.form_type,
         material_origin: r.material_origin,
         stock_length_in: r.stock_length_in,
         stock_width_in: r.stock_width_in,
+        cut_to_size: !!r.cut_to_size,
         form_type_name: (nameLookup && nameLookup[r.form_type]) || r.form_type,
         material_type_name: (nameLookup && nameLookup[r.material_origin]) || r.material_origin,
         spec_name: (nameLookup && r.cuts?.[0] && nameLookup[r.cuts[0].spec_name]) || '',
@@ -645,7 +812,13 @@ export default function App() {
   const [kerf1D, setKerf1D] = useState(0.125);
   const [kerf2D, setKerf2D] = useState(0.125);
   const [grainDirections, setGrainDirections] = useState({});
-  const [results, setResults] = useState(null);
+  // rawResults is the untouched API response. `results` below is the derived
+  // view with cut-to-size applied, so changing a cut-to-size setting re-quotes
+  // the plan instantly without another nesting run.
+  const [rawResults, setRawResults] = useState(null);
+  const [cts, setCts] = useState(CTS_DEFAULTS);
+  const [ctsOverrides, setCtsOverrides] = useState({});
+  const results = useMemo(() => applyCutToSize(rawResults, cts, ctsOverrides), [rawResults, cts, ctsOverrides]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -709,7 +882,7 @@ export default function App() {
               });
             }
             setSavedRunInfo(nestData.run_header);
-            setResults(nestData);
+            setRawResults(nestData);
             autoSelectAllPatterns(nestData);
             if (nestData.run_header?.kerf_1d) setKerf1D(nestData.run_header.kerf_1d);
             if (nestData.run_header?.kerf_2d) setKerf2D(nestData.run_header.kerf_2d);
@@ -814,7 +987,7 @@ export default function App() {
     setRunNotes('');
     setLoadedFromRunNumber(null);
     setSavedRunInfo(null);
-    setResults(null);
+    setRawResults(null);
     setStep(1);
   }
 
@@ -878,7 +1051,7 @@ export default function App() {
       const data = await resp.json();
       if (!data.found) { setError('Run not found'); return; }
       setSavedRunInfo(data.run_header);
-      setResults(data);
+      setRawResults(data);
       autoSelectAllPatterns(data);
       if (data.run_header?.kerf_1d) setKerf1D(data.run_header.kerf_1d);
       if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
@@ -992,7 +1165,7 @@ export default function App() {
         });
       }
       setSavedRunInfo(data.run_header);
-      setResults(data);
+      setRawResults(data);
       autoSelectAllPatterns(data);
       if (data.run_header?.kerf_1d) setKerf1D(data.run_header.kerf_1d);
       if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
@@ -1048,15 +1221,32 @@ export default function App() {
   function clearAllPatterns() { setSelectedPatterns(new Set()); }
 
   function autoSelectAllPatterns(data) {
+    // Group the cut-to-size view, not the raw response — pattern keys are
+    // positional, and converting a piece changes which group it lands in.
+    const view = applyCutToSize(data, cts, ctsOverrides);
     const allKeys = new Set();
-    groupResults(data.results_1d, data._nameLookup).forEach((group, gi) => {
+    groupResults(view.results_1d, view._nameLookup).forEach((group, gi) => {
       group.patterns.forEach((_, pi) => allKeys.add(`1d-${gi}-${pi}`));
     });
-    groupResults(data.results_2d, data._nameLookup).forEach((group, gi) => {
+    groupResults(view.results_2d, view._nameLookup).forEach((group, gi) => {
       group.patterns.forEach((_, pi) => allKeys.add(`2d-${gi}-${pi}`));
     });
     setSelectedPatterns(allKeys);
   }
+
+  // Pattern selection keys are positional (`1d-<group>-<pattern>`), so any
+  // change to the cut-to-size rules reshuffles them. Re-select everything.
+  useEffect(() => {
+    if (!results) return;
+    const allKeys = new Set();
+    groupResults(results.results_1d, results._nameLookup).forEach((group, gi) => {
+      group.patterns.forEach((_, pi) => allKeys.add(`1d-${gi}-${pi}`));
+    });
+    groupResults(results.results_2d, results._nameLookup).forEach((group, gi) => {
+      group.patterns.forEach((_, pi) => allKeys.add(`2d-${gi}-${pi}`));
+    });
+    setSelectedPatterns(allKeys);
+  }, [results]);
 
   function getSelectedResults() {
     if (!results) return { selected_1d: [], selected_2d: [] };
@@ -1087,6 +1277,66 @@ export default function App() {
     return weightMap[String(firstCut.bom_line_id)] || 0;
   }
 
+  /** Force every stock piece behind a pattern to cut-to-size (true), full stock
+   *  (false), or back to the automatic threshold decision (null). */
+  function setCtsForPattern(pattern, value) {
+    setCtsOverrides(prev => {
+      const next = { ...prev };
+      (pattern.stockPieces || []).forEach(p => {
+        const k = ctsPieceKey(p);
+        if (value === null) delete next[k]; else next[k] = value;
+      });
+      return next;
+    });
+  }
+
+  /** Cut-to-size badge + override buttons for one pattern. */
+  function renderCtsControls(pattern, r) {
+    const isCts = !!r.cut_to_size;
+    const overridden = Object.prototype.hasOwnProperty.call(ctsOverrides, ctsPieceKey(r));
+    const is2D = parseFloat(r.original_stock_width_in) > 0 || parseFloat(r.stock_width_in) > 0;
+    const wasDesc = isCts
+      ? (is2D
+        ? `${inToFt(r.original_stock_length_in)} × ${inToFt(r.original_stock_width_in)}`
+        : inToFt(r.original_stock_length_in))
+      : '';
+    return (
+      <>
+        {isCts && (
+          <span
+            className="cts-badge"
+            title={`Was ${wasDesc} stock at ${(parseFloat(r.original_waste_percentage) || 0).toFixed(1)}% waste`}
+            style={{
+              padding: '2px 8px', background: '#e6f4ea', color: '#1b5e20',
+              border: '1px solid #1b5e20', borderRadius: 3, fontSize: 11,
+              fontWeight: 'bold', letterSpacing: '0.04em',
+            }}
+          >
+            CUT TO SIZE{r.cts_forced ? ' (forced)' : ''} — was {wasDesc}
+          </span>
+        )}
+        <button
+          className="btn btn-small"
+          style={{ fontSize: 11, padding: '2px 8px' }}
+          title={isCts ? 'Buy full stock and nest out of it instead' : 'Buy a piece cut to this size instead'}
+          onClick={() => setCtsForPattern(pattern, !isCts)}
+        >
+          {isCts ? 'Use full stock' : 'Cut to size'}
+        </button>
+        {overridden && (
+          <button
+            className="btn btn-small"
+            style={{ fontSize: 11, padding: '2px 8px' }}
+            title="Go back to the automatic utilization threshold"
+            onClick={() => setCtsForPattern(pattern, null)}
+          >
+            Auto
+          </button>
+        )}
+      </>
+    );
+  }
+
   function buildPurchaseLines() {
     if (!results) return [];
     const { selected_1d, selected_2d } = getSelectedResults();
@@ -1103,7 +1353,7 @@ export default function App() {
       const matName = results._nameLookup?.[firstCut.material_type] || '';
       // Key by display values so same-looking material/length collapses to one
       // purchase line even when underlying IDs differ across BOM rows.
-      const key = `${ftn}|${mtn}|${specName}|${matName}|${r.stock_length_in}|${r.stock_width_in || 0}`;
+      const key = `${ftn}|${mtn}|${specName}|${matName}|${r.stock_length_in}|${r.stock_width_in || 0}|${r.cut_to_size ? 'cts' : 'nest'}`;
       if (!agg[key]) {
         const wpf = weightMap[String(firstCut.bom_line_id)] || 0;
         const unitWt = calcUnitWeight(wpf, r.stock_length_in, is2D ? r.stock_width_in : 0);
@@ -1115,7 +1365,8 @@ export default function App() {
           material_type_id: r.material_origin,
           specification_id: firstCut.spec_name,
           material_id: firstCut.material_type,
-          description: `${ftn} | ${mtn} | ${specName} | ${matName} | ${sizeDesc}`,
+          description: `${ftn} | ${mtn} | ${specName} | ${matName} | ${sizeDesc}${r.cut_to_size ? ' | CUT TO SIZE' : ''}`,
+          cut_to_size: !!r.cut_to_size,
           form_type_name: ftn,
           material_type_name: mtn,
           spec_name: specName,
@@ -1286,7 +1537,7 @@ export default function App() {
   async function runNesting() {
     setLoading(true);
     setError('');
-    setResults(null);
+    setRawResults(null);
     setSelectedPatterns(new Set());
     setShowPurchasePreview(false);
     setSavedRunInfo(null);
@@ -1405,7 +1656,7 @@ export default function App() {
         nameLookup[p.material_type] = p.material_name_display;
       });
       data._nameLookup = nameLookup;
-      setResults(data);
+      setRawResults(data);
       autoSelectAllPatterns(data);
       setStep(3);
     } catch (err) {
@@ -1501,6 +1752,9 @@ export default function App() {
     const usage = {};
     [...(results.results_1d || []), ...(results.results_2d || [])].forEach(r => {
       if (r.error) return;
+      // A cut-to-size buy is a new purchase, not a draw against on-hand stock —
+      // it must not count a 24' pipe as consumed for a 6" nipple.
+      if (r.cut_to_size) return;
       const id = String(r.stock_id);
       usage[id] = (usage[id] || 0) + 1;
     });
@@ -1776,7 +2030,7 @@ export default function App() {
                     setStandaloneParts([]);
                     setStock([]);
                     setEnabledStock(new Set());
-                    setResults(null);
+                    setRawResults(null);
                     setRunTitle('');
                     setRunNotes('');
                   }}
@@ -2010,6 +2264,72 @@ export default function App() {
                   <label>2D Kerf (inches)</label>
                   <input type="number" step="0.0625" value={kerf2D} onChange={e => setKerf2D(parseFloat(e.target.value) || 0)} className="input" />
                 </div>
+
+                <h3 style={{ marginTop: 22 }}>Cut To Size</h3>
+                <p className="hint" style={{ marginTop: -6 }}>
+                  Any stock piece that ends up barely used gets re-quoted as a piece
+                  cut to size instead of a full length or full sheet. Applies after
+                  nesting — change it any time without re-running.
+                </p>
+                <div className="field">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={cts.enabled}
+                      onChange={e => setCts(p => ({ ...p, enabled: e.target.checked }))}
+                    />
+                    Re-quote low-utilization pieces as cut to size
+                  </label>
+                </div>
+                <div className="field">
+                  <label>Convert below this utilization (%)</label>
+                  <input
+                    type="number" min="0" max="100" step="5" className="input"
+                    value={cts.utilThresholdPct}
+                    disabled={!cts.enabled}
+                    onChange={e => setCts(p => ({ ...p, utilThresholdPct: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 100) }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Linear square-up allowance (in)</label>
+                  <input
+                    type="number" min="0" step="0.5" className="input"
+                    value={cts.trimLinearIn}
+                    onChange={e => setCts(p => ({ ...p, trimLinearIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Plate edge trim, per side (in)</label>
+                  <input
+                    type="number" min="0" step="0.5" className="input"
+                    value={cts.trimPanelIn}
+                    onChange={e => setCts(p => ({ ...p, trimPanelIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Round buy sizes up to (in)</label>
+                  <input
+                    type="number" min="0" step="0.5" className="input"
+                    value={cts.roundToIn}
+                    onChange={e => setCts(p => ({ ...p, roundToIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Supplier minimum — cut length (in)</label>
+                  <input
+                    type="number" min="0" step="1" className="input"
+                    value={cts.minLinearBuyIn}
+                    onChange={e => setCts(p => ({ ...p, minLinearBuyIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Supplier minimum — plate dimension (in)</label>
+                  <input
+                    type="number" min="0" step="1" className="input"
+                    value={cts.minPanelDimIn}
+                    onChange={e => setCts(p => ({ ...p, minPanelDimIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
+                  />
+                </div>
               </div>
               <div className="config-section">
                 <h3>Grain Direction (2D Panels)</h3>
@@ -2223,8 +2543,14 @@ export default function App() {
                 </div>
                 <div className="summary-item">
                   <span className="summary-val">{results.summary.avg_waste_pct_1d?.toFixed(1)}%</span>
-                  <span className="summary-label">Avg Waste (1D)</span>
+                  <span className="summary-label">Length Waste (1D)</span>
                 </div>
+                {results._ctsCount > 0 && (
+                  <div className="summary-item">
+                    <span className="summary-val" style={{ color: 'var(--green)' }}>{results._ctsCount}</span>
+                    <span className="summary-label">Cut To Size</span>
+                  </div>
+                )}
                 {weightSummary && (
                   <>
                     <div className="summary-item">
@@ -2292,7 +2618,7 @@ export default function App() {
                     <div key={gi} className="material-group">
                       <div className="material-group-header">
                         <h4>
-                          {matDesc(group)} | {inToFt(group.stock_length_in)} — {groupTotalPieces} stock pieces
+                          {matDesc(group)} | {inToFt(group.stock_length_in)} — {groupTotalPieces} {group.cut_to_size ? 'pieces cut to size' : 'stock pieces'}
                           {groupWeightPerFt > 0 && (
                             <span className="group-weight"> — {fmtLbs(groupUnitWeight)}/pc — {fmtLbs(groupTotalWeight)} total</span>
                           )}
@@ -2319,11 +2645,16 @@ export default function App() {
                                 <span className="stock-label">
                                   Cut Pattern {pi + 1} — {matDesc(group)} | {inToFt(r.stock_length_in)}
                                   {(() => {
-                                    const src = stock.find(x => String(x.id) === String(r.stock_id));
+                                    // A cut-to-size buy is new material, so it inherits none of
+                                    // the on-hand piece's reference (heat #, bin, tag).
+                                    const src = r.cut_to_size ? null : stock.find(x => String(x.id) === String(r.stock_id));
                                     return src?.reference ? <span className="stock-ref-badge" style={{ marginLeft: 8, padding: '1px 6px', background: '#e8f0fb', color: '#2c5aa0', borderRadius: 3, fontSize: 11 }}>Ref: {src.reference}</span> : null;
                                   })()}
                                   {pattern.count > 1 && <span className="pattern-count-badge">×{pattern.count} identical</span>}
                                   {(() => {
+                                    // "a shorter stock size would fit" is meaningless once the
+                                    // piece is already being bought cut to size.
+                                    if (r.cut_to_size) return null;
                                     const totalUsed = r.cuts?.reduce((sum, c) => sum + c.cut_length + kerf1D, 0) || 0;
                                     const shorterStocks = matchedStock
                                       .filter(s => s.form_type === r.form_type && s.material_type === r.material_origin && parseFloat(s.stock_length) < r.stock_length_in)
@@ -2342,6 +2673,7 @@ export default function App() {
                                 </span>
                               </div>
                               <div className="result-badges">
+                                {renderCtsControls(pattern, r)}
                                 <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
                                 {patternWpf > 0 && (
                                   <span className="weight-badge">
@@ -2415,7 +2747,7 @@ export default function App() {
                     <div key={gi} className="material-group">
                       <div className="material-group-header">
                         <h4>
-                          {matDesc(group)} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {groupTotalPieces} stock pieces
+                          {matDesc(group)} | {inToFt(group.stock_length_in)} × {inToFt(group.stock_width_in)} — {groupTotalPieces} {group.cut_to_size ? 'plates cut to size' : 'stock pieces'}
                           {groupWeightPerFt > 0 && (
                             <span className="group-weight"> — {fmtLbs(groupUnitWeight)}/pc — {fmtLbs(groupTotalWeight)} total</span>
                           )}
@@ -2442,11 +2774,14 @@ export default function App() {
                                 <span className="stock-label">
                                   Cut Pattern {pi + 1} — {matDesc(group)} | {inToFt(r.stock_length_in)} × {inToFt(r.stock_width_in)}
                                   {(() => {
-                                    const src = stock.find(x => String(x.id) === String(r.stock_id));
+                                    // A cut-to-size buy is new material, so it inherits none of
+                                    // the on-hand piece's reference (heat #, bin, tag).
+                                    const src = r.cut_to_size ? null : stock.find(x => String(x.id) === String(r.stock_id));
                                     return src?.reference ? <span className="stock-ref-badge" style={{ marginLeft: 8, padding: '1px 6px', background: '#e8f0fb', color: '#2c5aa0', borderRadius: 3, fontSize: 11 }}>Ref: {src.reference}</span> : null;
                                   })()}
                                   {pattern.count > 1 && <span className="pattern-count-badge">×{pattern.count} identical</span>}
                                   {(() => {
+                                    if (r.cut_to_size) return null;
                                     const warnings = [];
                                     const maxCutX = Math.max(...(r.cuts?.map(c => c.x_position + c.cut_length + kerf2D) || [0]));
                                     const maxCutY = Math.max(...(r.cuts?.map(c => c.y_position + c.cut_width + kerf2D) || [0]));
@@ -2470,6 +2805,7 @@ export default function App() {
                                 </span>
                               </div>
                               <div className="result-badges">
+                                {renderCtsControls(pattern, r)}
                                 <span className="waste-badge">{r.waste_percentage?.toFixed(1)}% waste</span>
                                 {patternWpf > 0 && (
                                   <span className="weight-badge">
@@ -2563,7 +2899,15 @@ export default function App() {
                   <tbody>
                     {purchaseLines.map((line, i) => (
                       <tr key={i}>
-                        <td>{line.description}</td>
+                        <td>
+                          {line.description}
+                          {line.cut_to_size && (
+                            <span style={{
+                              marginLeft: 8, padding: '1px 6px', background: '#e6f4ea',
+                              color: '#1b5e20', borderRadius: 3, fontSize: 11, fontWeight: 'bold',
+                            }}>CUT TO SIZE</span>
+                          )}
+                        </td>
                         <td className="num">{line.quantity}</td>
                         <td className="num">{line.feet_length.toFixed(1)}</td>
                         <td className="num">{line.weight_per_ft > 0 ? `${line.weight_per_ft.toFixed(2)}` : '—'}</td>
@@ -2679,7 +3023,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.6 — same-window return to project after save</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.7 — cut to size for low-utilization pieces</span></footer>
     </div>
   );
 }
