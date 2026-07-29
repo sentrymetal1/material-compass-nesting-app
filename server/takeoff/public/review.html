@@ -130,7 +130,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.44 · 2026-07-29";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.45 · 2026-07-29";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1224,9 +1224,17 @@
   }
   function applyMaterialValue(idx,val){
     const R=loadResult(); if(!R.rows||!R.rows[idx]) return;
+    const was=String(R.rows[idx].size||"");
     R.rows[idx].size=val;
     if(!(Number(R.rows[idx].confidence)>0.5)) R.rows[idx].confidence=0.5;   // a human chose it
     recomputeCsv(R); saveResult(R); render();
+    // "What the AI called it" → "what this shop calls it", for a real Form × Material. That pair is
+    // the same thing the Material_Alias table exists to hold, and it stops the next take-off making
+    // the identical miss.
+    if(was && val && was!==val){
+      captureCorrection({ context: (R.rows[idx].form_type||"") + " · " + (R.rows[idx].material_type||"") + " · " + was,
+                          ai_value: was, human_value: val, source: "material" });
+    }
   }
   function applyMaterial(idx){
     const sel=document.getElementById("matsel"+idx);
@@ -1376,6 +1384,12 @@
         merged.chat=R2.chat.concat([{role:"ai", edited:true, text: data.reply||data.notes||"Updated the take-off."}]);
         saveResult(merged);
         REVISE_ATTACHMENTS=[];                                  // consumed
+        // THE MOST VALUABLE CORRECTION THERE IS, and it used to evaporate with the session. An
+        // instruction like "WEIGHT PER FOOT=21.40 means MC8 x 21.4 — apply to all channels" isn't a
+        // one-off fix: it's a rule about how THIS customer's documents are written, and it will be
+        // true of every package they send. Captured the moment it lands, with what the AI actually
+        // did in response, so the next take-off starts from it.
+        captureCorrection({ context: t, ai_value: "", human_value: data.reply||data.notes||"", source: "instruction" });
       } else {
         R2.chat.push({role:"ai", text: data.reply||"(no reply)"}); saveResult(R2);
       }
@@ -1464,6 +1478,22 @@
     if(!r.ok||data.ok===false) throw new Error(data.error||("HTTP "+r.status));
     return data.import_id;
   }
+  // ONE correction, stored the moment it happens. Fire-and-forget on purpose: learning must never
+  // be able to interrupt or fail the estimator's work. `source` says what kind it is, because the
+  // three kinds are used differently in the next take-off's prompt — a decision is a preference, an
+  // instruction is a standing rule, a material fix is this shop's word for a size.
+  function captureCorrection(c){
+    try{
+      if(!params.manufacturer_id || !c || !String(c.context||"").trim()) return;
+      const R=loadResult();
+      if(R.__demo) return;                                   // never learn from the sample
+      const ptype=(R.synopsis && R.synopsis.project && R.synopsis.project.type)||"";
+      fetch(RAILWAY_URL+"/api/takeoff/learn",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ manufacturer_id:params.manufacturer_id, project_type:ptype, corrections:[c] })})
+        .catch(function(){});
+    }catch(e){}
+  }
+
   // Capture this shop's decisions so future take-offs pre-apply their preferences (Tier-3 learning).
   function captureLearning(){
     try{

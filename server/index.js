@@ -1155,24 +1155,72 @@ async function fetchShopLearning(mfg) {
     recs = (q.data && q.data.data) || [];
   } catch (e) { return ''; }
   if (!recs.length) return '';
-  // Tally human choices per decision-context → the shop's prevailing preference.
+  // THREE KINDS OF CORRECTION, used three different ways. Lumping them together made an
+  // instruction ("weight per foot IS the size designation") read as if the estimator had "chosen"
+  // it from a menu, which is not what it is and not how the model should apply it.
+  const kind = function (r) {
+    const s = String(r.Source || '').toLowerCase().trim();
+    return (s === 'instruction' || s === 'material') ? s : 'decision';
+  };
+
+  // 1. DECISIONS — tally the human's choice per judgment call; the prevailing one is the default.
   const byCtx = {};
-  recs.forEach(function (r) {
+  recs.filter(function (r) { return kind(r) === 'decision'; }).forEach(function (r) {
     const ctx = String(r.Context || '').trim(); const hv = String(r.Human_Value || '').trim();
     if (!ctx || !hv) return;
     byCtx[ctx] = byCtx[ctx] || {};
     byCtx[ctx][hv] = (byCtx[ctx][hv] || 0) + 1;
   });
-  const lines = [];
+  const decision = [];
   Object.keys(byCtx).forEach(function (ctx) {
     const choices = byCtx[ctx]; let best = '', bestN = 0, total = 0;
     Object.keys(choices).forEach(function (c) { total += choices[c]; if (choices[c] > bestN) { best = c; bestN = choices[c]; } });
-    lines.push('- "' + ctx + '"  ->  this shop chose: "' + best + '"' + (total > 1 ? ' (' + bestN + '/' + total + ')' : ''));
+    decision.push('- "' + ctx + '"  ->  this shop chose: "' + best + '"' + (total > 1 ? ' (' + bestN + '/' + total + ')' : ''));
   });
-  if (!lines.length) return '';
-  return "THIS FABRICATOR'S PAST DECISIONS (apply as standing preferences): when the SAME judgment call " +
-    "appears in this take-off, pre-resolve it to this shop's prior choice and set that decision's " +
-    "ai_recommendation accordingly. A repeated choice is a strong default. Their history:\n" + lines.join('\n');
+
+  // 2. INSTRUCTIONS — what the estimator told the AI to change after reading a take-off. These are
+  // rules about how THIS customer's documents are written and they hold for the next package too:
+  // "the parts list gives WEIGHT PER FOOT, and that number IS the channel designation". Newest
+  // first, deduped, capped — a standing rule stops being useful if it's buried in fifty of them.
+  const seenIns = {}, instruction = [];
+  recs.filter(function (r) { return kind(r) === 'instruction'; })
+    .sort(function (a, b) { return String(b.Created || '').localeCompare(String(a.Created || '')); })
+    .forEach(function (r) {
+      const ctx = String(r.Context || '').trim();
+      const k = ctx.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      if (!ctx || seenIns[k] || instruction.length >= 25) return;
+      seenIns[k] = 1;
+      const did = String(r.Human_Value || '').trim();
+      instruction.push('- ' + ctx + (did ? '\n    (last time, this produced: ' + did.slice(0, 180) + ')' : ''));
+    });
+
+  // 3. MATERIAL WORDING — what the AI wrote vs what this shop's catalog actually calls it.
+  const seenMat = {}, material = [];
+  recs.filter(function (r) { return kind(r) === 'material'; }).forEach(function (r) {
+    const av = String(r.AI_Value || '').trim(), hv = String(r.Human_Value || '').trim();
+    const k = (av + '=>' + hv).toLowerCase();
+    if (!av || !hv || seenMat[k] || material.length >= 40) return;
+    seenMat[k] = 1;
+    material.push('- ' + String(r.Context || '').replace(/ · [^·]*$/, '').trim() + ': "' + av + '" should be written "' + hv + '"');
+  });
+
+  const out = [];
+  if (decision.length) {
+    out.push("THIS FABRICATOR'S PAST DECISIONS (apply as standing preferences): when the SAME judgment call " +
+      "appears in this take-off, pre-resolve it to this shop's prior choice and set that decision's " +
+      "ai_recommendation accordingly. A repeated choice is a strong default. Their history:\n" + decision.join('\n'));
+  }
+  if (instruction.length) {
+    out.push("STANDING INSTRUCTIONS FROM THIS FABRICATOR — corrections they have made to previous take-offs. " +
+      "These are how THIS customer's drawings and parts lists are written, so APPLY THEM AGAIN from the " +
+      "start unless the documents in front of you plainly contradict them. Say in `notes` where you applied " +
+      "one:\n" + instruction.join('\n'));
+  }
+  if (material.length) {
+    out.push("SIZES THIS SHOP HAS RE-SPELLED BEFORE — the left side is what a take-off wrote, the right side " +
+      "is what their catalog calls the same steel. Use the right-hand spelling:\n" + material.join('\n'));
+  }
+  return out.join('\n\n');
 }
 
 // CAPTURE — store this shop's corrections (decisions etc.) for future personalization.
