@@ -130,7 +130,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.43 · 2026-07-28";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.44 · 2026-07-29";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -291,7 +291,14 @@
       if(fromRow){ map[n].rows++; map[n].src='rows'; }
     };
     arr(loadResult().rows).forEach(function(r){ if((Number(r.quantity)||0)>0) push(r[field],true); });
-    (kind==='component'?scopeComponents():scopeDrawings()).forEach(function(v){ push(v,false); });
+    // The scope-of-work write-up is a FALLBACK, not a second source. It exists for the case where
+    // the rows carry no component/sheet tags at all — reading only the rows then reported "0 matched"
+    // while the answer sat in plain sight. Now that intake binds every row to a real component, mining
+    // the write-up as well proposed eleven "components" like "MC8 structural channels" and
+    // "Flat plates": material groups, not assemblies, and pure noise to add to a project.
+    if (!Object.keys(map).length) {
+      (kind==='component'?scopeComponents():scopeDrawings()).forEach(function(v){ push(v,false); });
+    }
     return Object.keys(map).map(function(n){return map[n];});
   }
   function reconState(){ return loadResult().__reconcile||{}; }
@@ -733,12 +740,19 @@
             '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconIgnoreIdx(\''+kind+'\','+i+')">ignore</button></td></tr>';
       });
       // ⚠ on the project, AI read nothing like it
+      // On the project, but no take-off row cites it. For a DRAWING that is routine and not a
+      // problem: when a parts list covers the same members, every row cites the list, so the sheet
+      // itself ends up with no rows against it. Offering "delete" as the loud first option there
+      // invites deleting a perfectly good drawing. Keep leads; delete is the quiet second choice.
       r.enteredOnly.forEach(function(e,i){
-        rows+='<tr><td style="'+TD+'"><span class="src">nothing read from the sheets</span></td>'+
+        const why = kind==='drawing'
+          ? 'no BOM row cites this drawing'
+          : 'nothing read from the sheets matches it';
+        rows+='<tr><td style="'+TD+'"><span class="src">'+why+'</span></td>'+
           '<td style="'+TD+'"><b style="color:#b6791f">⚠</b> '+NAMEBOX(kind,e.id,e.name,i,'only')+'</td>'+
           '<td style="'+TD+'; white-space:nowrap">'+
-            '<button class="applybtn" style="background:#b4544c" onclick="reconDeleteIdx(\''+kind+'\','+i+')" title="Delete from the project">🗑 delete</button> '+
-            '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconAckIdx(\''+kind+'\','+i+')">keep</button></td></tr>';
+            '<button class="applybtn" onclick="reconAckIdx(\''+kind+'\','+i+')" title="Leave it on the project">keep</button> '+
+            '<button class="applybtn" style="background:#c8a9a5;padding:1px 7px" onclick="reconDeleteIdx(\''+kind+'\','+i+')" title="Delete from the project — only if it genuinely does not belong">delete</button></td></tr>';
       });
       // ✓ agreed
       r.matched.forEach(function(t){
@@ -761,7 +775,7 @@
     return '<div class="card"><h2>▸ Scope Reconciliation <span class="lt">— what the AI read vs. what you entered</span></h2><div class="body">'+
       reconNoticeHtml()+
       sec('component','Components','component')+sec('drawing','Drawings','drawing')+
-      '<div class="src" style="margin-top:6px">➕ items import with a blank link unless you <b>add</b> them to the project or <b>map</b> them to an entered value. ≈ near matches will <b>not</b> link until you rename one side. 🗑 delete is blocked while drawings or BOM rows are still linked. Fixes here update the BOM before it commits.</div>'+
+      '<div class="src" style="margin-top:6px">➕ items import with a blank link unless you <b>add</b> them to the project or <b>map</b> them to an entered value. ≈ near matches will <b>not</b> link until you rename one side. Delete is blocked while drawings or BOM rows are still linked — and a drawing with no rows against it is usually fine, not wrong: when a parts list covers the same members, every row cites the list instead of the sheet. Fixes here update the BOM before it commits.</div>'+
       '</div></div>';
   }
 

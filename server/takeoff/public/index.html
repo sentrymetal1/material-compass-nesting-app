@@ -61,6 +61,11 @@
     .drop strong { font-size:15px; color:#2b3340; }
     .drop .hint { font-size:12px; color:#8893a0; }
     .drop input { display:none; }
+    /* Once files are in, the picker is a small "add another" affordance — the list below it is the
+       thing worth the space. */
+    .drop.loaded { flex-direction:row; gap:8px; padding:9px 14px; min-height:0; border-width:1px; }
+    .drop.loaded strong { font-size:13px; color:var(--blue); }
+    .drop.loaded .hint { font-size:11.5px; }
     .files { margin-top:12px; font-size:13px; color:#334; }
     .files div { padding:4px 2px; border-bottom:1px solid #f1f3f5; }
     .files div:last-child { border-bottom:0; }
@@ -82,6 +87,20 @@
             border-top-color:var(--blue); border-radius:50%; animation:s 0.8s linear infinite;
             vertical-align:-3px; margin-right:8px; }
     @keyframes s { to { transform:rotate(360deg); } }
+    /* READING — a minute of silence with a small status line looked like nothing was happening,
+       and a second click on a disabled button is the least of what that costs. This owns the
+       screen while it reads, says what it is doing, and counts. */
+    .busy { position:fixed; inset:0; background:rgba(23,32,45,.55); display:flex; align-items:center;
+            justify-content:center; z-index:9999; }
+    .busy[hidden] { display:none; }
+    .busybox { background:#fff; border-radius:12px; padding:30px 38px; max-width:460px; text-align:center;
+               box-shadow:0 18px 50px rgba(15,25,40,.28); }
+    .busybox .bspin { width:44px; height:44px; border:4px solid #e3e9f0; border-top-color:var(--blue);
+                      border-radius:50%; animation:s 0.9s linear infinite; margin:0 auto 16px; }
+    .busyttl { font-size:17px; font-weight:700; color:#22303f; margin-bottom:5px; }
+    .busysub { font-size:13px; color:#5b6675; line-height:1.55; }
+    .busytime { font-size:12px; color:#8893a0; margin-top:12px; font-variant-numeric:tabular-nums; }
+    .busynote { font-size:12px; color:#8893a0; margin-top:14px; padding-top:12px; border-top:1px solid #eef1f5; }
     .result { margin-top:18px; padding:14px; border-radius:8px; background:#f0f6fc;
               border:1px solid #cfe0f2; font-size:14px; }
     .result b.big { font-size:16px; }
@@ -452,6 +471,18 @@
       </div>
     </div>
 
+    <!-- Owns the screen while the AI reads. Both passes use it: the quick intake read and the full
+         take-off. Nothing here is clickable — that's the point. -->
+    <div class="busy" id="busy" hidden>
+      <div class="busybox">
+        <div class="bspin"></div>
+        <div class="busyttl" id="busyTtl">Reading your documents…</div>
+        <div class="busysub" id="busySub"></div>
+        <div class="busytime" id="busyTime">0:00</div>
+        <div class="busynote" id="busyNote">Keep this tab open — closing it stops the read.</div>
+      </div>
+    </div>
+
     <div class="status" id="status"></div>
     <div id="resultBox"></div>
 
@@ -460,7 +491,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.52 (2026-07-28)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.53 (2026-07-29)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -557,6 +588,36 @@
       if (i >= 0 && i < docs.length) { docs.splice(i, 1); invalidateScan(); renderFiles(); }
     });
 
+    // The reading overlay. One place, used by both passes, so they can't drift out of step.
+    let busyTimer = null;
+    function showBusy(title, sub, note) {
+      const box = document.getElementById("busy");
+      if (!box) return;
+      document.getElementById("busyTtl").textContent = title;
+      document.getElementById("busySub").innerHTML = sub || "";
+      document.getElementById("busyNote").innerHTML = note ||
+        "Keep this tab open — closing it stops the read.";
+      const t0 = Date.now();
+      const tick = () => {
+        const s = Math.round((Date.now() - t0) / 1000);
+        const el = document.getElementById("busyTime");
+        if (el) el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+      };
+      tick();
+      clearInterval(busyTimer); busyTimer = setInterval(tick, 500);
+      box.hidden = false;
+    }
+    function hideBusy() {
+      clearInterval(busyTimer); busyTimer = null;
+      const box = document.getElementById("busy");
+      if (box) box.hidden = true;
+    }
+    const filesLine = () => {
+      const pages = docs.reduce((s, d) => s + (d.pages || 0), 0);
+      return "<b>" + docs.length + "</b> file" + (docs.length === 1 ? "" : "s") +
+             (pages ? " · <b>" + pages + "</b> pages" : "");
+    };
+
     function readAsB64(f) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -624,6 +685,12 @@
             (totalPages ? " · " + totalPages + " page" + (totalPages === 1 ? "" : "s") : "") +
             (over ? "  — over " + MAX_MB + " MB, trim before running" : "") + "</b></div>"
         : '<div class="fmb" style="padding:6px 2px">No files yet — choose or drop PDFs above.</div>';
+      const dz = document.getElementById("drop");
+      if (dz) {
+        dz.classList.toggle("loaded", docs.length > 0);
+        dz.querySelector("strong").textContent = docs.length ? "＋ Add more PDFs" : "Click to choose PDFs";
+        dz.querySelector(".hint").textContent = docs.length ? "or drop them here" : "or drag them here";
+      }
       go.disabled = over || docs.length === 0;
       // Say WHY it's disabled, on the button and beside it.
       const hint = document.getElementById("runHint");
@@ -1308,6 +1375,9 @@
       const btn = document.getElementById("scanPdf");
       btn.disabled = true;
       setScopeStatus('<span class="spin"></span>Reading drawing numbers from the PDF…');
+      showBusy("Reading your documents…",
+        filesLine() + "<br>Finding the drawing number on every page, and working out which files are drawings and which are parts lists.",
+        "This is the quick read — it costs pennies, not a take-off.");
       try {
         const r = await fetch(RAILWAY_URL + "/api/takeoff/index", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -1365,7 +1435,7 @@
       } catch (e) {
         setScopeStatus("Couldn’t read the PDF (" + (e.message || e) + "). Use ↻ to try again, or pick the " +
           "components and drawings yourself below.");
-      } finally { scanning = false; btn.disabled = false; updateScanBtn(); }
+      } finally { hideBusy(); scanning = false; btn.disabled = false; updateScanBtn(); }
     }
 
     // What "Use this allocation" is about to do to the project, spelled out before it does it.
@@ -2086,7 +2156,9 @@
       const cols = document.querySelector(".cols");
       if (!cols) return;
       // Below 1500px the stylesheet stacks these into 2 columns / 1 column — don't fight it.
-      if (!window.matchMedia("(min-width:1501px)").matches) {
+      // No matchMedia at all (old browser, headless) ⇒ leave the stylesheet in charge rather than
+      // throwing halfway through a render.
+      if (!window.matchMedia || !window.matchMedia("(min-width:1501px)").matches) {
         cols.style.gridTemplateColumns = ""; cols.style.justifyContent = ""; return;
       }
       const on = COL_W.filter(function (c) {
@@ -2563,6 +2635,12 @@
       }
       go.disabled = true; resultBox.innerHTML = "";
       const t0 = Date.now();
+      const tree0 = buildScopeTree();
+      showBusy("Taking off your material…",
+        filesLine() + " · <b>" + tree0.length + "</b> component" + (tree0.length === 1 ? "" : "s") +
+        "<br>Reading every drawing and parts list, reconciling them against each other, and pricing " +
+        "each member against your catalog.",
+        "A minute or two is normal. Keep this tab open — you'll land on the review page when it's done.");
       const timer = setInterval(() => {
         statusEl.innerHTML = '<span class="spin"></span>Reading ' + docs.length +
           ' document' + (docs.length > 1 ? "s" : "") + '… ' +
@@ -2592,7 +2670,7 @@
           }),
         });
         const data = await r.json();
-        clearInterval(timer); statusEl.textContent = "";
+        clearInterval(timer); hideBusy(); statusEl.textContent = "";
 
         // Out of credits → 402. Show a Buy-credits button instead of a generic error.
         if (r.status === 402 || data.error === "out_of_credits") {
@@ -2621,6 +2699,12 @@
         // Premium tier → hand off to the full project approval page (review.html),
         // which renders the synopsis (scope / decisions / gaps / BOM) and commits.
         if (data.synopsis) {
+          // Hold the overlay across the hand-off — a blank beat between "done" and the review page
+          // reads like a failure.
+          showBusy("Take-off complete — opening your review…",
+            "<b>" + (data.count || 0) + "</b> BOM rows" +
+            (data.fitting_count ? " · <b>" + data.fitting_count + "</b> fittings" : "") +
+            (data.cost_usd != null ? " · $" + data.cost_usd : ""), "&nbsp;");
           data.__project = proj;  // tag so the review page can't confuse it with another project's take-off
           try { sessionStorage.setItem("takeoff_result", JSON.stringify(data)); } catch (e) {}
           try { if (proj) localStorage.setItem("mc_takeoff_" + proj, JSON.stringify(data)); } catch (e) {}
@@ -2677,7 +2761,7 @@
 
         go.disabled = false;
       } catch (e) {
-        clearInterval(timer);
+        clearInterval(timer); hideBusy();
         statusEl.textContent = "";
         resultBox.innerHTML = '<div class="result err"><b>Network error.</b><br>' + e.message + '</div>';
         go.disabled = false;
