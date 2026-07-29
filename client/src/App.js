@@ -2444,8 +2444,10 @@ export default function App() {
                     onChange={e => setCts(p => ({ ...p, trimLinearIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
                   <p className="hint">
-                    Extra length so you can face off the supplier's cut ends and still hit the
-                    finished dimension. Set to 0 if you order to exact length and take their cut as-is.
+                    <strong>Not kerf</strong> — the 1D kerf above is already charged per cut and is
+                    inside the buy length. This is extra material on top, only if you intend to face
+                    off the supplier's cut end to get square. Set to 0 to buy part + kerf and take
+                    their cut as-is.
                   </p>
                 </div>
                 <div className="field">
@@ -2456,8 +2458,9 @@ export default function App() {
                     onChange={e => setCts(p => ({ ...p, trimPanelIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
                   <p className="hint">
-                    Added to all four edges, so a 9" × 6" part buys 11" × 8". Covers mill edge
-                    condition and burn kerf. Set to 0 to buy the exact part size.
+                    <strong>Not kerf</strong> — the 2D kerf above already spaces the parts and is
+                    inside the buy size. This is extra material on all four edges for mill edge
+                    condition, so a 9" × 6" part buys 11" × 8". Set to 0 to buy part + kerf.
                   </p>
                 </div>
                 <div className="field">
@@ -3371,7 +3374,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.9 — grain pills, self-explaining cut-to-size fields</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.10 — trim fields state they are not kerf</span></footer>
     </div>
   );
 }
