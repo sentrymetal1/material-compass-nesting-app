@@ -130,7 +130,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.46 · 2026-07-29";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.47 · 2026-07-29";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -690,14 +690,15 @@
       return '<div style="border:1px solid #e6eaf0;border-radius:8px;padding:11px 13px;margin-bottom:10px">'+
         '<div style="font-size:13px"><b>'+esc(p.list_a||'?')+'</b> vs <b>'+esc(p.list_b||'?')+'</b> '+
           '<span class="src">— '+esc(rel)+
-          (p.items_in_common!=null?' · '+p.items_in_common+' lines agree':'')+'</span></div>'+
+          (p.items_in_common!=null?' · '+p.items_in_common+' lines agree'+
+            (arr(p.compared_on).length?' on '+arr(p.compared_on).join(', '):' on item, size, quantity and dimensions'):'')+'</span></div>'+
         (p.counted_from?'<div class="src" style="margin-top:3px">Counted from: '+esc(p.counted_from)+'</div>':'')+
         list('⚠ Only on '+esc(p.list_b||'the second list'), ob, '#b45309', function(x){
           return '<b>'+esc(x.item)+'</b>'+(x.note?' <span class="src">'+esc(x.note)+'</span>':''); })+
         list('Only on '+esc(p.list_a||'the first list'), oa, '#5b6675', function(x){
           return '<b>'+esc(x.item)+'</b>'+(x.note?' <span class="src">'+esc(x.note)+'</span>':''); })+
         list('⚡ They disagree', df, '#b45309', function(x){
-          return '<b>'+esc(x.item)+'</b> <span class="src">'+esc(p.list_a||'A')+': '+esc(x.a_says||'—')+
+          return '<b>'+esc(x.item)+'</b>'+(x.field?' <span class="src">('+esc(x.field)+')</span>':'')+' <span class="src">'+esc(p.list_a||'A')+': '+esc(x.a_says||'—')+
                  ' · '+esc(p.list_b||'B')+': '+esc(x.b_says||'—')+'</span>'+
                  (x.used?' → used <b>'+esc(x.used)+'</b>':''); })+
         (!oa.length&&!ob.length&&!df.length

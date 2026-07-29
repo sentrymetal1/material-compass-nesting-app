@@ -152,13 +152,17 @@ const SYNOPSIS_SCHEMA = {
               list_a: { type: "string", description: "The document you treated as authoritative." },
               list_b: { type: "string", description: "The other one." },
               relationship: { type: "string", description: "'nested' (b's items are already inside a), 'revision' (same scope, different issue/date), 'separate' (genuinely different scopes), or 'unclear'." },
-              items_in_common: { type: "number", description: "Lines that appear on both and agree." },
+              items_in_common: { type: "number", description: "Lines that appear on both AND match on EVERY field you could compare: size/section, dimensions (length, width, thickness), quantity, grade/spec, and weight where both give one. A line that appears on both but differs on ANY of those is NOT counted here — it belongs in `differences`. If a field is stated on one list and absent from the other, that is not agreement either: put it in `differences` with the missing side written '(not stated)'." },
+              compared_on: { type: "array", items: { type: "string" }, description: "Which fields you were actually able to compare across the two lists, e.g. ['item number','description','size','quantity','length','weight']. Say what you could NOT compare, so the agreed count is read for what it is." },
               only_in_a: { type: "array", items: { type: "object", properties: { item: { type: "string" }, note: { type: "string" } }, required: ["item"] }, description: "On list A, absent from list B." },
               only_in_b: { type: "array", items: { type: "object", properties: { item: { type: "string" }, note: { type: "string" } }, required: ["item"] }, description: "On list B, absent from list A — if you counted from A, THESE ARE THE LINES AT RISK OF BEING MISSED. Say for each whether you included it." },
               differences: {
-                type: "array", description: "On both, but the quantity, size, length, grade or weight disagrees.",
+                type: "array",
+                description: "On both lists, but they do not match on something: quantity, size/section, length, width, thickness, grade/spec, or weight — INCLUDING the case where one list states a value and the other leaves it blank. Quantity and dimensions are the ones that change the steel bought, so check them on every shared line; do not report only the obvious size differences.",
                 items: { type: "object", properties: {
-                  item: { type: "string" }, a_says: { type: "string" }, b_says: { type: "string" },
+                  item: { type: "string" },
+                  field: { type: "string", description: "What disagrees: 'quantity', 'length', 'size', 'width', 'thickness', 'grade', 'weight'." },
+                  a_says: { type: "string" }, b_says: { type: "string" },
                   used: { type: "string", description: "Which value went into the BOM." },
                 }, required: ["item"] },
               },
@@ -289,7 +293,12 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "and why. Near-identical lists are the dangerous case, not the easy one — they are usually a revision " +
     "or a parent/child pair, and the handful of lines that differ is the whole point. Anything present on " +
     "the list you did NOT count from must be explicitly included or explicitly explained; it must never " +
-    "just fall out.\n\n";
+    "just fall out.\n" +
+    "COMPARE THE NUMBERS, NOT JUST THE NAMES. Two lists 'having the same item' proves nothing — check " +
+    "QUANTITY and every DIMENSION (length, width, thickness) line by line, plus grade and stated weight. " +
+    "A line only counts as agreeing when all of those match; if one list states a value and the other " +
+    "leaves it blank, that is a difference, not a match. A quantity that differs by one, or a length that " +
+    "differs by an inch, is exactly the kind of thing a human skims past and a machine should not.\n\n";
 
   const outputBOM =
     "OUTPUT DISCIPLINE (critical): Return `rows` as a real JSON ARRAY of row objects — NEVER a " +
