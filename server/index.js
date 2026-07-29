@@ -669,6 +669,51 @@ app.get('/api/takeoff/fittings-catalog-check', async (req, res) => {
   }
 });
 
+// WHAT HAS IT LEARNED? Readable in a browser, per shop. Learning you can't inspect is learning you
+// can't trust — and if the Zoho side was never built, this says so plainly instead of the corrections
+// silently going nowhere.
+//   /api/takeoff/learning-check?manufacturer_id=123
+app.get('/api/takeoff/learning-check', async (req, res) => {
+  const mfg = String(req.query.manufacturer_id || '').trim();
+  const out = [];
+  let records = [];
+  try {
+    records = await fetchAllZohoPages('/report/Takeoff_Correction_Report' +
+      (mfg ? '?criteria=(Manufacture_ID=="' + mfg + '")' : ''));
+  } catch (err) {
+    const code = err && err.response && err.response.status;
+    return res.type('text/plain; charset=utf-8').send(
+      'THE LEARNING STORE IS NOT READABLE.\n\n' +
+      'Tried: /report/Takeoff_Correction_Report' + (mfg ? ' for manufacturer ' + mfg : '') + '\n' +
+      'Zoho said: ' + (code || '') + ' ' + String((err && err.message) || err) + '\n\n' +
+      'If the form or report does not exist yet, corrections are being posted and dropped. It needs a\n' +
+      'form `Takeoff_Correction` with fields: Manufacture_ID, Context, AI_Value, Human_Value,\n' +
+      'Project_Type, Source, Created — and a report `Takeoff_Correction_Report` exposing all of them\n' +
+      'as columns (a v2.1 report only returns the columns it is configured with).');
+  }
+  const by = {};
+  records.forEach(function (r) {
+    const s = String(r.Source || 'decision').toLowerCase().trim();
+    by[s] = (by[s] || 0) + 1;
+  });
+  out.push('# What this take-off has learned' + (mfg ? ' from manufacturer ' + mfg : ' (all manufacturers)'));
+  out.push('# ' + records.length + ' correction' + (records.length === 1 ? '' : 's') + ' stored' +
+    (Object.keys(by).length ? ' — ' + Object.keys(by).map(function (k) { return by[k] + ' ' + k; }).join(', ') : '') + '\n');
+  if (mfg) {
+    let text = '';
+    try { text = await fetchShopLearning(mfg); } catch (e) { text = '(could not build: ' + (e.message || e) + ')'; }
+    out.push('---- INJECTED INTO EVERY TAKE-OFF FOR THIS SHOP ----\n');
+    out.push(text || '(nothing yet — this shop has made no corrections)');
+  } else {
+    out.push('Add ?manufacturer_id=… to see what a particular shop\'s take-offs are told.');
+  }
+  let uk = '';
+  try { uk = await getUniversalKnowledge(); } catch (e) {}
+  out.push('\n---- SHARED WITH EVERY SHOP (approved patterns) ----\n');
+  out.push(uk || '(none approved yet — approve rows in Takeoff_Knowledge to promote a pattern)');
+  res.type('text/plain; charset=utf-8').send(out.join('\n'));
+});
+
 // The same for the STRUCTURAL size catalog, in the same readable form — the two are checked together.
 app.get('/api/takeoff/catalog-check-text', async (req, res) => {
   try {
