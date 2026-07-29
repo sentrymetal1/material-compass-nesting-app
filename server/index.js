@@ -590,19 +590,61 @@ async function buildCatalogGroups() {
   });
 }
 
+// THE VALID SPECIFICATIONS for each Form × Material, from Material_Form_Detail — the same table the
+// staging validator checks against. Sizes were a closed list to the model but SPECS were not, so it
+// defaulted to the carbon-steel spec it knew: three 10 ga Sheet rows came back as "A36", which is a
+// PLATE spec, and staging rejected all three with "Spec 'A36' not found for Sheet / Carbon Steel".
+// 482 rows across 109 pairs ≈ 1,500 tokens — cheap, cached, and it closes the last open field.
+async function buildSpecGroups() {
+  return cachedLookup('takeoff:spec-groups', 12 * 60 * 60 * 1000, async () => {
+    const ftRows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
+    const mtRows = await fetchAllZohoPages('/report/Material_Types_Report');
+    const specs = await fetchAllZohoPages('/report/Material_Form_Detail_Report');
+    const ft = {}, mt = {};
+    ftRows.forEach(function (r) { ft[String(r.ID)] = String(r.Form_Type || '').trim(); });
+    mtRows.forEach(function (r) { mt[String(r.ID)] = String(r.Material_Type || '').trim(); });
+    const groups = {};
+    specs.forEach(function (r) {
+      const d = String(r.Type_Detail || '').trim();
+      if (!d) return;
+      const f = ft[String((r.Form_Type && r.Form_Type.ID) || '')] || '';
+      const m = mt[String((r.Material_Type && r.Material_Type.ID) || '')] || '';
+      if (!f) return;
+      const key = f + '|' + (m || 'any material');
+      if (!groups[key]) groups[key] = [];
+      if (groups[key].indexOf(d) < 0) groups[key].push(d);
+    });
+    return groups;
+  });
+}
+
 // The same catalog rendered for the model.
 async function buildLiveCatalogContext() {
   const groups = await buildCatalogGroups();
+  let specs = {};
+  try { specs = await buildSpecGroups(); } catch (e) { console.error('spec groups unavailable:', e.message || e); }
   const keys = Object.keys(groups).sort();
   if (!keys.length) return '';
   const body = keys.map(function (k) {
-    return '### ' + k.replace('|', ' | ') + '\n' + groups[k].join(' · ');
+    const s = specs[k] || specs[k.split('|')[0] + '|any material'];
+    return '### ' + k.replace('|', ' | ') +
+      (s && s.length ? '\n  valid specifications: ' + s.join(' · ') : '') +
+      '\n  sizes: ' + groups[k].join(' · ');
   }).join('\n\n');
+  // A pair can have specs but no sizes (or vice versa) — list those too, or the model has no way to
+  // know the combination is even allowed.
+  const extra = Object.keys(specs).filter(function (k) { return keys.indexOf(k) < 0; }).sort()
+    .map(function (k) { return '### ' + k.replace('|', ' | ') + '\n  valid specifications: ' + specs[k].join(' · '); });
   const total = keys.reduce(function (n, k) { return n + groups[k].length; }, 0);
-  return "THIS SHOP'S LIVE MATERIAL CATALOG — " + total + " sizes across " + keys.length +
-    " Form Type × Material Type combinations. A row's `size` MUST be one of these strings, copied " +
-    "verbatim. They are grouped as `Form Type | Material Type`; pick the size from the group that " +
-    "matches the row's form and material.\n\n" + body + '\n';
+  const specTotal = Object.keys(specs).reduce(function (n, k) { return n + specs[k].length; }, 0);
+  return "THIS SHOP'S LIVE MATERIAL CATALOG — " + total + " sizes and " + specTotal + " specifications across " +
+    keys.length + " Form Type × Material Type combinations. BOTH the `size` AND the `specification` on a " +
+    "row MUST be copied verbatim from the group that matches that row's Form Type and Material Type. " +
+    "A specification is NOT interchangeable between forms: A36 is a Plate spec and is not valid for " +
+    "Sheet; sheet gauges take sheet specs (A1011 CS Type B and the like). If the group below lists no " +
+    "specification you can justify, say so in the row's `note` and lower confidence rather than " +
+    "borrowing one from another form.\n\n" + body +
+    (extra.length ? '\n\n' + extra.join('\n\n') : '') + '\n';
 }
 
 // THE SHOP'S FITTING VOCABULARY, rendered for the take-off prompt. Unlike the size catalog this is
