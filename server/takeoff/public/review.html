@@ -37,6 +37,7 @@
   .busy.show{display:block;}
   .busy.err{background:var(--red);}
   .busy.ok{background:var(--grn);}
+  .busy.warn{background:#b45309;}
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;overflow:hidden;}
   .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:13px 18px;border-bottom:1px solid var(--line);background:#fafbfc;}
   .card h2 .lt{text-transform:none;letter-spacing:0;font-weight:400;color:var(--mut);}
@@ -130,7 +131,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.47 · 2026-07-29";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.48 · 2026-07-29";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -425,18 +426,38 @@
 
   // Free-text rename straight from the "On your project" box — the one control that covers
   // "change it to something neither side proposed".
+  // Save WAS working — it wrote to the project and said nothing, then re-rendered a row that looked
+  // identical, which is indistinguishable from a dead button. Renaming an unmatched drawing usually
+  // leaves it unmatched (nothing the take-off read has that name either), so silence was the norm.
+  // It now reports what it did, refuses a no-op, and can't be double-clicked mid-save.
   async function reconRenameVal(kind,id,inputId){
     const el=document.getElementById(inputId); if(!el) return;
-    const v=String(el.value||"").trim(); if(!v) return;
+    const v=String(el.value||"").trim();
+    const noun=kind==='component'?'component':'drawing';
+    if(!v){ setBusy("Type a name first — an empty "+noun+" name can't be saved.","warn"); clearBusy(2600); return; }
+    const list=kind==='component'?arr(PROJECT_SCOPE.components):arr(PROJECT_SCOPE.drawings);
+    const rec=list.filter(function(x){ return String(x.id)===String(id); })[0];
+    const was=rec?String((kind==='component'?rec.name:rec.number)||""):"";
+    if(was && was===v){
+      setBusy("That's already its name on the project — nothing to save.","warn"); clearBusy(2600); return;
+    }
+    const btn=el.parentNode?el.parentNode.querySelector("button"):null;
+    if(btn){ btn.disabled=true; btn.textContent="saving…"; }
+    setBusy("<span class=\"spin\"></span>Renaming on the project…");
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/update",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({kind:kind,id:id,value:v})});
       const d=await r.json();
       if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
-      const list=kind==='component'?arr(PROJECT_SCOPE.components):arr(PROJECT_SCOPE.drawings);
       list.forEach(function(x){ if(String(x.id)===String(id)){ if(kind==='component') x.name=v; else x.number=v; } });
+      setBusy('✓ Saved on the project — '+(was?('"'+esc(was)+'" is now '):'')+'"'+esc(v)+'".'+
+        (kind==='drawing' ? ' <span style="opacity:.85">If it still shows as unmatched, nothing the take-off read carries that number either.</span>' : ''),"ok");
+      clearBusy(4200);
       render();
-    }catch(e){ alert("Rename failed: "+e.message); }
+    }catch(e){
+      if(btn){ btn.disabled=false; btn.textContent="save"; }
+      setBusy("⚠ Rename failed: "+esc(e.message||e),"err"); clearBusy(6000);
+    }
   }
 
   async function reconRenameIdx(kind,i){
