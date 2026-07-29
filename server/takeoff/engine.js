@@ -143,6 +143,30 @@ const SYNOPSIS_SCHEMA = {
             why_it_matters: { type: "string" },
           }, required: ["item"] },
         },
+        lists_compared: {
+          type: "array",
+          description: "WHEN THE PACKAGE HAS MORE THAN ONE PARTS LIST, compare them to EACH OTHER and report it here — one entry per pair. Two near-identical lists are the dangerous case: they are usually a revision or a parent/child pair, and the few lines where they differ are exactly what an estimator needs to see. Empty when there is only one list.",
+          items: {
+            type: "object",
+            properties: {
+              list_a: { type: "string", description: "The document you treated as authoritative." },
+              list_b: { type: "string", description: "The other one." },
+              relationship: { type: "string", description: "'nested' (b's items are already inside a), 'revision' (same scope, different issue/date), 'separate' (genuinely different scopes), or 'unclear'." },
+              items_in_common: { type: "number", description: "Lines that appear on both and agree." },
+              only_in_a: { type: "array", items: { type: "object", properties: { item: { type: "string" }, note: { type: "string" } }, required: ["item"] }, description: "On list A, absent from list B." },
+              only_in_b: { type: "array", items: { type: "object", properties: { item: { type: "string" }, note: { type: "string" } }, required: ["item"] }, description: "On list B, absent from list A — if you counted from A, THESE ARE THE LINES AT RISK OF BEING MISSED. Say for each whether you included it." },
+              differences: {
+                type: "array", description: "On both, but the quantity, size, length, grade or weight disagrees.",
+                items: { type: "object", properties: {
+                  item: { type: "string" }, a_says: { type: "string" }, b_says: { type: "string" },
+                  used: { type: "string", description: "Which value went into the BOM." },
+                }, required: ["item"] },
+              },
+              counted_from: { type: "string", description: "Which list the material was actually taken off, and why that one." },
+            },
+            required: ["list_a", "list_b", "relationship"],
+          },
+        },
         mismatches: {
           type: "array", description: "Present in BOTH but they disagree — quantity, length, size, grade or finish.",
           items: { type: "object", properties: {
@@ -257,7 +281,15 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "cross_check 'corrected', and record both values in synopsis.reconciliation.mismatches.\n" +
     "NEVER DOUBLE-COUNT: a member that is both listed and drawn is ONE row, never two. If the package has " +
     "no list of any kind, set reconciliation.performed=false and use cross_check 'no_list' — do not " +
-    "pretend a check happened.\n\n";
+    "pretend a check happened.\n\n" +
+    "TWO PARTS LISTS? COMPARE THEM TO EACH OTHER. When a package carries more than one bill of material, " +
+    "do NOT assume one supersedes the other and quietly take off from the bigger one. Work them against " +
+    "each other line by line and fill in synopsis.reconciliation.lists_compared: what is on both, what is " +
+    "on ONLY ONE, and every line where the quantity, size or grade disagrees. Say which you counted from " +
+    "and why. Near-identical lists are the dangerous case, not the easy one — they are usually a revision " +
+    "or a parent/child pair, and the handful of lines that differ is the whole point. Anything present on " +
+    "the list you did NOT count from must be explicitly included or explicitly explained; it must never " +
+    "just fall out.\n\n";
 
   const outputBOM =
     "OUTPUT DISCIPLINE (critical): Return `rows` as a real JSON ARRAY of row objects — NEVER a " +
