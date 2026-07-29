@@ -139,13 +139,16 @@ function calcUnitWeight(weightPerFt, lengthIn, widthIn) {
 const CTS_DEFAULTS = {
   enabled: true,
   utilThresholdPct: 35,   // convert a piece using less than this % of its stock
-  trimLinearIn: 2,        // square-up allowance added to a linear buy length
-  trimPanelIn: 1,         // burn/shear edge allowance per side on a plate buy
+  trimLinearIn: 0,        // optional extra length on a linear buy (0 = exact)
+  trimPanelIn: 0,         // optional extra per side on a plate buy (0 = exact)
   roundToIn: 1,           // buy dims round up to this increment (no 9.0313" cuts)
-  minLinearBuyIn: 12,     // supplier minimum on a cut length
-  minPanelDimIn: 6,       // supplier minimum on a cut plate dimension
   skipAtPctOfStock: 90,   // buy size this close to full stock — just take the stock
 };
+// Cut to size means the size. No supplier minimums and no default allowance: a
+// 9" x 2" part buys 9" x 2", not a wider strip or a padded one. The trim fields
+// stay available at 0 for the jobs that genuinely need an allowance, and the
+// trailing kerf comes off a converted piece too — you don't cut a piece that
+// already arrives at its finished length.
 
 function roundUpTo(val, inc) {
   const v = parseFloat(val) || 0;
@@ -174,7 +177,12 @@ function ctsLinearBuy(r, o, force) {
   // real consumed length — same definition the API used for waste_percentage.
   const used = stockL - (parseFloat(r.remnant_length_in) || 0);
   if (used <= 0) return null;
-  const buyL = roundUpTo(Math.max(used + o.trimLinearIn, o.minLinearBuyIn), o.roundToIn);
+  // One kerf comes back off: the API charges a kerf per cut including the last,
+  // but the far end of a cut-to-size piece is the supplier's cut, not yours. A
+  // lone 6" part then buys 6" exactly instead of 6.125" rounded up to 7".
+  const net = Math.max(used - (parseFloat(o.kerf1D) || 0), 0);
+  if (net <= 0) return null;
+  const buyL = roundUpTo(net + o.trimLinearIn, o.roundToIn);
   if (!force && buyL >= stockL * (o.skipAtPctOfStock / 100)) return null;
   const remnant = Math.max(buyL - used, 0);
   return {
@@ -203,8 +211,8 @@ function ctsPanelBuy(r, o, force) {
     usedArea += l * w;
   }
   if (maxX <= 0 || maxY <= 0) return null;
-  const buyL = Math.min(roundUpTo(Math.max(maxX + 2 * o.trimPanelIn, o.minPanelDimIn), o.roundToIn), stockL);
-  const buyW = Math.min(roundUpTo(Math.max(maxY + 2 * o.trimPanelIn, o.minPanelDimIn), o.roundToIn), stockW);
+  const buyL = Math.min(roundUpTo(maxX + 2 * o.trimPanelIn, o.roundToIn), stockL);
+  const buyW = Math.min(roundUpTo(maxY + 2 * o.trimPanelIn, o.roundToIn), stockW);
   const buyArea = buyL * buyW;
   if (!force && buyArea >= stockL * stockW * (o.skipAtPctOfStock / 100)) return null;
   // Centre the nest in the smaller plate so trim shows on all four edges, but
@@ -243,13 +251,15 @@ function ctsItemBuyDims(row, o) {
   if (is2D) {
     return {
       is2D: true,
-      buy_length_in: roundUpTo(Math.max(partL + 2 * o.trimPanelIn, o.minPanelDimIn), o.roundToIn),
-      buy_width_in: roundUpTo(Math.max(partW + 2 * o.trimPanelIn, o.minPanelDimIn), o.roundToIn),
+      buy_length_in: roundUpTo(partL + 2 * o.trimPanelIn, o.roundToIn),
+      buy_width_in: roundUpTo(partW + 2 * o.trimPanelIn, o.roundToIn),
     };
   }
+  // No kerf here at all — this part never entered a nest, so nothing is cut
+  // out of anything. The buy is the finished length.
   return {
     is2D: false,
-    buy_length_in: roundUpTo(Math.max(partL + o.trimLinearIn, o.minLinearBuyIn), o.roundToIn),
+    buy_length_in: roundUpTo(partL + o.trimLinearIn, o.roundToIn),
     buy_width_in: 0,
   };
 }
@@ -886,7 +896,10 @@ export default function App() {
   // BOM rows the user marked cut-to-size on the Configure step. These are pulled
   // out of the nest entirely and bought as finished pieces, one per part.
   const [ctsItems, setCtsItems] = useState(new Set());
-  const results = useMemo(() => applyCutToSize(rawResults, cts, ctsOverrides), [rawResults, cts, ctsOverrides]);
+  // Kerf rides along with the cut-to-size settings: a converted piece gives back
+  // its trailing kerf, since its far end is the supplier's cut and not yours.
+  const ctsOpts = useMemo(() => ({ ...cts, kerf1D, kerf2D }), [cts, kerf1D, kerf2D]);
+  const results = useMemo(() => applyCutToSize(rawResults, ctsOpts, ctsOverrides), [rawResults, ctsOpts, ctsOverrides]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1291,7 +1304,7 @@ export default function App() {
   function autoSelectAllPatterns(data) {
     // Group the cut-to-size view, not the raw response — pattern keys are
     // positional, and converting a piece changes which group it lands in.
-    const view = applyCutToSize(data, cts, ctsOverrides);
+    const view = applyCutToSize(data, ctsOpts, ctsOverrides);
     const allKeys = new Set();
     groupResults(view.results_1d, view._nameLookup).forEach((group, gi) => {
       group.patterns.forEach((_, pi) => allKeys.add(`1d-${gi}-${pi}`));
@@ -1411,7 +1424,7 @@ export default function App() {
   function buildDirectCutLines() {
     const agg = {};
     for (const row of ctsBom) {
-      const dims = ctsItemBuyDims(row, cts);
+      const dims = ctsItemBuyDims(row, ctsOpts);
       const qty = parseInt(row.quantity, 10) || 0;
       if (!dims || qty <= 0) continue;
       const ftn = row.form_type_name || row.form_type_id;
@@ -2445,10 +2458,9 @@ export default function App() {
                     onChange={e => setCts(p => ({ ...p, trimLinearIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
                   <p className="hint">
-                    <strong>Not kerf</strong> — the 1D kerf above is already charged per cut and is
-                    inside the buy length. This is extra material on top, only if you intend to face
-                    off the supplier's cut end to get square. Set to 0 to buy part + kerf and take
-                    their cut as-is.
+                    Leave at 0 and a cut-to-size piece is the finished length, nothing added.
+                    Raise it only if you intend to face off the supplier's cut end. Separate from
+                    kerf — a piece that arrives at length needs no cut from you.
                   </p>
                 </div>
                 <div className="field">
@@ -2459,9 +2471,8 @@ export default function App() {
                     onChange={e => setCts(p => ({ ...p, trimPanelIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
                   <p className="hint">
-                    <strong>Not kerf</strong> — the 2D kerf above already spaces the parts and is
-                    inside the buy size. This is extra material on all four edges for mill edge
-                    condition, so a 9" × 6" part buys 11" × 8". Set to 0 to buy part + kerf.
+                    Leave at 0 and a 9" × 2" part buys 9" × 2" — no minimum width, no padding.
+                    Raise it only if you want mill edge to face off, which adds to all four edges.
                   </p>
                 </div>
                 <div className="field">
@@ -2472,30 +2483,6 @@ export default function App() {
                     onChange={e => setCts(p => ({ ...p, roundToIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
                   <p className="hint">Keeps buy sizes orderable — nobody cuts 9.0313".</p>
-                </div>
-                <div className="field">
-                  <label>Supplier minimum — cut length (in)</label>
-                  <input
-                    type="number" min="0" step="1" className="input"
-                    value={cts.minLinearBuyIn}
-                    onChange={e => setCts(p => ({ ...p, minLinearBuyIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
-                  />
-                  <p className="hint">
-                    Shortest piece your supplier will cut and sell. A 6" part buys this length
-                    if it's longer. Set to 0 if they'll cut any length.
-                  </p>
-                </div>
-                <div className="field">
-                  <label>Supplier minimum — plate dimension (in)</label>
-                  <input
-                    type="number" min="0" step="1" className="input"
-                    value={cts.minPanelDimIn}
-                    onChange={e => setCts(p => ({ ...p, minPanelDimIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
-                  />
-                  <p className="hint">
-                    Narrowest strip your supplier will shear or burn. At 6", a 9" × 2" part buys
-                    11" × 6" instead of 11" × 4". Set to 0 to buy exactly part + trim.
-                  </p>
                 </div>
               </div>
               <div className="config-section">
@@ -2589,9 +2576,9 @@ export default function App() {
                 </div>
                 <p className="hint">
                   Checked items are taken out of the nest and bought as finished pieces —
-                  one piece per part, cut to the part size plus trim. They draw nothing
-                  from on-hand stock. Leave an item unchecked to nest it; a piece that
-                  still ends up barely used gets re-quoted automatically after nesting.
+                  one piece per part, at the part's own size. They draw nothing from
+                  on-hand stock. Leave an item unchecked to nest it; a piece that still
+                  ends up barely used gets re-quoted automatically after nesting.
                 </p>
                 {selectedBom.length === 0 ? (
                   <p className="hint">No items selected</p>
@@ -2608,7 +2595,7 @@ export default function App() {
                     <tbody>
                       {selectedBom.map(item => {
                         const on = ctsItems.has(item.id);
-                        const dims = ctsItemBuyDims(item, cts);
+                        const dims = ctsItemBuyDims(item, ctsOpts);
                         const qty = parseInt(item.quantity, 10) || 0;
                         const wpf = parseFloat(item.weight_per_ft) || 0;
                         const is2D = item.nest_type === 'Panel';
@@ -3375,7 +3362,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.11 — vendor naming scrubbed from user-facing errors</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.12 — cut to size is the size: no minimums, no padding</span></footer>
     </div>
   );
 }
