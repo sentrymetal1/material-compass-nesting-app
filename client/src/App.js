@@ -231,6 +231,71 @@ function ctsPanelBuy(r, o, force) {
   };
 }
 
+/** Finished size to buy for ONE part of a BOM row marked cut-to-size.
+ *  One piece per part: the part's own dimensions plus trim, rounded up, floored
+ *  at the supplier minimum. Nothing is nested, so there is no bounding box. */
+function ctsItemBuyDims(row, o) {
+  const partL = parseFloat(row.length_nest) || 0;
+  if (partL <= 0) return null;
+  const is2D = row.nest_type === 'Panel';
+  const partW = is2D ? (parseFloat(row.width_nest) || 0) : 0;
+  if (is2D && partW <= 0) return null;
+  if (is2D) {
+    return {
+      is2D: true,
+      buy_length_in: roundUpTo(Math.max(partL + 2 * o.trimPanelIn, o.minPanelDimIn), o.roundToIn),
+      buy_width_in: roundUpTo(Math.max(partW + 2 * o.trimPanelIn, o.minPanelDimIn), o.roundToIn),
+    };
+  }
+  return {
+    is2D: false,
+    buy_length_in: roundUpTo(Math.max(partL + o.trimLinearIn, o.minLinearBuyIn), o.roundToIn),
+    buy_width_in: 0,
+  };
+}
+
+/**
+ * Which BOM rows are worth suggesting for cut-to-size, before any nesting has run.
+ *
+ * Judged per nest group, not per row. A single 32" pipe is the only 1-1/4" pipe
+ * on the job, so it can never fill a 24' stick — but Items 100/110/120 are all
+ * MC6 x 18 and nest into one bar beautifully. Looking at rows in isolation would
+ * wrongly flag the channels, so the test is whether the *whole group* can fill
+ * `utilThresholdPct` of the shortest stock available to it.
+ */
+function suggestCtsItems(rows, stockList, enabledIds, o) {
+  const groups = {};
+  for (const row of rows) {
+    const key = `${row.form_type_id}|${row.material_type_id}|${row.material_name || ''}`;
+    if (!groups[key]) groups[key] = { rows: [], total: 0, is2D: row.nest_type === 'Panel' };
+    const qty = parseInt(row.quantity, 10) || 0;
+    const l = parseFloat(row.length_nest) || 0;
+    const w = parseFloat(row.width_nest) || 0;
+    groups[key].rows.push(row);
+    groups[key].total += row.nest_type === 'Panel' ? qty * l * w : qty * l;
+  }
+  const suggested = new Set();
+  for (const g of Object.values(groups)) {
+    const first = g.rows[0];
+    const candidates = stockList.filter(s =>
+      enabledIds.has(s.id) &&
+      String(s.form_type) === String(first.form_type_id) &&
+      String(s.material_type) === String(first.material_type_id) &&
+      (g.is2D ? parseFloat(s.stock_width) > 0 : !(parseFloat(s.stock_width) > 0))
+    );
+    if (candidates.length === 0) continue; // no stock to compare against
+    const capacities = candidates.map(s => g.is2D
+      ? (parseFloat(s.stock_length) || 0) * (parseFloat(s.stock_width) || 0)
+      : (parseFloat(s.stock_length) || 0)).filter(c => c > 0);
+    if (capacities.length === 0) continue;
+    const smallest = Math.min(...capacities);
+    if (g.total < smallest * (o.utilThresholdPct / 100)) {
+      g.rows.forEach(r => suggested.add(r.id));
+    }
+  }
+  return suggested;
+}
+
 /**
  * Re-quote low-utilization stock pieces as cut-to-size buys.
  * Pure — never mutates `data`, so it can be re-derived whenever settings change.
@@ -818,6 +883,9 @@ export default function App() {
   const [rawResults, setRawResults] = useState(null);
   const [cts, setCts] = useState(CTS_DEFAULTS);
   const [ctsOverrides, setCtsOverrides] = useState({});
+  // BOM rows the user marked cut-to-size on the Configure step. These are pulled
+  // out of the nest entirely and bought as finished pieces, one per part.
+  const [ctsItems, setCtsItems] = useState(new Set());
   const results = useMemo(() => applyCutToSize(rawResults, cts, ctsOverrides), [rawResults, cts, ctsOverrides]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1337,6 +1405,59 @@ export default function App() {
     );
   }
 
+  /** Purchase lines for BOM rows marked cut-to-size on the Configure step.
+   *  One buy piece per part, so a qty-4 row becomes 4 pieces at the finished
+   *  size. These never touched the nester, so they have no cut pattern. */
+  function buildDirectCutLines() {
+    const agg = {};
+    for (const row of ctsBom) {
+      const dims = ctsItemBuyDims(row, cts);
+      const qty = parseInt(row.quantity, 10) || 0;
+      if (!dims || qty <= 0) continue;
+      const ftn = row.form_type_name || row.form_type_id;
+      const mtn = row.material_type_name || row.material_type_id;
+      const specName = row.spec_name || '';
+      const matName = row.material_name || '';
+      const key = `${ftn}|${mtn}|${specName}|${matName}|${dims.buy_length_in}|${dims.buy_width_in}|cts-item`;
+      if (!agg[key]) {
+        const wpf = parseFloat(row.weight_per_ft) || 0;
+        const sizeDesc = dims.is2D
+          ? `${inToFt(dims.buy_length_in)} × ${inToFt(dims.buy_width_in)}`
+          : inToFt(dims.buy_length_in);
+        agg[key] = {
+          form_type_id: row.form_type_id,
+          material_type_id: row.material_type_id,
+          specification_id: row.specification_id,
+          material_id: row.material_id,
+          description: `${ftn} | ${mtn} | ${specName} | ${matName} | ${sizeDesc} | CUT TO SIZE`,
+          form_type_name: ftn,
+          material_type_name: mtn,
+          spec_name: specName,
+          material_name: matName,
+          material_size: matName,
+          stock_length_in: dims.buy_length_in,
+          stock_width_in: dims.buy_width_in,
+          quantity: 0,
+          feet_length: dims.buy_length_in / 12,
+          weight_per_ft: wpf,
+          unit_weight: calcUnitWeight(wpf, dims.buy_length_in, dims.is2D ? dims.buy_width_in : 0),
+          total_weight: 0,
+          total_length: dims.is2D ? 0 : (dims.buy_length_in / 12),
+          total_plate_width: dims.is2D ? dims.buy_width_in : 0,
+          is2D: dims.is2D,
+          cut_to_size: true,
+          cts_item: true,
+          marks: [],
+        };
+      }
+      agg[key].quantity += qty;
+      agg[key].marks.push(row.bom_item);
+    }
+    const lines = Object.values(agg);
+    lines.forEach(l => { l.total_weight = l.unit_weight * l.quantity; });
+    return lines;
+  }
+
   function buildPurchaseLines() {
     if (!results) return [];
     const { selected_1d, selected_2d } = getSelectedResults();
@@ -1388,7 +1509,9 @@ export default function App() {
     }
     const lines = Object.values(agg);
     lines.forEach(line => { line.total_weight = line.unit_weight * line.quantity; });
-    return lines;
+    // Items marked cut-to-size on Configure never entered the nest, so they have
+    // no pattern to derive from — append their buy lines here.
+    return [...lines, ...buildDirectCutLines()];
   }
 
   // ─── FIX: savePurchaseList with auto-refresh after save ───
@@ -1508,9 +1631,14 @@ export default function App() {
   }
 
   const selectedBom = bom.filter(b => selected.has(b.id) && b.nest_type);
+  // Rows marked cut-to-size never reach the nester; everything else does.
+  const ctsBom = selectedBom.filter(b => ctsItems.has(b.id));
+  const nestBom = selectedBom.filter(b => !ctsItems.has(b.id));
   const formTypes = [...new Set(selectedBom.map(b => b.form_type_name).filter(Boolean))];
   const matTypes = [...new Set(selectedBom.map(b => b.material_type_name).filter(Boolean))];
-  const bomKeys = new Set(selectedBom.map(b => `${b.form_type_id}|${b.material_type_id}`));
+  // Keyed off nestBom, not selectedBom: a form/material that is entirely
+  // cut-to-size needs no stock, so its rows drop out of the Stock Sizes table.
+  const bomKeys = new Set(nestBom.map(b => `${b.form_type_id}|${b.material_type_id}`));
   const matchedStock = stock.filter(s => bomKeys.has(`${s.form_type}|${s.material_type}`));
   const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length;
 
@@ -1547,7 +1675,7 @@ export default function App() {
       const parts2D = [];
       const neededKeys1D = new Set();
       const neededKeys2D = new Set();
-      for (const row of selectedBom) {
+      for (const row of nestBom) {
         if (!row.nest_type || !row.quantity || !row.length_nest) continue;
         if (row.nest_type === 'Linear') {
           parts1D.push({
@@ -1632,6 +1760,19 @@ export default function App() {
         stock_2d: stock2D,
       };
       setLastNestPayload(payload);
+      // Everything selected is cut-to-size, so there is nothing to nest. The API
+      // rejects an empty parts payload, so synthesize an empty plan instead of
+      // calling it — the direct buy lines carry the whole job.
+      if (parts1D.length === 0 && parts2D.length === 0) {
+        setRawResults({
+          project_id: payload.project_id, run_number: 1, results_1d: [], results_2d: [],
+          summary: { total_stock_pieces: 0, avg_waste_pct_1d: 0, avg_waste_pct_2d: 0, errors: [] },
+          _nameLookup: {},
+        });
+        setSelectedPatterns(new Set());
+        setStep(3);
+        return;
+      }
       const resp = await fetch(`${API}/api/nest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2356,6 +2497,98 @@ export default function App() {
 
               <div className="config-section config-full">
                 <div className="stock-header">
+                  <h3>Cut These Items To Size</h3>
+                  <div className="stock-controls">
+                    <div className="btn-group">
+                      <button
+                        className="btn btn-small"
+                        title="Replace the checked set with items whose whole nest group can't fill the utilization threshold on the smallest stock available to it"
+                        onClick={() => setCtsItems(suggestCtsItems(selectedBom, stock, enabledStock, cts))}
+                      >
+                        Suggest
+                      </button>
+                      <button className="btn btn-small" onClick={() => setCtsItems(new Set())}>Clear</button>
+                    </div>
+                  </div>
+                </div>
+                <p className="hint">
+                  Checked items are taken out of the nest and bought as finished pieces —
+                  one piece per part, cut to the part size plus trim. They draw nothing
+                  from on-hand stock. Leave an item unchecked to nest it; a piece that
+                  still ends up barely used gets re-quoted automatically after nesting.
+                </p>
+                {selectedBom.length === 0 ? (
+                  <p className="hint">No items selected</p>
+                ) : (
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 40 }}>Cut</th>
+                        <th>Mark</th><th>Type</th><th>Form</th><th>Material</th><th>Spec</th>
+                        <th>Size</th><th className="num">Qty</th><th className="num">Part</th>
+                        <th className="num">Buy Each</th><th className="num">Total Wt</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedBom.map(item => {
+                        const on = ctsItems.has(item.id);
+                        const dims = ctsItemBuyDims(item, cts);
+                        const qty = parseInt(item.quantity, 10) || 0;
+                        const wpf = parseFloat(item.weight_per_ft) || 0;
+                        const is2D = item.nest_type === 'Panel';
+                        const partL = parseFloat(item.length_nest) || 0;
+                        const partW = parseFloat(item.width_nest) || 0;
+                        const totalWt = dims
+                          ? calcUnitWeight(wpf, dims.buy_length_in, dims.is2D ? dims.buy_width_in : 0) * qty
+                          : 0;
+                        return (
+                          <tr key={item.id} style={on ? { background: '#f1f8f2' } : undefined}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                disabled={!dims}
+                                title={dims ? '' : 'Needs a part length (and width for panels)'}
+                                onChange={() => setCtsItems(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(item.id)) next.delete(item.id); else next.add(item.id);
+                                  return next;
+                                })}
+                              />
+                            </td>
+                            <td className="mono">{item.bom_item}</td>
+                            <td>
+                              <span className={`badge ${is2D ? 'badge-2d' : 'badge-1d'}`}>{item.nest_type}</span>
+                            </td>
+                            <td>{item.form_type_name}</td>
+                            <td>{item.material_type_name}</td>
+                            <td>{item.spec_name}</td>
+                            <td>{item.material_name}</td>
+                            <td className="num">{qty || '—'}</td>
+                            <td className="num">{is2D ? `${partL}" × ${partW}"` : `${partL}"`}</td>
+                            <td className="num">
+                              {dims
+                                ? (dims.is2D ? `${dims.buy_length_in}" × ${dims.buy_width_in}"` : `${dims.buy_length_in}"`)
+                                : '—'}
+                            </td>
+                            <td className="num">{on && totalWt > 0 ? fmtLbs(totalWt) : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+                <p className="hint">
+                  {ctsBom.length} of {selectedBom.length} items cut to size — {nestBom.length} going to the nester
+                  {ctsBom.length > 0 && (() => {
+                    const wt = buildDirectCutLines().reduce((s, l) => s + l.total_weight, 0);
+                    return wt > 0 ? ` — ${fmtLbs(wt)} bought direct` : '';
+                  })()}
+                </p>
+              </div>
+
+              <div className="config-section config-full">
+                <div className="stock-header">
                   <h3>Stock Sizes</h3>
                   <div className="stock-controls">
                     <div className="btn-group">
@@ -2507,7 +2740,7 @@ export default function App() {
               <button onClick={() => setStep(1)} className="btn">← Back</button>
               <div className="btn-group" style={{ alignItems: 'center' }}>
                 <span className="count">{activeStockCount} stock sizes active</span>
-                <button onClick={runNesting} className="btn btn-primary" disabled={loading || activeStockCount === 0}>
+                <button onClick={runNesting} className="btn btn-primary" disabled={loading || (activeStockCount === 0 && nestBom.length > 0)}>
                   {loading ? 'Running...' : 'Run Nesting'}
                 </button>
               </div>
@@ -2545,12 +2778,19 @@ export default function App() {
                   <span className="summary-val">{results.summary.avg_waste_pct_1d?.toFixed(1)}%</span>
                   <span className="summary-label">Length Waste (1D)</span>
                 </div>
-                {results._ctsCount > 0 && (
-                  <div className="summary-item">
-                    <span className="summary-val" style={{ color: 'var(--green)' }}>{results._ctsCount}</span>
-                    <span className="summary-label">Cut To Size</span>
-                  </div>
-                )}
+                {(() => {
+                  // Converted stock pieces plus the pieces bought direct for items
+                  // marked cut-to-size on Configure — both are cut-to-size buys.
+                  const directPieces = buildDirectCutLines().reduce((s, l) => s + l.quantity, 0);
+                  const total = (results._ctsCount || 0) + directPieces;
+                  if (total === 0) return null;
+                  return (
+                    <div className="summary-item">
+                      <span className="summary-val" style={{ color: 'var(--green)' }}>{total}</span>
+                      <span className="summary-label">Cut To Size</span>
+                    </div>
+                  );
+                })()}
                 {weightSummary && (
                   <>
                     <div className="summary-item">
@@ -2598,6 +2838,42 @@ export default function App() {
                     {' — need '}<strong>{s.used}</strong>, have <strong>{s.qty}</strong>, short <strong>{s.short}</strong>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Items pulled out of the nest on Configure — bought, not nested */}
+            {ctsBom.length > 0 && (
+              <div className="result-section">
+                <h3>Cut To Size — Bought Direct</h3>
+                <p className="hint">
+                  These {ctsBom.length} item{ctsBom.length > 1 ? 's were' : ' was'} marked cut to size on
+                  Configure, so {ctsBom.length > 1 ? 'they' : 'it'} never entered the nest — one buy piece
+                  per part, no cut pattern. Included in the purchase list.
+                </p>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Marks</th><th>Description</th><th className="num">Pieces</th>
+                      <th className="num">Buy Each</th><th className="num">Unit Wt</th><th className="num">Total Wt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {buildDirectCutLines().map((line, i) => (
+                      <tr key={i}>
+                        <td className="mono">{line.marks.join(', ')}</td>
+                        <td>{line.form_type_name} | {line.material_type_name} | {line.spec_name} | {line.material_name}</td>
+                        <td className="num">{line.quantity}</td>
+                        <td className="num">
+                          {line.is2D
+                            ? `${line.stock_length_in}" × ${line.stock_width_in}"`
+                            : `${line.stock_length_in}"`}
+                        </td>
+                        <td className="num">{line.unit_weight > 0 ? fmtLbs(line.unit_weight) : '—'}</td>
+                        <td className="num">{line.total_weight > 0 ? fmtLbs(line.total_weight) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
 
@@ -3023,7 +3299,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.7 — cut to size for low-utilization pieces</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v1.8 — pick cut-to-size items on Configure</span></footer>
     </div>
   );
 }
