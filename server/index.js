@@ -786,9 +786,16 @@ function buildScopeTreeContext(tree, excluded, aliases, documents) {
       '- DO NOT DOUBLE-COUNT. A member listed in a parts list AND drawn on a sheet is ONE row, not two. Where ' +
       'the two disagree, follow the parts list for quantity and length, follow the drawing for how it is used, ' +
       'and say so once in `notes`.\n' +
-      '- When a row comes from one of these documents, set `source_sheet` to that document\'s number EXACTLY as ' +
-      'written above, and set `component` from the component it is listed under above (or the best-fitting ' +
-      'component if it covers several).\n' +
+      '- CITE THE DRAWING WHEN THERE IS ONE. If a member is on a parts list AND detailed on a drawing, set ' +
+      '`source_sheet` to the DRAWING — that is the sheet the shop fabricates from, and it is what makes the row ' +
+      'traceable — and set `cross_check` to "both" to record that the list confirmed it. Cite a parts list in ' +
+      '`source_sheet` ONLY when it is the sole place the member appears. Tagging every row to the parts list ' +
+      'because that is where the quantity came from leaves every drawing looking unused.\n' +
+      '- Set `component` from the component the item is listed under above (or the best-fitting component if the ' +
+      'document covers several).\n' +
+      '- A SUB-ASSEMBLY parts list whose items are already included in a top-level parts list is NOT a second ' +
+      'source of material: count each member once, from whichever list is authoritative, and say in `notes` which ' +
+      'you treated as the parent.\n' +
       '- A specification is read for grades, finishes and requirements — raise no rows from it.\n\n'
     : '';
 
