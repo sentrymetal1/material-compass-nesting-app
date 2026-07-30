@@ -1470,11 +1470,14 @@ export default function App() {
    *  already in memory are shown straight away; otherwise the project's saved
    *  run is fetched first, so this works on a fresh page load too. */
   async function viewNestingResults() {
-    if (results) { setStep(3); return; }
+    if (results) { setError(''); setStep(3); return; }
     setLoadingSavedResults(true);
     try {
-      await fetchSavedNestingResults();
-      setStep(3);
+      // Only navigate if a run was actually loaded — stepping to Results with
+      // nothing to render leaves a blank page with no way back.
+      const found = await fetchSavedNestingResults();
+      if (found) { setError(''); setStep(3); }
+      else setError('No saved nesting run for this project yet — select items and run one first.');
     } finally {
       setLoadingSavedResults(false);
     }
@@ -1486,9 +1489,9 @@ export default function App() {
         ? `${API}/api/standalone/nesting-results?manufacturer_id=${manufactureId}`
         : `${API}/api/project/${projectId}/nesting-results`;
       const resp = await fetch(url);
-      if (!resp.ok) return;
+      if (!resp.ok) return false;
       const data = await resp.json();
-      if (!data.found) return;
+      if (!data.found) return false;
       if (data._nameLookup && bom.length > 0) {
         bom.forEach(b => {
           if (b.form_type_id && b.form_type_name) data._nameLookup[b.form_type_id] = b.form_type_name;
@@ -1502,8 +1505,10 @@ export default function App() {
       autoSelectAllPatterns(data);
       if (data.run_header?.kerf_1d) setKerf1D(data.run_header.kerf_1d);
       if (data.run_header?.kerf_2d) setKerf2D(data.run_header.kerf_2d);
+      return true;
     } catch (err) {
       console.error('Error fetching saved nesting results:', err);
+      return false;
     }
   }
 
@@ -3128,6 +3133,24 @@ export default function App() {
         )}
 
         {/* Step 3: Results */}
+        {/* Never leave Results blank. Any route that lands here without a plan
+            gets an explanation and a way out, rather than an empty page. */}
+        {step === 3 && !results && (
+          <div className="card">
+            <h2>Nesting Results</h2>
+            <p className="hint">
+              Nothing to show — no nesting run is loaded. Pick your items and run a nest,
+              and the cut patterns will appear here.
+            </p>
+            <div className="card-footer">
+              <button onClick={() => setStep(1)} className="btn">← {isStandalone ? 'Edit Parts' : 'Select Items'}</button>
+              <button onClick={() => setStep(2)} className="btn btn-primary" disabled={selected.size === 0}>
+                Configure →
+              </button>
+            </div>
+          </div>
+        )}
+
         {step === 3 && results && (
           <div className="card">
             <div className="card-header">
@@ -3794,7 +3817,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.7 — get back to results to print; drop price columns</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.7.1 — Results is never blank</span></footer>
     </div>
   );
 }
