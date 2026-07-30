@@ -264,6 +264,136 @@ function ctsItemBuyDims(row, o) {
   };
 }
 
+// ─── Nest groups ────────────────────────────────────────────────────────────
+// One card per material, which is what makes typed stock entry workable: the
+// card header already says form, material and size, so a stock row only needs
+// a length and a quantity. Every comparable tool scopes a run this way.
+//
+// Spec is deliberately NOT part of the key. The nester matches stock on
+// form_type + material_origin plus an optional material_name filter, and never
+// on specification — so A36 and A572 channel of the same size draw from the
+// same stock and must share a card. nest_type is in the key so a form that
+// somehow carries both linear and panel rows can't collapse into one card.
+function nestGroupKey(row) {
+  return `${row.nest_type}|${row.form_type_id}|${row.material_type_id}|${row.material_name || ''}`;
+}
+
+function buildNestGroups(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const key = nestGroupKey(row);
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        nest_type: row.nest_type,
+        is2D: row.nest_type === 'Panel',
+        form_type_id: row.form_type_id,
+        form_type_name: row.form_type_name || String(row.form_type_id || ''),
+        material_type_id: row.material_type_id,
+        material_type_name: row.material_type_name || String(row.material_type_id || ''),
+        material_name: row.material_name || '',
+        specs: [],
+        rows: [],
+        pieces: 0,
+        totalLength: 0,
+        totalArea: 0,
+      });
+    }
+    const g = map.get(key);
+    if (row.spec_name && !g.specs.includes(row.spec_name)) g.specs.push(row.spec_name);
+    const qty = parseInt(row.quantity, 10) || 0;
+    const l = parseFloat(row.length_nest) || 0;
+    const w = parseFloat(row.width_nest) || 0;
+    g.rows.push(row);
+    g.pieces += qty;
+    if (g.is2D) g.totalArea += qty * l * w; else g.totalLength += qty * l;
+  }
+  return [...map.values()].sort((a, b) =>
+    a.form_type_name.localeCompare(b.form_type_name) ||
+    a.material_type_name.localeCompare(b.material_type_name) ||
+    a.material_name.localeCompare(b.material_name));
+}
+
+/** How much of the smallest entered stock this group's parts would fill.
+ *  Null when nothing is entered yet — the caller says "no stock" instead. */
+function groupFillPct(group, entries) {
+  const caps = (entries || [])
+    .map(s => group.is2D
+      ? (parseFloat(s.len) || 0) * (parseFloat(s.wid) || 0)
+      : (parseFloat(s.len) || 0))
+    .filter(c => c > 0);
+  if (caps.length === 0) return null;
+  const need = group.is2D ? group.totalArea : group.totalLength;
+  const smallest = Math.min(...caps);
+  return smallest > 0 ? (need / smallest) * 100 : null;
+}
+
+/** Library sizes offered as chips for a group — the stock rows that actually
+ *  match its form + material.
+ *
+ *  Deduped by size, because the library carries one row per material size and
+ *  they collapse to the same chip — EXCEPT rows carrying a reference (heat #,
+ *  bin). Those are specific physical pieces, not a size you can order any
+ *  number of, so two of them never merge. Quantity and reference ride along on
+ *  the chip so clicking it doesn't quietly discard what's on hand. */
+function groupChips(group, stockLibrary) {
+  const seen = new Set();
+  const out = [];
+  for (const s of stockLibrary || []) {
+    if (String(s.form_type) !== String(group.form_type_id)) continue;
+    if (String(s.material_type) !== String(group.material_type_id)) continue;
+    const len = parseFloat(s.stock_length) || 0;
+    const wid = parseFloat(s.stock_width) || 0;
+    if (len <= 0) continue;
+    if (group.is2D !== (wid > 0)) continue;   // panels need width, linear must not have one
+    const ref = s.reference || '';
+    const label = (group.is2D ? `${len}x${wid}` : String(len)) + (ref ? `#${ref}` : '');
+    if (seen.has(label)) continue;
+    seen.add(label);
+    const qty = String(s.quantity ?? '').trim();
+    out.push({
+      label, len, wid, reference: ref,
+      quantity: qty,
+      standard: String(s.is_standard) === 'Yes',
+    });
+  }
+  return out.sort((a, b) => (a.len - b.len) || (a.wid - b.wid));
+}
+
+/** Turn the per-group stock entries into the API's stock_1d / stock_2d arrays.
+ *  Each entry is tagged with the group's material_name so the nester confines
+ *  it to that material; a blank quantity stays null, which the API reads as an
+ *  uncapped supply. */
+function buildStockPayload(groups, groupStock) {
+  const stock_1d = [];
+  const stock_2d = [];
+  groups.forEach((g, gi) => {
+    (groupStock[g.key] || []).forEach((s, si) => {
+      const len = parseFloat(s.len) || 0;
+      if (len <= 0) return;
+      const wid = parseFloat(s.wid) || 0;
+      if (g.is2D && wid <= 0) return;
+      const qtyRaw = String(s.qty ?? '').trim();
+      const qty = qtyRaw === '' ? null : (parseInt(qtyRaw, 10) || null);
+      const entry = {
+        stock_id: `g${gi}s${si}`,
+        stock_label: `${g.form_type_name} | ${g.material_type_name}`,
+        form_type: String(g.form_type_id),
+        material_origin: String(g.material_type_id),
+        material_name: g.material_name || '',
+        quantity: qty,
+        reference: s.ref || '',
+        density: 0,
+        length_in: len,
+        is_standard: s.standard ? 'Yes' : 'No',
+      };
+      if (g.is2D) stock_2d.push({ ...entry, width_in: wid });
+      else stock_1d.push(entry);
+    });
+  });
+  return { stock_1d, stock_2d };
+}
+
 /**
  * Which BOM rows are worth suggesting for cut-to-size, before any nesting has run.
  *
@@ -896,6 +1026,11 @@ export default function App() {
   // BOM rows the user marked cut-to-size on the Configure step. These are pulled
   // out of the nest entirely and bought as finished pieces, one per part.
   const [ctsItems, setCtsItems] = useState(new Set());
+  // Stock sizes typed per nest group: { [groupKey]: [{len, wid, qty, ref, standard}] }.
+  // Starts empty on purpose — the library is offered as chips to click, not as
+  // rows to audit.
+  const [groupStock, setGroupStock] = useState({});
+  const [openGroups, setOpenGroups] = useState(new Set());
   // Kerf rides along with the cut-to-size settings: a converted piece gives back
   // its trailing kerf, since its far end is the supplier's cut and not yours.
   const ctsOpts = useMemo(() => ({ ...cts, kerf1D, kerf2D }), [cts, kerf1D, kerf2D]);
@@ -904,10 +1039,6 @@ export default function App() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
-  const [enabledStock, setEnabledStock] = useState(new Set());
-  const [stockFilter, setStockFilter] = useState('all');
-  const [newStock, setNewStock] = useState({ form_type: '', material_type: '', material_name: '', stock_length: '', stock_width: '', quantity: '1', reference: '' });
-  const [nextCustomId, setNextCustomId] = useState(900000);
   const [lastNestPayload, setLastNestPayload] = useState(null);
   const [selectedPatterns, setSelectedPatterns] = useState(new Set());
   const [showPurchasePreview, setShowPurchasePreview] = useState(false);
@@ -1280,8 +1411,6 @@ export default function App() {
   function toggleStock(id) {
     setEnabledStock(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
-  function enableAllStock() { setEnabledStock(new Set(stock.map(s => s.id))); }
-  function disableAllStock() { setEnabledStock(new Set()); }
 
   function togglePattern(key) {
     setSelectedPatterns(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
@@ -1356,6 +1485,47 @@ export default function App() {
     const firstCut = result.cuts?.[0];
     if (!firstCut) return 0;
     return weightMap[String(firstCut.bom_line_id)] || 0;
+  }
+
+  function toggleGroupOpen(key) {
+    setOpenGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function addGroupStock(key, entry) {
+    setGroupStock(prev => ({ ...prev, [key]: [...(prev[key] || []), entry] }));
+    setOpenGroups(prev => new Set(prev).add(key));
+  }
+
+  function updateGroupStock(key, idx, field, value) {
+    setGroupStock(prev => {
+      const rows = [...(prev[key] || [])];
+      if (!rows[idx]) return prev;
+      rows[idx] = { ...rows[idx], [field]: value };
+      return { ...prev, [key]: rows };
+    });
+  }
+
+  function removeGroupStock(key, idx) {
+    setGroupStock(prev => {
+      const rows = [...(prev[key] || [])];
+      rows.splice(idx, 1);
+      return { ...prev, [key]: rows };
+    });
+  }
+
+  /** Card-level mode. Cut-to-size stays per BOM row underneath, so a group can
+   *  be switched wholesale here and still be corrected row by row inside. */
+  function setGroupMode(group, mode) {
+    setCtsItems(prev => {
+      const next = new Set(prev);
+      group.rows.forEach(r => { if (mode === 'cts') next.add(r.id); else next.delete(r.id); });
+      return next;
+    });
+    setOpenGroups(prev => new Set(prev).add(group.key));
   }
 
   /** Force every stock piece behind a pattern to cut-to-size (true), full stock
@@ -1608,73 +1778,22 @@ export default function App() {
     return { totalStock, totalAllocated, totalWaste: totalStock - totalAllocated };
   }
 
-  function addCustomStock() {
-    if (!newStock.form_type || !newStock.material_type || !newStock.stock_length) return;
-    const id = nextCustomId;
-    const matchingBom = selectedBom.find(
-      b => b.form_type_name === newStock.form_type && b.material_type_name === newStock.material_type
-    );
-    const entry = {
-      id,
-      form_type: matchingBom?.form_type_id || newStock.form_type,
-      form_type_name: newStock.form_type,
-      material_type: matchingBom?.material_type_id || newStock.material_type,
-      material_type_name: newStock.material_type,
-      material_name: newStock.material_name || '',
-      stock_length: parseFloat(newStock.stock_length),
-      stock_width: newStock.stock_width ? parseFloat(newStock.stock_width) : null,
-      density: 0,
-      is_standard: 'No',
-      source: 'custom',
-      quantity: newStock.quantity || '',
-      reference: newStock.reference || '',
-    };
-    setStock(prev => [...prev, entry]);
-    setEnabledStock(prev => { const n = new Set(prev); n.add(id); return n; });
-    setNextCustomId(prev => prev + 1);
-    setNewStock(prev => ({ ...prev, material_name: '', stock_length: '', stock_width: '', quantity: '1', reference: '' }));
-  }
-
-  function removeCustomStock(id) {
-    setStock(prev => prev.filter(s => s.id !== id));
-    setEnabledStock(prev => { const n = new Set(prev); n.delete(id); return n; });
-  }
-
-  function setStockQuantity(id, value) {
-    setStock(prev => prev.map(s => s.id === id ? { ...s, quantity: value } : s));
-  }
-
   const selectedBom = bom.filter(b => selected.has(b.id) && b.nest_type);
   // Rows marked cut-to-size never reach the nester; everything else does.
   const ctsBom = selectedBom.filter(b => ctsItems.has(b.id));
   const nestBom = selectedBom.filter(b => !ctsItems.has(b.id));
   const formTypes = [...new Set(selectedBom.map(b => b.form_type_name).filter(Boolean))];
   const matTypes = [...new Set(selectedBom.map(b => b.material_type_name).filter(Boolean))];
+  // Every group in the job, including the ones bought cut to size — the card is
+  // where you switch a group between the two, so it has to be listed either way.
+  const nestGroups = buildNestGroups(selectedBom);
+  const groupsNeedingStock = nestGroups.filter(g =>
+    g.rows.some(r => !ctsItems.has(r.id)) && (groupStock[g.key] || []).every(s => !(parseFloat(s.len) > 0)));
+
   // Keyed off nestBom, not selectedBom: a form/material that is entirely
   // cut-to-size needs no stock, so its rows drop out of the Stock Sizes table.
   const bomKeys = new Set(nestBom.map(b => `${b.form_type_id}|${b.material_type_id}`));
   const matchedStock = stock.filter(s => bomKeys.has(`${s.form_type}|${s.material_type}`));
-  const activeStockCount = matchedStock.filter(s => enabledStock.has(s.id)).length;
-
-  function getFilteredStock() {
-    let list = matchedStock;
-    if (stockFilter === 'library') list = list.filter(s => s.source === 'library');
-    if (stockFilter === 'custom') list = list.filter(s => s.source === 'custom');
-    return [...list].sort((a, b) => {
-      const ftA = (a.form_type_name || a.form_type || '').toString().toLowerCase();
-      const ftB = (b.form_type_name || b.form_type || '').toString().toLowerCase();
-      if (ftA !== ftB) return ftA.localeCompare(ftB);
-      const mtA = (a.material_type_name || a.material_type || '').toString().toLowerCase();
-      const mtB = (b.material_type_name || b.material_type || '').toString().toLowerCase();
-      if (mtA !== mtB) return mtA.localeCompare(mtB);
-      const lenA = parseFloat(a.stock_length) || 0;
-      const lenB = parseFloat(b.stock_length) || 0;
-      if (lenA !== lenB) return lenA - lenB;
-      const wA = parseFloat(a.stock_width) || 0;
-      const wB = parseFloat(b.stock_width) || 0;
-      return wA - wB;
-    });
-  }
 
   async function runNesting() {
     setLoading(true);
@@ -1687,8 +1806,6 @@ export default function App() {
     try {
       const parts1D = [];
       const parts2D = [];
-      const neededKeys1D = new Set();
-      const neededKeys2D = new Set();
       for (const row of nestBom) {
         if (!row.nest_type || !row.quantity || !row.length_nest) continue;
         if (row.nest_type === 'Linear') {
@@ -1708,7 +1825,6 @@ export default function App() {
             spec_name_display: row.spec_name || '',
             material_name_display: row.material_name || '',
           });
-          neededKeys1D.add(`${row.form_type_id}|${row.material_type_id}`);
         }
         if (row.nest_type === 'Panel') {
           parts2D.push({
@@ -1730,39 +1846,13 @@ export default function App() {
             spec_name_display: row.spec_name || '',
             material_name_display: row.material_name || '',
           });
-          neededKeys2D.add(`${row.form_type_id}|${row.material_type_id}`);
         }
       }
-      const enabledStockItems = stock.filter(s => enabledStock.has(s.id));
-      const stock1D = enabledStockItems
-        .filter(s => (!s.stock_width || parseFloat(s.stock_width) === 0) && neededKeys1D.has(`${s.form_type}|${s.material_type}`))
-        .map(s => ({
-          stock_id: String(s.id),
-          stock_label: `${s.form_type_name || s.form_type} | ${s.material_type_name || s.material_type}`,
-          form_type: String(s.form_type),
-          material_origin: String(s.material_type),
-          material_name: s.material_name || '',
-          quantity: s.quantity ? parseInt(s.quantity, 10) : null,
-          reference: s.reference || '',
-          density: parseFloat(s.density) || 0,
-          length_in: parseFloat(s.stock_length),
-          is_standard: String(s.is_standard),
-        }));
-      const stock2D = enabledStockItems
-        .filter(s => s.stock_width && parseFloat(s.stock_width) > 0 && neededKeys2D.has(`${s.form_type}|${s.material_type}`))
-        .map(s => ({
-          stock_id: String(s.id),
-          stock_label: `${s.form_type_name || s.form_type} | ${s.material_type_name || s.material_type}`,
-          form_type: String(s.form_type),
-          material_origin: String(s.material_type),
-          material_name: s.material_name || '',
-          quantity: s.quantity ? parseInt(s.quantity, 10) : null,
-          reference: s.reference || '',
-          density: parseFloat(s.density) || 0,
-          length_in: parseFloat(s.stock_length),
-          width_in: parseFloat(s.stock_width),
-          is_standard: String(s.is_standard),
-        }));
+      // Stock now comes from what was typed on each nest group card, tagged with
+      // that group's material_name so the nester confines it to that material.
+      // Groups that are entirely cut-to-size contribute nothing.
+      const nestingGroups = nestGroups.filter(g => g.rows.some(r => !ctsItems.has(r.id)));
+      const { stock_1d: stock1D, stock_2d: stock2D } = buildStockPayload(nestingGroups, groupStock);
       const payload = {
         project_id: String(projectId || manufactureId || 'standalone'),
         run_number: 1,
@@ -2485,325 +2575,297 @@ export default function App() {
                   <p className="hint">Keeps buy sizes orderable — nobody cuts 9.0313".</p>
                 </div>
               </div>
-              <div className="config-section">
-                {(() => {
-                  // Only panels that actually go to the nester — grain is meaningless
-                  // for an item bought cut to size.
-                  const grainPanels = nestBom.filter(b => b.nest_type === 'Panel');
-                  const MODES = [['none', 'None'], ['length', 'Length'], ['width', 'Width']];
+              <div className="config-section config-full">
+                <div className="stock-header">
+                  <h3>Nest Groups</h3>
+                  <div className="stock-controls">
+                    <div className="btn-group">
+                      <button className="btn btn-small" onClick={() => setOpenGroups(new Set(nestGroups.map(g => g.key)))}>Expand All</button>
+                      <button className="btn btn-small" onClick={() => setOpenGroups(new Set())}>Collapse All</button>
+                      <button
+                        className="btn btn-small"
+                        title="Check the groups whose parts can't fill the smallest library size for their material"
+                        onClick={() => setCtsItems(suggestCtsItems(selectedBom, stock, new Set(stock.map(s => s.id)), cts))}
+                      >
+                        Suggest Cut To Size
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <p className="hint">
+                  One card per material. Enter the stock sizes you actually have — a
+                  blank quantity means as many as needed. Click a size below the rows to
+                  add it. Switch a group to Cut To Size and it leaves the nest entirely.
+                </p>
+
+                {nestGroups.length === 0 && <p className="hint">No items selected</p>}
+
+                {nestGroups.map(group => {
+                  const open = openGroups.has(group.key);
+                  const entries = groupStock[group.key] || [];
+                  const groupCts = group.rows.filter(r => ctsItems.has(r.id));
+                  const allCts = groupCts.length === group.rows.length;
+                  const someCts = groupCts.length > 0 && !allCts;
+                  const chips = groupChips(group, stock);
+                  const stdChips = chips.filter(c => c.standard);
+                  const ownChips = chips.filter(c => !c.standard);
+                  const fill = groupFillPct(group, entries);
+                  const specLabel = group.specs.length > 1 ? `${group.specs.length} specs` : (group.specs[0] || '');
+
+                  let hint, hintWarn = false;
+                  if (allCts) {
+                    hint = 'Bought cut to size — no stock needed.';
+                  } else if (fill === null) {
+                    hint = "No stock entered — this group can't be nested yet.";
+                    hintWarn = true;
+                  } else if (fill < cts.utilThresholdPct) {
+                    hint = `Parts fill only ${Math.round(fill)}% of the smallest ${group.is2D ? 'sheet' : 'stick'} — consider Cut To Size.`;
+                    hintWarn = true;
+                  } else if (fill <= 100) {
+                    hint = `Parts fill ${Math.round(fill)}% of one ${group.is2D ? 'sheet' : 'stick'}.`;
+                  } else {
+                    hint = `Parts need about ${Math.ceil(fill / 100)} ${group.is2D ? 'sheets' : 'sticks'} (${Math.round(fill)}% of one).`;
+                  }
+
+                  const addChip = c => addGroupStock(group.key, {
+                    len: String(c.len), wid: c.wid ? String(c.wid) : '',
+                    qty: c.quantity || '', ref: c.reference || '', standard: c.standard,
+                  });
+
                   return (
-                    <>
-                      <div className="stock-header">
-                        <h3>Grain Direction (2D Panels)</h3>
-                        {grainPanels.length > 0 && (
-                          <div className="stock-controls">
-                            <div className="filter-tabs">
-                              <span className="hint" style={{ margin: 0, alignSelf: 'center' }}>Set all:</span>
-                              {MODES.map(([val, label]) => (
-                                <button
-                                  key={val}
-                                  className="filter-btn"
-                                  onClick={() => setGrainDirections(prev => {
-                                    const next = { ...prev };
-                                    grainPanels.forEach(p => { next[p.id] = val; });
-                                    return next;
-                                  })}
-                                >
-                                  {label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
+                    <div
+                      key={group.key}
+                      style={{
+                        border: `1px solid ${allCts ? '#1b5e20' : 'var(--gray-300)'}`,
+                        borderRadius: 4, marginBottom: 8, overflow: 'hidden',
+                      }}
+                    >
+                      <button
+                        onClick={() => toggleGroupOpen(group.key)}
+                        aria-expanded={open}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                          padding: '9px 12px', background: 'none', border: 0, cursor: 'pointer',
+                          font: 'inherit', fontSize: 12, textAlign: 'left', color: 'inherit',
+                        }}
+                      >
+                        <span style={{ color: 'var(--gray-400)', fontSize: 10, width: 10 }}>{open ? '▼' : '▶'}</span>
+                        <span className={`badge ${group.is2D ? 'badge-2d' : 'badge-1d'}`}>{group.is2D ? '2D' : '1D'}</span>
+                        <strong>{group.form_type_name}{group.material_name ? ` · ${group.material_name}` : ''}</strong>
+                        <span style={{ color: 'var(--gray-600)', flex: 1, minWidth: 0, fontSize: 11 }}>
+                          {group.material_type_name}{specLabel ? ` · ${specLabel}` : ''}
+                        </span>
+                        {allCts && <span className="badge" style={{ background: '#e6f4ea', color: '#1b5e20' }}>Cut To Size</span>}
+                        {someCts && <span className="badge" style={{ background: '#e6f4ea', color: '#1b5e20' }}>{groupCts.length} cut</span>}
+                        {!allCts && entries.length === 0 && (
+                          <span className="badge" style={{ background: '#fdecea', color: '#b71c1c' }}>No stock</span>
                         )}
-                      </div>
-                      {grainPanels.length === 0 ? (
-                        <p className="hint">No 2D panels going to the nester</p>
-                      ) : (
-                        <>
-                          <p className="hint">None allows the part to rotate 90° when nesting.</p>
-                          {grainPanels.map(item => {
-                            const current = grainDirections[item.id] || 'none';
-                            return (
-                              <div
-                                key={item.id}
-                                style={{
-                                  display: 'flex', alignItems: 'center', gap: 10,
-                                  padding: '4px 0', borderBottom: '1px solid var(--gray-300)',
-                                }}
+                        <span style={{ fontSize: 11, color: 'var(--gray-600)', whiteSpace: 'nowrap' }}>
+                          {group.pieces} pcs
+                        </span>
+                      </button>
+
+                      {open && (
+                        <div style={{ padding: '0 12px 12px', borderTop: '1px solid var(--gray-200)' }}>
+                          <div className="filter-tabs" style={{ margin: '10px 0 12px' }}>
+                            <button
+                              className={`filter-btn ${!allCts ? 'active' : ''}`}
+                              onClick={() => setGroupMode(group, 'nest')}
+                            >
+                              Nest From Stock
+                            </button>
+                            <button
+                              className={`filter-btn ${allCts ? 'active' : ''}`}
+                              onClick={() => setGroupMode(group, 'cts')}
+                            >
+                              Cut To Size
+                            </button>
+                          </div>
+
+                          <table className="table" style={{ marginBottom: 4 }}>
+                            <thead>
+                              <tr>
+                                <th style={{ width: 34 }}>Cut</th>
+                                <th>Mark</th>
+                                <th className="num">Qty</th>
+                                <th className="num">{group.is2D ? 'Size' : 'Length'}</th>
+                                <th className="num">Buys</th>
+                                {group.is2D && <th>Grain</th>}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.rows.map(row => {
+                                const on = ctsItems.has(row.id);
+                                const dims = ctsItemBuyDims(row, ctsOpts);
+                                const L = parseFloat(row.length_nest) || 0;
+                                const W = parseFloat(row.width_nest) || 0;
+                                const grain = grainDirections[row.id] || 'none';
+                                return (
+                                  <tr key={row.id} style={on ? { background: '#f1f8f2' } : undefined}>
+                                    <td>
+                                      <input
+                                        type="checkbox"
+                                        checked={on}
+                                        disabled={!dims}
+                                        title={dims ? 'Buy this part cut to size instead of nesting it' : 'Needs a part length (and width for panels)'}
+                                        onChange={() => setCtsItems(prev => {
+                                          const next = new Set(prev);
+                                          if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
+                                          return next;
+                                        })}
+                                      />
+                                    </td>
+                                    <td className="mono">{row.bom_item}</td>
+                                    <td className="num">{parseInt(row.quantity, 10) || 0}</td>
+                                    <td className="num">{group.is2D ? `${L}" × ${W}"` : `${L}"`}</td>
+                                    <td className="num" style={{ color: on ? '#1b5e20' : 'var(--gray-400)' }}>
+                                      {on && dims
+                                        ? (dims.is2D ? `${dims.buy_length_in}" × ${dims.buy_width_in}"` : `${dims.buy_length_in}"`)
+                                        : '—'}
+                                    </td>
+                                    {group.is2D && (
+                                      <td>
+                                        {on ? <span style={{ color: 'var(--gray-400)' }}>—</span> : (
+                                          <div className="filter-tabs">
+                                            {[['none', 'None'], ['length', 'L'], ['width', 'W']].map(([val, lab]) => (
+                                              <button
+                                                key={val}
+                                                className={`filter-btn ${grain === val ? 'active' : ''}`}
+                                                style={{ padding: '2px 7px', fontSize: 10 }}
+                                                title={val === 'none' ? 'Allow the part to rotate 90°' : `Lock grain to ${val}`}
+                                                onClick={() => setGrainDirections(prev => ({ ...prev, [row.id]: val }))}
+                                              >
+                                                {lab}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </td>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+
+                          {!allCts && (
+                            <>
+                              <p className="hint" style={{ margin: '12px 0 5px', fontSize: 11 }}>Stock sizes to nest from</p>
+                              {entries.map((s, i) => (
+                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
+                                  <input
+                                    className="input" style={{ width: 90 }}
+                                    value={s.len} placeholder="Length"
+                                    aria-label="Stock length in inches"
+                                    onChange={e => updateGroupStock(group.key, i, 'len', e.target.value)}
+                                  />
+                                  {group.is2D && (
+                                    <>
+                                      <span style={{ color: 'var(--gray-400)' }}>×</span>
+                                      <input
+                                        className="input" style={{ width: 90 }}
+                                        value={s.wid || ''} placeholder="Width"
+                                        aria-label="Stock width in inches"
+                                        onChange={e => updateGroupStock(group.key, i, 'wid', e.target.value)}
+                                      />
+                                    </>
+                                  )}
+                                  <span style={{ fontSize: 11, color: 'var(--gray-600)' }}>qty</span>
+                                  <input
+                                    className="input" style={{ width: 70 }}
+                                    value={s.qty || ''} placeholder="—"
+                                    aria-label="Quantity on hand, blank for unlimited"
+                                    onChange={e => updateGroupStock(group.key, i, 'qty', e.target.value)}
+                                  />
+                                  {!String(s.qty || '').trim() && (
+                                    <span style={{ fontSize: 11, color: 'var(--gray-400)', fontStyle: 'italic' }}>unlimited</span>
+                                  )}
+                                  <input
+                                    className="input" style={{ width: 130 }}
+                                    value={s.ref || ''} placeholder="Heat # / bin (opt.)"
+                                    aria-label="Reference"
+                                    onChange={e => updateGroupStock(group.key, i, 'ref', e.target.value)}
+                                  />
+                                  <button
+                                    className="btn btn-small"
+                                    aria-label="Remove this stock size"
+                                    onClick={() => removeGroupStock(group.key, i)}
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                              <button
+                                className="btn btn-small"
+                                onClick={() => addGroupStock(group.key, { len: '', wid: '', qty: '', ref: '', standard: false })}
                               >
-                                <span style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                  <span className="mono" style={{ fontWeight: 600 }}>{item.bom_item}</span>
-                                  <span style={{ color: 'var(--gray-600)', marginLeft: 8 }}>
-                                    {item.material_name} | {parseFloat(item.length_nest)}" × {parseFloat(item.width_nest)}"
-                                  </span>
-                                </span>
-                                <div className="filter-tabs">
-                                  {MODES.map(([val, label]) => (
+                                + Add Size
+                              </button>
+
+                              {stdChips.length > 0 && (
+                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+                                  <span style={{ fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--gray-400)' }}>Standard</span>
+                                  {stdChips.map(c => (
                                     <button
-                                      key={val}
-                                      className={`filter-btn ${current === val ? 'active' : ''}`}
-                                      onClick={() => setGrainDirections(prev => ({ ...prev, [item.id]: val }))}
+                                      key={c.label} className="btn btn-small"
+                                      style={{ borderRadius: 999, fontSize: 11, padding: '2px 10px' }}
+                                      onClick={() => addChip(c)}
                                     >
-                                      {label}
+                                      {c.wid ? `${c.len}" × ${c.wid}"` : `${c.len}"`}
                                     </button>
                                   ))}
                                 </div>
-                              </div>
-                            );
-                          })}
-                        </>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-
-              <div className="config-section config-full">
-                <div className="stock-header">
-                  <h3>Cut These Items To Size</h3>
-                  <div className="stock-controls">
-                    <div className="btn-group">
-                      <button
-                        className="btn btn-small"
-                        title="Replace the checked set with items whose whole nest group can't fill the utilization threshold on the smallest stock available to it"
-                        onClick={() => setCtsItems(suggestCtsItems(selectedBom, stock, enabledStock, cts))}
-                      >
-                        Suggest
-                      </button>
-                      <button className="btn btn-small" onClick={() => setCtsItems(new Set())}>Clear</button>
-                    </div>
-                  </div>
-                </div>
-                <p className="hint">
-                  Checked items are taken out of the nest and bought as finished pieces —
-                  one piece per part, at the part's own size. They draw nothing from
-                  on-hand stock. Leave an item unchecked to nest it; a piece that still
-                  ends up barely used gets re-quoted automatically after nesting.
-                </p>
-                {selectedBom.length === 0 ? (
-                  <p className="hint">No items selected</p>
-                ) : (
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: 40 }}>Cut</th>
-                        <th>Mark</th><th>Type</th><th>Form</th><th>Material</th><th>Spec</th>
-                        <th>Size</th><th className="num">Qty</th><th className="num">Part</th>
-                        <th className="num">Buy Each</th><th className="num">Total Wt</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedBom.map(item => {
-                        const on = ctsItems.has(item.id);
-                        const dims = ctsItemBuyDims(item, ctsOpts);
-                        const qty = parseInt(item.quantity, 10) || 0;
-                        const wpf = parseFloat(item.weight_per_ft) || 0;
-                        const is2D = item.nest_type === 'Panel';
-                        const partL = parseFloat(item.length_nest) || 0;
-                        const partW = parseFloat(item.width_nest) || 0;
-                        const totalWt = dims
-                          ? calcUnitWeight(wpf, dims.buy_length_in, dims.is2D ? dims.buy_width_in : 0) * qty
-                          : 0;
-                        return (
-                          <tr key={item.id} style={on ? { background: '#f1f8f2' } : undefined}>
-                            <td>
-                              <input
-                                type="checkbox"
-                                checked={on}
-                                disabled={!dims}
-                                title={dims ? '' : 'Needs a part length (and width for panels)'}
-                                onChange={() => setCtsItems(prev => {
-                                  const next = new Set(prev);
-                                  if (next.has(item.id)) next.delete(item.id); else next.add(item.id);
-                                  return next;
-                                })}
-                              />
-                            </td>
-                            <td className="mono">{item.bom_item}</td>
-                            <td>
-                              <span className={`badge ${is2D ? 'badge-2d' : 'badge-1d'}`}>{item.nest_type}</span>
-                            </td>
-                            <td>{item.form_type_name}</td>
-                            <td>{item.material_type_name}</td>
-                            <td>{item.spec_name}</td>
-                            <td>{item.material_name}</td>
-                            <td className="num">{qty || '—'}</td>
-                            <td className="num">{is2D ? `${partL}" × ${partW}"` : `${partL}"`}</td>
-                            <td className="num">
-                              {dims
-                                ? (dims.is2D ? `${dims.buy_length_in}" × ${dims.buy_width_in}"` : `${dims.buy_length_in}"`)
-                                : '—'}
-                            </td>
-                            <td className="num">{on && totalWt > 0 ? fmtLbs(totalWt) : '—'}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-                <p className="hint">
-                  {ctsBom.length} of {selectedBom.length} items cut to size — {nestBom.length} going to the nester
-                  {ctsBom.length > 0 && (() => {
-                    const wt = buildDirectCutLines().reduce((s, l) => s + l.total_weight, 0);
-                    return wt > 0 ? ` — ${fmtLbs(wt)} bought direct` : '';
-                  })()}
-                </p>
-              </div>
-
-              <div className="config-section config-full">
-                <div className="stock-header">
-                  <h3>Stock Sizes</h3>
-                  <div className="stock-controls">
-                    <div className="btn-group">
-                      <button onClick={enableAllStock} className="btn btn-small">Use All</button>
-                      <button onClick={disableAllStock} className="btn btn-small">Use None</button>
-                    </div>
-                    <div className="filter-tabs">
-                      {[
-                        ['all', 'All', matchedStock.length],
-                        ['library', 'Library', matchedStock.filter(s => s.source === 'library').length],
-                        ['custom', 'Custom', matchedStock.filter(s => s.source === 'custom').length],
-                      ].map(([k, l, n]) => (
-                        <button key={k} className={`filter-btn ${stockFilter === k ? 'active' : ''}`} onClick={() => setStockFilter(k)}>
-                          {l} ({n})
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <p className="hint">
-                  <strong>{activeStockCount}</strong> of {matchedStock.length} stock sizes enabled for nesting. Unchecked sizes will be excluded.
-                </p>
-                <table className="stock-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: 30 }}>Use</th><th>Source</th><th>Form Type</th>
-                      <th>Material</th><th>Description</th><th>Length</th><th>Width</th><th>Standard</th>
-                      <th style={{ width: 90 }}>Qty</th><th>Reference</th><th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {getFilteredStock().map(s => (
-                      <tr key={s.id} className={`${s.source === 'custom' ? 'stock-row-custom' : ''} ${!enabledStock.has(s.id) ? 'stock-disabled' : ''}`}>
-                        <td><input type="checkbox" checked={enabledStock.has(s.id)} onChange={() => toggleStock(s.id)} /></td>
-                        <td>
-                          <span className={`badge ${s.source === 'library' ? 'badge-lib' : 'badge-custom'}`}>
-                            {s.source === 'library' ? 'Library' : 'Custom'}
-                          </span>
-                        </td>
-                        <td>{s.form_type_name || s.form_type}</td>
-                        <td>{s.material_type_name || s.material_type}</td>
-                        <td>{s.material_name || <span style={{ color: '#bbb' }}>—</span>}</td>
-                        <td className="num">{inToFt(s.stock_length)}</td>
-                        <td className="num">{s.stock_width && parseFloat(s.stock_width) > 0 ? inToFt(s.stock_width) : '—'}</td>
-                        <td>{s.is_standard}</td>
-                        <td>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={s.quantity ?? ''}
-                            onChange={e => setStockQuantity(s.id, e.target.value)}
-                            placeholder="—"
-                            style={{ width: 70, padding: '2px 4px', fontFamily: "'IBM Plex Mono', monospace" }}
-                          />
-                        </td>
-                        <td>{s.reference || <span style={{ color: '#bbb' }}>—</span>}</td>
-                        <td>
-                          {s.source === 'custom' && (
-                            <button onClick={() => removeCustomStock(s.id)} className="btn btn-small btn-danger">Remove</button>
+                              )}
+                              {ownChips.length > 0 && (
+                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+                                  <span style={{ fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--gray-400)' }}>Your sizes</span>
+                                  {ownChips.map(c => (
+                                    <button
+                                      key={c.label} className="btn btn-small"
+                                      style={{ borderRadius: 999, fontSize: 11, padding: '2px 10px' }}
+                                      onClick={() => addChip(c)}
+                                    >
+                                      {c.wid ? `${c.len}" × ${c.wid}"` : `${c.len}"`}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {chips.length === 0 && (
+                                <p className="hint" style={{ marginTop: 8, fontSize: 11 }}>
+                                  No library sizes for this material — type the size you buy.
+                                </p>
+                              )}
+                            </>
                           )}
-                        </td>
-                      </tr>
-                    ))}
-                    {getFilteredStock().length === 0 && (
-                      <tr><td colSpan={11} style={{ textAlign: 'center', color: '#999', padding: 16 }}>No stock items</td></tr>
-                    )}
-                  </tbody>
-                </table>
-                {(() => {
-                  // Detect if the picked Form Type is panel or linear by matching against selectedBom rows
-                  const matchingPart = selectedBom.find(b => b.form_type_name === newStock.form_type);
-                  const isPanel = matchingPart?.nest_type === 'Panel';
-                  const isLinear = matchingPart?.nest_type === 'Linear';
-                  const qtyOk = parseInt(newStock.quantity) >= 1;
-                  const widthOk = !isPanel || (newStock.stock_width && parseFloat(newStock.stock_width) > 0);
-                  const canAdd = !!(newStock.form_type && newStock.material_type && newStock.stock_length && qtyOk && widthOk);
-                  return (
-                <div className="add-stock-row">
-                  <div className="mini-field">
-                    <label>Form Type <span style={{ color: '#d32f2f' }}>*</span></label>
-                    <select value={newStock.form_type} onChange={e => setNewStock(p => ({ ...p, form_type: e.target.value }))}>
-                      <option value="">Select...</option>
-                      {formTypes.map(ft => <option key={ft} value={ft}>{ft}</option>)}
-                    </select>
-                  </div>
-                  <div className="mini-field">
-                    <label>Material <span style={{ color: '#d32f2f' }}>*</span></label>
-                    <select value={newStock.material_type} onChange={e => setNewStock(p => ({ ...p, material_type: e.target.value, material_name: '' }))}>
-                      <option value="">Select...</option>
-                      {matTypes.map(mt => <option key={mt} value={mt}>{mt}</option>)}
-                    </select>
-                  </div>
-                  <div className="mini-field">
-                    <label>Description (opt.)</label>
-                    {(() => {
-                      const matchingMats = [...new Set(
-                        selectedBom
-                          .filter(b => (!newStock.form_type || b.form_type_name === newStock.form_type)
-                            && (!newStock.material_type || b.material_type_name === newStock.material_type))
-                          .map(b => b.material_name)
-                          .filter(Boolean)
-                      )];
-                      return (
-                        <select value={newStock.material_name} onChange={e => setNewStock(p => ({ ...p, material_name: e.target.value }))}>
-                          <option value="">Any</option>
-                          {matchingMats.map(mn => <option key={mn} value={mn}>{mn}</option>)}
-                        </select>
-                      );
-                    })()}
-                  </div>
-                  <div className="mini-field">
-                    <label>Length (in) <span style={{ color: '#d32f2f' }}>*</span></label>
-                    <input type="number" step="0.25" value={newStock.stock_length} onChange={e => setNewStock(p => ({ ...p, stock_length: e.target.value }))} placeholder="240" />
-                  </div>
-                  <div className="mini-field">
-                    <label>
-                      Width (in)
-                      {isPanel && <span style={{ color: '#d32f2f' }}> *</span>}
-                      {isLinear && <span style={{ color: '#999', fontSize: 10 }}> (linear — N/A)</span>}
-                    </label>
-                    <input
-                      type="number"
-                      step="0.25"
-                      value={isLinear ? '' : newStock.stock_width}
-                      onChange={e => setNewStock(p => ({ ...p, stock_width: e.target.value }))}
-                      placeholder={isPanel ? 'Required' : (isLinear ? '—' : 'Pick form type first')}
-                      disabled={isLinear}
-                      style={isLinear ? { background: '#f5f6f8', cursor: 'not-allowed' } : {}}
-                    />
-                  </div>
-                  <div className="mini-field">
-                    <label>Qty <span style={{ color: '#d32f2f' }}>*</span></label>
-                    <input type="number" min="1" step="1" value={newStock.quantity} onChange={e => setNewStock(p => ({ ...p, quantity: e.target.value }))} placeholder="1" />
-                  </div>
-                  <div className="mini-field">
-                    <label>Reference (opt.)</label>
-                    <input type="text" value={newStock.reference} onChange={e => setNewStock(p => ({ ...p, reference: e.target.value }))} placeholder="Heat # / bin / job" />
-                  </div>
-                  <button onClick={addCustomStock} className="btn btn-add" disabled={!canAdd}>
-                    + Add Stock
-                  </button>
-                </div>
+
+                          <p
+                            className="hint"
+                            style={{ marginTop: 12, paddingTop: 8, borderTop: '1px dashed var(--gray-200)', color: hintWarn ? '#b06a1f' : undefined }}
+                          >
+                            {hint}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   );
-                })()}
+                })}
               </div>
             </div>
             <div className="card-footer">
               <button onClick={() => setStep(1)} className="btn">← Back</button>
               <div className="btn-group" style={{ alignItems: 'center' }}>
-                <span className="count">{activeStockCount} stock sizes active</span>
-                <button onClick={runNesting} className="btn btn-primary" disabled={loading || (activeStockCount === 0 && nestBom.length > 0)}>
+                <span className="count">
+                  {nestGroups.length - groupsNeedingStock.length} of {nestGroups.length} groups ready
+                  {groupsNeedingStock.length > 0 && ` — ${groupsNeedingStock.length} still need stock`}
+                </span>
+                <button
+                  onClick={runNesting}
+                  className="btn btn-primary"
+                  title={groupsNeedingStock.length > 0
+                    ? `Enter a stock size (or switch to Cut To Size) for: ${groupsNeedingStock.map(g => g.form_type_name + (g.material_name ? ' ' + g.material_name : '')).join(', ')}`
+                    : ''}
+                  disabled={loading || groupsNeedingStock.length > 0 || nestGroups.length === 0}
+                >
                   {loading ? 'Running...' : 'Run Nesting'}
                 </button>
               </div>
@@ -3362,7 +3424,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v1.12 — cut to size is the size: no minimums, no padding</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.0 — nest groups: per-material stock entry with chips</span></footer>
     </div>
   );
 }
