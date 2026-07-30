@@ -1880,7 +1880,36 @@ export default function App() {
         totalAllocated += cutWt * (cut.quantity_on_this_stock || 1);
       }
     }
-    return { totalStock, totalAllocated, totalWaste: totalStock - totalAllocated };
+    // Items marked cut-to-size on Configure never entered the nest, so they have
+    // no result rows — without this they vanish from the header entirely and the
+    // totals read far below the BOM.
+    for (const row of ctsBom) {
+      const dims = ctsItemBuyDims(row, ctsOpts);
+      const qty = parseInt(row.quantity, 10) || 0;
+      const wpf = parseFloat(row.weight_per_ft) || 0;
+      if (!dims || qty <= 0 || wpf <= 0) continue;
+      const is2D = dims.is2D;
+      totalStock += calcUnitWeight(wpf, dims.buy_length_in, is2D ? dims.buy_width_in : 0) * qty;
+      totalAllocated += calcUnitWeight(
+        wpf, parseFloat(row.length_nest) || 0, is2D ? (parseFloat(row.width_nest) || 0) : 0) * qty;
+    }
+
+    // The BOM is the anchor: every selected part's finished weight, whether it
+    // was nested, bought cut to size, or drawn from the shop. Allocated should
+    // land on it. Anything left over is a row the plan hasn't accounted for.
+    let bomWeight = 0, unpriced = 0;
+    for (const row of selectedBom) {
+      const qty = parseInt(row.quantity, 10) || 0;
+      const wpf = parseFloat(row.weight_per_ft) || 0;
+      const L = parseFloat(row.length_nest) || 0;
+      const W = row.nest_type === 'Panel' ? (parseFloat(row.width_nest) || 0) : 0;
+      if (wpf > 0 && L > 0) bomWeight += calcUnitWeight(wpf, L, W) * qty;
+      else if (L > 0) unpriced += qty;
+    }
+    return {
+      totalStock, totalAllocated, totalWaste: totalStock - totalAllocated,
+      bomWeight, unpriced, shortfall: bomWeight - totalAllocated,
+    };
   }
 
   const selectedBom = bom.filter(b => selected.has(b.id) && b.nest_type);
@@ -3151,6 +3180,33 @@ export default function App() {
               </div>
             )}
 
+            {/* Reconcile the plan against the BOM. Allocated should land on the
+                BOM's own weight; a gap means parts the plan never covered. */}
+            {weightSummary && weightSummary.bomWeight > 0 && (() => {
+              const gap = weightSummary.shortfall;
+              const off = Math.abs(gap) > Math.max(weightSummary.bomWeight * 0.005, 1);
+              return (
+                <div style={{
+                  padding: '9px 14px', marginBottom: 12, borderRadius: 4, fontSize: 13,
+                  background: off ? '#fdf3e3' : '#f2f8f3',
+                  border: `1px solid ${off ? '#b06a1f' : '#1b5e20'}`,
+                  color: off ? '#7a4a12' : '#1b5e20',
+                }}>
+                  <strong>{fmtLbs(weightSummary.totalAllocated)}</strong> allocated against{' '}
+                  <strong>{fmtLbs(weightSummary.bomWeight)}</strong> of selected BOM
+                  {off ? (
+                    <>
+                      {' — '}<strong>{fmtLbs(Math.abs(gap))} {gap > 0 ? 'not covered' : 'over'}</strong>.
+                      {gap > 0 && ' Check for groups you did not run, patterns left unselected, or rows the nester errored on.'}
+                    </>
+                  ) : ' — the plan covers the BOM.'}
+                  {weightSummary.unpriced > 0 && (
+                    <> {weightSummary.unpriced} part(s) have no Weight_Per_Ft, so both figures understate.</>
+                  )}
+                </div>
+              );
+            })()}
+
             {stockShortages.length > 0 && (
               <div className="stock-shortage-banner" style={{
                 background: '#fdecea', border: '1px solid #d32f2f', borderRadius: 4,
@@ -3688,7 +3744,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.4 — label every stock field</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.5 — reconcile the plan against the BOM weight</span></footer>
     </div>
   );
 }
