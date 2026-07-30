@@ -1867,12 +1867,14 @@ export default function App() {
     const weightMap = getWeightMap();
     let totalStock = 0;
     let totalAllocated = 0;
+    let fromStock = 0;   // drawn from the shop — weight you already own
     for (const r of [...selected_1d, ...selected_2d]) {
       if (r.error || !r.cuts?.length) continue;
       const wpf = getStockWeightPerFt(r, weightMap);
       const is2D = r.stock_width_in && r.stock_width_in > 0;
       const stockWt = calcUnitWeight(wpf, r.stock_length_in, is2D ? r.stock_width_in : 0);
       totalStock += stockWt;
+      if (isOnHandStockId(r.stock_id)) fromStock += stockWt;
       for (const cut of r.cuts) {
         const cutWt = is2D
           ? wpf * ((cut.cut_length * cut.cut_width) / 144)
@@ -1908,6 +1910,7 @@ export default function App() {
     }
     return {
       totalStock, totalAllocated, totalWaste: totalStock - totalAllocated,
+      fromStock, toOrder: totalStock - fromStock,
       bomWeight, unpriced, shortfall: bomWeight - totalAllocated,
     };
   }
@@ -3153,8 +3156,20 @@ export default function App() {
                   <>
                     <div className="summary-item">
                       <span className="summary-val">{weightSummary.totalStock.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
-                      <span className="summary-label">Total Stock (lbs)</span>
+                      <span className="summary-label">Total Weight (lbs)</span>
                     </div>
+                    <div className="summary-item">
+                      <span className="summary-val">{weightSummary.toOrder.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                      <span className="summary-label">To Order (lbs)</span>
+                    </div>
+                    {weightSummary.fromStock > 0 && (
+                      <div className="summary-item">
+                        <span className="summary-val" style={{ color: 'var(--green)' }}>
+                          {weightSummary.fromStock.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        </span>
+                        <span className="summary-label">From Stock (lbs)</span>
+                      </div>
+                    )}
                     <div className="summary-item">
                       <span className="summary-val">{weightSummary.totalAllocated.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
                       <span className="summary-label">Allocated (lbs)</span>
@@ -3280,6 +3295,14 @@ export default function App() {
                           <td className="mono">{[...l.refs].join(', ') || '—'}</td>
                         </tr>
                       ))}
+                      <tr className="purchase-total-row">
+                        <td><strong>Total from your stock</strong></td>
+                        <td />
+                        <td className="num"><strong>{lines.reduce((t, l) => t + l.qty, 0)}</strong></td>
+                        <td />
+                        <td className="num"><strong>{fmtLbs(lines.reduce((t, l) => t + l.unit * l.qty, 0))}</strong></td>
+                        <td />
+                      </tr>
                     </tbody>
                   </table>
                 </div>
@@ -3317,6 +3340,17 @@ export default function App() {
                         <td className="num">{line.total_weight > 0 ? fmtLbs(line.total_weight) : '—'}</td>
                       </tr>
                     ))}
+                    {(() => {
+                      const dl = buildDirectCutLines();
+                      return (
+                        <tr className="purchase-total-row">
+                          <td /><td><strong>Total bought cut to size</strong></td>
+                          <td className="num"><strong>{dl.reduce((t, l) => t + l.quantity, 0)}</strong></td>
+                          <td /><td />
+                          <td className="num"><strong>{fmtLbs(dl.reduce((t, l) => t + l.total_weight, 0))}</strong></td>
+                        </tr>
+                      );
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -3744,7 +3778,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.5 — reconcile the plan against the BOM weight</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.6 — total weight, split into to-order and from-stock</span></footer>
     </div>
   );
 }
