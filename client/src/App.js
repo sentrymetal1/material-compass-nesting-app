@@ -141,7 +141,7 @@ const CTS_DEFAULTS = {
   utilThresholdPct: 35,   // convert a piece using less than this % of its stock
   trimLinearIn: 0,        // optional extra length on a linear buy (0 = exact)
   trimPanelIn: 0,         // optional extra per side on a plate buy (0 = exact)
-  roundToIn: 1,           // buy dims round up to this increment (no 9.0313" cuts)
+  roundToIn: 0.125,       // buy dims round up to this increment — 1/8"
   skipAtPctOfStock: 90,   // buy size this close to full stock — just take the stock
 };
 // Cut to size means the size. No supplier minimums and no default allowance: a
@@ -421,10 +421,21 @@ function groupChips(group, stockLibrary) {
   return out.sort((a, b) => (a.len - b.len) || (a.wid - b.wid));
 }
 
+/** Is this stock piece something already on the floor, rather than a buy?
+ *  The source is encoded in the stock_id the payload builder assigns, so the
+ *  results come back self-describing with no side map to keep in sync. */
+function isOnHandStockId(stockId) {
+  return String(stockId || '').startsWith('oh');
+}
+
 /** Turn the per-group stock entries into the API's stock_1d / stock_2d arrays.
  *  Each entry is tagged with the group's material_name so the nester confines
  *  it to that material; a blank quantity stays null, which the API reads as an
- *  uncapped supply. */
+ *  uncapped supply.
+ *
+ *  On-hand rows are always capped: an uncapped "on hand" is a contradiction, so
+ *  a blank quantity on one falls back to 1 rather than becoming infinite shop
+ *  stock. */
 function buildStockPayload(groups, groupStock) {
   const stock_1d = [];
   const stock_2d = [];
@@ -435,9 +446,10 @@ function buildStockPayload(groups, groupStock) {
       const wid = parseFloat(s.wid) || 0;
       if (g.is2D && wid <= 0) return;
       const qtyRaw = String(s.qty ?? '').trim();
-      const qty = qtyRaw === '' ? null : (parseInt(qtyRaw, 10) || null);
+      let qty = qtyRaw === '' ? null : (parseInt(qtyRaw, 10) || null);
+      if (s.onHand && (qty === null || qty <= 0)) qty = 1;
       const entry = {
-        stock_id: `g${gi}s${si}`,
+        stock_id: `${s.onHand ? 'oh' : 'or'}${gi}s${si}`,
         stock_label: `${g.form_type_name} | ${g.material_type_name}`,
         form_type: String(g.form_type_id),
         material_origin: String(g.material_type_id),
@@ -1704,6 +1716,9 @@ export default function App() {
     const agg = {};
     for (const r of [...selected_1d, ...selected_2d]) {
       if (r.error) continue;
+      // Material already on the floor is allocated, not purchased — it must not
+      // reach the purchase order. It's reported separately on the results page.
+      if (isOnHandStockId(r.stock_id)) continue;
       const firstCut = r.cuts?.[0];
       if (!firstCut) continue;
       const is2D = r.stock_width_in && r.stock_width_in > 0;
@@ -2625,11 +2640,11 @@ export default function App() {
                 <div className="field">
                   <label>Round buy sizes up to (in)</label>
                   <input
-                    type="number" min="0" step="0.5" className="input"
+                    type="number" min="0" step="0.125" className="input"
                     value={cts.roundToIn}
                     onChange={e => setCts(p => ({ ...p, roundToIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
-                  <p className="hint">Keeps buy sizes orderable — nobody cuts 9.0313".</p>
+                  <p className="hint">Keeps buy sizes orderable — 1/8" lands on a real increment, where 9.0313" does not.</p>
                 </div>
               </div>
               <div className="config-section config-full">
@@ -2685,9 +2700,12 @@ export default function App() {
                     hint = `Parts need about ${Math.ceil(fill / 100)} ${group.is2D ? 'sheets' : 'sticks'} (${Math.round(fill)}% of one).`;
                   }
 
+                  // A chip carrying a reference is a specific piece in the shop, so it
+                  // lands as On Hand with its count. A catalog size lands as To Order.
                   const addChip = c => addGroupStock(group.key, {
                     len: String(c.len), wid: c.wid ? String(c.wid) : '',
                     qty: c.quantity || '', ref: c.reference || '', standard: c.standard,
+                    onHand: !!c.reference,
                   });
 
                   return (
@@ -2846,7 +2864,33 @@ export default function App() {
                             <>
                               <p className="hint" style={{ margin: '12px 0 5px', fontSize: 11 }}>Stock sizes to nest from</p>
                               {entries.map((s, i) => (
-                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
+                                <div
+                                  key={i}
+                                  style={{
+                                    display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, flexWrap: 'wrap',
+                                    background: s.onHand ? '#f1f8f2' : undefined,
+                                    borderLeft: s.onHand ? '3px solid #1b5e20' : '3px solid transparent',
+                                    paddingLeft: 5,
+                                  }}
+                                >
+                                  <div className="filter-tabs">
+                                    <button
+                                      className={`filter-btn ${!s.onHand ? 'active' : ''}`}
+                                      style={{ padding: '3px 8px', fontSize: 10 }}
+                                      title="Buy this size — it goes on the purchase list"
+                                      onClick={() => updateGroupStock(group.key, i, 'onHand', false)}
+                                    >
+                                      To Order
+                                    </button>
+                                    <button
+                                      className={`filter-btn ${s.onHand ? 'active' : ''}`}
+                                      style={{ padding: '3px 8px', fontSize: 10 }}
+                                      title="Already in the shop — allocated, never purchased"
+                                      onClick={() => updateGroupStock(group.key, i, 'onHand', true)}
+                                    >
+                                      On Hand
+                                    </button>
+                                  </div>
                                   <input
                                     className="input" style={{ width: 90 }}
                                     value={s.len} placeholder="Length"
@@ -2872,7 +2916,9 @@ export default function App() {
                                     onChange={e => updateGroupStock(group.key, i, 'qty', e.target.value)}
                                   />
                                   {!String(s.qty || '').trim() && (
-                                    <span style={{ fontSize: 11, color: 'var(--gray-400)', fontStyle: 'italic' }}>unlimited</span>
+                                    <span style={{ fontSize: 11, color: s.onHand ? '#b06a1f' : 'var(--gray-400)', fontStyle: 'italic' }}>
+                                      {s.onHand ? 'how many? (assumes 1)' : 'unlimited'}
+                                    </span>
                                   )}
                                   <input
                                     className="input" style={{ width: 130 }}
@@ -3059,6 +3105,66 @@ export default function App() {
                 ))}
               </div>
             )}
+
+            {/* Pieces taken from shop stock — allocated, never purchased */}
+            {(() => {
+              const { selected_1d, selected_2d } = getSelectedResults();
+              const onHand = [...selected_1d, ...selected_2d].filter(r => !r.error && isOnHandStockId(r.stock_id));
+              if (onHand.length === 0) return null;
+              const wm = getWeightMap();
+              const agg = {};
+              for (const r of onHand) {
+                const is2D = r.stock_width_in > 0;
+                const ftn = results._nameLookup?.[r.form_type] || r.form_type;
+                const mtn = results._nameLookup?.[r.material_origin] || r.material_origin;
+                const k = `${ftn}|${mtn}|${r.material_name}|${r.stock_length_in}|${r.stock_width_in || 0}`;
+                if (!agg[k]) {
+                  const wpf = getStockWeightPerFt(r, wm);
+                  agg[k] = {
+                    desc: `${ftn} | ${mtn}${r.material_name ? ` | ${r.material_name}` : ''}`,
+                    size: is2D ? `${inToFt(r.stock_length_in)} × ${inToFt(r.stock_width_in)}` : inToFt(r.stock_length_in),
+                    qty: 0,
+                    unit: calcUnitWeight(wpf, r.stock_length_in, is2D ? r.stock_width_in : 0),
+                    refs: new Set(),
+                  };
+                }
+                agg[k].qty += 1;
+                const src = lastNestPayload && [...(lastNestPayload.stock_1d || []), ...(lastNestPayload.stock_2d || [])]
+                  .find(x => String(x.stock_id) === String(r.stock_id));
+                if (src?.reference) agg[k].refs.add(src.reference);
+              }
+              const lines = Object.values(agg);
+              return (
+                <div className="result-section">
+                  <h3>From Your Stock — Not Purchased</h3>
+                  <p className="hint">
+                    These pieces came off material you marked On Hand, so they are allocated
+                    from the shop and deliberately left off the purchase list.
+                  </p>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '100%' }}>Description</th><th>Size</th>
+                        <th className="num">Pieces</th><th className="num">Unit Wt</th>
+                        <th className="num">Total Wt</th><th>Reference</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lines.map((l, i) => (
+                        <tr key={i}>
+                          <td>{l.desc}</td>
+                          <td className="mono">{l.size}</td>
+                          <td className="num">{l.qty}</td>
+                          <td className="num">{l.unit > 0 ? fmtLbs(l.unit) : '—'}</td>
+                          <td className="num">{l.unit > 0 ? fmtLbs(l.unit * l.qty) : '—'}</td>
+                          <td className="mono">{[...l.refs].join(', ') || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
 
             {/* Items pulled out of the nest on Configure — bought, not nested */}
             {ctsBom.length > 0 && (
@@ -3518,7 +3624,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.1 — group totals, aligned numeric headers</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.2 — shop stock vs stock to order, 1/8 rounding</span></footer>
     </div>
   );
 }
