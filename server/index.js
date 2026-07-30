@@ -2266,6 +2266,51 @@ async function fetchCutDetailsBatched(token, stockResultIds) {
   return out;
 }
 
+/**
+ * Ground truth for "why is my saved run not showing". Costs one Zoho read and
+ * reports exactly what the lookup saw: the project id the app is using, the
+ * response code, and every run header row with its status and its own
+ * Project_Lookup — so a mismatched id or a report-level filter is visible
+ * rather than inferred.
+ */
+app.get('/api/project/:id/nesting-runs-debug', async (req, res) => {
+  const projectId = req.params.id;
+  try {
+    const token = await getAccessToken();
+    const url = creatorApiBase() + '/report/Nesting_Run_Header_Report?criteria=(Project_Lookup==' + projectId + ')&limit=50';
+    let status = null, code = null, rows = [], errBody = null;
+    try {
+      const r = await axios.get(url, { headers: zohoHeaders(token) });
+      status = r.status; code = r.data?.code ?? null; rows = r.data?.data || [];
+    } catch (e) {
+      status = e.response?.status ?? null;
+      code = e.response?.data?.code ?? null;
+      errBody = e.response?.data || String(e.message);
+    }
+    res.json({
+      project_id_used: projectId,
+      report: 'Nesting_Run_Header_Report',
+      criteria: 'Project_Lookup==' + projectId,
+      http_status: status,
+      zoho_code: code,
+      row_count: rows.length,
+      quota_exhausted: code === 4000,
+      zero_match: code === 9280,
+      error: errBody,
+      runs: rows.map(r => ({
+        id: r.ID,
+        run_number: r.Run_Number,
+        run_status: r.Run_Status,
+        run_date: r.Run_Date,
+        project_lookup: (r.Project_Lookup && (r.Project_Lookup.ID || r.Project_Lookup.zc_display_value)) || r.Project_Lookup || null,
+        total_stock_pieces: r.Total_Stock_Pieces,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ project_id_used: projectId, error: err.response?.data || err.message });
+  }
+});
+
 app.get('/api/project/:id/nesting-results', async (req, res) => {
   try {
     const token = await getAccessToken();
