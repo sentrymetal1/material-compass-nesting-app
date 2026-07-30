@@ -2063,6 +2063,13 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         Dim2_Result: widthFtResult,
         Dim3_Result: widthInchResult,
       };
+      // Inventory plumbing. Material_Source lets the Purchase view exclude shop
+      // stock while the allotted totals stay whole; Stock_Reference is the heat
+      // number / bin the user typed, which is the only link from a consumed piece
+      // back to a physical one. Both are stripped automatically if the form does
+      // not carry them yet — see the retry in the insert loop.
+      row.Material_Source = line.on_hand ? 'On Hand' : 'Purchase';
+      if (line.stock_reference) row.Stock_Reference = String(line.stock_reference).slice(0, 255);
       if (matTypeId) row.Material_Type = matTypeId;
       else if (line.material_type_id) row.Material_Type = line.material_type_id;
       if (lengthInchId) row.Length_INCH = lengthInchId;
@@ -2120,11 +2127,37 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     var saved = 0;
     var failures = [];
     var CHUNK = 100;
+    var dropNewFields = false;
+    function stripNewFields(r) {
+      var c = Object.assign({}, r);
+      delete c.Material_Source; delete c.Stock_Reference;
+      return c;
+    }
+    // Zoho has no single code for "no such field", so match on the message. Only
+    // treat it as such when NO row succeeded — a genuine per-row rejection must
+    // not silently strip the new fields from everything.
+    function looksLikeUnknownField(body) {
+      var rows = (body && body.result) || [];
+      if (rows.some(function(r) { return r && (r.code === 3000 || (r.data && r.data.ID)); })) return false;
+      var text = JSON.stringify(body || {}).toLowerCase();
+      return text.indexOf('material_source') > -1 || text.indexOf('stock_reference') > -1
+        || text.indexOf('no such field') > -1 || text.indexOf('invalid field') > -1;
+    }
     for (var c = 0; c < subformRows.length; c += CHUNK) {
       var batch = subformRows.slice(c, c + CHUNK);
       try {
+        if (dropNewFields) batch = batch.map(stripNewFields);
         var postResp = await axios.post(creatorApiBase()+'/form/Project_Material_Allocated_Detail_Form', { data: batch }, { headers: zohoHeaders(token) });
         var body = postResp.data || {};
+        // A form without the two new fields rejects every row. Rather than lose
+        // the whole list, drop them and send the batch again, then report it.
+        if (!dropNewFields && looksLikeUnknownField(body)) {
+          console.warn('Project_Material_Allocated_Detail_Form has no Material_Source/Stock_Reference — retrying without them');
+          dropNewFields = true;
+          batch = batch.map(stripNewFields);
+          postResp = await axios.post(creatorApiBase()+'/form/Project_Material_Allocated_Detail_Form', { data: batch }, { headers: zohoHeaders(token) });
+          body = postResp.data || {};
+        }
         // Whole-request failure (e.g. quota 4000) — no per-record result array.
         if (body.code === 4000) {
           return res.status(429).json({ error: 'Daily data limit reached — purchase list partially saved (' + saved + '). This resets overnight; try again then.', code: 4000, items_saved: saved, items_attempted: subformRows.length });
@@ -2157,7 +2190,9 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
     }
 
     console.log('Purchase list save complete: ' + saved + ' rows written, ' + failures.length + ' failed of ' + subformRows.length);
-    res.json({ success: true, items_saved: saved, items_attempted: subformRows.length, items_failed: failures.length, failures: failures });
+    res.json({ success: true, items_saved: saved, items_attempted: subformRows.length, items_failed: failures.length, failures: failures,
+      material_source_written: !dropNewFields,
+      on_hand_rows: purchase_lines.filter(function(l) { return l.on_hand; }).length });
   } catch (err) {
     console.error('Purchase list error:', JSON.stringify(err.response?.data || err.message));
     res.status(500).json({ error: 'Failed to save purchase list', details: err.response?.data || err.message });

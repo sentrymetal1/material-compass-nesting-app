@@ -1760,6 +1760,8 @@ export default function App() {
           is2D: dims.is2D,
           cut_to_size: true,
           cts_item: true,
+          on_hand: false,
+          stock_reference: '',
           marks: [],
         };
       }
@@ -1776,11 +1778,19 @@ export default function App() {
     const { selected_1d, selected_2d } = getSelectedResults();
     const weightMap = getWeightMap();
     const agg = {};
+    // Reference (heat #, bin) for each stock piece, from the payload that was
+    // actually nested. Typed by hand and otherwise lost at save — it's the only
+    // thing tying a consumed piece back to a physical one.
+    const refById = {};
+    [...(lastNestPayload?.stock_1d || []), ...(lastNestPayload?.stock_2d || [])]
+      .forEach(s => { if (s.reference) refById[String(s.stock_id)] = s.reference; });
+
     for (const r of [...selected_1d, ...selected_2d]) {
       if (r.error) continue;
-      // Material already on the floor is allocated, not purchased — it must not
-      // reach the purchase order. It's reported separately on the results page.
-      if (isOnHandStockId(r.stock_id)) continue;
+      // On-hand material is allocated rather than bought, but it still belongs on
+      // the project — tagged, so the purchase view can exclude it while the
+      // allotted totals stay complete.
+      const onHand = isOnHandStockId(r.stock_id);
       const firstCut = r.cuts?.[0];
       if (!firstCut) continue;
       const is2D = r.stock_width_in && r.stock_width_in > 0;
@@ -1790,7 +1800,7 @@ export default function App() {
       const matName = results._nameLookup?.[firstCut.material_type] || '';
       // Key by display values so same-looking material/length collapses to one
       // purchase line even when underlying IDs differ across BOM rows.
-      const key = `${ftn}|${mtn}|${specName}|${matName}|${r.stock_length_in}|${r.stock_width_in || 0}|${r.cut_to_size ? 'cts' : 'nest'}`;
+      const key = `${ftn}|${mtn}|${specName}|${matName}|${r.stock_length_in}|${r.stock_width_in || 0}|${r.cut_to_size ? 'cts' : 'nest'}|${onHand ? 'oh' : 'buy'}`;
       if (!agg[key]) {
         const wpf = weightMap[String(firstCut.bom_line_id)] || 0;
         const unitWt = calcUnitWeight(wpf, r.stock_length_in, is2D ? r.stock_width_in : 0);
@@ -1802,8 +1812,10 @@ export default function App() {
           material_type_id: r.material_origin,
           specification_id: firstCut.spec_name,
           material_id: firstCut.material_type,
-          description: `${ftn} | ${mtn} | ${specName} | ${matName} | ${sizeDesc}${r.cut_to_size ? ' | CUT TO SIZE' : ''}`,
+          description: `${ftn} | ${mtn} | ${specName} | ${matName} | ${sizeDesc}${r.cut_to_size ? ' | CUT TO SIZE' : ''}${onHand ? ' | ON HAND' : ''}`,
           cut_to_size: !!r.cut_to_size,
+          on_hand: onHand,
+          stock_reference: '',
           form_type_name: ftn,
           material_type_name: mtn,
           spec_name: specName,
@@ -1822,6 +1834,10 @@ export default function App() {
         };
       }
       agg[key].quantity += 1;
+      const ref = refById[String(r.stock_id)];
+      if (ref && !agg[key].stock_reference.split(', ').filter(Boolean).includes(ref)) {
+        agg[key].stock_reference = agg[key].stock_reference ? agg[key].stock_reference + ', ' + ref : ref;
+      }
     }
     const lines = Object.values(agg);
     lines.forEach(line => { line.total_weight = line.unit_weight * line.quantity; });
@@ -3700,7 +3716,26 @@ export default function App() {
             {showPurchasePreview && purchaseLines.length > 0 && (
               <div className="result-section">
                 <h3>Purchase List Preview</h3>
-                <p className="hint">Review the aggregated purchase lines below before saving to the project.</p>
+                <p className="hint">
+                  Review the aggregated lines below before saving to the project.
+                  {purchaseLines.some(l => l.on_hand) && (
+                    <> Rows marked <strong>ON HAND</strong> are drawn from shop stock — they are
+                    saved to the project and priced like any material, but no purchase order is
+                    raised for them.</>
+                  )}
+                </p>
+                {purchaseLines.some(l => l.on_hand) && (() => {
+                  const buy = purchaseLines.filter(l => !l.on_hand);
+                  const own = purchaseLines.filter(l => l.on_hand);
+                  const wt = ls => ls.reduce((t, l) => t + l.total_weight, 0);
+                  return (
+                    <p className="hint">
+                      To order: <strong>{buy.reduce((t, l) => t + l.quantity, 0)} pcs / {fmtLbs(wt(buy))}</strong>
+                      {'  ·  '}
+                      From shop stock: <strong>{own.reduce((t, l) => t + l.quantity, 0)} pcs / {fmtLbs(wt(own))}</strong>
+                    </p>
+                  );
+                })()}
                 <table className="table">
                   <thead>
                     <tr>
@@ -3717,6 +3752,12 @@ export default function App() {
                               marginLeft: 8, padding: '1px 6px', background: '#e6f4ea',
                               color: '#1b5e20', borderRadius: 3, fontSize: 11, fontWeight: 'bold',
                             }}>CUT TO SIZE</span>
+                          )}
+                          {line.on_hand && (
+                            <span style={{
+                              marginLeft: 8, padding: '1px 6px', background: '#fdf3e3',
+                              color: '#7a4a12', borderRadius: 3, fontSize: 11, fontWeight: 'bold',
+                            }}>ON HAND{line.stock_reference ? ` · ${line.stock_reference}` : ''}</span>
                           )}
                         </td>
                         <td className="num">{line.quantity}</td>
@@ -3832,7 +3873,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.10 — batch cut-detail reads to save API calls</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.11 — shop stock reaches the project, tagged</span></footer>
     </div>
   );
 }
