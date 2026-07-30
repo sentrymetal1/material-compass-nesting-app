@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import './App.css';
 
 const API = '';
+// Why the last saved-run fetch came back empty, so the UI can say which.
+let lastSavedRunMessage = '';
 
 function getProjectIdFromURL() {
   const params = new URLSearchParams(window.location.search);
@@ -1477,7 +1479,7 @@ export default function App() {
       // nothing to render leaves a blank page with no way back.
       const found = await fetchSavedNestingResults();
       if (found) { setError(''); setStep(3); }
-      else setError('No saved nesting run for this project yet — select items and run one first.');
+      else setError(lastSavedRunMessage || 'No saved nesting run for this project yet.');
     } finally {
       setLoadingSavedResults(false);
     }
@@ -1489,9 +1491,15 @@ export default function App() {
         ? `${API}/api/standalone/nesting-results?manufacturer_id=${manufactureId}`
         : `${API}/api/project/${projectId}/nesting-results`;
       const resp = await fetch(url);
-      if (!resp.ok) return false;
-      const data = await resp.json();
-      if (!data.found) return false;
+      // Carry the server's reason back — "quota exhausted" and "never saved" are
+      // very different news, and guessing between them wastes the user's time.
+      let body = null;
+      try { body = await resp.json(); } catch (_) { body = null; }
+      if (!resp.ok || !body || !body.found) {
+        lastSavedRunMessage = (body && body.message) || 'Saved runs could not be read right now.';
+        return false;
+      }
+      const data = body;
       if (data._nameLookup && bom.length > 0) {
         bom.forEach(b => {
           if (b.form_type_id && b.form_type_name) data._nameLookup[b.form_type_id] = b.form_type_name;
@@ -3824,7 +3832,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.8 — recover a nesting run left unapproved</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.9 — say why a saved run cannot be read</span></footer>
     </div>
   );
 }

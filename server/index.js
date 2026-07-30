@@ -2222,9 +2222,20 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       runResp = await axios.get(creatorApiBase()+'/report/Nesting_Run_Header_Report?criteria=(Project_Lookup=='+projectId+')&limit=10', { headers: zohoHeaders(token) });
     } catch (e) {
       if (e.response?.data?.code === 9280 || e.response?.status === 404) {
-        return res.json({ found: false, message: 'No approved nesting run found' });
+        return res.json({ found: false, message: 'No nesting run has been saved for this project yet.' });
       }
       throw e;
+    }
+    // A used-up daily allowance answers HTTP 200 with code 4000 and an empty
+    // data array, which is indistinguishable from "no records" unless the code
+    // is checked. Reporting that as "nothing saved" tells the user their work is
+    // gone when it is simply unreadable right now.
+    if (runResp.data && runResp.data.code === 4000) {
+      console.error('Quota exhausted (code 4000) reading nesting runs for project ' + projectId);
+      return res.status(429).json({
+        found: false, code: 4000,
+        message: 'Daily data limit reached — saved runs cannot be read right now. This resets overnight; your run is not lost.',
+      });
     }
     var allRuns = (runResp.data.data || []);
     var runs = allRuns.filter(function(r) { return r.Run_Status === 'Approved'; });
@@ -2238,7 +2249,13 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       supersededOnly = true;
       console.warn('Project ' + projectId + ': no Approved run, falling back to newest of ' + allRuns.length);
     }
-    if (runs.length === 0) { return res.json({ found: false, message: 'No nesting run saved for this project' }); }
+    if (runs.length === 0) {
+      return res.json({
+        found: false,
+        message: 'No nesting run has been saved for this project yet. Running a nest does not save it — '
+          + 'use "Import Patterns to Project" on the Results step to save one.',
+      });
+    }
     runs.sort(function(a, b) { return (parseInt(b.Run_Number) || 0) - (parseInt(a.Run_Number) || 0); });
     var runHeader = runs[0];
     var nestRunID = runHeader.ID;
