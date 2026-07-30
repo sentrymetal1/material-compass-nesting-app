@@ -264,6 +264,15 @@ function ctsItemBuyDims(row, o) {
   };
 }
 
+// Each stock field gets its own label sitting directly above its own box. A
+// single floating "qty" label between two inputs read as belonging to the box
+// on its left, so lengths were being typed into the quantity field.
+const FIELD = { display: 'flex', flexDirection: 'column', gap: 2 };
+const FIELD_LBL = {
+  fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
+  color: 'var(--gray-600)', fontWeight: 600,
+};
+
 // ─── Nest groups ────────────────────────────────────────────────────────────
 // One card per material, which is what makes typed stock entry workable: the
 // card header already says form, material and size, so a stock row only needs
@@ -2912,7 +2921,7 @@ export default function App() {
                                 <div
                                   key={i}
                                   style={{
-                                    display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, flexWrap: 'wrap',
+                                    display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8, flexWrap: 'wrap',
                                     background: s.onHand ? '#f1f8f2' : undefined,
                                     borderLeft: s.onHand ? '3px solid #1b5e20' : '3px solid transparent',
                                     paddingLeft: 5,
@@ -2936,43 +2945,52 @@ export default function App() {
                                       On Hand
                                     </button>
                                   </div>
+                                  <label style={FIELD}>
+                                    <span style={FIELD_LBL}>Length (in)</span>
                                   <input
                                     className="input" style={{ width: 90 }}
-                                    value={s.len} placeholder="Length"
+                                    value={s.len} placeholder="0"
                                     aria-label="Stock length in inches"
                                     onChange={e => updateGroupStock(group.key, i, 'len', e.target.value)}
                                   />
+                                    </label>
                                   {group.is2D && (
-                                    <>
-                                      <span style={{ color: 'var(--gray-400)' }}>×</span>
+                                    <label style={FIELD}>
+                                      <span style={FIELD_LBL}>Width (in)</span>
                                       <input
                                         className="input" style={{ width: 90 }}
-                                        value={s.wid || ''} placeholder="Width"
+                                        value={s.wid || ''} placeholder="0"
                                         aria-label="Stock width in inches"
                                         onChange={e => updateGroupStock(group.key, i, 'wid', e.target.value)}
                                       />
-                                    </>
+                                    </label>
                                   )}
-                                  <span style={{ fontSize: 11, color: 'var(--gray-600)' }}>qty</span>
+                                  <label style={FIELD}>
+                                    <span style={FIELD_LBL}>How many</span>
                                   <input
-                                    className="input" style={{ width: 70 }}
-                                    value={s.qty || ''} placeholder="—"
-                                    aria-label="Quantity on hand, blank for unlimited"
+                                    className="input" style={{ width: 80 }}
+                                    value={s.qty || ''} placeholder={s.onHand ? '1' : 'all'}
+                                    aria-label={s.onHand ? 'How many you have' : 'How many to buy, blank for as many as needed'}
                                     onChange={e => updateGroupStock(group.key, i, 'qty', e.target.value)}
                                   />
+                                  </label>
                                   {!String(s.qty || '').trim() && (
-                                    <span style={{ fontSize: 11, color: s.onHand ? '#b06a1f' : 'var(--gray-400)', fontStyle: 'italic' }}>
-                                      {s.onHand ? 'how many? (assumes 1)' : 'unlimited'}
+                                    <span style={{ fontSize: 11, color: s.onHand ? '#b06a1f' : 'var(--gray-400)', fontStyle: 'italic', alignSelf: 'flex-end', paddingBottom: 6 }}>
+                                      {s.onHand ? 'assumes 1' : 'as many as needed'}
                                     </span>
                                   )}
+                                  <label style={FIELD}>
+                                    <span style={FIELD_LBL}>Heat # / bin</span>
                                   <input
                                     className="input" style={{ width: 130 }}
-                                    value={s.ref || ''} placeholder="Heat # / bin (opt.)"
+                                    value={s.ref || ''} placeholder="optional"
                                     aria-label="Reference"
                                     onChange={e => updateGroupStock(group.key, i, 'ref', e.target.value)}
                                   />
+                                  </label>
                                   <button
                                     className="btn btn-small"
+                                    style={{ alignSelf: 'flex-end', marginBottom: 1 }}
                                     aria-label="Remove this stock size"
                                     onClick={() => removeGroupStock(group.key, i)}
                                   >
@@ -3670,7 +3688,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.3 — catch parts too big for the stock before running</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.4 — label every stock field</span></footer>
     </div>
   );
 }
