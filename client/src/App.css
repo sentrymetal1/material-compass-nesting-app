@@ -348,6 +348,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* `.table th` is (0,1,1) and out-specifies `.num` at (0,1,0), so numeric
+   headers stayed left-aligned while their cells went right. Match the
+   specificity to put the header back over its column. */
+.table th.num {
+  text-align: right;
+}
+
 /* ─── Badges ─── */
 .badge {
   display: inline-block;

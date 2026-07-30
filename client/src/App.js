@@ -314,6 +314,42 @@ function buildNestGroups(rows) {
     a.material_name.localeCompare(b.material_name));
 }
 
+/** Extended totals for a group — what you actually have to cut.
+ *
+ *  Linear groups total in inches. Panel groups can't total a width, so they
+ *  total in AREA; weight is carried for both so a plate group and a channel
+ *  group can be compared on the one axis you buy on. Weight is inlined rather
+ *  than calling calcUnitWeight so this stays dependency-free and testable.
+ */
+function groupTotals(group) {
+  let lengthIn = 0, areaIn2 = 0, lbs = 0, unweighed = 0;
+  for (const r of group.rows) {
+    const qty = parseInt(r.quantity, 10) || 0;
+    const L = parseFloat(r.length_nest) || 0;
+    const W = parseFloat(r.width_nest) || 0;
+    const wpf = parseFloat(r.weight_per_ft) || 0;
+    if (group.is2D) areaIn2 += qty * L * W; else lengthIn += qty * L;
+    if (wpf > 0 && L > 0) lbs += qty * (W > 0 ? wpf * (L * W / 144) : wpf * (L / 12));
+    else if (L > 0) unweighed += qty;   // Weight_Per_Ft blank on the BOM row
+  }
+  return { lengthIn, areaIn2, lbs, unweighed };
+}
+
+/** Extended size of one BOM row, in the unit its group totals in. */
+function rowExtended(row, is2D) {
+  const qty = parseInt(row.quantity, 10) || 0;
+  const L = parseFloat(row.length_nest) || 0;
+  const W = parseFloat(row.width_nest) || 0;
+  return is2D ? qty * L * W : qty * L;
+}
+
+/** Square feet, for panel totals. */
+function fmtArea(in2) {
+  const n = parseFloat(in2) || 0;
+  if (n <= 0) return '—';
+  return (n / 144).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' ft²';
+}
+
 /** How much of the smallest entered stock this group's parts would fill.
  *  Null when nothing is entered yet — the caller says "no stock" instead. */
 function groupFillPct(group, entries) {
@@ -372,7 +408,10 @@ function groupChips(group, stockLibrary) {
     const label = (group.is2D ? `${len}x${wid}` : String(len)) + (ref ? `#${ref}` : '');
     if (seen.has(label)) continue;
     seen.add(label);
-    const qty = String(s.quantity ?? '').trim();
+    // Only a referenced row's quantity is a real cap — that's a specific piece
+    // on the floor. A plain catalog size carrying "1" is not a statement that
+    // you may buy only one, and importing it would cap the nest at one stick.
+    const qty = ref ? String(s.quantity ?? '').trim() : '';
     out.push({
       label, len, wid, reference: ref,
       quantity: qty,
@@ -2628,6 +2667,7 @@ export default function App() {
                   const stdChips = chips.filter(c => c.standard);
                   const ownChips = chips.filter(c => !c.standard);
                   const fill = groupFillPct(group, entries);
+                  const totals = groupTotals(group);
                   const specLabel = group.specs.length > 1 ? `${group.specs.length} specs` : (group.specs[0] || '');
 
                   let hint, hintWarn = false;
@@ -2680,6 +2720,9 @@ export default function App() {
                         )}
                         <span style={{ fontSize: 11, color: 'var(--gray-600)', whiteSpace: 'nowrap' }}>
                           {group.pieces} pcs
+                          {' · '}
+                          {group.is2D ? fmtArea(totals.areaIn2) : inToFt(totals.lengthIn)}
+                          {totals.lbs > 0 && ` · ${fmtLbs(totals.lbs)}`}
                         </span>
                       </button>
 
@@ -2704,9 +2747,12 @@ export default function App() {
                             <thead>
                               <tr>
                                 <th style={{ width: 34 }}>Cut</th>
-                                <th>Mark</th>
+                                {/* Mark absorbs the slack so the numeric columns hug
+                                    their values instead of drifting apart. */}
+                                <th style={{ width: '100%' }}>Mark</th>
                                 <th className="num">Qty</th>
                                 <th className="num">{group.is2D ? 'Size' : 'Length'}</th>
+                                <th className="num">{group.is2D ? 'Total Area' : 'Total Length'}</th>
                                 <th className="num">Buys</th>
                                 {group.is2D && <th>Grain</th>}
                               </tr>
@@ -2736,6 +2782,9 @@ export default function App() {
                                     <td className="mono">{row.bom_item}</td>
                                     <td className="num">{parseInt(row.quantity, 10) || 0}</td>
                                     <td className="num">{group.is2D ? `${L}" × ${W}"` : `${L}"`}</td>
+                                    <td className="num">
+                                      {group.is2D ? fmtArea(rowExtended(row, true)) : `${rowExtended(row, false)}"`}
+                                    </td>
                                     <td className="num" style={{ color: on ? '#1b5e20' : 'var(--gray-400)' }}>
                                       {on && dims
                                         ? (dims.is2D ? `${dims.buy_length_in}" × ${dims.buy_width_in}"` : `${dims.buy_length_in}"`)
@@ -2763,6 +2812,33 @@ export default function App() {
                                   </tr>
                                 );
                               })}
+                              <tr style={{ borderTop: '2px solid var(--gray-300)', fontWeight: 700 }}>
+                                <td />
+                                <td>Total</td>
+                                <td className="num">{group.pieces}</td>
+                                <td />
+                                <td className="num">
+                                  {group.is2D ? fmtArea(totals.areaIn2) : `${Math.round(totals.lengthIn * 100) / 100}"`}
+                                </td>
+                                <td className="num" colSpan={group.is2D ? 2 : 1}>
+                                  {totals.lbs > 0 ? fmtLbs(totals.lbs) : '—'}
+                                </td>
+                              </tr>
+                              {!group.is2D && totals.lengthIn > 0 && (
+                                <tr>
+                                  <td /><td colSpan={5} className="hint" style={{ paddingTop: 2 }}>
+                                    {inToFt(totals.lengthIn)} of {group.material_name || group.form_type_name} to cut
+                                    {totals.unweighed > 0 && ` — ${totals.unweighed} pc(s) have no Weight_Per_Ft, so the weight is understated`}
+                                  </td>
+                                </tr>
+                              )}
+                              {group.is2D && totals.unweighed > 0 && (
+                                <tr>
+                                  <td /><td colSpan={6} className="hint" style={{ paddingTop: 2 }}>
+                                    {totals.unweighed} pc(s) have no Weight_Per_Ft, so the weight is understated
+                                  </td>
+                                </tr>
+                              )}
                             </tbody>
                           </table>
 
@@ -3442,7 +3518,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.0.1 — fix crash from removed stock-table state</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.1 — group totals, aligned numeric headers</span></footer>
     </div>
   );
 }
