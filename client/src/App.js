@@ -350,6 +350,31 @@ function fmtArea(in2) {
   return (n / 144).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' ft²';
 }
 
+/** Parts in this group that fit NO entered stock size.
+ *
+ *  The nester reports these as "too long for any stock" only after a run, which
+ *  is a confusing place to learn it — by then the numbers on the card have
+ *  already gone nonsensical ("needs 104 sticks"). Catching it up front turns a
+ *  post-run error into an obvious red line on the card that blocks the run.
+ *
+ *  Panels are checked both ways round, since a part may fit rotated. Rows
+ *  bought cut to size are skipped — they never enter the nest.
+ */
+function groupOversizeParts(group, entries, ctsIds) {
+  const stocks = (entries || [])
+    .map(s => ({ L: parseFloat(s.len) || 0, W: parseFloat(s.wid) || 0 }))
+    .filter(s => s.L > 0 && (!group.is2D || s.W > 0));
+  if (stocks.length === 0) return [];
+  return group.rows.filter(r => {
+    if (ctsIds && ctsIds.has(r.id)) return false;
+    const L = parseFloat(r.length_nest) || 0;
+    const W = parseFloat(r.width_nest) || 0;
+    if (L <= 0) return false;
+    if (!group.is2D) return !stocks.some(s => s.L >= L);
+    return !stocks.some(s => (s.L >= L && s.W >= W) || (s.L >= W && s.W >= L));
+  });
+}
+
 /** How much of the smallest entered stock this group's parts would fill.
  *  Null when nothing is entered yet — the caller says "no stock" instead. */
 function groupFillPct(group, entries) {
@@ -1858,8 +1883,13 @@ export default function App() {
   // Every group in the job, including the ones bought cut to size — the card is
   // where you switch a group between the two, so it has to be listed either way.
   const nestGroups = buildNestGroups(selectedBom);
+  // A group blocks the run if it still needs stock, or if something in it fits
+  // none of the sizes entered — the nester would only report that afterwards.
   const groupsNeedingStock = nestGroups.filter(g =>
     g.rows.some(r => !ctsItems.has(r.id)) && (groupStock[g.key] || []).every(s => !(parseFloat(s.len) > 0)));
+  const groupsOversize = nestGroups.filter(g =>
+    groupOversizeParts(g, groupStock[g.key], ctsItems).length > 0);
+  const groupsBlocked = [...new Set([...groupsNeedingStock, ...groupsOversize])];
 
   // Keyed off nestBom, not selectedBom: a form/material that is entirely
   // cut-to-size needs no stock, so its rows drop out of the Stock Sizes table.
@@ -2685,9 +2715,21 @@ export default function App() {
                   const totals = groupTotals(group);
                   const specLabel = group.specs.length > 1 ? `${group.specs.length} specs` : (group.specs[0] || '');
 
-                  let hint, hintWarn = false;
+                  const oversize = groupOversizeParts(group, entries, ctsItems);
+                  let hint, hintWarn = false, hintBad = false;
                   if (allCts) {
                     hint = 'Bought cut to size — no stock needed.';
+                  } else if (oversize.length > 0) {
+                    // Say this instead of a fill percentage: "needs 104 sticks" is
+                    // arithmetic on a stock size that can't hold the part at all.
+                    const biggest = oversize.reduce((a, b) =>
+                      (parseFloat(b.length_nest) || 0) > (parseFloat(a.length_nest) || 0) ? b : a);
+                    hint = `Won't fit: ${oversize.map(r => r.bom_item).join(', ')} — `
+                      + `${group.is2D
+                          ? `${parseFloat(biggest.length_nest)}" × ${parseFloat(biggest.width_nest)}"`
+                          : `${parseFloat(biggest.length_nest)}"`}`
+                      + ' is bigger than every stock size entered. Add a bigger size, or switch these to Cut To Size.';
+                    hintBad = true;
                   } else if (fill === null) {
                     hint = "No stock entered — this group can't be nested yet.";
                     hintWarn = true;
@@ -2735,6 +2777,9 @@ export default function App() {
                         {someCts && <span className="badge" style={{ background: '#e6f4ea', color: '#1b5e20' }}>{groupCts.length} cut</span>}
                         {!allCts && entries.length === 0 && (
                           <span className="badge" style={{ background: '#fdecea', color: '#b71c1c' }}>No stock</span>
+                        )}
+                        {!allCts && entries.length > 0 && oversize.length > 0 && (
+                          <span className="badge" style={{ background: '#fdecea', color: '#b71c1c' }}>Won't fit</span>
                         )}
                         <span style={{ fontSize: 11, color: 'var(--gray-600)', whiteSpace: 'nowrap' }}>
                           {group.pieces} pcs
@@ -2980,7 +3025,7 @@ export default function App() {
 
                           <p
                             className="hint"
-                            style={{ marginTop: 12, paddingTop: 8, borderTop: '1px dashed var(--gray-200)', color: hintWarn ? '#b06a1f' : undefined }}
+                            style={{ marginTop: 12, paddingTop: 8, borderTop: '1px dashed var(--gray-200)', color: hintBad ? '#b71c1c' : (hintWarn ? '#b06a1f' : undefined), fontWeight: hintBad ? 600 : undefined }}
                           >
                             {hint}
                           </p>
@@ -2995,16 +3040,17 @@ export default function App() {
               <button onClick={() => setStep(1)} className="btn">← Back</button>
               <div className="btn-group" style={{ alignItems: 'center' }}>
                 <span className="count">
-                  {nestGroups.length - groupsNeedingStock.length} of {nestGroups.length} groups ready
-                  {groupsNeedingStock.length > 0 && ` — ${groupsNeedingStock.length} still need stock`}
+                  {nestGroups.length - groupsBlocked.length} of {nestGroups.length} groups ready
+                  {groupsNeedingStock.length > 0 && ` — ${groupsNeedingStock.length} need stock`}
+                  {groupsOversize.length > 0 && ` — ${groupsOversize.length} have parts too big for the stock entered`}
                 </span>
                 <button
                   onClick={runNesting}
                   className="btn btn-primary"
-                  title={groupsNeedingStock.length > 0
-                    ? `Enter a stock size (or switch to Cut To Size) for: ${groupsNeedingStock.map(g => g.form_type_name + (g.material_name ? ' ' + g.material_name : '')).join(', ')}`
+                  title={groupsBlocked.length > 0
+                    ? `Fix first: ${groupsBlocked.map(g => g.form_type_name + (g.material_name ? ' ' + g.material_name : '')).join(', ')}`
                     : ''}
-                  disabled={loading || groupsNeedingStock.length > 0 || nestGroups.length === 0}
+                  disabled={loading || groupsBlocked.length > 0 || nestGroups.length === 0}
                 >
                   {loading ? 'Running...' : 'Run Nesting'}
                 </button>
@@ -3624,7 +3670,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.2 — shop stock vs stock to order, 1/8 rounding</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.3 — catch parts too big for the stock before running</span></footer>
     </div>
   );
 }
