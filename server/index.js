@@ -1455,12 +1455,25 @@ app.get('/api/project/:id', async (req, res) => {
 // therefore yields 0 and zeroes out every downstream purchase/quote weight.
 // Joining Material.ID -> material library here is immune to that blank field.
 // Cached 30 min: material weights essentially never change.
+// The single most expensive read in the app: it paginates the WHOLE material
+// catalog at 200 rows a call, and every BOM load needs it. At a 30-minute TTL,
+// per process, across multiple Railway instances, it rebuilt itself all day and
+// dominated the 1,000/day developer allowance.
+//
+// The catalog only changes when it is deliberately regenerated, so it is cached
+// for a working day instead. POST /api/cache-clear flushes it immediately after
+// a regeneration — that is the release valve that makes the long TTL safe.
+const MATERIAL_WEIGHT_TTL_MS = 12 * 60 * 60 * 1000;
+
 async function getMaterialWeightMap() {
-  return cachedLookup('material-weight-map', 30 * 60 * 1000, async () => {
+  return cachedLookup('material-weight-map', MATERIAL_WEIGHT_TTL_MS, async () => {
+    const startedAt = Date.now();
     const rows = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report');
     const map = {};
     rows.forEach(r => { map[String(r.ID)] = parseFloat(r.Weight_Lb_Ft) || 0; });
-    console.log('material-weight-map built: ' + Object.keys(map).length + ' materials');
+    console.log('material-weight-map built: ' + Object.keys(map).length + ' materials from '
+      + rows.length + ' rows (~' + Math.ceil(rows.length / 200) + ' API calls, '
+      + (Date.now() - startedAt) + 'ms) — cached for ' + (MATERIAL_WEIGHT_TTL_MS / 3600000) + 'h');
     return map;
   });
 }
