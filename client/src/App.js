@@ -2583,6 +2583,13 @@ export default function App() {
               <div className="save-status save-success" style={{ margin: '12px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>
                   Previous nesting run found — Run #{savedRunInfo.run_number} ({savedRunInfo.run_date}) — {results.summary?.total_stock_pieces || 0} stock pieces — Status: {savedRunInfo.run_status}
+                {savedRunInfo.superseded_only && (
+                  <strong style={{ color: '#b06a1f', display: 'block', marginTop: 4 }}>
+                    No approved run on file — this is the newest saved run. A save that was
+                    interrupted can leave a project in this state; re-import the patterns to
+                    approve it again.
+                  </strong>
+                )}
                 </span>
                 <button onClick={() => setStep(3)} className="btn btn-primary btn-small" style={{ marginLeft: 12 }}>
                   View Saved Results →
@@ -3817,7 +3824,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.7.1 — Results is never blank</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.8 — recover a nesting run left unapproved</span></footer>
     </div>
   );
 }

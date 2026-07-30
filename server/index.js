@@ -2226,8 +2226,19 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       }
       throw e;
     }
-    var runs = (runResp.data.data || []).filter(function(r) { return r.Run_Status === 'Approved'; });
-    if (runs.length === 0) { return res.json({ found: false, message: 'No approved nesting run found' }); }
+    var allRuns = (runResp.data.data || []);
+    var runs = allRuns.filter(function(r) { return r.Run_Status === 'Approved'; });
+    var supersededOnly = false;
+    if (runs.length === 0 && allRuns.length > 0) {
+      // Saving marks the previous approved run Superseded BEFORE writing the new
+      // one, so an interrupted save (daily quota, network drop) can leave a
+      // project with runs on file but none approved. Showing the newest one beats
+      // telling the user their work is gone and sending them off to re-nest.
+      runs = allRuns.slice();
+      supersededOnly = true;
+      console.warn('Project ' + projectId + ': no Approved run, falling back to newest of ' + allRuns.length);
+    }
+    if (runs.length === 0) { return res.json({ found: false, message: 'No nesting run saved for this project' }); }
     runs.sort(function(a, b) { return (parseInt(b.Run_Number) || 0) - (parseInt(a.Run_Number) || 0); });
     var runHeader = runs[0];
     var nestRunID = runHeader.ID;
@@ -2252,7 +2263,7 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
     function safeStr(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.zc_display_value || val.display_value || val.ID || ''; return String(val); }
     function safeId(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.ID || val.zc_display_value || ''; return String(val); }
     if (stockResults.length === 0) {
-      return res.json({ found: true, run_header: { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: safeStr(runHeader.Run_Date), run_status: safeStr(runHeader.Run_Status), run_by: safeStr(runHeader.Run_By), notes: safeStr(runHeader.Notes) }, results_1d: [], results_2d: [], summary: { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
+      return res.json({ found: true, run_header: { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: safeStr(runHeader.Run_Date), superseded_only: supersededOnly, run_status: safeStr(runHeader.Run_Status), run_by: safeStr(runHeader.Run_By), notes: safeStr(runHeader.Notes) }, results_1d: [], results_2d: [], summary: { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
     }
     var stockResultIds = stockResults.map(function(sr) { return sr.ID; });
     var allCutDetails = [];
@@ -2309,7 +2320,7 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
     results_1d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
     results_2d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
     var avgWaste1d = count1d > 0 ? totalWaste1d / count1d : 0;
-    res.json({ found: true, run_header: { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: safeStr(runHeader.Run_Date), run_status: safeStr(runHeader.Run_Status), run_by: safeStr(runHeader.Run_By), kerf_1d: parseFloat(runHeader.Kerf_1D) || 0, kerf_2d: parseFloat(runHeader.Kerf_2D) || 0, notes: (typeof runHeader.Notes === 'object') ? '' : (runHeader.Notes || ''), total_stock_pieces: parseInt(runHeader.Total_Stock_Pieces) || (results_1d.length + results_2d.length) }, results_1d: results_1d, results_2d: results_2d, summary: { total_stock_pieces: results_1d.length + results_2d.length, avg_waste_pct_1d: Math.round(avgWaste1d * 10) / 10, errors: [] }, _nameLookup: nameLookup });
+    res.json({ found: true, run_header: { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: safeStr(runHeader.Run_Date), superseded_only: supersededOnly, run_status: safeStr(runHeader.Run_Status), run_by: safeStr(runHeader.Run_By), kerf_1d: parseFloat(runHeader.Kerf_1D) || 0, kerf_2d: parseFloat(runHeader.Kerf_2D) || 0, notes: (typeof runHeader.Notes === 'object') ? '' : (runHeader.Notes || ''), total_stock_pieces: parseInt(runHeader.Total_Stock_Pieces) || (results_1d.length + results_2d.length) }, results_1d: results_1d, results_2d: results_2d, summary: { total_stock_pieces: results_1d.length + results_2d.length, avg_waste_pct_1d: Math.round(avgWaste1d * 10) / 10, errors: [] }, _nameLookup: nameLookup });
   } catch (err) {
     console.error('Error fetching nesting results:', err.response?.data || err.message);
     if (err.response?.data?.code === 9280 || err.response?.status === 404) { return res.json({ found: false, message: 'No nesting results found' }); }
