@@ -328,6 +328,28 @@ function groupFillPct(group, entries) {
   return smallest > 0 ? (need / smallest) * 100 : null;
 }
 
+/** Rebuild the per-group stock map from flat library-shaped rows, so reopening a
+ *  saved run restores the sizes it was nested with. nest_type is inferred from
+ *  the width, which is the same test the payload builder uses. */
+function groupStockFromRows(rows) {
+  const out = {};
+  for (const s of rows || []) {
+    const len = parseFloat(s.stock_length) || 0;
+    if (len <= 0) continue;
+    const wid = parseFloat(s.stock_width) || 0;
+    const key = `${wid > 0 ? 'Panel' : 'Linear'}|${s.form_type}|${s.material_type}|${s.material_name || ''}`;
+    if (!out[key]) out[key] = [];
+    out[key].push({
+      len: String(len),
+      wid: wid > 0 ? String(wid) : '',
+      qty: String(s.quantity ?? '').trim(),
+      ref: s.reference || '',
+      standard: String(s.is_standard) === 'Yes',
+    });
+  }
+  return out;
+}
+
 /** Library sizes offered as chips for a group — the stock rows that actually
  *  match its form + material.
  *
@@ -1077,7 +1099,6 @@ export default function App() {
         if (item.nest_type && item.nest_type !== '') autoSelect.add(item.id);
       });
       setSelected(autoSelect);
-      setEnabledStock(new Set(taggedStock.map(s => s.id)));
       setStep(1);
       // Auto-load saved nesting results
       try {
@@ -1278,7 +1299,8 @@ export default function App() {
       if (isProjectRun) {
         setStandaloneParts([]);
         setStock([]);
-        setEnabledStock(new Set());
+        setGroupStock({});
+        setOpenGroups(new Set());
       }
 
       // For standalone runs only: pre-fill parts grid + stock entries so user can revise
@@ -1347,8 +1369,7 @@ export default function App() {
           reference: '',
         }));
         setStock(reconstructedStock);
-        setEnabledStock(new Set(reconstructedStock.map(s => s.id)));
-        setNextCustomId(900000 + reconstructedStock.length);
+        setGroupStock(groupStockFromRows(reconstructedStock));
       }
 
       setStep(3);
@@ -1408,10 +1429,6 @@ export default function App() {
   }
   function selectAll() { setSelected(new Set(bom.filter(b => b.nest_type).map(b => b.id))); }
   function selectNone() { setSelected(new Set()); }
-  function toggleStock(id) {
-    setEnabledStock(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  }
-
   function togglePattern(key) {
     setSelectedPatterns(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   }
@@ -2274,7 +2291,8 @@ export default function App() {
                     setSavedRunInfo(null);
                     setStandaloneParts([]);
                     setStock([]);
-                    setEnabledStock(new Set());
+                    setGroupStock({});
+                    setOpenGroups(new Set());
                     setRawResults(null);
                     setRunTitle('');
                     setRunNotes('');
@@ -3424,7 +3442,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.0 — nest groups: per-material stock entry with chips</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.0.1 — fix crash from removed stock-table state</span></footer>
     </div>
   );
 }
