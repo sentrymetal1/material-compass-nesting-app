@@ -1153,6 +1153,7 @@ export default function App() {
   const [purchaseStatus, setPurchaseStatus] = useState('');
   const [savedPurchaseLines, setSavedPurchaseLines] = useState([]);
   const [loadingSavedPurchase, setLoadingSavedPurchase] = useState(false);
+  const [loadingSavedResults, setLoadingSavedResults] = useState(false);
   const [showSavedPurchase, setShowSavedPurchase] = useState(false);
   const [savedRunInfo, setSavedRunInfo] = useState(null);
 
@@ -1462,6 +1463,20 @@ export default function App() {
       setError(e.message || 'Failed to load run');
     } finally {
       setLoadingRunId(null);
+    }
+  }
+
+  /** Jump to the Results step so a plan can be reviewed or printed. Results
+   *  already in memory are shown straight away; otherwise the project's saved
+   *  run is fetched first, so this works on a fresh page load too. */
+  async function viewNestingResults() {
+    if (results) { setStep(3); return; }
+    setLoadingSavedResults(true);
+    try {
+      await fetchSavedNestingResults();
+      setStep(3);
+    } finally {
+      setLoadingSavedResults(false);
     }
   }
 
@@ -2572,6 +2587,9 @@ export default function App() {
             <div className="card-footer">
               <span className="count">{selected.size} items selected</span>
               <div className="btn-group">
+                <button onClick={viewNestingResults} className="btn btn-secondary" disabled={loadingSavedResults}>
+                  {loadingSavedResults ? 'Loading...' : 'View Nesting Results'}
+                </button>
                 <button onClick={fetchSavedPurchaseList} className="btn btn-secondary" disabled={loadingSavedPurchase}>
                   {loadingSavedPurchase ? 'Loading...' : 'View Saved Purchase List'}
                 </button>
@@ -2586,7 +2604,12 @@ export default function App() {
               <div className="result-section" style={{ marginTop: 16 }}>
                 <div className="card-header">
                   <h3>Saved Purchase List ({savedPurchaseLines.length} items)</h3>
-                  <button onClick={() => setShowSavedPurchase(false)} className="btn btn-small">Close</button>
+                  <div className="btn-group">
+                    <button onClick={viewNestingResults} className="btn btn-small btn-primary" disabled={loadingSavedResults}>
+                      {loadingSavedResults ? 'Loading...' : 'View Nesting Results →'}
+                    </button>
+                    <button onClick={() => setShowSavedPurchase(false)} className="btn btn-small">Close</button>
+                  </div>
                 </div>
                 {savedPurchaseLines.length === 0 ? (
                   <p className="hint">No purchase list saved for this project yet.</p>
@@ -2597,7 +2620,7 @@ export default function App() {
                         <tr>
                           <th>#</th><th>Description</th><th>Form Type</th><th>Material</th>
                           <th>Spec</th><th>Qty</th><th>Feet</th><th>Wt/Ft</th>
-                          <th>Unit Wt</th><th>Total Wt</th><th>Price/LB</th><th>Unit Price</th><th>Unit Total</th>
+                          <th className="num">Unit Wt</th><th className="num">Total Wt</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2613,9 +2636,6 @@ export default function App() {
                             <td className="num">{line.weight_per_ft > 0 ? line.weight_per_ft.toFixed(2) : '—'}</td>
                             <td className="num">{line.unit_weight > 0 ? fmtLbs(line.unit_weight) : '—'}</td>
                             <td className="num">{line.total_weight > 0 ? fmtLbs(line.total_weight) : '—'}</td>
-                            <td className="num">{line.price_per_lb > 0 ? `$${line.price_per_lb.toFixed(2)}` : '—'}</td>
-                            <td className="num">{line.unit_price > 0 ? `$${line.unit_price.toFixed(2)}` : '—'}</td>
-                            <td className="num">{line.unit_total > 0 ? `$${line.unit_total.toFixed(2)}` : '—'}</td>
                           </tr>
                         ))}
                         <tr className="purchase-total-row">
@@ -2625,8 +2645,6 @@ export default function App() {
                           <td className="num"><strong>{savedPurchaseLines.reduce((s, l) => s + l.quantity, 0)}</strong></td>
                           <td></td><td></td><td></td>
                           <td className="num"><strong>{fmtLbs(savedPurchaseLines.reduce((s, l) => s + l.total_weight, 0))}</strong></td>
-                          <td></td><td></td>
-                          <td className="num"><strong>${savedPurchaseLines.reduce((s, l) => s + l.unit_total, 0).toFixed(2)}</strong></td>
                         </tr>
                       </tbody>
                     </table>
@@ -3712,7 +3730,7 @@ export default function App() {
                     <thead>
                       <tr>
                         <th>#</th><th>Description</th><th>Qty</th><th>Feet</th>
-                        <th>Unit Wt</th><th>Total Wt</th><th>Price/LB</th><th>Unit Total</th>
+                        <th className="num">Unit Wt</th><th className="num">Total Wt</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3724,8 +3742,6 @@ export default function App() {
                           <td className="num">{line.feet_length}</td>
                           <td className="num">{line.unit_weight > 0 ? fmtLbs(line.unit_weight) : '—'}</td>
                           <td className="num">{line.total_weight > 0 ? fmtLbs(line.total_weight) : '—'}</td>
-                          <td className="num">{line.price_per_lb > 0 ? `$${line.price_per_lb.toFixed(2)}` : '—'}</td>
-                          <td className="num">{line.unit_total > 0 ? `$${line.unit_total.toFixed(2)}` : '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -3778,7 +3794,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.6 — total weight, split into to-order and from-stock</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.7 — get back to results to print; drop price columns</span></footer>
     </div>
   );
 }
