@@ -2213,6 +2213,59 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
   }
 });
 
+/**
+ * Cut details for many stock results in as few calls as possible.
+ *
+ * One request per stock result burned the daily allowance fast: a 16-piece run
+ * cost 16 calls just to open the results, and the project page auto-loads them
+ * on every visit. Criteria accept an OR chain, so ids are batched.
+ *
+ * A full batch (limit reached) can't be trusted not to have truncated, so those
+ * fall back to per-id fetches — correctness first, savings where they're safe.
+ */
+async function fetchCutDetailsBatched(token, stockResultIds) {
+  const BATCH = 10, LIMIT = 200;
+  let out = [];
+  const stamp = (rows, chunk) => {
+    const wanted = new Set(chunk.map(String));
+    rows.forEach(c => {
+      const lk = c.Nesting_Stock_Result_Lookup;
+      let id = String((lk && (lk.ID || lk.id)) || lk || '');
+      if (!wanted.has(id) && chunk.length === 1) id = String(chunk[0]);
+      c._stock_result_id = id;
+    });
+    return rows;
+  };
+  for (let i = 0; i < stockResultIds.length; i += BATCH) {
+    const chunk = stockResultIds.slice(i, i + BATCH);
+    const crit = '(' + chunk.map(id => 'Nesting_Stock_Result_Lookup==' + id).join('%7C%7C') + ')';
+    let rows = null;
+    try {
+      const resp = await axios.get(
+        creatorApiBase() + '/report/All_Nesting_Cut_Details?criteria=' + crit + '&limit=' + LIMIT,
+        { headers: zohoHeaders(token) });
+      rows = resp.data.data || [];
+    } catch (e) {
+      if (e.response?.data?.code === 9280) rows = [];   // zero matches
+      else { console.error('Cut detail batch error:', e.response?.data || e.message); rows = null; }
+    }
+    if (rows !== null && rows.length < LIMIT) { out = out.concat(stamp(rows, chunk)); continue; }
+    // Batch failed, or came back full and may be truncated — redo it one at a time.
+    if (rows !== null) console.warn('Cut detail batch hit the ' + LIMIT + ' row limit; refetching ' + chunk.length + ' individually');
+    for (const id of chunk) {
+      try {
+        const r = await axios.get(
+          creatorApiBase() + '/report/All_Nesting_Cut_Details?criteria=(Nesting_Stock_Result_Lookup==' + id + ')&limit=' + LIMIT,
+          { headers: zohoHeaders(token) });
+        out = out.concat(stamp(r.data.data || [], [id]));
+      } catch (e) {
+        if (e.response?.data?.code !== 9280) console.error('Cut detail fetch error for SR', id, ':', e.response?.data || e.message);
+      }
+    }
+  }
+  return out;
+}
+
 app.get('/api/project/:id/nesting-results', async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -2283,15 +2336,7 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       return res.json({ found: true, run_header: { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: safeStr(runHeader.Run_Date), superseded_only: supersededOnly, run_status: safeStr(runHeader.Run_Status), run_by: safeStr(runHeader.Run_By), notes: safeStr(runHeader.Notes) }, results_1d: [], results_2d: [], summary: { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
     }
     var stockResultIds = stockResults.map(function(sr) { return sr.ID; });
-    var allCutDetails = [];
-    for (var i = 0; i < stockResultIds.length; i++) {
-      try {
-        var cdResp = await axios.get(creatorApiBase()+'/report/All_Nesting_Cut_Details?criteria=(Nesting_Stock_Result_Lookup=='+stockResultIds[i]+')&limit=200', { headers: zohoHeaders(token) });
-        var cuts = cdResp.data.data || [];
-        cuts.forEach(function(c) { c._stock_result_id = stockResultIds[i]; });
-        allCutDetails = allCutDetails.concat(cuts);
-      } catch (e) { if (e.response?.data?.code !== 9280) { console.error('Cut detail fetch error for SR', stockResultIds[i], ':', e.response?.data || e.message); } }
-    }
+    var allCutDetails = await fetchCutDetailsBatched(token, stockResultIds);
     var cutsByStock = {};
     allCutDetails.forEach(function(cd) { var srId = cd._stock_result_id; if (!cutsByStock[srId]) cutsByStock[srId] = []; cutsByStock[srId].push(cd); });
     var results_1d = [];
@@ -2976,15 +3021,7 @@ app.get('/api/standalone/nesting-results', async (req, res) => {
     }
 
     var stockResultIds = stockResults.map(function(sr) { return sr.ID; });
-    var allCutDetails = [];
-    for (var i = 0; i < stockResultIds.length; i++) {
-      try {
-        var cdResp = await axios.get(creatorApiBase()+'/report/All_Nesting_Cut_Details?criteria=(Nesting_Stock_Result_Lookup=='+stockResultIds[i]+')&limit=200', { headers: zohoHeaders(token) });
-        var cuts = cdResp.data.data || [];
-        cuts.forEach(function(c) { c._stock_result_id = stockResultIds[i]; });
-        allCutDetails = allCutDetails.concat(cuts);
-      } catch (e) { if (e.response?.data?.code !== 9280) console.error('Cut detail fetch error for SR', stockResultIds[i], ':', e.response?.data || e.message); }
-    }
+    var allCutDetails = await fetchCutDetailsBatched(token, stockResultIds);
     var cutsByStock = {};
     allCutDetails.forEach(function(cd) { var srId = cd._stock_result_id; if (!cutsByStock[srId]) cutsByStock[srId] = []; cutsByStock[srId].push(cd); });
 

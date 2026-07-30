@@ -3832,7 +3832,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.9 — say why a saved run cannot be read</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.10 — batch cut-detail reads to save API calls</span></footer>
     </div>
   );
 }
