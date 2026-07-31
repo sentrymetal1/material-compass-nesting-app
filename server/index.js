@@ -2042,14 +2042,19 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
       var widthFtId = is2D ? findWidthFtId(lookups.plateWidthFt, widFt) : findWidthFtId(lookups.plateWidthFt, 0);
       var widthInchId = findLengthInchId(lookups.lengthInch, widInchRem);
       var matTypeId = findMaterialTypeId(lookups.materialTypes, line.material_type_name);
-      var lengthInchResult = lengthInchId ? findLengthInchResult(lookups.lengthInch, lengthInchId) : lenInchRem;
-      var widthFtResult = widthFtId ? findWidthFtResult(lookups.plateWidthFt, widthFtId) : widFt;
-      var widthInchResult = widthInchId ? findLengthInchResult(lookups.lengthInch, widthInchId) : widInchRem;
+      // These land in tight decimal fields on the form. Buy sizes now round to
+      // 1/8", and half the eighths (.125/.375/.625/.875) need THREE decimals —
+      // more than the fields hold, which rejects the whole row with code 3001
+      // ("has exceeded its maximum digits"). Clamp to 2dp: the ~0.005" it costs
+      // is meaningless on a purchase line, and losing the line is not.
+      var lengthInchResult = safeNum(lengthInchId ? findLengthInchResult(lookups.lengthInch, lengthInchId) : lenInchRem, 2);
+      var widthFtResult = safeNum(widthFtId ? findWidthFtResult(lookups.plateWidthFt, widthFtId) : widFt, 2);
+      var widthInchResult = safeNum(widthInchId ? findLengthInchResult(lookups.lengthInch, widthInchId) : widInchRem, 2);
       var unitWt = Math.round((parseFloat(line.unit_weight) || 0) * 100) / 100;
       var qty = safeNum(line.quantity, 0);
       var totalWt = Math.round(unitWt * qty * 100) / 100;
       var area = is2D ? safeNum((stockLenIn * stockWidIn) / 144, 2) : 0;
-      var totalLength = is2D ? 0 : safeNum((lenFt * 12) + lengthInchResult, 4);
+      var totalLength = is2D ? 0 : safeNum((lenFt * 12) + lengthInchResult, 2);
       var totalPlateWidth = is2D ? safeNum(stockWidIn, 4) : 0;
       var descParts = [line.form_type_name, line.material_type_name, line.spec_name, line.material_name].filter(Boolean);
       var lenStr = lenFt + "'-" + (lenInchRem > 0 ? Math.round(lenInchRem) + '"' : '0"');
@@ -2082,8 +2087,8 @@ app.post('/api/project/:id/generate-purchase-list', async (req, res) => {
         CalcWeight: totalWt,
         Area: area,
         Total_Length: totalLength,
-        Total_Plate_Width: totalPlateWidth,
-        Material_Size: safeNum(line.material_size, 4),
+        Total_Plate_Width: safeNum(totalPlateWidth, 2),
+        Material_Size: safeNum(line.material_size, 2),
         Price_Per_LB: 0,
         Unit_Price: 0,
         Unit_Total: 0,
