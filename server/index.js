@@ -2335,6 +2335,22 @@ app.get('/api/project/:id/nesting-runs-debug', async (req, res) => {
       code = e.response?.data?.code ?? null;
       errBody = e.response?.data || String(e.message);
     }
+    // Decisive second probe: read the SAME report with no criteria at all.
+    // A v2.1 report only returns the columns configured on it, so if
+    // Project_Lookup is not a column the filtered read can never match and
+    // always looks like "no runs" — regardless of how many exist. Comparing
+    // filtered against unfiltered separates "none saved" from "cannot see it".
+    let anyRows = [], anyCode = null, anyErr = null;
+    try {
+      const r2 = await axios.get(
+        creatorApiBase() + '/report/Nesting_Run_Header_Report?limit=5',
+        { headers: zohoHeaders(token) });
+      anyCode = r2.data?.code ?? null; anyRows = r2.data?.data || [];
+    } catch (e) {
+      anyCode = e.response?.data?.code ?? null;
+      anyErr = e.response?.data || String(e.message);
+    }
+
     res.json({
       project_id_used: projectId,
       report: 'Nesting_Run_Header_Report',
@@ -2345,6 +2361,23 @@ app.get('/api/project/:id/nesting-runs-debug', async (req, res) => {
       quota_exhausted: code === 4000,
       zero_match: code === 9280,
       error: errBody,
+      unfiltered_probe: {
+        row_count: anyRows.length,
+        zoho_code: anyCode,
+        error: anyErr,
+        // If rows come back here but the filtered read found none, compare these
+        // ids against project_id_used — and if Project_Lookup is absent from the
+        // sample, it is not a column on the report and that is the whole problem.
+        project_lookup_field_present: anyRows.length > 0
+          ? Object.prototype.hasOwnProperty.call(anyRows[0], 'Project_Lookup') : null,
+        columns_returned: anyRows.length > 0 ? Object.keys(anyRows[0]) : [],
+        sample: anyRows.map(r => ({
+          id: r.ID,
+          run_number: r.Run_Number,
+          run_status: r.Run_Status,
+          project_lookup: (r.Project_Lookup && (r.Project_Lookup.ID || r.Project_Lookup.zc_display_value)) || r.Project_Lookup || null,
+        })),
+      },
       runs: rows.map(r => ({
         id: r.ID,
         run_number: r.Run_Number,
