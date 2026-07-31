@@ -1140,6 +1140,9 @@ export default function App() {
   // rows to audit.
   const [groupStock, setGroupStock] = useState({});
   const [openGroups, setOpenGroups] = useState(new Set());
+  // Collapsed by default — it is set once per job, while the group cards below
+  // are worked through every time.
+  const [showSettings, setShowSettings] = useState(false);
   // Kerf rides along with the cut-to-size settings: a converted piece gives back
   // its trailing kerf, since its far end is the supplier's cut and not yours.
   const ctsOpts = useMemo(() => ({ ...cts, kerf1D, kerf2D }), [cts, kerf1D, kerf2D]);
@@ -2715,18 +2718,43 @@ export default function App() {
           <div className="card">
             <h2>Nesting Configuration</h2>
             <div className="config-grid">
-              <div className="config-section">
-                <h3>Kerf Settings</h3>
+              <div className="config-section config-full">
+                <div className="stock-header">
+                  <h3>Nesting Settings</h3>
+                  <div className="stock-controls" style={{ gap: 12 }}>
+                    {/* The values stay readable while collapsed — these are live
+                        settings, not preferences you set once and forget. */}
+                    <span className="hint" style={{ margin: 0 }}>
+                      Kerf {kerf1D}" / {kerf2D}"
+                      {' · '}
+                      {cts.enabled ? `re-quote under ${cts.utilThresholdPct}%` : 're-quote off'}
+                      {' · '}
+                      {(cts.trimLinearIn > 0 || cts.trimPanelIn > 0)
+                        ? `trim ${cts.trimLinearIn}" / ${cts.trimPanelIn}"`
+                        : 'no trim'}
+                      {' · '}round {cts.roundToIn}"
+                    </span>
+                    <button className="btn btn-small" onClick={() => setShowSettings(v => !v)}>
+                      {showSettings ? 'Hide' : 'Edit'}
+                    </button>
+                  </div>
+                </div>
+                <div style={{
+                  display: showSettings ? 'grid' : 'none',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                  columnGap: 28,
+                  alignItems: 'start',
+                }}>
                 <div className="field">
-                  <label>1D Kerf (inches)</label>
+                  <label>Kerf — linear cuts (in)</label>
                   <input type="number" step="0.0625" value={kerf1D} onChange={e => setKerf1D(parseFloat(e.target.value) || 0)} className="input" />
                 </div>
                 <div className="field">
-                  <label>2D Kerf (inches)</label>
+                  <label>Kerf — panel cuts (in)</label>
                   <input type="number" step="0.0625" value={kerf2D} onChange={e => setKerf2D(parseFloat(e.target.value) || 0)} className="input" />
                 </div>
 
-                <h3 style={{ marginTop: 22 }}>Cut To Size</h3>
+                <h3 style={{ marginTop: 0, gridColumn: '1 / -1' }}>Cut To Size</h3>
                 <p className="hint" style={{ marginTop: -6 }}>
                   Any stock piece that ends up barely used gets re-quoted as a piece
                   cut to size instead of a full length or full sheet. Applies after
@@ -2789,6 +2817,7 @@ export default function App() {
                     onChange={e => setCts(p => ({ ...p, roundToIn: Math.max(parseFloat(e.target.value) || 0, 0) }))}
                   />
                   <p className="hint">Keeps buy sizes orderable — 1/8" lands on a real increment, where 9.0313" does not.</p>
+                </div>
                 </div>
               </div>
               <div className="config-section config-full">
@@ -3892,7 +3921,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.13 — show the project id being searched</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.14 — settings collapse to one line</span></footer>
     </div>
   );
 }
