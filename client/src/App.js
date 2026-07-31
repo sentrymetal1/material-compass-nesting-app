@@ -2105,11 +2105,12 @@ export default function App() {
   }
 
   async function saveToZoho() {
-    if (!results) return;
+    let savedOk = false;
+    if (!results) return savedOk;
     const { selected_1d, selected_2d } = getSelectedResults();
     if (selected_1d.length === 0 && selected_2d.length === 0) {
       setSaveStatus('Error: No patterns selected for import');
-      return;
+      return savedOk;
     }
     setSaving(true);
     setSaveStatus('');
@@ -2170,6 +2171,7 @@ export default function App() {
       if (!resp.ok) throw new Error('Save failed');
       const data = await resp.json();
       setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d || 0} 1D + ${data.saved_2d || 0} 2D results (Status: ${data.run_status})`);
+      savedOk = true;
       setRunTitle('');
       setRunNotes('');
       setLoadedFromRunNumber(null);
@@ -2181,6 +2183,25 @@ export default function App() {
     } finally {
       setSaving(false);
     }
+    return savedOk;
+  }
+
+  /**
+   * One action for what is really one decision: this plan is the plan.
+   *
+   * The cut patterns and the purchase list describe the same nest but saved
+   * through separate endpoints, so it was possible — and it happened — to end
+   * up with a purchase list in the project and no run behind it, with nothing
+   * on screen saying so. The patterns go first, and the purchase list is only
+   * written if they landed, so the two can no longer disagree.
+   */
+  async function saveAllToProject() {
+    const ok = await saveToZoho();
+    if (!ok) {
+      setPurchaseStatus('Purchase list not saved — the nesting run did not save, so there is nothing to bill against.');
+      return;
+    }
+    await savePurchaseList();
   }
 
   const selectedPatternCount = selectedPatterns.size;
@@ -3828,8 +3849,8 @@ export default function App() {
                   </tbody>
                 </table>
                 <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-                  <button onClick={savePurchaseList} className="btn btn-primary" disabled={savingPurchase}>
-                    {savingPurchase ? 'Saving...' : 'Save Purchase List to Project'}
+                  <button onClick={saveAllToProject} className="btn btn-primary" disabled={savingPurchase || saving}>
+                    {savingPurchase || saving ? 'Saving...' : 'Save to Project'}
                   </button>
                   <button onClick={() => setShowPurchasePreview(false)} className="btn">Cancel</button>
                 </div>
@@ -3893,13 +3914,23 @@ export default function App() {
                   </span>
                 )}
                 <span className="count">{selectedPatternCount} pattern{selectedPatternCount !== 1 ? 's' : ''} selected</span>
+                {/* One button for one decision. Standalone has no project to bill
+                    against, so it still just saves the run. */}
                 <button
-                  onClick={saveToZoho}
+                  onClick={isStandalone ? saveToZoho : saveAllToProject}
                   className="btn btn-primary"
-                  disabled={saving || selectedPatternCount === 0 || (isStandalone && loadedRunIsProject)}
-                  title={isStandalone && loadedRunIsProject ? 'View-only — go to the project page to modify a project run' : ''}
+                  disabled={saving || savingPurchase || selectedPatternCount === 0 || (isStandalone && loadedRunIsProject)}
+                  title={isStandalone && loadedRunIsProject
+                    ? 'View-only — go to the project page to modify a project run'
+                    : (isStandalone ? '' : 'Saves the cut patterns and the purchase list together')}
                 >
-                  {saving ? 'Saving...' : (isStandalone && loadedRunIsProject) ? 'View only (project run)' : `${isStandalone ? 'Save' : 'Import'} ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''}${isStandalone ? '' : ' to Project'}`}
+                  {(saving || savingPurchase)
+                    ? 'Saving...'
+                    : (isStandalone && loadedRunIsProject)
+                      ? 'View only (project run)'
+                      : isStandalone
+                        ? `Save ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''}`
+                        : `Save to Project — ${selectedPatternCount} Pattern${selectedPatternCount !== 1 ? 's' : ''} + Purchase List`}
                 </button>
                 {!isStandalone && (
                   <>
@@ -3907,8 +3938,9 @@ export default function App() {
                       onClick={() => { setShowPurchasePreview(true); setPurchaseStatus(''); }}
                       className="btn btn-secondary"
                       disabled={selectedPatternCount === 0}
+                      title="Look at the purchase lines without saving anything"
                     >
-                      Generate Purchase List
+                      Preview Purchase List
                     </button>
                     <button onClick={fetchSavedPurchaseList} className="btn btn-small" disabled={loadingSavedPurchase}>
                       {loadingSavedPurchase ? 'Loading...' : 'View Saved'}
@@ -3925,7 +3957,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.15 — grain column drops for cut-to-size groups</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.16 — one Save to Project, patterns and purchase list together</span></footer>
     </div>
   );
 }
