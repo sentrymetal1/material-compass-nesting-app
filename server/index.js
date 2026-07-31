@@ -1851,8 +1851,12 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       existingRuns = rr.data.data || [];
     } catch (e) { if (e.response?.data?.code === 9280) existingRuns = []; else throw e; }
 
+    // Superseding the previous approved run happens LAST, once the replacement
+    // exists and its rows are written. It used to run first, so any failure
+    // after it — an exhausted allowance being the obvious one — left the project
+    // with its good run demoted and no new one to replace it. That is how a
+    // project ends up with runs on file and none approved.
     const approvedRuns = existingRuns.filter(r => r.Run_Status === 'Approved');
-    for (const pr of approvedRuns) { try { await axios.patch(creatorApiBase()+'/report/Nesting_Run_Header_Report/'+pr.ID, { data: { Run_Status: 'Superseded' } }, { headers: zohoHeaders(token) }); } catch(e) {} }
 
     let mfg = '';
     try { const pr = await axios.get(creatorApiBase()+'/report/All_Projects/'+projectId, { headers: zohoHeaders(token) }); const m = pr.data.data?.MANUFACTURE; mfg = m?.ID || m?.zc_display_value || m || ''; } catch(e) {}
@@ -1868,7 +1872,19 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     if (kerf_2d !== undefined) hd.Kerf_2D = kerf_2d;
 
     const hr = await axios.post(creatorApiBase()+'/form/Nesting_Run_Header', { data: hd }, { headers: zohoHeaders(token) });
-    const nestRunID = hr.data.data.ID;
+    // An exhausted allowance answers HTTP 200 with code 4000 and no record, so
+    // reading .data.data.ID blind threw a TypeError and surfaced as a generic
+    // "Failed to save results" — the user was told nothing useful and the run
+    // silently did not exist. Check before dereferencing.
+    if (hr.data && hr.data.code === 4000) {
+      console.error('Quota exhausted creating the run header for project ' + projectId);
+      return res.status(429).json({ error: 'Daily data limit reached — the nesting run was NOT saved. This resets overnight; try again then.', code: 4000 });
+    }
+    const nestRunID = hr.data && hr.data.data && hr.data.data.ID;
+    if (!nestRunID) {
+      console.error('Run header not created:', JSON.stringify(hr.data));
+      return res.status(502).json({ error: 'The nesting run header could not be created, so nothing was saved.', detail: hr.data });
+    }
 
     let s1d = 0;
     for (const result of results_1d || []) {
@@ -1899,7 +1915,22 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       await axios.patch(creatorApiBase()+'/report/Nesting_Run_Header_Report/'+nestRunID, { data: { Total_Stock_Pieces: s1d + s2d, Total_Waste_Inches: Math.round((summary?.total_remnant_length_in || 0) * 10000) / 10000, Notes: 'Saved '+s1d+' 1D + '+s2d+' 2D | Waste: '+(summary?.avg_waste_pct_1d || 0)+'%' } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     } catch (e) { console.error('Header patch failed'); }
 
-    res.json({ success: true, nest_run_id: nestRunID, run_number: existingRuns.length + 1, run_status: 'Approved', saved_1d: s1d, saved_2d: s2d, superseded_runs: approvedRuns.length });
+    // Only now is it safe to demote the previous run. If nothing was written,
+    // leave the old one approved — a stale plan beats no plan at all.
+    let superseded = 0;
+    if (s1d + s2d > 0) {
+      for (const pr of approvedRuns) {
+        try {
+          await axios.patch(creatorApiBase()+'/report/Nesting_Run_Header_Report/'+pr.ID,
+            { data: { Run_Status: 'Superseded' } }, { headers: zohoHeaders(token) });
+          superseded++;
+        } catch (e) { console.error('Supersede failed for run ' + pr.ID); }
+      }
+    } else {
+      console.warn('No stock results written — leaving ' + approvedRuns.length + ' prior run(s) approved');
+    }
+
+    res.json({ success: true, nest_run_id: nestRunID, run_number: existingRuns.length + 1, run_status: 'Approved', saved_1d: s1d, saved_2d: s2d, superseded_runs: superseded, wrote_nothing: (s1d + s2d) === 0 });
   } catch (err) { console.error('Save error:', err.response?.data || err.message); res.status(500).json({ error: 'Failed to save results', details: err.response?.data || err.message }); }
 });
 
