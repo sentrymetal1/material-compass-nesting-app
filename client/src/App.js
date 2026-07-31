@@ -2859,6 +2859,10 @@ export default function App() {
                   const specLabel = group.specs.length > 1 ? `${group.specs.length} specs` : (group.specs[0] || '');
 
                   const oversize = groupOversizeParts(group, entries, ctsItems);
+                  // Grain only means something for a part that gets nested, so the
+                  // column disappears once the whole group is bought cut to size —
+                  // a column of dashes is just noise.
+                  const showGrain = group.is2D && !allCts;
                   let hint, hintWarn = false, hintBad = false;
                   if (allCts) {
                     hint = 'Bought cut to size — no stock needed.';
@@ -2960,7 +2964,7 @@ export default function App() {
                                 <th className="num">{group.is2D ? 'Size' : 'Length'}</th>
                                 <th className="num">{group.is2D ? 'Total Area' : 'Total Length'}</th>
                                 <th className="num">Buys</th>
-                                {group.is2D && <th>Grain</th>}
+                                {showGrain && <th>Grain</th>}
                               </tr>
                             </thead>
                             <tbody>
@@ -2996,7 +3000,7 @@ export default function App() {
                                         ? (dims.is2D ? `${dims.buy_length_in}" × ${dims.buy_width_in}"` : `${dims.buy_length_in}"`)
                                         : '—'}
                                     </td>
-                                    {group.is2D && (
+                                    {showGrain && (
                                       <td>
                                         {on ? <span style={{ color: 'var(--gray-400)' }}>—</span> : (
                                           <div className="filter-tabs">
@@ -3026,7 +3030,7 @@ export default function App() {
                                 <td className="num">
                                   {group.is2D ? fmtArea(totals.areaIn2) : `${Math.round(totals.lengthIn * 100) / 100}"`}
                                 </td>
-                                <td className="num" colSpan={group.is2D ? 2 : 1}>
+                                <td className="num" colSpan={showGrain ? 2 : 1}>
                                   {totals.lbs > 0 ? fmtLbs(totals.lbs) : '—'}
                                 </td>
                               </tr>
@@ -3921,7 +3925,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.14 — settings collapse to one line</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.15 — grain column drops for cut-to-size groups</span></footer>
     </div>
   );
 }
