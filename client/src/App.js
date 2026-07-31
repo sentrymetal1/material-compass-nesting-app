@@ -2232,6 +2232,26 @@ export default function App() {
               Standalone Nesting — Mfg ID {manufactureId.slice(-6)}
             </div>
           )}
+          {/* Always reachable, not only after a save. Leaving mid-nest was a
+              dead end otherwise — the only way out was the browser button. */}
+          {!isStandalone && (returnUrl || window.history.length > 1) && (
+            <button
+              onClick={() => {
+                if (returnUrl) window.location.href = returnUrl;
+                else window.history.back();
+              }}
+              className="btn btn-small"
+              title={returnUrl ? 'Return to the project page' : 'Go back to where you came from'}
+              style={{
+                background: 'transparent',
+                color: '#cfd8e3',
+                border: '1px solid #3a4757',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              ← Back to Project
+            </button>
+          )}
         </div>
       </header>
 
@@ -3873,7 +3893,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.11 — shop stock reaches the project, tagged</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.12 — Back to Project always available</span></footer>
     </div>
   );
 }
