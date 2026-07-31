@@ -1479,7 +1479,11 @@ export default function App() {
       // nothing to render leaves a blank page with no way back.
       const found = await fetchSavedNestingResults();
       if (found) { setError(''); setStep(3); }
-      else setError(lastSavedRunMessage || 'No saved nesting run for this project yet.');
+      // Name the project id being searched. Without it there is no way to tell
+      // "nothing was saved" apart from "saved against a different project", and
+      // that ambiguity has cost a lot of time.
+      else setError((lastSavedRunMessage || 'No saved nesting run for this project yet.')
+        + ` — searched project id ${projectId}. Check Nesting_Run_Header for this id before re-nesting.`);
     } finally {
       setLoadingSavedResults(false);
     }
@@ -2240,14 +2244,9 @@ export default function App() {
                 if (returnUrl) window.location.href = returnUrl;
                 else window.history.back();
               }}
-              className="btn btn-small"
+              className="btn btn-small btn-primary"
               title={returnUrl ? 'Return to the project page' : 'Go back to where you came from'}
-              style={{
-                background: 'transparent',
-                color: '#cfd8e3',
-                border: '1px solid #3a4757',
-                whiteSpace: 'nowrap',
-              }}
+              style={{ whiteSpace: 'nowrap', fontWeight: 700 }}
             >
               ← Back to Project
             </button>
@@ -3893,7 +3892,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.12 — Back to Project always available</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.13 — show the project id being searched</span></footer>
     </div>
   );
 }
