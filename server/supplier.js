@@ -1007,18 +1007,19 @@ function registerSupplierRoutes(app, deps) {
     }
     return { added, errors };
   }
-  // Bulk delete by criteria — one call instead of N per-id deletes (saves API budget).
-  async function deleteByCriteria(report, criteria) {
-    const token = await getAccessToken();
-    try {
-      const r = await axios.delete(creatorApiBase() + '/report/' + report + '?criteria=' + criteria, { headers: zohoHeaders(token) });
-      return { ok: true, code: r.data && r.data.code, message: r.data && r.data.message };
-    } catch (e) {
-      const code = e.response && e.response.data && e.response.data.code;
-      // 3100 = no records matched the criteria; that's fine for a sync.
-      if (code === 3100) return { ok: true, code };
-      return { ok: false, code, message: (e.response && JSON.stringify(e.response.data)) || e.message };
+  // NOTE: there is no bulk delete-by-criteria here on purpose. Creator v2.1 accepts a
+  // criteria string on GET but rejects the identical string on DELETE:
+  //   DELETE /report/X?criteria=(A==1&&B==2) -> HTTP 401 {"code":1060,"criteria"} and
+  //   deletes nothing. Verified 2026-08-03 against Supplier_Fitting_Stock_All.
+  // Deletes must go one record ID at a time. Keep call counts down by diffing (see the
+  // group sync below), not by batching the delete.
+  async function deleteRecords(report, ids) {
+    let removed = 0; const errors = [];
+    for (const id of ids) {
+      const r = await deleteRecord(report, id);
+      if (r.ok) removed++; else errors.push(id + ': ' + (r.message || 'delete failed'));
     }
+    return { removed, errors };
   }
   async function deleteRecord(report, id) {
     const token = await getAccessToken();
@@ -1240,22 +1241,51 @@ function registerSupplierRoutes(app, deps) {
       const sid = String(req.supplier.id);
       const b = req.body || {};
       if (!b.type_id || !b.make_id || !b.end_id) return res.status(400).json({ ok: false, error: 'type, make, and end required' });
-      const connIds = Array.isArray(b.connection_ids) ? b.connection_ids.filter(Boolean) : [];
-      const specIds = Array.isArray(b.spec_ids) ? b.spec_ids.filter(Boolean) : [];
-      // Clear the whole group in ONE delete call, then re-add the desired cross-product.
-      // Keeps a group save to ~2 API calls regardless of size (per-combo deletes blew the
-      // daily Developer-API quota). Supplier_ID in the criteria scopes it to this supplier.
-      const crit = '(Supplier_ID==' + sid + '%26%26Fitting_Type==' + b.type_id + '%26%26Fitting_Make==' + b.make_id + '%26%26End_Type==' + b.end_id + ')';
-      const del = await deleteByCriteria(FIT_STOCK_REPORT, crit);
-      if (!del.ok) return res.status(502).json({ ok: false, error: 'sync failed (clear)', message: del.message });
-      let added = 0;
-      if (connIds.length && specIds.length) {
-        const rows = [];
-        for (const c of connIds) for (const s of specIds) rows.push({ Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id, End_Type: b.end_id, Connection_Type: c, Fitting_Specification: s, Fitting_Stocked_Checkbox: ['Stocked'], Timestamp: zohoNow() });
-        const r = await bulkAdd('Supplier_Fitting_Stock', rows); added = r.added;
+      const connIds = Array.isArray(b.connection_ids) ? b.connection_ids.filter(Boolean).map(String) : [];
+      const specIds = Array.isArray(b.spec_ids) ? b.spec_ids.filter(Boolean).map(String) : [];
+      // Diff against what's already stocked rather than clearing and re-adding the whole
+      // group: checking one more spec writes one row instead of rewriting all 102. (Clearing
+      // first is also not an option — Zoho rejects criteria on DELETE; see deleteRecords.)
+      // Re-read rather than trust the 60s cache: diffing against a stale list duplicates rows.
+      bust('fit-stock-all:' + sid);
+      const all = await fitStock(sid);
+      const inGroup = (all || []).filter(r =>
+        lkid(r.Fitting_Type) === String(b.type_id) &&
+        lkid(r.Fitting_Make) === String(b.make_id) &&
+        lkid(r.End_Type) === String(b.end_id));
+
+      const combo = (c, s) => c + '|' + s;
+      const wanted = new Set();
+      for (const c of connIds) for (const s of specIds) wanted.add(combo(c, s));
+
+      const seen = new Set(); const staleIds = [];
+      for (const r of inGroup) {
+        const k = combo(lkid(r.Connection_Type), lkid(r.Fitting_Specification));
+        // drop anything deselected, plus any duplicate rows for a combo we're keeping
+        if (!wanted.has(k) || seen.has(k)) staleIds.push(String(r.ID)); else seen.add(k);
       }
+
+      const rows = [];
+      for (const k of wanted) {
+        if (seen.has(k)) continue;
+        const [c, s] = k.split('|');
+        rows.push({ Supplier_ID: sid, Fitting_Type: b.type_id, Fitting_Make: b.make_id, End_Type: b.end_id, Connection_Type: c, Fitting_Specification: s, Fitting_Stocked_Checkbox: ['Stocked'], Timestamp: zohoNow() });
+      }
+
+      const del = await deleteRecords(FIT_STOCK_REPORT, staleIds);
+      const add = rows.length ? await bulkAdd('Supplier_Fitting_Stock', rows) : { added: 0, errors: [] };
       bust('fit-stock-all:' + sid); bust('fitting-stock:' + sid);
-      res.json({ ok: true, added });
+
+      // Surface partial failures instead of reporting a clean save (a save that silently
+      // drops rows is worse than one that says what it couldn't do).
+      const errors = [...del.errors, ...add.errors];
+      if (errors.length) {
+        return res.status(502).json({
+          ok: false, error: 'saved partially', added: add.added, removed: del.removed,
+          message: errors.length + ' of ' + (staleIds.length + rows.length) + ' changes failed: ' + errors.slice(0, 3).join('; '),
+        });
+      }
+      res.json({ ok: true, added: add.added, removed: del.removed, total: wanted.size });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
