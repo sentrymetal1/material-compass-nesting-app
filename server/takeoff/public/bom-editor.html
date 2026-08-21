@@ -224,6 +224,13 @@
   .tabulator-row.tabulator-row-even { background: #fafbfc; }
   .tabulator-cell { padding: 7px 10px !important; vertical-align: middle; border-right: 1px solid #f6f6f6; }
 
+  /* Tabulator parks a 6px column-resize handle between headers at z-index 10,
+     but the frozen headers on either side (check / # / Tag / DELETE) are sticky
+     at z-index 11 and bury it completely -- which is why the # column could
+     never be dragged wider while the scrolling columns could. Lift the handles
+     above the frozen headers. */
+  .tabulator .tabulator-header .tabulator-col-resize-handle { z-index: 12; }
+
   .tabulator .tabulator-row.tabulator-group {
     background: #5F94CE !important;
     color: #fff;
@@ -519,7 +526,7 @@
 
 <div class="toolbar">
   <button class="btn btn-ghost" id="back">← Back to Project</button>
-  <button class="btn btn-ghost" id="add-row" title="Add a new BOM row at top, carrying forward Form / Mat Type / Spec / Material / Component / Drawing / Supplied / Finish from your last added row">+ Add Row</button>
+  <button class="btn btn-ghost" id="add-row" title="Add a new BOM row at the bottom, carrying forward Form / Mat Type / Spec / Material / Component / Drawing / Supplied / Finish from your last added row">+ Add Row</button>
   <select id="view-mode" class="view-select" title="Group rows by Tag prefix, Form Type, or Component">
     <option value="flat">View: Flat</option>
     <option value="tag">Group by Tag</option>
@@ -575,12 +582,12 @@
 <div id="loading" class="state-msg"><span class="spinner"></span>Loading BOM rows...</div>
 <div id="error" class="state-msg error" style="display:none;"></div>
 <div id="quota-banner" style="display:none; background:#fdecea; border-top:1px solid #f5c2c0; border-bottom:1px solid #f5c2c0; color:#7a1f1a; padding:8px 16px; font-size:13px;">
-  <strong>Daily data limit reached.</strong> Lookup dropdowns (Form / Mat Type / Spec / Material) cannot fetch new options until the allowance resets overnight. Existing cell values display normally.
+  <strong>Zoho API daily quota reached.</strong> Lookup dropdowns (Form / Mat Type / Spec / Material) cannot fetch new options until the limit resets at midnight UTC. Existing cell values display normally. Upgrade Zoho plan for higher limits.
 </div>
 <div id="bom-table" style="display:none;"></div>
 
 <div class="footer-note">
-  <span id="build-tag-display">v2.23.0</span> — Added a view-only ✓ checklist column (first column) to check off rows verified against the drawing; checked rows tint green (not saved to Zoho). v2.22.0: Delete column now has a "DELETE" header above the ✕.
+  <span id="build-tag-display">v2.26.1</span> — Rows you add but leave blank (no material, or qty 0) are now caught on Save or Back to Project: discard them, or go back and finish. v2.25.0: Add Row appends at the BOTTOM and takes the next number; existing rows keep theirs.
 </div>
 
 <div id="toast" class="toast"></div>
@@ -603,8 +610,15 @@
 </div>
 
 <script>
-const BUILD_TAG = "v2.24.7 (2026-07-20)";
+const BUILD_TAG = "v2.27.0 (2026-08-21)";
 console.log('[BOM Editor] build:', BUILD_TAG);
+// The footer used to carry its own hardcoded version and drifted two releases
+// behind BUILD_TAG, which reads as "the deploy didn't work". Drive it from the
+// one source of truth so it can never disagree again.
+{
+  const el = document.getElementById('build-tag-display');
+  if (el) el.textContent = BUILD_TAG;
+}
 
 const APP_NAME            = "type-formsheet-2-18-21";
 const REPORT_NAME         = "Project_Bill_Of_Material_Detail_Form_Report";
@@ -863,6 +877,176 @@ function autoToggleEditor(cell, onRendered, success /*, cancel, editorParams */)
   return placeholder;
 }
 
+// ---------------------------------------------------------------------------
+// Tab navigation
+//
+// Tabulator's own Tab handling breaks on `list` editors, which is most of this
+// grid:
+//   * autocomplete on (Component / Drawing / Form / Mat Type / Spec / Material):
+//     Tab reaches the editor while it is still in "typing" state, which routes
+//     to _resolveValue(blur) -> the edit is CANCELLED and the typed value lost.
+//   * autocomplete off (INCH L/W, FT W, Supplied, Finish): Tab "chooses" the
+//     focused item silently -- no success() call -- so the cell never commits
+//     and the editor stays open. Edit.edit() refuses to open a second editor
+//     while one is live, so the Tab then lands nowhere.
+// Both read as "Tab doesn't go to the next field". So we own Tab: catch it in
+// the capture phase (ahead of the editor's own keydown), commit the open editor
+// ourselves, then open the next editable cell.
+// ---------------------------------------------------------------------------
+
+// Fields Tab visits, in order. Excludes the calc columns (no editor) and SA /
+// Galv, whose editor is autoToggleEditor -- tabbing through those would flip
+// the checkbox just by passing over it.
+const TAB_ORDER = ['tag', 'component', 'drawing', 'formType', 'matType', 'spec',
+                   'material', 'qty', 'ftL', 'inchL', 'ftW', 'inchW', 'supplied', 'finish'];
+
+// The cell currently in edit mode, or null. table.modules.edit is internal, but
+// the Tabulator version is pinned in the <script> tag at the top of this file
+// and it is the only authoritative source -- cellEdited / cellEditCancelled do
+// not fire when a commit leaves the value unchanged.
+function editingCell() {
+  try {
+    const cur = table && table.modules && table.modules.edit && table.modules.edit.getCurrentCell();
+    return cur || null;
+  } catch (err) { return null; }
+}
+
+function isTabbable(row, field) {
+  const col = table.getColumn(field);
+  if (!col || !col.isVisible()) return false;
+  const def = col.getDefinition();
+  if (!def.editor) return false;
+  const cell = row.getCell(field);
+  if (!cell) return false;
+  // Respect the per-row editable() rules: FT (W) / INCH (W) on panel rows only,
+  // Finish locked while Galv is on.
+  if (typeof def.editable === 'function' && !def.editable(cell)) return false;
+  return true;
+}
+
+// Next editable cell after `cell`, spilling into the following row at the end
+// of this one. dir = 1 for Tab, -1 for Shift+Tab. Returns {rowId, field}|null.
+function nextTabTarget(cell, dir) {
+  const start = TAB_ORDER.indexOf(cell.getField());
+  if (start === -1) return null;
+  let row = cell.getRow();
+  for (let i = start + dir; i >= 0 && i < TAB_ORDER.length; i += dir) {
+    if (isTabbable(row, TAB_ORDER[i])) return {rowId: row.getData().id, field: TAB_ORDER[i]};
+  }
+  row = dir > 0 ? row.getNextRow() : row.getPrevRow();
+  while (row) {
+    for (let i = dir > 0 ? 0 : TAB_ORDER.length - 1; i >= 0 && i < TAB_ORDER.length; i += dir) {
+      if (isTabbable(row, TAB_ORDER[i])) return {rowId: row.getData().id, field: TAB_ORDER[i]};
+    }
+    row = dir > 0 ? row.getNextRow() : row.getPrevRow();
+  }
+  return null;
+}
+
+// Commit the open editor through its OWN code path so cellEdited fires and the
+// Zoho write is queued. For a list editor that means clicking the item the user
+// landed on -- clicking is the only path that calls _resolveValue() non-silently.
+function commitOpenEditor() {
+  const listEl = document.querySelector('.tabulator-edit-list');
+  if (listEl && listEl.isConnected) {
+    const items   = Array.from(listEl.querySelectorAll('.tabulator-edit-list-item'));
+    const focused = listEl.querySelector('.tabulator-edit-list-item.focused');
+    const active  = document.activeElement;
+    const typed   = active && active.tagName === 'INPUT' ? String(active.value || '').trim().toLowerCase() : '';
+    const label   = (el) => el.textContent.trim().toLowerCase();
+    let pick = null;
+    if (typed) {
+      pick = items.find(el => label(el) === typed)                            // exact match wins
+          || (focused && label(focused).startsWith(typed) ? focused : null)   // selection still matches
+          || items[0]                                                         // top of the filtered list
+          || null;
+    } else {
+      pick = focused;
+    }
+    if (pick) { pick.click(); return; }
+  }
+  // input / number editors commit on blur. A list with nothing pickable falls
+  // through to here too and simply keeps the value it already had.
+  const active = document.activeElement;
+  if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) active.blur();
+}
+
+function handleGridTab(e) {
+  if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return;
+  const cell = editingCell();
+  if (!cell) return;               // not editing -- leave Tab to the browser
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  const target = nextTabTarget(cell, e.shiftKey ? -1 : 1);   // resolve BEFORE the commit moves things
+  commitOpenEditor();
+  if (!target) return;
+  // Edit.edit() bails out if another editor is still live, so open on the next
+  // tick, once the commit above has cleared it.
+  setTimeout(() => {
+    const row = table ? table.getRow(target.rowId) : null;
+    if (!row) return;
+    const next = row.getCell(target.field);
+    if (next) next.edit();
+  }, 0);
+}
+
+let tabNavInstalled = false;
+function installTabNavigation() {
+  if (tabNavInstalled) return;
+  // document-level + capture phase so we run before the editor's own keydown
+  // handler, and still catch the key when focus sits on a popup list item.
+  document.addEventListener('keydown', handleGridTab, true);
+  tabNavInstalled = true;
+}
+
+// --- async refresh must not evict a live editor ----------------------------
+// Row.reformat() rebuilds every cell in a row and row.update() re-renders the
+// ones whose value changed. Both run after an await, by which time the user has
+// usually tabbed into the next cell of that same row -- and both would tear the
+// editor out mid-keystroke, which also reads as "Tab didn't work". Hold the
+// refresh until the row has no editor open.
+const deferredRowRefresh = new Map();   // rowId -> [fn]
+let deferredRefreshTimer = null;
+
+function rowIsEditing(rowId) {
+  const cur = editingCell();
+  return !!cur && cur.getRow().getData().id === rowId;
+}
+
+function whenRowIdle(rowId, fn) {
+  if (!rowIsEditing(rowId)) { fn(); return; }
+  const queue = deferredRowRefresh.get(rowId) || [];
+  queue.push(fn);
+  deferredRowRefresh.set(rowId, queue);
+  if (!deferredRefreshTimer) deferredRefreshTimer = setInterval(flushDeferredRefresh, 250);
+}
+
+function flushDeferredRefresh() {
+  for (const [rowId, queue] of Array.from(deferredRowRefresh)) {
+    if (rowIsEditing(rowId)) continue;
+    deferredRowRefresh.delete(rowId);
+    for (const fn of queue) {
+      try { fn(); } catch (err) { console.warn('[BOM Editor] deferred row refresh failed', err); }
+    }
+  }
+  if (!deferredRowRefresh.size && deferredRefreshTimer) {
+    clearInterval(deferredRefreshTimer);
+    deferredRefreshTimer = null;
+  }
+}
+
+// Drop-in replacement for Tabulator row.reformat(), deferred while row is edited.
+function safeReformat(row) {
+  const data = row && typeof row.getData === 'function' ? row.getData() : null;
+  const id   = data ? data.id : null;
+  if (id == null) { if (row) row.reformat(); return; }
+  whenRowIdle(id, () => {
+    const live = table ? table.getRow(id) : null;
+    if (live) live.reformat();
+  });
+}
+
 async function refetchAndUpdateRow(row, recordId) {
   const resp = await ZOHO.CREATOR.API.getRecordById({
     appName:    APP_NAME,
@@ -880,7 +1064,10 @@ async function refetchAndUpdateRow(row, recordId) {
   const fresh    = mapRecord(recordData, lineItem - 1);
   const idx      = bomData.findIndex(r => r.id === recordId);
   if (idx >= 0) bomData[idx] = fresh;
-  row.update(fresh);
+  whenRowIdle(recordId, () => {
+    const live = table ? table.getRow(recordId) : null;
+    if (live) live.update(fresh);
+  });
   renumberRows();   // fresh carries Zoho's gappy Line_Item; re-collapse to 1..N
   updateStats();
 }
@@ -927,6 +1114,16 @@ async function commitChanges() {
     showToast(`Cannot save — ${missing.length} row(s) missing Supplied or Finish. Fill the highlighted rows, then Save.`, 'error');
     return;
   }
+
+  // Blank rows added this session — discard, or go back and finish them. Runs
+  // before the commit because saving is what kicks the project-level recalc
+  // that they break. Drop the grid lock first or the modal sits behind it.
+  lock.classList.remove('show');
+  if (!(await resolveIncompleteNewRows('save'))) {
+    updateSaveButtonState();
+    return;
+  }
+  lock.classList.add('show');
 
   if (recentlyEdited.size === 0) {
     lock.classList.remove('show');
@@ -1006,7 +1203,7 @@ async function toggleDelete(row, makeDeleted) {
 
     recentlyEdited.add(data.id);
     renumberRows();   // marked rows drop out of the count; kept rows go 1..N
-    row.reformat();
+    safeReformat(row);
     updateSaveButtonState();
     flashRow(row, 'success');
     showToast(`${verb}${data.tag ? ' — ' + data.tag : ''}.`, 'success');
@@ -1096,7 +1293,7 @@ function makeEditHandler(fieldLinkName, dataKey, opts) {
       }
 
       recentlyEdited.add(data.id);
-      row.reformat();
+      safeReformat(row);
       updateSaveButtonState();
       flashRow(row, 'success');
       showToast(`Saved ${opts.label || fieldLinkName} on row ${data.lineItem}.`, 'success');
@@ -1134,7 +1331,7 @@ async function syncFinishToGalv(row, galvOn) {
       throw new Error('Bad response: ' + JSON.stringify(resp));
     }
     row.update({ finish: target });
-    row.reformat();  // re-evaluate Finish editable/lock state
+    safeReformat(row);  // re-evaluate Finish editable/lock state
     const item = bomData.find(r => r.id === data.id);
     if (item) item.finish = target;
     recentlyEdited.add(data.id);
@@ -1254,7 +1451,7 @@ function makeCascadeEditHandler(fieldLinkName, dataKey, downstream, opts) {
       }
 
       recentlyEdited.add(data.id);
-      row.reformat();
+      safeReformat(row);
       updateSaveButtonState();
       flashRow(row, 'success');
       const tail = clearedDataKeys.length ? ` (cleared ${clearedDataKeys.length} downstream field${clearedDataKeys.length>1?'s':''})` : '';
@@ -1263,7 +1460,7 @@ function makeCascadeEditHandler(fieldLinkName, dataKey, downstream, opts) {
       if (dataKey === 'formType' || dataKey === 'matType') {
         const fresh = row.getData();
         if (fresh.formType && fresh.matType) {
-          ensureComboLoaded(fresh.formType, fresh.matType).then(() => row.reformat());
+          ensureComboLoaded(fresh.formType, fresh.matType).then(() => safeReformat(row));
         }
       }
     } catch (err) {
@@ -1353,11 +1550,11 @@ async function fetchRailwayLookup(path) {
     try { body = await resp.json(); } catch (_) {}
     if (body?.zoho_code === 4000 && !zohoQuotaExhausted) {
       zohoQuotaExhausted = true;
-      showToast('Daily data limit reached. Dropdowns will repopulate after it resets overnight.', 'error');
+      showToast('Zoho daily API quota reached. Dropdowns will repopulate after midnight UTC.', 'error');
       const banner = document.getElementById('quota-banner');
       if (banner) banner.style.display = 'block';
     }
-    throw new Error('Daily data limit reached while loading ' + path);
+    throw new Error('Zoho quota exhausted on ' + path);
   }
   if (!resp.ok) throw new Error('HTTP ' + resp.status + ' on ' + path);
   return await resp.json();
@@ -1870,9 +2067,12 @@ function renderGrid() {
         cellClick: (e, cell) => {
           const id = cell.getRow().getData().id;
           if (verifiedRows.has(id)) verifiedRows.delete(id); else verifiedRows.add(id);
-          cell.getRow().reformat();   // re-render from the Set (source of truth) + apply row-verified tint
+          safeReformat(cell.getRow());   // re-render from the Set (source of truth) + apply row-verified tint
         }},
-      {title: '#',        field: 'lineItem',  width: 50,  hozAlign: 'center', frozen: true},
+      // A sortable header reserves 25px for the sort arrow, so at 50px wide the
+      // "#" title had ~5px of room and rendered clipped. 68 fits title + arrow,
+      // and 3-digit line numbers in the cells.
+      {title: '#',        field: 'lineItem',  width: 68,  minWidth: 44, hozAlign: 'center', frozen: true},
       {title: 'Tag',      field: 'tag',       width: 110, frozen: true, widthGrow: 1,
         editor: 'input',
         cellEdited: makeEditHandler('BOM_Item', 'tag', {label: 'Tag'}),
@@ -1899,7 +2099,7 @@ function renderGrid() {
           if (!d.component) return {values: []};
           const entry = drawingsByComponent[d.component];
           if (!entry) {
-            ensureDrawingsLoaded(d.component).then(() => cell.getRow().reformat());
+            ensureDrawingsLoaded(d.component).then(() => safeReformat(cell.getRow()));
             return {values: []};
           }
           return {values: entry.options || [], autocomplete: true, listOnEmpty: true};
@@ -1942,7 +2142,7 @@ function renderGrid() {
           if (!d.formType || !d.matType) return {values: []};
           const combo = comboCache[comboKey(d.formType, d.matType)];
           if (!combo) {
-            ensureComboLoaded(d.formType, d.matType).then(() => cell.getRow().reformat());
+            ensureComboLoaded(d.formType, d.matType).then(() => safeReformat(cell.getRow()));
             return {values: []};
           }
           return {values: combo.specs || [], autocomplete: true, listOnEmpty: true};
@@ -1962,7 +2162,7 @@ function renderGrid() {
           if (!d.formType || !d.matType) return {values: []};
           const combo = comboCache[comboKey(d.formType, d.matType)];
           if (!combo) {
-            ensureComboLoaded(d.formType, d.matType).then(() => cell.getRow().reformat());
+            ensureComboLoaded(d.formType, d.matType).then(() => safeReformat(cell.getRow()));
             return {values: []};
           }
           // Dedupe by description: catalog has many records per visible size (one per
@@ -2091,6 +2291,8 @@ function renderGrid() {
       el.classList.toggle('row-verified', verifiedRows.has(data.id));
     },
   });
+
+  installTabNavigation();
 }
 
 function groupKeyForRow(row, mode) {
@@ -2149,7 +2351,11 @@ document.getElementById('delete-marked').addEventListener('click', hardDeleteAll
 
 document.getElementById('save-project').addEventListener('click', commitChanges);
 
-document.getElementById('back').addEventListener('click', () => {
+document.getElementById('back').addEventListener('click', async () => {
+  // Walking away from a blank row you just added is how the project form ends
+  // up throwing on its next save. Offer to discard before navigating.
+  if (!(await resolveIncompleteNewRows('leave'))) return;
+
   // Match the FULL param set the project launchers use — the dashboard's
   // form-embed reads description / client_id / manufacture from the URL, so
   // omitting them blanks Client + Project Description on arrival.
@@ -2222,7 +2428,7 @@ function markAllFiltered(makeDeleted) {
       const item = bomData.find(r => r.id === row.getData().id);
       if (item) item.deleted = makeDeleted;
       row.update({deleted: makeDeleted});
-      row.reformat();
+      safeReformat(row);
       changed++;
     }
   });
@@ -2237,6 +2443,83 @@ function markAllFiltered(makeDeleted) {
 // forward its classification fields (Form / Mat Type / Spec / Material / Component /
 // Drawing / Supplied / Finish). Dimensions + Tag + QTY stay blank.
 let lastAddedRowId = null;
+
+// Rows created by "+ Add Row" during THIS session. A row is inserted into Zoho
+// the instant it is added, so one the estimator abandons half-filled is a real
+// record — and a blank one is not harmless: the project form's success stack
+// divides by Quantity and sums over matching BOM rows, so a row with no
+// material or qty 0 throws "Null value occurred while performing Addition
+// operation" and takes the whole save down with it.
+// Scoped to this session on purpose: pre-existing incomplete rows are the
+// estimator's own business, not something to nag about on every visit.
+const sessionAddedRowIds = new Set();
+
+function getIncompleteNewRows() {
+  // Total weight is the reliable signal. Add Row carries Form/Mat/Spec/Material
+  // forward from the last add, so "has a material" proves nothing — a row can
+  // look populated and still have no tag, no dimensions and zero weight. A real
+  // BOM line always ends up with a weight; an abandoned one never does.
+  const rows = bomData.filter(r =>
+    sessionAddedRowIds.has(r.id) && !r.deleted &&
+    (!r.material || !(r.qty > 0) || !(r.totWt > 0) || !r.tag)
+  );
+  console.log('[BOM Editor] incomplete new rows:', rows.length, 'of', sessionAddedRowIds.size, 'added this session', rows);
+  return rows;
+}
+
+// Returns true when it is safe to continue — either nothing is blank, or the
+// user chose to discard and every delete succeeded. Returns false when the user
+// wants to keep editing, OR when a delete was rejected (a survivor is exactly
+// the row that breaks the project form, so never wave it through).
+async function resolveIncompleteNewRows(actionLabel) {
+  const blanks = getIncompleteNewRows();
+  if (!blanks.length) return true;
+
+  blanks.forEach(b => { const tr = table.getRow(b.id); if (tr) flashRow(tr, 'error'); });
+  table.scrollToRow(blanks[0].id, 'top', false);
+
+  const lines = blanks.map(b => '#' + b.lineItem).join(', ');
+  const ok = await customConfirm(
+    `${blanks.length} row(s) you added are still blank — ${lines}. ` +
+    `A row with no material, or a quantity of 0, breaks the project's totals. ` +
+    `Discard them and ${actionLabel}, or go back and finish filling them in?`,
+    {title: 'Blank rows', okText: 'Discard blank rows', cancelText: 'Go back and finish'}
+  );
+  if (!ok) return false;
+
+  let failed = 0;
+  for (const b of blanks) {
+    try {
+      // deleteRecord takes `criteria`, not `id` — same as hardDeleteRow.
+      const resp = await ZOHO.CREATOR.API.deleteRecord({
+        appName:    APP_NAME,
+        reportName: REPORT_NAME,
+        criteria:   `ID == ${b.id}`,
+      });
+      if (!resp || (resp.code !== 3000 && !resp.result)) {
+        throw new Error('Bad deleteRecord response: ' + JSON.stringify(resp));
+      }
+      const idx = bomData.findIndex(r => r.id === b.id);
+      if (idx >= 0) bomData.splice(idx, 1);
+      recentlyEdited.delete(b.id);
+      sessionAddedRowIds.delete(b.id);
+      const tr = table.getRow(b.id);
+      if (tr) tr.delete();
+    } catch (err) {
+      failed++;
+      console.error('[BOM Editor] discard blank row failed', b.id, err);
+    }
+  }
+  renumberRows();
+  updateStats();
+  updateSaveButtonState();
+  if (failed) {
+    showToast(`Discarded ${blanks.length - failed} of ${blanks.length} blank row(s) — ${failed} could not be deleted. Remove them manually before saving.`, 'error');
+    return false;
+  }
+  showToast(`Discarded ${blanks.length} blank row(s).`, 'success');
+  return true;
+}
 
 async function hardDeleteRow(row) {
   const data = row.getData();
@@ -2280,7 +2563,7 @@ async function hardDeleteAllMarked() {
     return;
   }
   if (!(await customConfirm(
-        `Permanently delete ${marked.length} row(s) marked for delete? This deletes the records directly and CANNOT be undone.`,
+        `Permanently delete ${marked.length} row(s) marked for delete? This calls Zoho's record-delete directly and CANNOT be undone.`,
         {title: 'Permanently delete all marked', okText: `Delete ${marked.length}`}))) return;
 
   btn.disabled = true;
@@ -2440,6 +2723,11 @@ async function addNewBomRow() {
       // bi-directional field on Project_Material_Allocated_Detail_Form.
       Bi_Directional_Project_ID: projectId,
       Line_Item: nextLineItem,
+      // Tag defaults to the line number so a new row always lands with an
+      // identifier instead of a blank cell; the user overwrites it when the
+      // drawing calls for a real tag. Deliberately NOT carried forward from the
+      // previous row below -- two rows sharing a tag is worse than a number.
+      BOM_Item: String(nextLineItem),
       // Mandatory-field defaults. New rows start non-galv, so Finish defaults to
       // 'Plain'; carry-forward below overrides these if the last row had values.
       Supplied: 'Manufacture',
@@ -2492,20 +2780,21 @@ async function addNewBomRow() {
       throw new Error('addRecord response missing record ID: ' + JSON.stringify(resp));
     }
     const newRow = mapRecord(newRecord, nextLineItem - 1);
-    bomData.unshift(newRow);  // top of bomData
+    bomData.push(newRow);  // bottom of bomData
     if (table) {
-      table.addRow(newRow, true);  // true = add to TOP
-      table.scrollToRow(newRow.id, 'top', false);
+      table.addRow(newRow, false);  // false = add to BOTTOM
+      table.scrollToRow(newRow.id, 'bottom', false);
     }
     lastAddedRowId = newRow.id;
+    sessionAddedRowIds.add(newRow.id);
     recentlyEdited.add(newRow.id);
-    renumberRows();   // new row is at top -> becomes #1, push the rest down
+    renumberRows();   // new row is at bottom -> takes the next # ; existing rows keep theirs
     updateStats();
     updateSaveButtonState();
     const carriedNote = lastAddedRowId && bomData.find(r => r.id === lastAddedRowId && (r.formType || r.material))
       ? ' (carried Form/Mat/Spec/Material from previous add — fill in Tag + dimensions)'
       : ' — fill in Tag / Form / Mat Type / etc.';
-    showToast(`Added new row at top${carriedNote}`, 'success');
+    showToast(`Added new row at bottom${carriedNote}`, 'success');
   } catch (err) {
     showToast('Add row failed: ' + (err.message || JSON.stringify(err)), 'error');
     console.error('[BOM Editor] addRecord failed', err);
