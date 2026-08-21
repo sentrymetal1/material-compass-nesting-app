@@ -493,7 +493,11 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
         const sv_form_id = (quote.structural_lines.find(l => l.sv_form_id) || {}).sv_form_id || '';
         const r = await fetch('/api/supplier/me/quote-submit?email=' + encodeURIComponent(email), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ quote_id: quote.quote_id, sv_form_id, header: hdr, lines }),
+          // fittings_total rides along on the structural submit: the fittings write is a
+          // separate endpoint that never sees the SV header, so this is the only point at
+          // which the header money can be made whole. Matches the "Fittings total" shown
+          // above -- No Quote lines already excluded.
+          body: JSON.stringify({ quote_id: quote.quote_id, sv_form_id, header: { ...hdr, fittings_total: fitGrand }, lines }),
         });
         structResult = await r.json();
       }

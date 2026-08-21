@@ -814,7 +814,15 @@ function registerSupplierRoutes(app, deps) {
       const validDays = Number(header.valid_days) || 0;
       const shipAmt = Number(header.shipping) || 0;
       const miscAmt = Number(header.misc) || 0;
-      const grandTotal = sumMaterial + shipAmt + miscAmt;  // material + shipping + misc
+      // Fittings are priced down a SEPARATE path (RFQs_Sent_Fittings), so they never reach
+      // detailRows and never touch sumMaterial -- but they ARE part of what the supplier
+      // quoted. Without this the MFG's review form reads a grand total short by exactly the
+      // fittings amount ($14,878.88 against a quoted $15,933.88 on MMQ-10000). The client
+      // sends the figure it displayed as "Fittings total"; older clients omit it and land
+      // on 0, i.e. today's behaviour.
+      const fittingsTotal = Number(header.fittings_total) || 0;
+      const materialTotal = sumMaterial + fittingsTotal;
+      const grandTotal = materialTotal + shipAmt + miscAmt;  // material + fittings + shipping + misc
       // Header lead time (Lead_Time_For_Ship_Complete, a CHOICE field): use the supplier's
       // header value if valid, else the first valid per-line value, else the fallback.
       const hdrLeadRaw = (header.lead_time || '').trim();
@@ -840,8 +848,8 @@ function registerSupplierRoutes(app, deps) {
         Miscellaneous_Charges: header.misc != null ? String(header.misc) : '0',
         Supplier_Notes_To_Buyer: header.notes || '',
         // header rollups — set explicitly (workflow computes but doesn't store on API-add)
-        Total_Material_Amount_Currency: round(sumMaterial, 2),
-        Response_Total_Material_Price: round(sumMaterial, 2),
+        Total_Material_Amount_Currency: round(materialTotal, 2),
+        Response_Total_Material_Price: round(materialTotal, 2),
         Response_Total_Price: round(grandTotal, 2),
         Total_Amount_Currency: round(grandTotal, 2),
         Response_Total_Weight: round(sumWeight, 2),
