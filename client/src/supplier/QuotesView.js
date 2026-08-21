@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 // Unified quote view: ONE card per quote (keyed by Quote_LU), holding both the
 // structural/pipe lines (RFQs_Sent → priced by weight) AND the fitting lines
@@ -319,6 +319,11 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
   const hasFit = quote.fitting_lines.length > 0;
   const [open, setOpen] = useState(false);
   const [submitState, setSubmitState] = useState(null); // {status, structResult, fitResult, error}
+  // Set by a failed submit so the missing controls light up. A sentence next to the
+  // button ("Please complete all required fields: Meets MFG requirements") left the
+  // supplier hunting the form for which control it meant.
+  const [showErrors, setShowErrors] = useState(false);
+  const cardRef = useRef(null);
   // Selectable specs for a line, from the shared catalog (hoisted out of the per-line
   // payload — see alterationMeta on the server).
   const specOptionsFor = l => ((alterationCatalog || {}).specs || {})[(l.alteration || {}).spec_key] || [];
@@ -421,9 +426,15 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
     ['shipping', 'Shipping amount'],
     ['misc', 'Miscellaneous amount'],
   ];
-  const missingFields = hasStruct
-    ? REQUIRED_FIELDS.filter(([k]) => String(hdr[k] == null ? '' : hdr[k]).trim() === '').map(([, lbl]) => lbl)
-    : [];
+  // Fittings-only quotes are exempt on purpose: the whole quote-summary block below is
+  // rendered under `hasStruct`, and the fittings endpoint takes lines only -- no header.
+  // Requiring these there would block a submit on controls that do not exist.
+  const missingKeys = new Set(hasStruct
+    ? REQUIRED_FIELDS.filter(([k]) => String(hdr[k] == null ? '' : hdr[k]).trim() === '').map(([k]) => k)
+    : []);
+  const missingFields = REQUIRED_FIELDS.filter(([k]) => missingKeys.has(k)).map(([, lbl]) => lbl);
+  // Class hook for a required control that is still empty AFTER a failed submit.
+  const inv = k => (showErrors && missingKeys.has(k) ? ' q-invalid' : '');
 
   // A line marked "Alter …" that carries no actual change (or a change the server refused)
   // must not go out: it would quote the MFG's original spec under an "altered" label.
@@ -439,7 +450,19 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
 
   const onSubmit = async () => {
     if (missingFields.length) {
+      setShowErrors(true);
       setSubmitState({ status: 'error', error: 'Please complete all required fields: ' + missingFields.join(', ') + '.' });
+      // Put the supplier ON the first missing control rather than leaving them to find
+      // it -- the summary sits well below the fold on a quote with this many lines.
+      setTimeout(() => {
+        const root = cardRef.current;
+        if (!root) return;
+        const first = root.querySelector('.q-invalid');
+        if (!first) return;
+        first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const control = first.querySelector('select, input, textarea, button');
+        if (control) control.focus({ preventScroll: true });
+      }, 0);
       return;
     }
     if (alterationProblems.length) {
@@ -519,7 +542,7 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
   }
 
   return (
-    <div className="q-card">
+    <div className="q-card" ref={cardRef}>
       <div className="q-head" onClick={() => setOpen(o => !o)}>
         <div className="q-head-main">
           <span className="q-caret">{open ? '▾' : '▸'}</span>
@@ -601,7 +624,7 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
                 <div className="q-req-panel">
                   <div className="q-req-panel-top">
                     <span className="q-req-panel-head">MFG REQUIREMENTS <span className="q-req-note">— set by the manufacturer</span></span>
-                    <div className="q-req-panel-meets">
+                    <div className={'q-req-panel-meets' + inv('meets_requirements')} data-field="meets_requirements">
                       <span className="q-meets-lbl">Does your quote meet these?<span className="req-star">*</span></span>
                       <div className="q-seg">
                         <button type="button"
@@ -630,34 +653,34 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
               </div>
 
               <div className="q-grid q-grid-8">
-                <label>Supplier location<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('location')} data-field="location">Supplier location<span className="req-star">*</span>
                   <select value={hdr.location} onChange={e => setH({ location: e.target.value })}>
                     <option value="">— select —</option>
                     {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </select>
                 </label>
-                <label>Supplier representative<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('rep')} data-field="rep">Supplier representative<span className="req-star">*</span>
                   <select value={hdr.rep} onChange={e => setH({ rep: e.target.value })}>
                     <option value="">— select —</option>
                     {reps.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
                 </label>
-                <label>Your quote #<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('supplier_quote_number')} data-field="supplier_quote_number">Your quote #<span className="req-star">*</span>
                   <input value={hdr.supplier_quote_number} onChange={e => setH({ supplier_quote_number: e.target.value })} placeholder="Internal quote number" />
                 </label>
-                <label>Quote valid (business days)<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('valid_days')} data-field="valid_days">Quote valid (business days)<span className="req-star">*</span>
                   <select value={hdr.valid_days} onChange={e => onValidDays(e.target.value)}>
                     <option value="">— select —</option>
                     {quoteValidChoices.map(n => <option key={n} value={n}>{n} {n === 1 ? 'day' : 'days'}</option>)}
                   </select>
                 </label>
-                <label>Valid until<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('valid_until')} data-field="valid_until">Valid until<span className="req-star">*</span>
                   <input type="date" value={hdr.valid_until} onChange={e => setH({ valid_until: e.target.value })} />
                 </label>
-                <label>Lead time for ship complete<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('lead_time')} data-field="lead_time">Lead time for ship complete<span className="req-star">*</span>
                   <LeadTimeSelect value={hdr.lead_time} choices={leadChoices} blankLabel="— select —" onChange={v => setH({ lead_time: v })} />
                 </label>
-                <label>Shipping amount<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('shipping')} data-field="shipping">Shipping amount<span className="req-star">*</span>
                   <div className="q-money-in">
                     <span className="q-dollar">$</span>
                     <input type="text" inputMode="decimal" value={hdr.shipping} placeholder="0.00"
@@ -665,7 +688,7 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
                       onBlur={e => setH({ shipping: fmtMoney2(e.target.value) })} />
                   </div>
                 </label>
-                <label>Miscellaneous amount<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('misc')} data-field="misc">Miscellaneous amount<span className="req-star">*</span>
                   <div className="q-money-in">
                     <span className="q-dollar">$</span>
                     <input type="text" inputMode="decimal" value={hdr.misc} placeholder="0.00"

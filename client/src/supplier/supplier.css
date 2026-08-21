@@ -345,3 +345,13 @@
 .cov-na { background: #f0f1f3; color: #717a86; }
 .cov-quoted { background: #e7f6ec !important; color: #1a7f37 !important; }
 .cov-pending { background: #fff4e0 !important; color: #9a6a12 !important; }
+
+/* A failed submit marks the exact controls that are missing. Before this, the only
+   feedback was a sentence beside the button, so "Meets MFG requirements" read as a
+   bug rather than an unanswered question sitting above the fold. */
+.q-invalid, .q-invalid .q-meets-lbl { color: #c0392b; }
+.q-invalid input, .q-invalid select, .q-invalid .q-seg {
+  border-color: #c0392b;
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, .14);
+}
+.q-invalid .q-money-in { border-radius: 6px; }
