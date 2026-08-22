@@ -512,8 +512,15 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
             lead_time: d.lead_time || '', comments: d.comments || '',
           };
         });
+        // Link each fitting row back to the SV record the structural submit just
+        // created. Fittings use a "bridge = response" model and otherwise have no
+        // path to that record, which is why the MFG side can't reach anything held
+        // on it -- the supplier's own quote number, and the review form's fittings
+        // subform. structResult is the response from the POST directly above.
+        // Blank on a fittings-only quote: no structural lines, so no SV record exists.
+        const sv_form_id = (structResult && structResult.sv_form_id) || '';
         const r = await fetch('/api/supplier/me/sent-fitting-rfqs/submit?email=' + encodeURIComponent(email), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines, sv_form_id }),
         });
         fitResult = await r.json();
       }

@@ -482,6 +482,12 @@ function registerSupplierRoutes(app, deps) {
     try {
       const sid = String(req.supplier.id);
       const lines = (req.body && req.body.lines) || [];
+      // SV record the structural half of this submit just created. Stamping it on
+      // each bridge row is the ONLY link fittings get to the Supplier_Verify_Form —
+      // without it the MFG side cannot dot-walk to anything held there (the
+      // supplier's REFERENCE_QUOTE_NUMBER, the review form's fittings subform).
+      // Empty on a fittings-only quote, where no SV record was created at all.
+      const svFormId = String((req.body && req.body.sv_form_id) || '').trim();
       if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ ok: false, error: 'no lines to submit' });
 
       // Index the supplier's own bridge rows for ownership + qty (no extra API call).
@@ -507,6 +513,9 @@ function registerSupplierRoutes(app, deps) {
           Supplier_Comments: l.comments || '',
           Responded_Timestamp: zohoNow(),
         };
+        // Only sent when we have one: an empty lookup value can be rejected, and a
+        // rejected PATCH would take the price down with it.
+        if (svFormId) data.Supplier_Verify_Form = svFormId;
         const r = await patchRecord(FIT_RFQ_REPORT, id, data);
         results.push({ rfq_row_id: id, ok: r.ok, code: r.code, message: r.ok ? undefined : r.message, unit_price: unit, total_price: total });
       }
