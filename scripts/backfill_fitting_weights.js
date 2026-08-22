@@ -106,9 +106,28 @@ const lkid = v => (v && typeof v === 'object' ? String(v.ID || '') : String(v ||
 
   let rows = await fetchAll('/report/' + FIT_RFQ_REPORT);
   console.log('Bridge rows read:  ' + rows.length);
+  // The "already weighed" skip below reads Unit_Weight off this report, and a Creator
+  // report returns ONLY its configured columns — so if Unit_Weight is not a column,
+  // every row looks unweighed forever and re-running --apply silently rewrites rows
+  // that were already correct. Say so out loud rather than reporting a clean run.
+  if (rows.length && !Object.prototype.hasOwnProperty.call(rows[0], 'Unit_Weight')) {
+    console.log('\n⚠  ' + FIT_RFQ_REPORT + ' has no Unit_Weight column, so the "already weighed"');
+    console.log('   skip cannot see prior writes. Add Unit_Weight/Total_Weight as columns on that');
+    console.log('   report to make re-runs safe. Writes still land — only the read is blind.');
+  }
   if (ONLY_QUOTE) {
-    rows = rows.filter(r => String(r.Quote_Reference_Number || r.Quote_Number || '') === ONLY_QUOTE);
+    // Match ANY of the three identifiers a person might reasonably type. The MFG-facing
+    // number ("MMQ-10000") is NOT stored on this bridge — the send workflow sets
+    // Quote_Number (the internal one, e.g. "586") and never Quote_Reference_Number — so
+    // filtering on the number printed all over the close-out UI silently matched zero
+    // rows and looked like "nothing to backfill".
+    rows = rows.filter(r => [r.Quote_Reference_Number, r.Quote_Number, lkid(r.Quote_LU)]
+      .some(v => String(v || '') === ONLY_QUOTE));
     console.log('Filtered to ' + ONLY_QUOTE + ': ' + rows.length + ' rows');
+    if (!rows.length) {
+      console.log('  (no match — this bridge stores the INTERNAL quote number, not "MMQ-…";');
+      console.log('   run with no --quote to see what is eligible across all quotes)');
+    }
   }
 
   // Only rows a supplier actually answered — an unanswered row has no weight to
