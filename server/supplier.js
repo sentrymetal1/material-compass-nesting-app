@@ -381,10 +381,15 @@ function registerSupplierRoutes(app, deps) {
   // the size at all, so we join demand-line-id -> size here rather than add a bridge field
   // (that would need a re-send to backfill; this fixes existing rows immediately).
   //
+  // WEIGHT lives on the demand line too (`Weight`, per-each). Unlike size it also gets
+  // COPIED onto the bridge at submit — Zoho only aggregates native fields of a report's
+  // base form, so a dot-walked weight column has no Total in the close-out footer. This
+  // join is what feeds that copy.
+  //
   // Prefer the _Text mirror: it's populated where the lookup isn't (8/9 vs 5/9 live).
   // "Redo Selection" is the cascade's reset sentinel, not a size — never show it.
-  async function fetchFittingSizes() {
-    return cachedLookup('fitting-sizes', 30 * 60 * 1000, async () => {
+  async function fetchFittingDemandLines() {
+    return cachedLookup('fitting-demand-lines', 30 * 60 * 1000, async () => {
       const map = {};
       try {
         const rows = await fetchAllZohoPages('/report/Fittings_Quote_Subform_Report');
@@ -392,11 +397,12 @@ function registerSupplierRoutes(app, deps) {
           const txt = String(r.Fitting_Description_Text || '').trim();
           const lk = flatten(r.Fitting_Description).trim();
           const size = (txt && txt !== 'Redo Selection') ? txt : ((lk && lk !== 'Redo Selection') ? lk : '');
-          if (size) map[String(r.ID)] = size;
+          const weight = r.Weight != null && r.Weight !== '' ? Number(r.Weight) : 0;
+          if (size || weight) map[String(r.ID)] = { size, weight };
         }
       } catch (e) {
-        // Best-effort: a size outage must not blank the whole fittings list.
-        console.error('Fitting sizes fetch failed:', (e.response && e.response.data) || e.message);
+        // Best-effort: a demand-line outage must not blank the whole fittings list.
+        console.error('Fitting demand-line fetch failed:', (e.response && e.response.data) || e.message);
       }
       return map;
     });
@@ -404,10 +410,10 @@ function registerSupplierRoutes(app, deps) {
 
   async function fetchSentFittingRfqs(supplierId) {
     // fetchAllZohoPages returns [] on an empty criteria result (Zoho 9280), so no guard here.
-    const [rows, sizeByDemandLine] = await Promise.all([
+    const [rows, demandLineById] = await Promise.all([
       cachedLookup('fit-rfqs:' + supplierId, 60 * 1000, async () =>
         fetchAllZohoPages('/report/' + FIT_RFQ_REPORT + '?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')')),
-      fetchFittingSizes(),
+      fetchFittingDemandLines(),
     ]);
     const byQuote = new Map();
     for (const r of rows) {
@@ -429,9 +435,11 @@ function registerSupplierRoutes(app, deps) {
       const type = flatten(r.Fitting_Type), make = flatten(r.Fitting_Make);
       const end = flatten(r.End_Type), conn = flatten(r.Connection_Type), spec = flatten(r.Fitting_Specification);
       const demandLineId = lkid(r.Fittings_Quote_Subform);
-      // Size comes from the demand line (see fetchFittingSizes). Fall back to the bridge's
-      // Dim1/Dim2 in case they're ever populated, but the demand line is the source of truth.
-      const size = sizeByDemandLine[demandLineId]
+      // Size and weight come from the demand line (see fetchFittingDemandLines). Fall back
+      // to the bridge's Dim1/Dim2 for size in case they're ever populated, but the demand
+      // line is the source of truth.
+      const demand = demandLineById[demandLineId] || {};
+      const size = demand.size
         || [r.Dim1_Drop_Down, r.Dim2_Drop_Down].filter(Boolean).join(' | ')
         || '';
       byQuote.get(qid).lines.push({
@@ -444,6 +452,10 @@ function registerSupplierRoutes(app, deps) {
           + (end || conn || spec ? '  ·  ' + [end, conn, spec].filter(Boolean).join(' · ') : '')
           + (size ? '  ·  ' + size : ''),
         qty: r.Quantity != null && r.Quantity !== '' ? Number(r.Quantity) : null,
+        // Per-each weight, joined from the demand line. The bridge's own Unit_Weight is
+        // only written at submit, so this join is the authority for both the UI and that
+        // write — and it works on rows submitted before the fields existed.
+        unit_weight: Number(demand.weight) || 0,
         // response (may be blank until the supplier prices it). Defensive reads —
         // these fields are being added; absent = undefined → null.
         quote_option: r.Item_Verification_Status || '',
@@ -505,10 +517,18 @@ function registerSupplierRoutes(app, deps) {
         const qty = row.qty != null ? row.qty : 0;
         const unit = noQuote ? 0 : round(Number(l.unit_price) || 0, 3);
         const total = noQuote ? 0 : round(unit * qty, 2);
+        // Weight is copied from the demand line so the close-out report can Total it —
+        // Zoho won't aggregate a dot-walked column. Unit_Weight is a property of the ITEM
+        // so it's written either way; only the line total follows the response, mirroring
+        // Total_Price. That's what makes the footer read "weight actually quoted", so a
+        // gap against the weight sent is the coverage signal.
+        const unitWt = Number(row.unit_weight) || 0;
         const data = {
           Item_Verification_Status: opt,
           Unit_Price: unit,
           Total_Price: total,
+          Unit_Weight: unitWt,
+          Total_Weight: noQuote ? 0 : round(unitWt * qty, 2),
           Supplier_Lead_Time: l.lead_time || '',
           Supplier_Comments: l.comments || '',
           Responded_Timestamp: zohoNow(),
