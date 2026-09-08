@@ -816,6 +816,53 @@ function registerTriageRoutes(app, deps) {
     }
   });
 
+  // Bulk Skip, used by "Clear past due" on the triage page.
+  //
+  // DECLINE, NOT DELETE. Mark asked for a way to clear opportunities whose bid
+  // date has passed. Deleting them would throw away the only record that the
+  // email was ever seen, and the scanner dedups on message id — a deleted
+  // opportunity would be re-created on the next scan and the list would refill
+  // with the same expired rows. Setting Status = Decline moves them to the
+  // Declined tab, keeps the dedup key, and is reversible by hand.
+  //
+  // The date test lives on the CLIENT, which already parses Due_Date for the
+  // "soon" badge, so the server takes explicit ids and never guesses which rows
+  // the user meant. One patch per row, errors collected rather than thrown, so
+  // a single bad record cannot abandon the rest half-done.
+  app.post('/api/triage/decision/bulk', async (req, res) => {
+    try {
+      const { ids, decision } = req.body || {};
+      if (!Array.isArray(ids) || !ids.length || (decision !== 'quote' && decision !== 'skip')) {
+        return res.status(400).json({ ok: false, error: 'ids[] and decision (quote|skip) required' });
+      }
+      if (ids.length > 500) {
+        return res.status(400).json({ ok: false, error: 'refusing to patch more than 500 rows in one call' });
+      }
+      const status = decision === 'quote' ? 'Quoting' : 'Decline';
+      const today = fmtDate(new Date().toISOString());
+      const done = [], failed = [];
+      for (const id of ids) {
+        try {
+          try { await patchOpportunity(id, { Status: status, Decision_Date: today }); }
+          catch (e) { await patchOpportunity(id, { Status: status }); } // retry without date on format reject
+          done.push(id);
+        } catch (e) {
+          // Quota is fatal for the whole run: every remaining patch would fail
+          // the same way, and reporting them one by one would bury the cause.
+          if (isQuotaError(e)) {
+            return res.json({ ok: false, quota: true, done, failed,
+              error: 'Zoho API daily limit reached — ' + done.length + ' of ' + ids.length + ' cleared before it ran out.' });
+          }
+          failed.push({ id, error: e.response?.data?.message || e.message });
+        }
+      }
+      res.json({ ok: failed.length === 0, status, requested: ids.length, done, failed });
+    } catch (err) {
+      console.error('[triage] bulk decision error:', err.response?.data || err.message);
+      res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
+    }
+  });
+
   // Diagnostic: what does Graph actually see in this mailbox?
   app.get('/api/triage/debug', async (req, res) => {
     try {

@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-07-08-1';
+const BUILD_TAG = 'triage-ui-2026-09-07-1';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -47,6 +47,11 @@ function renderTriagePage() {
   .duewrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .due{font-size:12.5px;font-weight:600;padding:4px 10px;border-radius:8px;background:#eef3fa;color:#345}
   .due.soon{background:#fdecea;color:var(--soon)}
+  .due.past{background:#4a4a4a;color:#fff}
+  .due.past .lbl{color:#d8d8d8}
+  .btn.clearpast{border-color:#e6c9c3;color:#a3402f;background:#fff}
+  .btn.clearpast:hover:not(:disabled){background:#fdecea;border-color:#e0a99e}
+  .btn.clearpast:disabled{opacity:.4;cursor:default}
   .due .lbl{font-weight:500;color:var(--muted);margin-right:4px}
   .actions{display:flex;gap:8px;margin-top:13px;align-items:center}
   .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 16px;font-size:13.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.15s}
@@ -94,6 +99,7 @@ function renderTriagePage() {
       <button data-status="Decline">Declined</button>
     </div>
     <span class="spacer"></span>
+    <button class="btn clearpast" id="clearPastBtn" title="Skip every opportunity whose bid date has already passed. They move to Declined, nothing is deleted." style="display:none">Clear past due</button>
     <select class="days" id="scanDays" title="How far back to scan">
       <option value="since" selected>since last scan</option>
       <option value="3">last 3 days</option>
@@ -138,11 +144,19 @@ function renderTriagePage() {
 
   function confColor(c){ c=Number(c)||0; if(c>=.75)return'var(--good)'; if(c>=.4)return'var(--warn)'; return'#8a97a6'; }
   function accent(c){ return confColor(c); }
+  // "past" is measured against the START of today, not the current moment, so a
+  // bid closing at 5pm today is not reported as expired at 9am. A row with no
+  // due date, or one Date.parse cannot read, is NEVER past — it must not be
+  // swept up by Clear past due on a guess.
   function dueInfo(d){
-    if(!d) return {txt:'—', soon:false};
-    var t=Date.parse(d); if(isNaN(t)) return {txt:d, soon:false};
+    if(!d) return {txt:'—', soon:false, past:false};
+    var t=Date.parse(d); if(isNaN(t)) return {txt:d, soon:false, past:false};
+    var midnight=new Date(); midnight.setHours(0,0,0,0);
     var days=(t-Date.now())/86400000;
-    return {txt:d, soon: days<=10};
+    return {txt:d, soon: days<=10, past: t < midnight.getTime()};
+  }
+  function pastDueIds(){
+    return all.filter(function(o){ return dueInfo(o.due_date).past; }).map(function(o){ return o.id; });
   }
   function chips(scope){
     if(!scope||!scope.trim()) return '<span class="chip blank">Material scope — pending</span>';
@@ -163,7 +177,7 @@ function renderTriagePage() {
       + '</div>'
       + (o.summary?'<p class="summary">'+esc(o.summary)+'</p>':'')
       + '<div class="chips">'+chips(o.material_scope)+'</div>'
-      + '<div class="duewrap"><span class="due'+(di.soon?' soon':'')+'"><span class="lbl">Bid due</span> '+esc(di.txt)+'</span>'
+      + '<div class="duewrap"><span class="due'+(di.past?' past':(di.soon?' soon':''))+'"><span class="lbl">Bid due</span> '+esc(di.txt)+(di.past?' · PAST DUE':'')+'</span>'
       + (o.received?'<span class="meta">Received '+esc(o.received)+'</span>':'')+'</div>'
       + (status==='New' ? '<div class="actions">'
           + '<button class="btn quote" onclick="decide(this,\\'quote\\')">✓ Quote</button>'
@@ -180,6 +194,14 @@ function renderTriagePage() {
     var rows=all.filter(function(o){ return !q || ((o.project||'')+' '+(o.location||'')+' '+(o.customer||'')).toLowerCase().indexOf(q)>=0; });
     document.getElementById('count').textContent = rows.length + (status==='New'?' new':'');
     document.getElementById('list').innerHTML = rows.map(card).join('');
+    // The button counts EVERY past-due row loaded, not the search-filtered set.
+    // Clearing is a list-wide action; making it depend on the search box would
+    // silently clear a different set than the one on screen.
+    // (No backticks anywhere in this file below the template literal opener —
+    //  one ends the page string and the whole module stops parsing.)
+    var cp=document.getElementById('clearPastBtn'), n=pastDueIds().length;
+    cp.style.display = (status==='New' && n>0) ? '' : 'none';
+    cp.textContent = 'Clear past due (' + n + ')';
     document.getElementById('state').style.display = rows.length? 'none':'block';
     if(!rows.length) document.getElementById('state').textContent = status==='New' ? '🎉 All caught up — no new opportunities to triage.' : 'No '+status+' opportunities.';
   }
@@ -218,6 +240,27 @@ function renderTriagePage() {
       })
       .catch(function(e){ alert('Failed: '+e); });
   };
+  // Clear past due — bulk Skip, not delete. Declining keeps the row's message id,
+  // which is what stops the next inbox scan re-creating every one of them.
+  document.getElementById('clearPastBtn').addEventListener('click', function(){
+    var ids=pastDueIds();
+    if(!ids.length) return;
+    if(!confirm('Skip '+ids.length+' opportunit'+(ids.length===1?'y':'ies')+' whose bid date has passed?\\n\\nThey move to the Declined tab. Nothing is deleted, and you can reopen any of them there.')) return;
+    var btn=this; btn.disabled=true; var was=btn.textContent; btn.textContent='Clearing…';
+    fetch('/api/triage/decision/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ids,decision:'skip'})})
+      .then(function(r){return r.json()})
+      .then(function(res){
+        // Drop only what the server confirms. A row that failed stays on screen
+        // rather than vanishing from a list it is still sitting in.
+        var cleared={}; (res.done||[]).forEach(function(i){cleared[String(i)]=1});
+        all=all.filter(function(o){return !cleared[String(o.id)]});
+        render();
+        if(res.quota){ alert(res.error||'Zoho daily API limit reached partway through.'); }
+        else if(res.failed && res.failed.length){ alert((res.done||[]).length+' cleared, '+res.failed.length+' could not be updated and are still listed.'); }
+      })
+      .catch(function(e){ alert('Failed: '+e); })
+      .then(function(){ btn.disabled=false; btn.textContent=was; });
+  });
   // Create Project: open the pre-filled NEW project on the Project_Dashboard
   // page directly. 'description'->Project Description, 'due'->Quote Due Date,
   // 'client_id'->Client lookup, 'quote_id' stored on the project. Manufacture/
