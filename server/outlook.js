@@ -159,7 +159,7 @@ function registerOutlookRoutes(app, deps) {
   app.get('/connect/outlook/start', (req, res) => {
     if (!MS_CLIENT_ID || !MS_REDIRECT_URI) {
       return res.status(500).send(htmlPage('Not configured',
-        '<h1 class="err">Outlook connect not configured</h1><p>Missing <code>MS_CLIENT_ID</code> or <code>MS_REDIRECT_URI</code> in Railway.</p>'));
+        '<h1 class="err">Outlook connect not configured</h1><p>Missing <code>MS_CLIENT_ID</code> or <code>MS_REDIRECT_URI</code> in the server configuration.</p>'));
     }
     const manufacture = (req.query.manufacture || '').toString();
     const nonce = crypto.randomBytes(8).toString('hex');

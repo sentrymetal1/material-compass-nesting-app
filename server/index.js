@@ -1580,7 +1580,7 @@ app.post('/api/cache-clear', (req, res) => {
 // Easy to misdiagnose code 4000 as "the report is empty" — surface it explicitly.
 class ZohoApiError extends Error {
   constructor(code, message, url) {
-    super('Zoho API code ' + code + ': ' + message);
+    super('Data service error ' + code + ': ' + message);
     this.zohoCode = code;
     this.zohoMessage = message;
     this.url = url;

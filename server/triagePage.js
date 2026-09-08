@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-09-08-1';
+const BUILD_TAG = 'triage-ui-2026-09-08-2';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -96,6 +96,21 @@ function renderTriagePage() {
   .laststamp{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:20px;padding:5px 12px;margin:-4px 0 14px}
   .laststamp b{color:var(--ink);font-weight:600}
   .laststamp .ago{color:var(--good);font-weight:600}
+  /* ── In-page messaging ──────────────────────────────────────────────────
+     A browser alert() or confirm() prints "An embedded page at <host> says"
+     above whatever you wrote, and nothing can suppress it. The only way to keep
+     the product's own name on screen is not to use them. */
+  .toasts{position:fixed;right:18px;bottom:18px;z-index:60;display:flex;flex-direction:column;gap:8px;max-width:min(420px,calc(100vw - 36px))}
+  .toast{background:#fff;border:1px solid var(--line);border-left:4px solid var(--mc-blue);border-radius:10px;
+    padding:12px 40px 12px 14px;box-shadow:0 6px 20px rgba(20,30,40,.16);font-size:13.5px;line-height:1.5;position:relative;white-space:pre-line}
+  .toast.bad{border-left-color:var(--soon)}
+  .toast.good{border-left-color:var(--good)}
+  .toast .x{position:absolute;top:6px;right:8px;border:0;background:transparent;font-size:16px;line-height:1;color:var(--muted);cursor:pointer}
+  .ask{position:fixed;inset:0;background:rgba(244,246,249,.82);display:none;align-items:center;justify-content:center;z-index:70;padding:24px}
+  .ask.show{display:flex}
+  .ask-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:24px 26px;max-width:440px;box-shadow:0 8px 30px rgba(20,30,40,.18)}
+  .ask-card p{margin:0 0 18px;font-size:14px;line-height:1.6;white-space:pre-line}
+  .ask-row{display:flex;gap:8px;justify-content:flex-end}
 </style></head>
 <body><div class="wrap">
   <div class="head">
@@ -145,6 +160,11 @@ function renderTriagePage() {
   <div id="list"></div>
   <div class="state" id="state">Loading…</div>
   <div class="foot">Material Compass · Quote Triage · ${BUILD_TAG}</div>
+  <div class="toasts" id="toasts"></div>
+  <div class="ask" id="ask"><div class="ask-card">
+    <p id="askText"></p>
+    <div class="ask-row"><button class="btn" id="askNo">Cancel</button><button class="btn quote" id="askYes">Yes</button></div>
+  </div></div>
 </div>
 <div class="overlay" id="overlay"><div class="ov-card" id="ovCard">
   <div class="spinner"></div>
@@ -157,12 +177,40 @@ function renderTriagePage() {
   var MFG = qs.get('manufacture') || '';
   var status = 'New';
   var all = [];
-  // Connect Inbox → the delegated-OAuth start route (same Railway origin).
+  // Connect Inbox → the delegated-OAuth start route (same origin as this page).
   // Pass the manufacturer so the new Mail_Connection row is scoped to it.
-  // Opens in a new tab: Microsoft's login refuses to render inside the Zoho iframe.
+  // Opens in a new tab: Microsoft's login refuses to render inside an iframe.
   document.getElementById('connectBtn').href = '/connect/outlook/start' + (MFG ? ('?manufacture=' + encodeURIComponent(MFG)) : '');
   var lastSyncedIso = '';   // raw ISO of the last scan, for "since last scan" mode
   var esc = function(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])})};
+  // In-page replacements for alert() and confirm(). Both browser dialogs print
+  // "An embedded page at <host> says" above the message, which puts the hosting
+  // platform's name in front of the user on every error. These keep the page's
+  // own branding and read better besides.
+  function notify(msg,kind){
+    var wrap=document.getElementById('toasts');
+    var t=document.createElement('div');
+    t.className='toast'+(kind?' '+kind:'');
+    t.textContent=String(msg==null?'':msg);
+    var x=document.createElement('button'); x.className='x'; x.textContent='×';
+    x.setAttribute('aria-label','Dismiss');
+    x.onclick=function(){ if(t.parentNode) wrap.removeChild(t); };
+    t.appendChild(x); wrap.appendChild(t);
+    // Errors stay until dismissed; anything else clears itself.
+    if(kind!=='bad') setTimeout(function(){ if(t.parentNode) wrap.removeChild(t); },6000);
+  }
+  function askConfirm(msg,onYes){
+    var box=document.getElementById('ask');
+    document.getElementById('askText').textContent=msg;
+    var yes=document.getElementById('askYes'), no=document.getElementById('askNo');
+    function close(){ box.classList.remove('show'); yes.onclick=null; no.onclick=null; document.removeEventListener('keydown',esckey); }
+    function esckey(e){ if(e.key==='Escape') close(); }
+    yes.onclick=function(){ close(); onYes(); };
+    no.onclick=close;
+    document.addEventListener('keydown',esckey);
+    box.classList.add('show');
+    yes.focus();
+  }
   function timeAgo(t){
     var s=Math.max(0,(Date.now()-t)/1000);
     if(s<60) return 'just now';
@@ -263,12 +311,12 @@ function renderTriagePage() {
     fetch('/api/triage/decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,decision:decision})})
       .then(function(r){return r.json()})
       .then(function(res){
-        if(!res.ok){ alert('Failed: '+(res.error||'unknown')); Array.prototype.forEach.call(c.querySelectorAll('button'),function(b){b.disabled=false}); return; }
+        if(!res.ok){ notify('Could not save that decision: '+(res.error||'unknown error'),'bad'); Array.prototype.forEach.call(c.querySelectorAll('button'),function(b){b.disabled=false}); return; }
         c.classList.add('gone');
         all=all.filter(function(o){return String(o.id)!==String(id)});
         setTimeout(render,260);
       })
-      .catch(function(e){ alert('Failed: '+e); });
+      .catch(function(e){ notify('Could not save that decision: '+e,'bad'); });
   };
   // ---- Manual intake -------------------------------------------------------
   // Files are read in the browser and posted as base64. Nothing is stored server
@@ -307,7 +355,7 @@ function renderTriagePage() {
         else { var s=String(reader.result||''); rec.data=s.slice(s.indexOf(',')+1); }
         intakeFiles.push(rec); renderIntakeFiles();
       };
-      reader.onerror=function(){ alert('Could not read '+f.name); };
+      reader.onerror=function(){ notify('Could not read '+f.name,'bad'); };
       if(kind==='text') reader.readAsText(f); else reader.readAsDataURL(f);
     });
   }
@@ -329,9 +377,9 @@ function renderTriagePage() {
   document.getElementById('intakeDrop').addEventListener('drop',function(e){ addIntakeFiles(e.dataTransfer.files); });
   document.getElementById('intakeSubmit').addEventListener('click',function(){
     var text=document.getElementById('intakeText').value||'';
-    if(!text.trim() && !intakeFiles.length){ alert('Add some notes or at least one file.'); return; }
+    if(!text.trim() && !intakeFiles.length){ notify('Add some notes, or at least one file.','bad'); return; }
     var total=intakeFiles.reduce(function(s,f){return s+f.size},0);
-    if(total>MAX_INTAKE_BYTES){ alert('Those files total '+fmtBytes(total)+'. Keep it under 25 MB — send the big drawing set at take-off time instead.'); return; }
+    if(total>MAX_INTAKE_BYTES){ notify('Those files total '+fmtBytes(total)+'. Keep it under 25 MB — the full drawing set goes in at take-off time instead.','bad'); return; }
     var btn=this; btn.disabled=true; var was=btn.textContent; btn.textContent='Reading…';
     document.getElementById('intakeNote').textContent='Reading your material…';
     fetch('/api/triage/manual',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -340,17 +388,17 @@ function renderTriagePage() {
       })})})
       .then(function(r){return r.json()})
       .then(function(res){
-        if(!res.ok){ alert('Could not add it: '+(res.error||'unknown')); return; }
+        if(!res.ok){ notify('Could not add it: '+(res.error||'unknown error'),'bad'); return; }
         document.getElementById('intakeText').value=''; intakeFiles=[]; renderIntakeFiles();
         document.getElementById('intake').classList.remove('open');
-        // Reload rather than splice it in locally: the row now exists in Zoho and
+        // Reload rather than splice it in locally: the row now exists server-side and
         // the list should show exactly what was stored, not a local guess at it.
         status='New';
         Array.prototype.forEach.call(document.querySelectorAll('#seg button'),function(b){ b.classList.toggle('active', b.getAttribute('data-status')==='New'); });
         load();
-        if(res.dates_dropped) alert('Added, but the bid date could not be stored in the format Zoho expects. Set it on the card.');
+        if(res.dates_dropped) notify('Added, but the bid date could not be saved in the expected format. Set it on the card.','bad');
       })
-      .catch(function(e){ alert('Could not add it: '+e); })
+      .catch(function(e){ notify('Could not add it: '+e,'bad'); })
       .then(function(){ btn.disabled=false; btn.textContent=was; document.getElementById('intakeNote').textContent=''; });
   });
 
@@ -359,21 +407,24 @@ function renderTriagePage() {
   document.getElementById('clearPastBtn').addEventListener('click', function(){
     var ids=pastDueIds();
     if(!ids.length) return;
-    if(!confirm('Skip '+ids.length+' opportunit'+(ids.length===1?'y':'ies')+' whose bid date has passed?\\n\\nThey move to the Declined tab. Nothing is deleted, and you can reopen any of them there.')) return;
-    var btn=this; btn.disabled=true; var was=btn.textContent; btn.textContent='Clearing…';
-    fetch('/api/triage/decision/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ids,decision:'skip'})})
-      .then(function(r){return r.json()})
-      .then(function(res){
-        // Drop only what the server confirms. A row that failed stays on screen
-        // rather than vanishing from a list it is still sitting in.
-        var cleared={}; (res.done||[]).forEach(function(i){cleared[String(i)]=1});
-        all=all.filter(function(o){return !cleared[String(o.id)]});
-        render();
-        if(res.quota){ alert(res.error||'Zoho daily API limit reached partway through.'); }
-        else if(res.failed && res.failed.length){ alert((res.done||[]).length+' cleared, '+res.failed.length+' could not be updated and are still listed.'); }
-      })
-      .catch(function(e){ alert('Failed: '+e); })
-      .then(function(){ btn.disabled=false; btn.textContent=was; });
+    var btn=this, was=btn.textContent;
+    askConfirm('Skip '+ids.length+' opportunit'+(ids.length===1?'y':'ies')+' whose bid date has passed?\\n\\nThey move to the Declined tab. Nothing is deleted, and you can reopen any of them there.', function(){
+      btn.disabled=true; btn.textContent='Clearing…';
+      fetch('/api/triage/decision/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ids,decision:'skip'})})
+        .then(function(r){return r.json()})
+        .then(function(res){
+          // Drop only what the server confirms. A row that failed stays on screen
+          // rather than vanishing from a list it is still sitting in.
+          var cleared={}; (res.done||[]).forEach(function(i){cleared[String(i)]=1});
+          all=all.filter(function(o){return !cleared[String(o.id)]});
+          render();
+          if(res.quota){ notify(res.error||'Daily data limit reached partway through.','bad'); }
+          else if(res.failed && res.failed.length){ notify((res.done||[]).length+' cleared. '+res.failed.length+' could not be updated and are still listed.','bad'); }
+          else { notify((res.done||[]).length+' past-due opportunit'+((res.done||[]).length===1?'y':'ies')+' moved to Declined.','good'); }
+        })
+        .catch(function(e){ notify('Could not clear those: '+e,'bad'); })
+        .then(function(){ btn.disabled=false; btn.textContent=was; });
+    });
   });
   // Create Project: open the pre-filled NEW project on the Project_Dashboard
   // page directly. 'description'->Project Description, 'due'->Quote Due Date,
@@ -392,7 +443,7 @@ function renderTriagePage() {
   window.createProject=function(btn){
     var c=btn.closest('.card'); var id=c.getAttribute('data-id');
     var o=null; for(var i=0;i<all.length;i++){ if(String(all[i].id)===String(id)){ o=all[i]; break; } }
-    if(!o){ alert('Could not find this opportunity to create a project.'); return; }
+    if(!o){ notify('Could not find this opportunity to create a project.','bad'); return; }
     var qp='?description='+encodeURIComponent(o.project||'');
     var dueField=fmtDueForField(o.due_date); if(dueField) qp+='&due='+encodeURIComponent(dueField);
     if(o.id) qp+='&quote_id='+encodeURIComponent(o.id);

@@ -476,7 +476,7 @@
 
   async function reconDeleteIdx(kind,i){
     const e=RECON[kind]&&RECON[kind].enteredOnly[i]; if(!e) return;
-    if(!confirm('Delete "'+e.name+'" from the project?\n\nThis removes the record in Zoho. It is blocked if anything is still linked to it.')) return;
+    if(!confirm('Delete "'+e.name+'" from the project?\n\nThis removes the record permanently. It is blocked if anything is still linked to it.')) return;
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/delete",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({kind:kind,id:e.id})});

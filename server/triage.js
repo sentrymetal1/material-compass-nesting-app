@@ -344,7 +344,7 @@ function isNoRecords(e) {
 // Throw a tagged error so callers can surface it instead of silently showing 0.
 function throwIfQuota(resp) {
   if (resp && resp.data && resp.data.code === 4000) {
-    const err = new Error('Zoho API daily quota exhausted (code 4000)');
+    const err = new Error('Daily data limit reached (code 4000)');
     err.zohoQuota = true;
     throw err;
   }
@@ -613,7 +613,7 @@ function registerTriageRoutes(app, deps) {
     } catch (e) {
       if (isQuotaError(e)) {
         summary.quota = true;
-        summary.errors.push('Zoho API daily quota exhausted — try again after it resets (midnight in your Zoho data-center timezone).');
+        summary.errors.push('Daily data limit reached — try again after it resets overnight.');
         return summary;
       }
       summary.errors.push('load existing: ' + (e.response?.data?.message || e.message));
@@ -815,7 +815,7 @@ function registerTriageRoutes(app, deps) {
       let rows = [];
       try { const r = await axios.get(url, { headers: zohoHeaders(token) }); throwIfQuota(r); rows = (r.data && r.data.data) || []; }
       catch (e) {
-        if (isQuotaError(e)) return res.json({ status, count: 0, quota: true, opportunities: [], error: 'Zoho API daily limit reached — resets at midnight (your Zoho data-center timezone).' });
+        if (isQuotaError(e)) return res.json({ status, count: 0, quota: true, opportunities: [], error: 'Daily data limit reached — resets overnight.' });
         if (!isNoRecords(e)) throw e;
       }
       rows.sort((a, b) => (Date.parse(b.Received_Date) || 0) - (Date.parse(a.Received_Date) || 0));
@@ -927,7 +927,7 @@ function registerTriageRoutes(app, deps) {
       const result = await insertOpportunity(fields);
       if (!result.ok) {
         console.error('[triage] manual insert failed:', JSON.stringify(result.raw));
-        return res.status(500).json({ ok: false, error: 'Zoho refused the record [code ' + result.code + ']: ' + (result.message || 'unknown') });
+        return res.status(500).json({ ok: false, error: 'The record was refused [code ' + result.code + ']: ' + (result.message || 'unknown') });
       }
       res.json({ ok: true, id: result.id, dates_dropped: !!result.dateDropped, extracted: out });
     } catch (err) {
@@ -971,7 +971,7 @@ function registerTriageRoutes(app, deps) {
           // the same way, and reporting them one by one would bury the cause.
           if (isQuotaError(e)) {
             return res.json({ ok: false, quota: true, done, failed,
-              error: 'Zoho API daily limit reached — ' + done.length + ' of ' + ids.length + ' cleared before it ran out.' });
+              error: 'Daily data limit reached — ' + done.length + ' of ' + ids.length + ' cleared before it ran out.' });
           }
           failed.push({ id, error: e.response?.data?.message || e.message });
         }
