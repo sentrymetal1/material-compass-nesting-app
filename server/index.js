@@ -56,6 +56,29 @@ async function getAccessToken(forceRefresh) {
   } catch (err) { lastTokenError = err.response?.data || err.message; cachedToken = null; tokenExpiry = 0; throw err; }
 }
 
+// Zoho revokes the OLDEST access token once too many are minted from one refresh
+// token. So ANYTHING else minting tokens from the same credentials — a local
+// script, a second service — silently kills the token this process is holding,
+// and the cache keeps serving the dead one until its clock expiry up to an hour
+// later. Every Zoho read in the app then fails with code 1030 while a freshly
+// minted token works perfectly, which is a confusing thing to debug: the data is
+// fine, the credentials are fine, only this process is wrong.
+//
+// One interceptor fixes every call site at once. On a 1030 from a Zoho host it
+// forces a refresh and re-issues the request exactly once. The __zohoRetried flag
+// stops a genuinely revoked refresh token turning into an infinite loop.
+axios.interceptors.response.use(undefined, async (error) => {
+  const cfg = error.config || {};
+  const code = error.response && error.response.data && error.response.data.code;
+  const isZoho = typeof cfg.url === 'string' && cfg.url.indexOf('zohoapis.com') >= 0;
+  if (!isZoho || code !== 1030 || cfg.__zohoRetried) return Promise.reject(error);
+  cfg.__zohoRetried = true;
+  console.log('[zoho] access token rejected (1030) — forcing refresh and retrying once');
+  const fresh = await getAccessToken(true);
+  cfg.headers = Object.assign({}, cfg.headers || {}, { Authorization: 'Zoho-oauthtoken ' + fresh });
+  return axios.request(cfg);
+});
+
 function zohoHeaders(token) { return { Authorization: 'Zoho-oauthtoken ' + token, Accept: 'application/json' }; }
 function creatorApiBase() { return 'https://www.zohoapis.com/creator/v2.1/data/' + ZOHO.accountOwner + '/' + ZOHO.appLinkName; }
 function safeNum(val, dec) { dec = dec || 4; const n = parseFloat(val); if (!Number.isFinite(n)) return 0; return Math.round(n * Math.pow(10, dec)) / Math.pow(10, dec); }
