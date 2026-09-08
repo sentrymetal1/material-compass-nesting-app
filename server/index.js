@@ -10,6 +10,7 @@ const takeoffSnap = require('./takeoff/snap');   // size matching shared with th
 const app = express();
 app.use(cors());
 app.use('/api/takeoff', express.json({ limit: '60mb' })); // AI take-off: base64 PDFs are large; must precede the 10mb global json
+app.use('/api/triage/manual', express.json({ limit: '40mb' })); // manual intake carries base64 photos/PDFs; same reason, same placement
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 

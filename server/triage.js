@@ -146,6 +146,60 @@ const EXTRACT_TOOL = {
   },
 };
 
+// Manual intake. Same tool and the same extraction rules, but the source is a
+// pile of whatever the estimator has rather than one email — typed notes, a
+// photo of a pencil breakdown, a supplier quote PDF, a forwarded thread pasted
+// as text. The rules that matter (customer is the GC not the platform, honour a
+// date override, blank beats a guess) are identical, so the base prompt is
+// reused and only the framing changes.
+const MANUAL_SYSTEM = EXTRACT_SYSTEM
+  .replace('You read one email and', 'You read a set of materials an estimator has supplied and')
+  + "\nTHIS IS A MANUAL ENTRY, not an email. The material may be typed notes, a photograph of a "
+  + "handwritten take-off, a supplier quotation, a drawing, a spreadsheet, or text pasted out of "
+  + "an email thread. Read everything given.\n"
+  + "- is_rfq: a manual entry is here BECAUSE the estimator intends to quote it. Set true unless "
+  + "the material plainly has no steel scope at all. Do not decline it for being scrappy, "
+  + "handwritten, or incomplete — that is the normal shape of this input.\n"
+  + "- project_name: if nothing states one, build a short descriptive name from the content "
+  + "rather than leaving it blank, since this row has no email subject to fall back on.\n"
+  + "- confidence here measures how well the MATERIAL SUPPORTS the extraction, not whether it is "
+  + "worth bidding. Sparse notes should read low and still come through.";
+
+// Turns the caller's mixed bag into Anthropic content blocks. Images and PDFs go
+// as native blocks so the model actually looks at them; anything already text is
+// inlined and truncated, because a pasted thread can be enormous and the tail of
+// it is rarely the part that carries the bid date.
+function manualContent(text, attachments) {
+  const content = [];
+  const note = String(text || '').trim();
+  if (note) content.push({ type: 'text', text: 'ESTIMATOR NOTES / PASTED MATERIAL:\n' + note.slice(0, 60000) });
+  (Array.isArray(attachments) ? attachments : []).forEach(a => {
+    if (!a) return;
+    if (a.kind === 'image' && a.data) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: a.media_type || 'image/png', data: a.data } });
+    } else if (a.kind === 'text' && a.text) {
+      content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ':\n' + String(a.text).slice(0, 60000) });
+    } else if (a.data) {
+      content.push({ type: 'document', source: { type: 'base64', media_type: a.media_type || 'application/pdf', data: a.data } });
+    }
+  });
+  if (!content.length) content.push({ type: 'text', text: '(no material supplied)' });
+  return content;
+}
+
+async function extractManual(client, text, attachments) {
+  const resp = await client.messages.create({
+    model: EXTRACT_MODEL,
+    max_tokens: 1024,
+    system: MANUAL_SYSTEM,
+    tools: [EXTRACT_TOOL],
+    tool_choice: { type: 'tool', name: 'submit_opportunity' },
+    messages: [{ role: 'user', content: manualContent(text, attachments) }],
+  });
+  const toolUse = resp.content.find(b => b.type === 'tool_use');
+  return { out: toolUse ? toolUse.input : null, usage: resp.usage };
+}
+
 async function extractOpportunity(client, email) {
   const body = (email.body || '').slice(0, 8000);
   const userText =
@@ -812,6 +866,72 @@ function registerTriageRoutes(app, deps) {
       res.json({ ok: true, id, status });
     } catch (err) {
       console.error('[triage] decision error:', err.response?.data || err.message);
+      res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
+    }
+  });
+
+  // Manual intake — start a quote from material that never came through a mailbox.
+  //
+  // Every other way into this system begins with an email the poller found or a
+  // project that already exists. This is the front door for walking up with a
+  // pile of whatever you have: typed notes, a photo of a pencil breakdown, a
+  // supplier quote, a drawing, text pasted out of a thread.
+  //
+  // It deliberately produces an ORDINARY Quote_Opportunity, so the row behaves
+  // like every other card — same Quote/Skip, same project creation, same
+  // take-off afterwards. One queue, one process, no second path to maintain.
+  app.post('/api/triage/manual', async (req, res) => {
+    try {
+      const { manufacture, text, attachments } = req.body || {};
+      const note = String(text || '').trim();
+      const files = Array.isArray(attachments) ? attachments : [];
+      if (!note && !files.length) {
+        return res.status(400).json({ ok: false, error: 'Add some notes or at least one file.' });
+      }
+      const anthropic = new Anthropic(); // ANTHROPIC_API_KEY from env
+      const { out } = await extractManual(anthropic, note, files);
+      if (!out) return res.status(502).json({ ok: false, error: 'The AI returned no extraction. Try again.' });
+
+      // Email_Message_ID carries a No-Duplicate-Values rule and is what dedup
+      // keys on. A manual row has no message id, so it gets a synthetic one that
+      // cannot collide with a real Internet message id and cannot collide with
+      // another manual entry either.
+      const messageId = 'manual:' + Date.now() + ':' + Math.random().toString(36).slice(2, 10);
+      const nowIso = new Date().toISOString();
+      const fields = {
+        Source_inbox: 'Manual entry',
+        Email_Message_ID: messageId,
+        Received_Date: fmtDateTime(nowIso),
+        Subject_field: out.project_name || 'Manual entry',
+        Summary: out.summary || '',
+        Customer_Name: out.customer_name || '',
+        Project: out.project_name || '',
+        Due_Date: fmtDate(out.due_date),
+        Location: out.location || '',
+        Material_Scope: out.material_scope || '',
+        Confidence: typeof out.confidence === 'number' ? Math.round(out.confidence * 100) / 100 : 0,
+        Status: 'New',
+        // No webLink, so the card shows no Open email button. The marker records
+        // what was supplied without storing the files, which have no home on this
+        // form — they are re-attached at take-off time, where they are needed.
+        Extracted_JSON: JSON.stringify({
+          source: 'manual',
+          entered_at: nowIso,
+          notes_chars: note.length,
+          attachments: files.map(f => ({ name: f && f.name, kind: f && f.kind })),
+          extraction: out,
+        }),
+      };
+      if (manufacture) fields.Manufacture = manufacture;
+
+      const result = await insertOpportunity(fields);
+      if (!result.ok) {
+        console.error('[triage] manual insert failed:', JSON.stringify(result.raw));
+        return res.status(500).json({ ok: false, error: 'Zoho refused the record [code ' + result.code + ']: ' + (result.message || 'unknown') });
+      }
+      res.json({ ok: true, id: result.id, dates_dropped: !!result.dateDropped, extracted: out });
+    } catch (err) {
+      console.error('[triage] manual intake error:', err.response?.data || err.message);
       res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
     }
   });

@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-09-07-1';
+const BUILD_TAG = 'triage-ui-2026-09-08-1';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -49,6 +49,20 @@ function renderTriagePage() {
   .due.soon{background:#fdecea;color:var(--soon)}
   .due.past{background:#4a4a4a;color:#fff}
   .due.past .lbl{color:#d8d8d8}
+  .btn.newquote{background:var(--mc-blue);border-color:var(--mc-blue);color:#fff}
+  .btn.newquote:hover{background:var(--mc-blue-dark)}
+  .intake{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px;display:none}
+  .intake.open{display:block}
+  .intake h3{margin:0 0 4px;font-size:15px}
+  .intake .hint{color:var(--muted);font-size:12.5px;margin:0 0 12px;line-height:1.5}
+  .intake textarea{width:100%;min-height:150px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:inherit;font-size:13px;resize:vertical}
+  .intake .drop{margin-top:10px;border:1.5px dashed #ccd5e0;border-radius:8px;padding:14px;text-align:center;color:var(--muted);font-size:13px;cursor:pointer}
+  .intake .drop:hover,.intake .drop.over{border-color:var(--mc-blue);background:#f7fafd;color:var(--mc-blue)}
+  .intake .files{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px;color:#3d4955}
+  .intake .files li{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid #f2f4f7}
+  .intake .files button{border:0;background:transparent;color:var(--soon);cursor:pointer;font-size:14px;line-height:1}
+  .intake .bar{display:flex;align-items:center;gap:10px;margin-top:14px}
+  .intake .note{font-size:12px;color:var(--muted)}
   .btn.clearpast{border-color:#e6c9c3;color:#a3402f;background:#fff}
   .btn.clearpast:hover:not(:disabled){background:#fdecea;border-color:#e0a99e}
   .btn.clearpast:disabled{opacity:.4;cursor:default}
@@ -98,6 +112,7 @@ function renderTriagePage() {
       <button data-status="Quoting">Quoting</button>
       <button data-status="Decline">Declined</button>
     </div>
+    <button class="btn newquote" id="newQuoteBtn" title="Start a quote from material that did not come through your inbox">＋ Start a quote</button>
     <span class="spacer"></span>
     <button class="btn clearpast" id="clearPastBtn" title="Skip every opportunity whose bid date has already passed. They move to Declined, nothing is deleted." style="display:none">Clear past due</button>
     <select class="days" id="scanDays" title="How far back to scan">
@@ -112,6 +127,21 @@ function renderTriagePage() {
     <input class="search" id="search" placeholder="Search project, location…">
   </div>
   <div id="lastScan" class="laststamp"></div>
+  <div class="intake" id="intake">
+    <h3>Start a quote from what you have</h3>
+    <p class="hint">Paste anything — an email thread, a scope list, your own notes. Add files if you have them:
+      photos of a handwritten take-off, a supplier quotation, a drawing, a spreadsheet.
+      It gets read and lands in this list as an ordinary opportunity, so Quote and the take-off work on it as usual.</p>
+    <textarea id="intakeText" placeholder="Paste or type here. Rough is fine — a project name, a customer, a bid date and a few lines of scope is plenty to start."></textarea>
+    <div class="drop" id="intakeDrop">Drop files here, or click to choose — images, PDFs, text and CSV</div>
+    <input type="file" id="intakeFiles" multiple accept="image/*,application/pdf,text/plain,text/csv,.csv,.txt" style="display:none">
+    <ul class="files" id="intakeList"></ul>
+    <div class="bar">
+      <button class="btn quote" id="intakeSubmit">Read it and add to triage</button>
+      <button class="btn" id="intakeCancel">Cancel</button>
+      <span class="note" id="intakeNote"></span>
+    </div>
+  </div>
   <div id="list"></div>
   <div class="state" id="state">Loading…</div>
   <div class="foot">Material Compass · Quote Triage · ${BUILD_TAG}</div>
@@ -240,6 +270,90 @@ function renderTriagePage() {
       })
       .catch(function(e){ alert('Failed: '+e); });
   };
+  // ---- Manual intake -------------------------------------------------------
+  // Files are read in the browser and posted as base64. Nothing is stored server
+  // side: the extraction pulls the header fields out and the files are then let
+  // go, because Quote_Opportunity has nowhere to keep them. They are re-attached
+  // at take-off time, which is the step that actually needs to read drawings.
+  var intakeFiles = [];
+  var MAX_INTAKE_BYTES = 25 * 1024 * 1024;   // server accepts 40mb of JSON; base64 inflates by ~4/3
+  function fmtBytes(n){ return n>1048576 ? (n/1048576).toFixed(1)+' MB' : Math.max(1,Math.round(n/1024))+' KB'; }
+  function intakeKind(f){
+    var t=(f.type||'').toLowerCase();
+    if(t.indexOf('image/')===0) return 'image';
+    if(t==='application/pdf') return 'pdf';
+    return 'text';
+  }
+  function renderIntakeFiles(){
+    var ul=document.getElementById('intakeList');
+    ul.innerHTML=intakeFiles.map(function(f,i){
+      return '<li><span>'+esc(f.name)+' <span style="color:#9aa5b1">'+esc(f.kindLabel)+' · '+fmtBytes(f.size)+'</span></span>'
+        + '<button title="Remove" onclick="removeIntakeFile('+i+')">✕</button></li>';
+    }).join('');
+    var total=intakeFiles.reduce(function(s,f){return s+f.size},0);
+    document.getElementById('intakeNote').textContent = intakeFiles.length
+      ? intakeFiles.length+' file'+(intakeFiles.length===1?'':'s')+' · '+fmtBytes(total)
+      : '';
+  }
+  window.removeIntakeFile=function(i){ intakeFiles.splice(i,1); renderIntakeFiles(); };
+  function addIntakeFiles(fileList){
+    var pending=Array.prototype.slice.call(fileList||[]);
+    pending.forEach(function(f){
+      var kind=intakeKind(f);
+      var reader=new FileReader();
+      reader.onload=function(){
+        var rec={name:f.name, size:f.size, kind:kind, media_type:f.type||'', kindLabel:kind};
+        if(kind==='text'){ rec.text=String(reader.result||''); }
+        else { var s=String(reader.result||''); rec.data=s.slice(s.indexOf(',')+1); }
+        intakeFiles.push(rec); renderIntakeFiles();
+      };
+      reader.onerror=function(){ alert('Could not read '+f.name); };
+      if(kind==='text') reader.readAsText(f); else reader.readAsDataURL(f);
+    });
+  }
+  document.getElementById('newQuoteBtn').addEventListener('click',function(){
+    var p=document.getElementById('intake'); p.classList.toggle('open');
+    if(p.classList.contains('open')) document.getElementById('intakeText').focus();
+  });
+  document.getElementById('intakeCancel').addEventListener('click',function(){
+    document.getElementById('intake').classList.remove('open');
+  });
+  document.getElementById('intakeDrop').addEventListener('click',function(){ document.getElementById('intakeFiles').click(); });
+  document.getElementById('intakeFiles').addEventListener('change',function(e){ addIntakeFiles(e.target.files); e.target.value=''; });
+  ['dragenter','dragover'].forEach(function(ev){
+    document.getElementById('intakeDrop').addEventListener(ev,function(e){ e.preventDefault(); this.classList.add('over'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    document.getElementById('intakeDrop').addEventListener(ev,function(e){ e.preventDefault(); this.classList.remove('over'); });
+  });
+  document.getElementById('intakeDrop').addEventListener('drop',function(e){ addIntakeFiles(e.dataTransfer.files); });
+  document.getElementById('intakeSubmit').addEventListener('click',function(){
+    var text=document.getElementById('intakeText').value||'';
+    if(!text.trim() && !intakeFiles.length){ alert('Add some notes or at least one file.'); return; }
+    var total=intakeFiles.reduce(function(s,f){return s+f.size},0);
+    if(total>MAX_INTAKE_BYTES){ alert('Those files total '+fmtBytes(total)+'. Keep it under 25 MB — send the big drawing set at take-off time instead.'); return; }
+    var btn=this; btn.disabled=true; var was=btn.textContent; btn.textContent='Reading…';
+    document.getElementById('intakeNote').textContent='Reading your material…';
+    fetch('/api/triage/manual',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({manufacture:MFG, text:text, attachments:intakeFiles.map(function(f){
+        return {kind:f.kind, name:f.name, media_type:f.media_type, data:f.data, text:f.text};
+      })})})
+      .then(function(r){return r.json()})
+      .then(function(res){
+        if(!res.ok){ alert('Could not add it: '+(res.error||'unknown')); return; }
+        document.getElementById('intakeText').value=''; intakeFiles=[]; renderIntakeFiles();
+        document.getElementById('intake').classList.remove('open');
+        // Reload rather than splice it in locally: the row now exists in Zoho and
+        // the list should show exactly what was stored, not a local guess at it.
+        status='New';
+        Array.prototype.forEach.call(document.querySelectorAll('#seg button'),function(b){ b.classList.toggle('active', b.getAttribute('data-status')==='New'); });
+        load();
+        if(res.dates_dropped) alert('Added, but the bid date could not be stored in the format Zoho expects. Set it on the card.');
+      })
+      .catch(function(e){ alert('Could not add it: '+e); })
+      .then(function(){ btn.disabled=false; btn.textContent=was; document.getElementById('intakeNote').textContent=''; });
+  });
+
   // Clear past due — bulk Skip, not delete. Declining keeps the row's message id,
   // which is what stops the next inbox scan re-creating every one of them.
   document.getElementById('clearPastBtn').addEventListener('click', function(){
