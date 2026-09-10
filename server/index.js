@@ -27,6 +27,11 @@ app.get('/takeoff', (req, res, next) => {
   res.redirect(301, '/takeoff/' + (q > -1 ? req.originalUrl.slice(q) : ''));
 });
 app.use('/takeoff', express.static(path.join(__dirname, 'takeoff', 'public')));
+// The narrated how-to films, served from the product rather than from a Claude
+// artifact link. The artifact version was pinned: viewers kept getting an older
+// cut no matter how often it was republished, and one browser blocked the domain
+// outright. Here the URL is ours, needs no account, and updates on push.
+app.use('/howto', express.static(path.join(__dirname, 'howto')));
 
 const ZOHO = {
   clientId: process.env.ZOHO_CLIENT_ID,

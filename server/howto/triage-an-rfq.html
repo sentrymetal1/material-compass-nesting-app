@@ -1,0 +1,732 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Triage an Incoming RFQ</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* ── TOKENS ── player chrome is themed; the STAGE keeps a fixed light palette
+   because it depicts the real triage page, which only renders light. */
+:root{
+  --ground:#EEF1F6; --panel:#FFFFFF; --panel-2:#F7F9FC;
+  --ink:#171A21; --ink-2:#57616F; --ink-3:#8D97A6; --line:#DCE2EB;
+  --accent:#3F76B4; --accent-soft:#DCE8F6; --warn:#9A5B00; --warn-soft:#FBEEDA;
+  --shadow:0 1px 2px rgba(23,26,33,.06), 0 8px 24px rgba(23,26,33,.07);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#11141A; --panel:#1A1F27; --panel-2:#151920;
+    --ink:#E7EBF1; --ink-2:#9BA6B5; --ink-3:#6C7887; --line:#2A313C;
+    --accent:#7EAFE4; --accent-soft:#20303F; --warn:#E0AE63; --warn-soft:#33281A;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 28px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#11141A; --panel:#1A1F27; --panel-2:#151920;
+  --ink:#E7EBF1; --ink-2:#9BA6B5; --ink-3:#6C7887; --line:#2A313C;
+  --accent:#7EAFE4; --accent-soft:#20303F; --warn:#E0AE63; --warn-soft:#33281A;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 28px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:'DM Sans',system-ui,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
+.shell{max-width:1180px;margin:0 auto;padding:28px 20px 56px;display:flex;flex-direction:column;gap:18px}
+
+.mast{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.mast h1{font-family:'Barlow Condensed',Impact,sans-serif;font-size:38px;font-weight:700;letter-spacing:.4px;line-height:1;margin:0;text-transform:uppercase;text-wrap:balance}
+.eyebrow{font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:600;letter-spacing:2.4px;text-transform:uppercase;color:var(--ink-3);margin:0 0 6px}
+.mast p.sub{margin:8px 0 0;color:var(--ink-2);font-size:14px;max-width:62ch}
+.badge{display:inline-flex;align-items:center;gap:7px;flex:none;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:6px 13px;font-size:11.5px;font-weight:600;color:var(--ink-2)}
+.badge b{color:var(--ink);font-weight:600}
+.dot{width:7px;height:7px;border-radius:50%;background:#D8A22A;flex:none}
+
+.player{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.stage-wrap{position:relative;width:100%;background:#EDEFF3;overflow:hidden;border-bottom:1px solid var(--line)}
+.stage{width:1120px;height:630px;transform-origin:top left;position:relative;background:#F1F3F7;font-size:13px;color:#1A1D23}
+
+.transport{display:flex;align-items:center;gap:14px;padding:12px 16px}
+.pbar{flex:1;height:5px;border-radius:3px;background:var(--line);position:relative;cursor:pointer}
+.pbar span{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:3px;width:0%}
+.btn{width:34px;height:34px;flex:none;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);cursor:pointer;display:grid;place-items:center;padding:0}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn svg{width:15px;height:15px;fill:currentColor}
+.clock{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.vsel{border:1px solid var(--line);background:var(--panel-2);color:var(--ink-2);border-radius:8px;padding:6px 8px;font:inherit;font-size:11.5px;max-width:170px}
+.vsel:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.cap{display:flex;gap:14px;align-items:flex-start;padding:14px 16px 16px;border-top:1px solid var(--line);background:var(--panel-2);min-height:76px}
+.cap-idx{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:4px 8px;flex:none;letter-spacing:.5px}
+.cap-txt{font-size:15px;line-height:1.5;max-width:72ch;margin:1px 0 0}
+.cap.is-warn{background:var(--warn-soft)}
+.cap.is-warn .cap-idx{color:var(--warn);background:transparent;border:1px solid var(--warn)}
+.cap.is-warn .cap-txt{color:var(--warn);font-weight:500}
+
+.chapters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.ch{text-align:left;border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:11px 12px;cursor:pointer;color:var(--ink);display:flex;flex-direction:column;gap:3px;font:inherit}
+.ch:hover{border-color:var(--accent)}
+.ch:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ch[aria-current="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.ch-n{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);letter-spacing:.6px}
+.ch[aria-current="true"] .ch-n{color:var(--accent)}
+.ch-t{font-family:'Barlow Condensed',sans-serif;font-size:17px;font-weight:600;letter-spacing:.3px;line-height:1.15}
+.foot{color:var(--ink-2);font-size:13px;line-height:1.6;border-top:1px solid var(--line);padding-top:14px;max-width:78ch}
+.foot b{color:var(--ink);font-weight:600}
+@media (max-width:980px){.chapters{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:880px){.chapters{grid-template-columns:repeat(2,1fr)}.mast h1{font-size:30px}}
+
+/* ══ STAGE — the triage page ══ */
+.stage .thead{display:flex;align-items:center;gap:12px;background:#1F3D5C;color:#fff;padding:12px 18px}
+.stage .thead h2{margin:0;font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:600;letter-spacing:.6px;text-transform:uppercase}
+.stage .mfg{font-size:11px;color:#A9C4DE;border-left:1px solid #3B5E82;padding-left:12px}
+.stage .spacer{flex:1}
+.stage .lastscan{font-size:10.5px;color:#A9C4DE}
+.stage .sel{background:#2C557C;border:1px solid #3E6A92;border-radius:6px;padding:5px 10px;font-size:11px;color:#fff}
+.stage .gbtn{background:#5F94CE;border-radius:6px;padding:6px 14px;font-size:11.5px;font-weight:600;color:#fff}
+.stage .gbtn.ghost{background:transparent;border:1px solid #4E7BA6;color:#CFE0EF}
+
+/* The three steps, drawn on the page itself. Not decoration: the whole failure
+   this film exists to prevent was someone not knowing there were three. */
+.stage .steps{position:absolute;left:18px;right:18px;top:56px;display:flex;background:#fff;border:1px solid #E1E4EA;border-radius:8px;overflow:hidden}
+.stage .stp{flex:1;padding:7px 12px;border-right:1px solid #E1E4EA;font-size:9.5px;color:#8D97A6;line-height:1.4}
+.stage .stp:last-child{border-right:0}
+.stage .stp b{display:block;color:#3C4655;font-size:11px;font-weight:700;margin-bottom:1px}
+.stage .stp .n{display:inline-grid;place-items:center;width:14px;height:14px;border-radius:50%;background:#5F94CE;color:#fff;font-size:8.5px;font-weight:700;margin-right:5px;vertical-align:1px}
+.stage .stp.lit{background:#EDF3FA;box-shadow:inset 0 -2px 0 #5F94CE}
+
+.stage .tabrow{display:flex;align-items:center;gap:8px;padding:0 18px;position:absolute;left:0;right:0;top:116px}
+.stage .tb{font-size:11.5px;font-weight:600;color:#5F6775;background:#E5E9F0;border-radius:7px 7px 0 0;padding:7px 15px;display:flex;gap:7px;align-items:center}
+.stage .tb.on{background:#fff;color:#1F3D5C;box-shadow:0 -1px 0 #5F94CE inset,0 -3px 0 #5F94CE inset}
+.stage .tb i{font-style:normal;font-family:'JetBrains Mono',monospace;font-size:10px;background:#CBD5E1;color:#3C4655;border-radius:9px;padding:1px 6px}
+.stage .tb.on i{background:#5F94CE;color:#fff}
+.stage .newq{background:#5F94CE;color:#fff;border-radius:7px;padding:5px 13px;font-size:11px;font-weight:700;margin-left:4px}
+.stage .search{margin-left:auto;background:#fff;border:1px solid #DCE2EB;border-radius:7px;padding:6px 12px;font-size:11px;color:#9BA3B0;width:190px}
+
+.stage .cards{position:absolute;left:18px;right:18px;top:150px;bottom:14px;overflow:hidden;display:flex;flex-direction:column;gap:9px}
+.stage .c{background:#fff;border:1px solid #E1E4EA;border-left:4px solid #C7D2DE;border-radius:9px;padding:11px 14px;display:flex;gap:14px;align-items:flex-start}
+.stage .c.hi{border-color:#5F94CE;box-shadow:0 0 0 3px rgba(95,148,206,.25)}
+.stage .c.fresh{animation:drop .5s ease-out}
+@keyframes drop{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+.stage .c.go{animation:leave .45s ease-in forwards}
+/* Where the row landed after Quote. One pulse, then quiet. */
+.stage .c.landed{border-color:#2e7d32;animation:landed 2.4s ease-out}
+@keyframes landed{0%{box-shadow:0 0 0 0 rgba(46,125,50,.45)}45%{box-shadow:0 0 0 10px rgba(46,125,50,0)}100%{box-shadow:none}}
+@keyframes leave{to{opacity:0;transform:translateX(40px)}}
+.stage .conf{flex:none;width:52px;text-align:center}
+.stage .conf b{display:block;font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:600;line-height:1}
+.stage .conf span{font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:#9BA3B0}
+.stage .c.g{border-left-color:#2e7d32} .stage .c.g .conf b{color:#2e7d32}
+.stage .c.a{border-left-color:#B4690E} .stage .c.a .conf b{color:#B4690E}
+.stage .c.n{border-left-color:#98A2B1} .stage .c.n .conf b{color:#6C7887}
+.stage .cmain{flex:1;min-width:0}
+.stage .cmain h4{margin:0 0 3px;font-size:14px;font-weight:700;letter-spacing:-.1px}
+.stage .meta{font-size:10.5px;color:#6C7887;margin-bottom:5px}
+.stage .meta b{color:#3C4655;font-weight:600}
+.stage .sum{font-size:11px;color:#57616F;line-height:1.45;margin:0 0 6px;max-width:74ch}
+.stage .chips{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.stage .chip{background:#EDF3FA;color:#2C557C;border-radius:999px;padding:2px 9px;font-size:9.5px;font-weight:600;letter-spacing:.2px}
+.stage .chip.pend{background:#F0F2F5;color:#98A2B1;font-style:italic;font-weight:500}
+/* Documents held. Green because it is the reassurance, not a warning. */
+.stage .held{background:#E9F7EE;color:#1A6B34;border:1px solid #BFE3C9;border-radius:999px;padding:2px 9px;font-size:9.5px;font-weight:700}
+.stage .cside{flex:none;width:158px;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.stage .due{border-radius:999px;padding:3px 11px;font-size:10px;font-weight:700;letter-spacing:.3px;background:#EEF1F6;color:#57616F;font-family:'JetBrains Mono',monospace}
+.stage .due.hot{background:#FBE7E4;color:#B03A2B}
+.stage .row{display:flex;gap:6px}
+.stage .b{border-radius:6px;padding:5px 12px;font-size:10.5px;font-weight:600}
+.stage .b.q{background:#5F94CE;color:#fff}
+.stage .b.s{background:#fff;border:1px solid #DCE2EB;color:#6C7887}
+.stage .b.o{background:#fff;border:1px solid #DCE2EB;color:#2C557C}
+.stage .b.mk{background:#2e7d32;color:#fff}
+.stage .b.press{filter:brightness(.88)}
+.stage .stat{font-size:9.5px;color:#8D97A6}
+.stage .nextup{margin-top:7px;background:#F7FAFD;border:1px solid #DCE6F3;border-radius:6px;padding:6px 9px;font-size:10px;color:#3D4955;line-height:1.45}
+
+.stage .empty2{padding:34px;text-align:center;color:#9BA3B0;font-size:12px}
+
+/* scanning overlay */
+.stage .scan{position:absolute;inset:150px 18px 14px;background:rgba(241,243,247,.93);display:grid;place-items:center;border-radius:9px;z-index:12}
+.stage .scanbox{text-align:center}
+.stage .ring2{width:34px;height:34px;border-radius:50%;border:3px solid #D6DEE8;border-top-color:#5F94CE;margin:0 auto 10px;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.stage .scanbox p{margin:0;font-size:12px;color:#3C4655;font-weight:600}
+.stage .scanbox small{display:block;margin-top:4px;font-size:10.5px;color:#8D97A6}
+
+/* extraction panel */
+.stage .detail{position:absolute;right:18px;top:150px;bottom:14px;width:520px;background:#fff;border:1px solid #D6DEE8;border-radius:10px;box-shadow:-6px 0 26px rgba(20,30,45,.16);z-index:14;overflow:hidden;animation:sld .38s cubic-bezier(.3,0,.2,1)}
+@keyframes sld{from{opacity:0;transform:translateX(34px)}to{opacity:1;transform:none}}
+.stage .detail h5{margin:0;background:#1F3D5C;color:#fff;padding:9px 14px;font-size:10.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase}
+.stage .drow{display:flex;gap:12px;padding:9px 14px;border-bottom:1px solid #EDF0F4;font-size:11.5px}
+.stage .drow .k{width:104px;flex:none;font-size:9.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#8D97A6;padding-top:2px}
+.stage .drow .v{flex:1;line-height:1.5}
+.stage .strike{text-decoration:line-through;color:#B03A2B}
+.stage .won{background:#E4F1E4;color:#1E5D22;border-radius:4px;padding:1px 6px;font-weight:700;font-family:'JetBrains Mono',monospace}
+.stage .drow.lit{background:#FFF8E6;box-shadow:inset 3px 0 0 #D8A22A}
+.stage .json{margin:0;padding:9px 14px;font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.6;color:#6C7887;background:#F7F9FC;white-space:pre-wrap}
+
+/* ── the by-hand intake ── */
+.stage .intake{position:absolute;left:18px;right:18px;top:150px;background:#fff;border:1px solid #D6DEE8;border-radius:10px;box-shadow:0 8px 26px rgba(20,30,45,.13);z-index:13;overflow:hidden;animation:up .38s ease-out}
+@keyframes up{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.stage .intake h5{margin:0;background:#2C557C;color:#fff;padding:8px 14px;font-size:10.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase}
+.stage .ibody{display:flex;gap:14px;padding:12px 14px 14px}
+.stage .ita{flex:1.15;border:1px solid #D6DBE3;border-radius:6px;padding:9px 11px;font-size:11px;line-height:1.55;color:#3C4655;min-height:118px;background:#fff;white-space:pre-line}
+.stage .ita .car{display:inline-block;width:1px;height:12px;background:#5F94CE;vertical-align:-2px;animation:bl .9s step-end infinite}
+@keyframes bl{50%{opacity:0}}
+.stage .idrop{flex:1;border:1.5px dashed #C6D2E0;border-radius:6px;padding:9px 11px;font-size:10.5px;color:#8D97A6}
+.stage .idrop.over{border-color:#5F94CE;background:#F5FAFF;color:#2C557C}
+.stage .flist{list-style:none;margin:7px 0 0;padding:0;max-height:82px;overflow:hidden}
+.stage .flist li{display:flex;justify-content:space-between;gap:8px;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#3C4655;padding:2px 0;border-bottom:1px solid #F2F4F7}
+.stage .flist li span{color:#9BA3B0}
+.stage .ibar{display:flex;align-items:center;gap:10px;padding:0 14px 13px}
+.stage .ibar .note{font-size:10px;color:#8D97A6}
+.stage .keepnote{margin:0 14px 12px;background:#E9F7EE;border:1px solid #BFE3C9;border-radius:6px;padding:7px 10px;font-size:10.5px;color:#1A6B34;font-weight:600}
+
+/* prefilled project form flash */
+.stage .pf{position:absolute;left:18px;right:18px;bottom:14px;background:#fff;border:1px solid #D6DEE8;border-radius:10px;box-shadow:0 -6px 22px rgba(20,30,45,.12);z-index:13;animation:up .4s ease-out}
+.stage .pf h5{margin:0;background:#2e5f8a;color:#fff;padding:7px 14px;font-size:10px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase}
+.stage .pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px 16px;padding:12px 14px 14px}
+.stage .pf .fl{display:flex;flex-direction:column;gap:3px}
+.stage .pf label{font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#5F6775}
+.stage .pf .inp{border:1px solid #D6DBE3;border-radius:5px;padding:5px 8px;font-size:11.5px;min-height:26px;background:#fff}
+.stage .pf .inp.auto{border-color:#8FBF92;background:#F2FAF2}
+.stage .pf .inp.todo{border-style:dashed;color:#A9B2BE}
+.stage .tag{font-size:8.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+.stage .tag.a{color:#2e7d32} .stage .tag.t{color:#A9B2BE}
+.stage .submitline{display:flex;align-items:center;gap:10px;padding:0 14px 13px}
+.stage .subbtn{background:#2e7d32;color:#fff;border-radius:6px;padding:6px 16px;font-size:11px;font-weight:700;letter-spacing:.3px}
+.stage .subbtn.ghost{background:#fff;border:1px solid #DCE2EB;color:#6C7887;font-weight:600}
+.stage .submitline .warn{font-size:10px;color:#B03A2B;font-weight:600}
+
+/* ── the take-off, opening with the drawings already in it ── */
+.stage .tk{position:absolute;inset:116px 18px 14px;background:#F7F9FC;border:1px solid #D6DEE8;border-radius:10px;box-shadow:0 10px 30px rgba(20,30,45,.16);z-index:16;overflow:hidden;animation:up .4s ease-out}
+.stage .tk h5{margin:0;background:#1F3D5C;color:#fff;padding:10px 15px;font-size:11px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;display:flex;gap:10px;align-items:center}
+.stage .tk h5 em{font-style:normal;font-weight:500;letter-spacing:.2px;text-transform:none;font-size:10.5px;color:#A9C4DE}
+.stage .tkbanner{margin:13px 15px 0;background:#E9F7EE;border:1px solid #BFE3C9;border-radius:7px;padding:9px 12px;font-size:11.5px;color:#1A6B34;font-weight:600}
+.stage .tkgrid{display:grid;grid-template-columns:1.25fr 1fr;gap:13px;padding:12px 15px 15px}
+.stage .tkcard{background:#fff;border:1px solid #E1E4EA;border-radius:8px;padding:10px 12px}
+.stage .tkcard h6{margin:0 0 7px;font-size:9.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:#8D97A6}
+.stage .tkf{list-style:none;margin:0;padding:0}
+.stage .tkf li{display:flex;justify-content:space-between;gap:10px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#3C4655;padding:3px 0;border-bottom:1px solid #F2F4F7}
+.stage .tkf li b{color:#1A6B34;font-weight:700;font-family:'DM Sans',sans-serif;font-size:9px;letter-spacing:.3px}
+.stage .tkcomp{display:flex;flex-direction:column;gap:6px}
+.stage .tkrow{display:flex;justify-content:space-between;background:#F7F9FC;border:1px solid #E8ECF2;border-radius:6px;padding:6px 9px;font-size:10.5px;color:#3C4655}
+.stage .tkrow b{font-weight:700}
+.stage .tkgo{margin:0 15px 15px;background:#5F94CE;color:#fff;border-radius:7px;padding:9px 16px;font-size:12px;font-weight:700;display:inline-block}
+
+.cursor{position:absolute;left:0;top:0;width:19px;height:19px;z-index:20;pointer-events:none;transform:translate(560px,320px);transition:transform .62s cubic-bezier(.42,0,.24,1);filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
+.ring{position:absolute;width:34px;height:34px;border-radius:50%;border:2px solid #5f94ce;z-index:19;pointer-events:none;opacity:0;transform:translate(-50%,-50%) scale(.4)}
+.ring.go{animation:rg .55s ease-out}
+@keyframes rg{0%{opacity:.9;transform:translate(-50%,-50%) scale(.4)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.5)}}
+@media (prefers-reduced-motion: reduce){
+  .cursor{transition:none}
+  .stage .c.fresh,.stage .c.go,.stage .c.landed,.stage .detail,.stage .pf,.stage .intake,.stage .tk,.ring.go,.stage .ita .car{animation:none}
+  .stage .ring2{animation-duration:3s}
+}
+</style>
+
+<div class="shell">
+  <header class="mast">
+    <div>
+      <p class="eyebrow">MaterialCompass · How-to</p>
+      <h1>Triage an Incoming RFQ</h1>
+      <p class="sub">From a scanned inbox to a bill of material: reading the queue, judging confidence, skipping cleanly, starting one by hand, and carrying its drawings through to the take-off. Narrated, just under four minutes. Press play.</p>
+    </div>
+    <span class="badge"><span class="dot"></span>Demo data · <b>Viking Mfg sandbox</b></span>
+  </header>
+
+  <div class="player">
+    <div class="stage-wrap" id="wrap">
+      <div class="stage" id="stage">
+        <div class="thead">
+          <h2>Quote Triage</h2>
+          <span class="mfg">Viking Mfg · 2 inboxes connected</span>
+          <span class="spacer"></span>
+          <span class="lastscan" id="lastscan">Last scanned yesterday 6:02 PM</span>
+          <span class="sel" data-a="look">Last 30 days</span>
+          <span class="gbtn ghost">How this works</span>
+          <span class="gbtn" data-a="scan" id="scanbtn">Scan inbox</span>
+        </div>
+        <div class="steps" id="steps"></div>
+        <div class="tabrow" id="tabrow"></div>
+        <div class="cards" id="cards"></div>
+        <div id="layers"></div>
+        <div class="ring" id="ring"></div>
+        <svg class="cursor" id="cursor" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 2 L4 20 L9 15.5 L12 22 L15 20.5 L12 14.5 L19 14 Z" fill="#12161c" stroke="#fff" stroke-width="1.4"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="transport">
+      <button class="btn" id="play" aria-label="Play or pause"><svg id="ico" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+      <button class="btn" id="restart" aria-label="Restart from the beginning"><svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button>
+      <button class="btn" id="voice" aria-label="Narration" aria-pressed="true" hidden><svg id="vico" viewBox="0 0 24 24"><path d="M4 9v6h4l5 5V4L8 9H4z"/></svg></button>
+      <div class="pbar" id="pbar" role="slider" tabindex="0" aria-label="Timeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="pfill"></span></div>
+      <div class="clock" id="clock">0:00 / 0:00</div>
+      <select class="vsel" id="vsel" aria-label="Narration voice" hidden></select>
+    </div>
+
+    <div class="cap" id="cap">
+      <span class="cap-idx" id="cap-idx">01 / 27</span>
+      <p class="cap-txt" id="cap-txt">The triage queue.</p>
+    </div>
+  </div>
+
+  <nav class="chapters" id="chapters" aria-label="Chapters"></nav>
+
+  <p class="foot"><b>Drawn in code rather than recorded</b>, so it updates by editing this page. Figures are sandbox demo values modelled on real bid invitations. Narration uses the voice built into your browser, so nothing is fetched and no audio ships with the page; browsers refuse to speak until you click, which is why play starts the voice. Pick a different voice from the dropdown if the default reads flat — the ones marked with a star are the natural-sounding ones. The speaker button mutes it and the captions carry the same words.</p>
+</div>
+
+<script>
+/* ── CONTENT ─────────────────────────────────────────────────────────────── */
+const OPPS = {
+  nfta:{k:'nfta',conf:92,proj:'NFTA Metro Bailey Corridor Improvements',cust:'Resetarits Construction',loc:'Buffalo, NY',
+        due:'Jun 24',days:6,files:0,
+        sum:'Forwarded by the general contractor with plans and specs attached. Fourteen CSI divisions listed; two are steel trades.',
+        scope:['051200 Structural Steel Framing','055213 Pipe &amp; Tube Railings']},
+  erie:{k:'erie',conf:85,proj:'Erie County DOT Pre-Engineered Metal Building',cust:'Erie County DOT',loc:'Alden, NY',
+        due:'Jun 26',days:8,files:0,
+        sum:'Public letting for a 60 by 120 foot pre-engineered building with an attached equipment canopy.',
+        scope:['133419 Metal Building Systems']},
+  mellor:{k:'mellor',conf:45,proj:'CC Mellor Memorial Library Renovations',cust:'',loc:'Pittsburgh, PA',
+        due:'Jul 09',days:21,files:0,
+        sum:'Bid platform notice. The contractor list and trade breakdown sit behind a paid subscription link.',
+        scope:[]},
+  elmira:{k:'elmira',conf:40,proj:'Elmira Centertown Parking Garage Elevator Modernization',cust:'',loc:'Elmira, NY',
+        due:'Jul 02',days:14,files:0,
+        sum:'Rebid notice. Elevator modernization with no steel scope called out in the notice body.',
+        scope:[]},
+  /* The by-hand entry. Nine sheets, which is what a solids-handling package
+     actually arrives as when an estimator emails it to himself. */
+  spar:{k:'spar',conf:85,proj:'Sparrow Creek WWTP Solids Handling Improvements',cust:'Halloran Contracting',loc:'Sparrow Creek, NY',
+        due:'Jun 30',days:12,files:9,
+        sum:'Entered by hand from the drawing set. Digester building framing, stair stringers with galvanized treads, railings, a davit crane base and bracing gussets. All steel hot-dip galvanized.',
+        scope:['051200 Structural Steel Framing','055213 Pipe &amp; Tube Railings','055000 Metal Fabrications']}
+};
+const confClass = c => c>=75?'g':(c>=40?'a':'n');
+
+const SHEETS = [
+  ['S300 · Access chamber plan','2.4 MB'],
+  ['S301 · Access chamber details','1.9 MB'],
+  ['S302 · Digester stair plan I','3.1 MB'],
+  ['S303 · Digester stair plan II','2.8 MB'],
+  ['S304 · Utility pipe supports','2.2 MB'],
+  ['S305 · Concrete repair details','1.4 MB'],
+  ['S500 · Gas flare precast vault','2.0 MB'],
+  ['S501 · Gas flare and pipe bracing','2.6 MB'],
+  ['Spec 05 12 00 · Structural steel','0.4 MB']
+];
+
+const CH = ['The queue','Scan the inbox','Read a card','What the model caught',
+            'Thin platform notices','Skip, never delete','Start one by hand',
+            'Quote it','Create the project','Run the take-off'];
+
+const NOTE_FULL = 'Halloran sent the drawing set for the Sparrow Creek digester job.\nBid is the 30th. Structural steel, stairs and railings, all galvanized.\nNo bid platform, it came straight to me.';
+
+const STEPS = [
+ {ch:0,d:2800,cap:'The triage queue holds every bid invitation the scanner found, newest first. It is one shared list, so every estimator sees the same work.'},
+ {ch:0,d:3400,a:'stp-1',cap:'The strip across the top is the whole job of this page. Decide, create the project, run the take-off. Three steps, and the bill of material comes out of the third one.',f:s=>{s.lit=1}},
+ {ch:1,d:2800,a:'scan',cap:'Scan Inbox searches the whole mailbox for bid language across the lookback window, not just the newest mail.',f:s=>{s.lit=0;s.scanning=1}},
+ {ch:1,d:2800,cap:'A ninety thousand message inbox buries an invitation within a day, so searching by keyword is what finds one forwarded last week.',f:s=>{s.scanning=0;s.list.unshift('nfta');s.fresh='nfta';s.scanned=1}},
+ {ch:2,d:2800,a:'c-nfta',cap:'Confidence is the model scoring its own reading. Green above seventy five percent, amber above forty, grey below that.',f:s=>{s.hi='nfta';s.fresh=''}},
+ {ch:2,d:2800,a:'due-nfta',cap:'The due pill turns red inside ten days. That is the number that decides what gets worked this afternoon.'},
+ {ch:3,d:2600,a:'open-nfta',cap:'Open the extraction to see what the model actually took out of the email.',f:s=>{s.detail=1}},
+ {ch:3,d:3800,cap:'This invitation printed a bid date of June sixteenth. A note to bidders further down moved it to the twenty fourth, and the extraction kept the later date.',warn:1,f:s=>{s.litRow=1}},
+ {ch:3,d:3200,cap:'It also cut fourteen divisions down to the two steel trades, and kept the full list underneath in case you need it.',f:s=>{s.litRow=2}},
+ {ch:4,d:3400,a:'c-mellor',cap:'A bid platform notice comes back thin, because the trades sit behind a paid link. Blank scope is an honest answer, not a missed read.',f:s=>{s.detail=0;s.litRow=0;s.hi='mellor'}},
+ {ch:5,d:3800,a:'skip-mellor',cap:'Skip sets the status to Decline. Never delete the row, because the next scan finds the same message and puts it straight back.',warn:1,f:s=>{s.leaving='mellor'}},
+ {ch:5,d:2400,cap:'A declined opportunity never resurfaces, since the scanner matches on message identity across every status.',f:s=>{s.leaving='';s.list=s.list.filter(k=>k!=='mellor');s.declined.push('mellor');s.hi=''}},
+
+ /* ── by-hand intake ── */
+ {ch:6,d:3200,a:'newq',cap:'Not every job arrives by email. Start a quote opens the same queue to whatever you actually have in front of you.',f:s=>{s.intake=1}},
+ {ch:6,d:3400,cap:'Type what you know. A project name, a customer, a bid date and a few lines of scope is enough to start, and rough is fine.',f:s=>{s.typed=NOTE_FULL}},
+ {ch:6,d:3600,a:'idrop',cap:'Then drop the drawings in. Nine sheets and the structural specification, straight off the set the contractor sent.',f:s=>{s.dropped=1}},
+ {ch:6,d:4200,cap:'These files are kept. That is the part worth knowing: they stay with the quote, and the take-off opens with them already loaded rather than asking you for them a second time.',warn:1},
+ {ch:6,d:3400,a:'isubmit',cap:'The model reads the notes and the drawings together, and the result lands in this list as an ordinary opportunity.',
+  f:s=>{s.intake=0;s.typed='';s.dropped=0;s.list.unshift('spar');s.fresh='spar';s.hi='spar'}},
+ {ch:6,d:3000,a:'held-spar',cap:'Nine documents held, it says, on the card itself. Nothing about that job is sitting on somebody’s desktop any more.',f:s=>{s.fresh=''}},
+
+ /* ── decide and convert ── */
+ {ch:7,d:3000,a:'quote-spar',cap:'Quote stamps who decided it and when, and the row leaves the New list.',
+  f:s=>{s.list=s.list.filter(k=>k!=='spar');s.quoting.push('spar')}},
+ {ch:7,d:3600,a:'tab-Quoting',cap:'It does not vanish. The page follows it across to the Quoting tab and lights it up, because a row that only disappears reads as a row that was lost.',f:s=>{s.tab='Quoting';s.hi='spar';s.landed='spar';s.lit=2}},
+ {ch:7,d:3200,cap:'This tab is the working list, and every row on it says what to do next. Nothing has been created in the project system yet.',f:s=>{s.landed=''}},
+ {ch:8,d:3200,a:'create-spar',cap:'Create Project opens the real project form with the description, the due date and the client already filled in.',f:s=>{s.pf=1;s.hi=''}},
+ {ch:8,d:3400,cap:'The client only fills when the company name matches exactly one record. An ambiguous name is left blank rather than filled wrong.'},
+ {ch:8,d:4000,a:'submit',cap:'Press Submit New Project. Until you do, nothing has been saved and the form is only a form. This is the step people miss.',warn:1,f:s=>{s.pfDone=1}},
+ {ch:9,d:3600,a:'runtk',cap:'Now the last step, on the project page. Run AI Take-off is what turns drawings into a bill of material.',f:s=>{s.pf=0;s.lit=3;s.tk=1}},
+ {ch:9,d:4000,cap:'It opens holding the nine documents the quote came in with. No second upload, no hunting for the set, nothing to remember.'},
+ {ch:9,d:3800,cap:'From here the take-off reads the sheets, proposes the components, and the bill of material follows. The chain from a dropped file to priced steel never breaks.'}
+];
+STEPS.forEach(s=>{ const w = s.cap.trim().split(/\s+/).length; s.d = Math.max(s.d, Math.round(w*340+1100)); });
+const TOTAL = STEPS.reduce((a,s)=>a+s.d,0);
+
+/* ── NARRATION ────────────────────────────────────────────────────────────
+   Browser speech engine; nothing fetched, no audio shipped. The rules below
+   were all bought with a real defect: an utterance dropped without an end
+   event stalls the film, one sentence per utterance survives where a long one
+   is truncated, and Chrome stops speaking after about fifteen seconds unless
+   the page nudges it. */
+const CAN = 'speechSynthesis' in window;
+let narrate = true, unlocked = false, voice = null, spoken = -1;
+let vdone = true, doneAt = 0, sayTok = 0, started = true, queuedAt = 0;
+function fin(){ vdone = true; doneAt = performance.now(); }
+function voiceDone(now){
+  if(!CAN || !narrate || !unlocked) return true;
+  if(vdone) return true;
+  if(!started) return now - queuedAt > 2500;
+  try{ return !speechSynthesis.speaking && !speechSynthesis.pending; }catch(e){ return true; }
+}
+const VOICE_PREF = [/Michelle/i,/Sonia/i,/Aria/i,/Ava/i,/Allison/i,/Susan/i,/Samantha/i,
+  /Google UK English Female/i,/Emma/i,/Libby/i,/Jenny/i,/Google US English/i,/Zira/i,/Hazel/i];
+function enVoices(){ try{ return speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang)); }catch(e){ return []; } }
+function isNatural(v){ return !!v && /natural|neural|online|premium|enhanced|siri|google/i.test(v.name); }
+function rateFor(v){ return isNatural(v) ? .96 : .88; }
+function pitchFor(v){ return isNatural(v) ? .97 : .94; }
+function pickVoice(){
+  const all = enVoices();
+  if(!all.length) return null;
+  try{ const s = localStorage.getItem('mc_voice'); if(s){ const hit = all.find(v=>v.name===s); if(hit) return hit; } }catch(e){}
+  for(const p of VOICE_PREF){ const h = all.find(v=>p.test(v.name)); if(h) return h; }
+  return all.find(v=>/en[-_]US/i.test(v.lang)) || all[0];
+}
+function say(t){
+  if(!CAN || !narrate || !unlocked){ fin(); started = true; return; }
+  const tok = ++sayTok;
+  try{ speechSynthesis.cancel(); }catch(e){}
+  const parts = (t.match(/[^.?!]+[.?!]*/g) || [t]).map(s=>s.trim()).filter(Boolean);
+  vdone = false; started = false; queuedAt = performance.now();
+  setTimeout(()=>{
+    if(tok !== sayTok) return;
+    parts.forEach((p,n)=>{
+      const u = new SpeechSynthesisUtterance(p.replace(/&amp;/g,'and'));
+      if(voice) u.voice = voice;
+      u.rate = rateFor(voice); u.pitch = pitchFor(voice);
+      u.onstart = () => { if(tok === sayTok) started = true; };
+      if(n === parts.length-1){
+        u.onend = () => { if(tok === sayTok) fin(); };
+        u.onerror = () => { if(tok === sayTok) fin(); };
+      }
+      speechSynthesis.speak(u);
+    });
+  }, 90);
+}
+function sayStep(i){ if(i>=0 && i!==spoken){ spoken = i; say(STEPS[i].cap); } }
+function unlock(){ if(!unlocked){ unlocked = true; spoken = -1; sayStep(idx); } }
+
+/* ── STATE + RENDER ──────────────────────────────────────────────────────── */
+const fresh = () => ({tab:'New',list:['erie','mellor','elmira'],quoting:[],declined:[],
+                      scanning:0,scanned:0,hi:'',fresh:'',leaving:'',detail:0,litRow:0,
+                      intake:0,typed:'',dropped:0,pf:0,pfDone:0,tk:0,lit:0,landed:''});
+let S = fresh(), idx = -1, elapsed = 0, playing = false, last = 0, animate = true, parked = false, holdAt = 0;
+const $ = id => document.getElementById(id);
+const reduced = (typeof matchMedia === 'function') ? matchMedia('(prefers-reduced-motion: reduce)').matches : false;
+
+function steps(){
+  const rows = [
+    ['1','Decide','Quote it or skip it. Skipping files it under Declined and never deletes it.'],
+    ['2','Create the project','Name, bid date and client are filled in for you. Press Submit on the form.'],
+    ['3','Run the take-off','From the project page. This is the step that builds the bill of material.']
+  ];
+  return rows.map((r,i)=>`<div class="stp${S.lit===i+1?' lit':''}" data-a="stp-${i+1}">
+    <b><span class="n">${r[0]}</span>${r[1]}</b>${r[2]}</div>`).join('');
+}
+
+function card(k){
+  const o = OPPS[k], cls = confClass(o.conf);
+  const chips = o.scope.length
+    ? o.scope.map(s=>`<span class="chip">${s}</span>`).join('')
+    : '<span class="chip pend">scope pending — details behind a paid link</span>';
+  const held = o.files ? `<span class="held" data-a="held-${k}">&#128206; ${o.files} documents held</span>` : '';
+  const acted = S.quoting.includes(k), dec = S.declined.includes(k);
+  const next = o.files
+    ? `Next: create the project, press Submit on the form that opens, then run the take-off from the project page. Its ${o.files} documents will already be loaded.`
+    : 'Next: create the project, press Submit on the form that opens, then run the take-off from the project page with the drawings for this job.';
+  const side = acted
+    ? `<span class="stat">Quoting · decided today</span>
+       <div class="row"><span class="b o">View source RFQ</span><span class="b mk" data-a="create-${k}">Create Project</span></div>`
+    : dec ? `<span class="stat">Declined · will not resurface</span>`
+    : `<div class="row"><span class="b o" data-a="open-${k}">Open email</span><span class="b s" data-a="skip-${k}">Skip</span><span class="b q" data-a="quote-${k}">Quote</span></div>`;
+  return `<div class="c ${cls}${S.hi===k?' hi':''}${S.fresh===k?' fresh':''}${S.leaving===k?' go':''}${S.landed===k?' landed':''}" data-a="c-${k}">
+    <div class="conf"><b>${o.conf}%</b><span>conf</span></div>
+    <div class="cmain">
+      <h4>${o.proj}</h4>
+      <div class="meta">${o.cust?`<b>${o.cust}</b> · `:'<b>Customer pending</b> · '}${o.loc}</div>
+      <p class="sum">${o.sum}</p>
+      <div class="chips">${chips}${held}</div>
+      ${acted?`<div class="nextup">${next}</div>`:''}
+    </div>
+    <div class="cside">
+      <span class="due${o.days<=10?' hot':''}" data-a="due-${k}">Due ${o.due} · ${o.days}d</span>
+      ${side}
+    </div>
+  </div>`;
+}
+
+function detailPanel(){
+  return `<div class="detail">
+    <h5>Extraction · NFTA Metro Bailey Corridor</h5>
+    <div class="drow${S.litRow===1?' lit':''}"><span class="k">Bid date</span><span class="v">
+      <span class="strike">June 16, 2026</span> &nbsp;<span class="won">June 24, 2026</span><br>
+      <span style="font-size:10.5px;color:#8D97A6">Note to Bidders no. 2 moved the letting. The header still printed the old date.</span></span></div>
+    <div class="drow${S.litRow===2?' lit':''}"><span class="k">Trades kept</span><span class="v">
+      051200 Structural Steel Framing<br>055213 Pipe and Tube Railings<br>
+      <span style="font-size:10.5px;color:#8D97A6">Twelve other divisions read and set aside. Full list retained.</span></span></div>
+    <div class="drow"><span class="k">Customer</span><span class="v">Resetarits Construction, the general contractor. Not the bid platform that relayed it.</span></div>
+    <div class="drow"><span class="k">Confidence</span><span class="v">0.92 — plans, specs and a named contact all present in the body.</span></div>
+    <pre class="json">"divisions_all": [ "033000", "042000", "051200", "055000",
+   "055213", "061000", "079200", "081000", "092900", "099100",
+   "221000", "230500", "260500", "312000" ],
+"source": "email attachment · ITB-2026-0611.pdf"</pre>
+  </div>`;
+}
+
+function intakePanel(){
+  const files = S.dropped
+    ? `<ul class="flist">${SHEETS.map(f=>`<li>${f[0]}<span>${f[1]}</span></li>`).join('')}</ul>`
+    : '';
+  const note = S.typed ? S.typed + '<span class="car"></span>' : '<span style="color:#A9B2BE">Paste or type here. Rough is fine — a project name, a customer, a bid date and a few lines of scope is plenty to start.</span>';
+  return `<div class="intake">
+    <h5>Start a quote from what you have</h5>
+    <div class="ibody">
+      <div class="ita">${note}</div>
+      <div class="idrop${S.dropped?' over':''}" data-a="idrop">
+        ${S.dropped ? '<b style="color:#2C557C">9 files · 18.8 MB</b>' : 'Drop files here, or click to choose — drawings, photos, PDFs, spreadsheets'}
+        ${files}
+      </div>
+    </div>
+    <div class="keepnote">&#128206; Drawings you add here are kept. When you turn this into a project, the take-off opens with them already loaded.</div>
+    <div class="ibar"><span class="b q" data-a="isubmit">Read it and add to triage</span><span class="b s">Cancel</span>
+      <span class="note">${S.dropped?'9 files · 18.8 MB':''}</span></div>
+  </div>`;
+}
+
+function prefill(){
+  const f = (l,v,c,t)=>`<div class="fl"><label>${l} <span class="tag ${c==='auto'?'a':'t'}">${t}</span></label>
+    <div class="inp ${c}">${v||'&nbsp;'}</div></div>`;
+  return `<div class="pf" data-a="pf">
+    <h5>&#9679;&nbsp; New Project — pre-filled from the quote</h5>
+    <div class="pgrid">
+      ${f('Project Description','Sparrow Creek WWTP Solids Handling Improvements','auto','filled')}
+      ${f('Quote Due Date','Jun 30, 2026 00:00:00','auto','filled')}
+      ${f('Client','Halloran','auto','matched')}
+      ${f('Client Rep', S.pfDone?'D. Marchetti':'', S.pfDone?'auto':'todo', S.pfDone?'set':'yours')}
+      ${f('Project Entry Type', S.pfDone?'Basic Entry':'', S.pfDone?'auto':'todo', S.pfDone?'set':'yours')}
+      ${f('Expected Award Date', S.pfDone?'Aug 14, 2026':'', S.pfDone?'auto':'todo', S.pfDone?'set':'yours')}
+    </div>
+    <div class="submitline">
+      <span class="subbtn${S.pfDone?' ':''}" data-a="submit">Submit New Project</span>
+      <span class="subbtn ghost">Save as Draft</span>
+      <span class="warn">${S.pfDone?'Saved. The project exists now.':'Nothing is saved until this is pressed.'}</span>
+    </div>
+  </div>`;
+}
+
+function takeoff(){
+  return `<div class="tk">
+    <h5>Material Compass · AI Take-off <em>Sparrow Creek WWTP Solids Handling Improvements</em></h5>
+    <div class="tkbanner">&#128206; 9 documents from the quote are loaded below — you do not need to upload them again.</div>
+    <div class="tkgrid">
+      <div class="tkcard"><h6>Documents in this take-off</h6>
+        <ul class="tkf">${SHEETS.map(f=>`<li>${f[0]}<b>FROM THE QUOTE</b></li>`).join('')}</ul></div>
+      <div class="tkcard"><h6>Components read from the sheets</h6>
+        <div class="tkcomp">
+          <div class="tkrow"><span>Digester building framing</span><b>S302, S303</b></div>
+          <div class="tkrow"><span>Stair stringers and treads</span><b>S302, S303</b></div>
+          <div class="tkrow"><span>Access chamber steel</span><b>S300, S301</b></div>
+          <div class="tkrow"><span>Pipe supports and bracing</span><b>S304, S501</b></div>
+          <div class="tkrow"><span>Davit crane base</span><b>S500</b></div>
+        </div>
+      </div>
+    </div>
+    <span class="tkgo" data-a="runtk">Run take-off</span>
+  </div>`;
+}
+
+function render(){
+  $('steps').innerHTML = steps();
+  const counts = {New:S.list.length, Quoting:S.quoting.length, Declined:S.declined.length};
+  $('tabrow').innerHTML = ['New','Quoting','Declined'].map(t=>
+    `<span class="tb${S.tab===t?' on':''}" data-a="tab-${t}">${t} <i>${counts[t]}</i></span>`).join('')
+    + '<span class="newq" data-a="newq">&#65291; Start a quote</span>'
+    + '<span class="search">Search client or project…</span>';
+
+  const keys = S.tab==='New' ? S.list : (S.tab==='Quoting' ? S.quoting : S.declined);
+  $('cards').innerHTML = keys.length ? keys.map(card).join('')
+    : '<div class="empty2">Nothing in this list.</div>';
+
+  let layers = '';
+  if(S.scanning) layers += `<div class="scan"><div class="scanbox"><div class="ring2"></div>
+    <p>Searching 30 days of mail for bid language</p>
+    <small>invitation to bid · addendum · bid date · request for quote · plans and specs</small></div></div>`;
+  if(S.detail) layers += detailPanel();
+  if(S.intake) layers += intakePanel();
+  if(S.pf) layers += prefill();
+  if(S.tk) layers += takeoff();
+  $('layers').innerHTML = layers;
+
+  $('lastscan').textContent = S.scanned ? 'Last scanned just now' : 'Last scanned yesterday 6:02 PM';
+  $('scanbtn').classList.toggle('press', !!S.scanning);
+}
+
+function point(anchor){
+  if(!anchor) return;
+  const el = $('stage').querySelector(`[data-a="${anchor}"]`);
+  if(!el) return;
+  const s = $('stage').getBoundingClientRect(), r = el.getBoundingClientRect(), k = scale();
+  const x = (r.left-s.left)/k + Math.min(r.width/k,120)/2;
+  const y = (r.top -s.top )/k + Math.min(r.height/k,60)/2;
+  const c = $('cursor');
+  c.style.transition = (animate && !reduced) ? '' : 'none';
+  c.style.transform = `translate(${x}px,${y}px)`;
+  if(animate && !reduced){
+    const ring = $('ring');
+    ring.style.left = x+'px'; ring.style.top = y+'px';
+    ring.classList.remove('go'); void ring.offsetWidth; ring.classList.add('go');
+  }
+}
+
+function apply(i){
+  const st = STEPS[i];
+  if(st.f) st.f(S);
+  render();
+  point(st.a);
+  $('cap-idx').textContent = String(i+1).padStart(2,'0')+' / '+STEPS.length;
+  $('cap-txt').textContent = st.cap.replace(/&amp;/g,'&');
+  $('cap').classList.toggle('is-warn', !!st.warn);
+  [...$('chapters').children].forEach((b,c)=>b.setAttribute('aria-current', String(c===st.ch)));
+  idx = i; holdAt = 0;
+}
+
+function seek(ms){
+  elapsed = Math.max(0, Math.min(TOTAL-1, ms));
+  let t = 0, target = 0;
+  for(let i=0;i<STEPS.length;i++){ if(elapsed>=t) target = i; t += STEPS[i].d; }
+  animate = false; S = fresh();
+  for(let i=0;i<=target;i++) apply(i);
+  animate = true;
+  spoken = -1; sayStep(idx);
+  paint();
+}
+
+const fmt = ms => Math.floor(ms/60000)+':'+String(Math.floor(ms/1000)%60).padStart(2,'0');
+function paint(){
+  const p = Math.min(100, elapsed/TOTAL*100);
+  $('pfill').style.width = p+'%';
+  $('pbar').setAttribute('aria-valuenow', Math.round(p));
+  $('clock').textContent = fmt(elapsed)+' / '+fmt(TOTAL);
+}
+
+/* The frame never turns over while its line is still being spoken. BEAT is the
+   breath after it lands; HANG is the ceiling, so a silent engine cannot freeze
+   the film. */
+const BEAT = 460, HANG = 18000;
+function edgeOf(n){ let t = 0; for(let j=0;j<=n;j++) t += STEPS[j].d; return t; }
+function tick(ts){
+  if(!playing) return;
+  if(!last) last = ts;
+  const step = ts-last; last = ts;
+  const edge = edgeOf(idx);
+  if(elapsed+step >= edge-1){
+    elapsed = edge-1;
+    if(!holdAt) holdAt = ts;
+    const gate = Math.max(doneAt, holdAt);
+    if((voiceDone(ts) && ts-gate >= BEAT) || ts-holdAt > HANG){
+      if(idx >= STEPS.length-1){ elapsed = TOTAL; playing = false; setIcon(); paint(); return; }
+      elapsed = edge; apply(idx+1); sayStep(idx);
+    }
+    paint(); requestAnimationFrame(tick); return;
+  }
+  elapsed += step;
+  paint(); requestAnimationFrame(tick);
+}
+
+const PLAY='M8 5v14l11-7z', PAUSE='M6 5h4v14H6zM14 5h4v14h-4z';
+function setIcon(){ $('ico').innerHTML = `<path d="${playing?PAUSE:PLAY}"/>`; }
+function toggle(){
+  if(parked || elapsed >= TOTAL){ parked = false; seek(0); }
+  playing = !playing; last = 0; holdAt = 0; setIcon();
+  if(playing){
+    if(CAN && speechSynthesis.paused) speechSynthesis.resume(); else sayStep(idx);
+    requestAnimationFrame(tick);
+  } else if(CAN && speechSynthesis.speaking){ speechSynthesis.pause(); }
+}
+
+const starts = [];
+{ let t = 0; STEPS.forEach(s=>{ if(starts[s.ch]===undefined) starts[s.ch] = t; t += s.d; }); }
+CH.forEach((name,c)=>{
+  const b = document.createElement('button');
+  b.className = 'ch'; b.type = 'button';
+  b.innerHTML = `<span class="ch-n">STEP ${String(c+1).padStart(2,'0')}</span><span class="ch-t">${name}</span>`;
+  b.onclick = () => { unlock(); parked = false; seek(starts[c]+1); if(!playing) toggle(); };
+  $('chapters').appendChild(b);
+});
+
+$('play').onclick = () => { unlock(); toggle(); };
+$('restart').onclick = () => { unlock(); parked = false; const was = playing; playing = false; seek(0);
+  if(was){ playing = true; last = 0; holdAt = 0; setIcon(); requestAnimationFrame(tick); } };
+$('pbar').onclick = e => { unlock(); parked = false; const r = e.currentTarget.getBoundingClientRect();
+  seek((e.clientX-r.left)/r.width*TOTAL); };
+$('pbar').onkeydown = e => {
+  if(e.key==='ArrowRight'){ unlock(); parked=false; seek(elapsed+2000); e.preventDefault(); }
+  if(e.key==='ArrowLeft'){ unlock(); parked=false; seek(elapsed-2000); e.preventDefault(); }
+};
+
+const SPK_ON  = 'M4 9v6h4l5 5V4L8 9H4zm12.5 3a4 4 0 0 0-2.5-3.7v7.4a4 4 0 0 0 2.5-3.7z';
+const SPK_OFF = 'M4 9v6h4l5 5V4L8 9H4zm17.4-.6L20 7l-2.3 2.3L15.4 7 14 8.4l2.3 2.3L14 13l1.4 1.4 2.3-2.3 2.3 2.3 1.4-1.4-2.3-2.3z';
+if(CAN){
+  const vb = $('voice'), sel = $('vsel');
+  vb.hidden = false; sel.hidden = false;
+  const paintVoice = () => {
+    $('vico').innerHTML = `<path d="${narrate?SPK_ON:SPK_OFF}"/>`;
+    vb.setAttribute('aria-pressed', String(narrate));
+    vb.title = narrate ? ('Narration on'+(voice?' · '+voice.name:'')) : 'Narration off';
+    if(voice) sel.value = voice.name;
+  };
+  const fillVoices = () => {
+    const all = enVoices();
+    if(!all.length){ sel.hidden = true; return; }
+    sel.hidden = false;
+    sel.innerHTML = all.map(v=>`<option value="${v.name.replace(/"/g,'')}">${isNatural(v)?'★ ':''}${v.name}</option>`).join('');
+    if(voice) sel.value = voice.name;
+  };
+  sel.onchange = () => {
+    const v = enVoices().find(x=>x.name===sel.value);
+    if(!v) return;
+    voice = v; try{ localStorage.setItem('mc_voice', v.name); }catch(e){}
+    unlocked = true; narrate = true; spoken = -1; sayStep(idx); paintVoice();
+  };
+  vb.onclick = () => {
+    narrate = !narrate; unlocked = true;
+    if(!narrate){ try{ speechSynthesis.cancel(); }catch(e){} fin(); spoken = -1; }
+    else { spoken = -1; sayStep(idx); }
+    paintVoice();
+  };
+  const loadVoices = () => { voice = pickVoice(); fillVoices(); paintVoice(); };
+  speechSynthesis.onvoiceschanged = loadVoices;
+  loadVoices();
+  addEventListener('beforeunload', () => { try{ speechSynthesis.cancel(); }catch(e){} });
+  /* Chrome stops speaking after roughly fifteen seconds of continuous output.
+     A pause/resume ping on a short cycle keeps the engine alive. */
+  setInterval(() => {
+    try{ if(playing && narrate && speechSynthesis.speaking && !speechSynthesis.paused){
+      speechSynthesis.pause(); speechSynthesis.resume(); } }catch(e){}
+  }, 7000);
+}
+
+let k = 1;
+const scale = () => k;
+function fit(){
+  const w = $('wrap').clientWidth;
+  k = w/1120;
+  $('stage').style.transform = `scale(${k})`;
+  $('wrap').style.height = (630*k)+'px';
+  if(idx>=0) point(STEPS[idx].a);
+}
+addEventListener('resize', fit);
+fit();
+
+/* Park on the by-hand intake with the drawings in it — the frame that carries
+   the one thing this film exists to say. Play rewinds to the top, and that
+   click is what unlocks the narration. */
+seek(starts[6]+STEPS[12].d+STEPS[13].d+STEPS[14].d+1);
+parked = true;
+setIcon();
+</script>
+
+</body></html>

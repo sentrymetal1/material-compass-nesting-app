@@ -7,10 +7,15 @@
 // ============================================================================
 const BUILD_TAG = 'triage-ui-2026-09-09-1';
 
-// The narrated walkthrough of this page. Published separately, linked rather
-// than embedded: this page is itself inside an iframe on the Zoho dashboard and
-// a nested iframe with sound in it is a bad place to put a video.
-const HOWTO_VIDEO = 'https://claude.ai/code/artifact/4994983d-9773-40af-ae15-f9fc5cb13458';
+// The narrated walkthrough of this page. Linked rather than embedded: this page
+// is itself inside an iframe on the Zoho dashboard and a nested iframe with sound
+// in it is a bad place to put a video.
+//
+// Served from this app (server/howto/) rather than from the Claude artifact it
+// was authored as. The artifact link served viewers a PINNED older cut that
+// republishing did not move, and at least one browser blocked the domain
+// outright. Same-origin, no account, no pin, updates on push.
+const HOWTO_VIDEO = '/howto/triage-an-rfq.html';
 
 function renderTriagePage() {
   return `<!doctype html>
