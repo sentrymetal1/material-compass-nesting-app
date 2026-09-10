@@ -3354,6 +3354,7 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
 // file's Zoho token helpers so there's no duplicate auth machinery.
 require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Quote Triage poller (Step 4): GET /api/triage/poll ----
+require('./filestore').registerFileRoutes(app);
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
 require('./fittingMatch').registerFittingMatchRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError });

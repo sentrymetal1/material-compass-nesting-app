@@ -375,6 +375,12 @@
        components — take it, edit it, or ignore it. Ask it questions before you commit. Nothing is taken
        off until you start the run. Keep the combined size under ~32 MB.</p>
 
+    <!-- Documents that arrived with the RFQ this project came from. They are fetched
+         and loaded into the run automatically; this strip exists so the estimator can
+         see that happen rather than wonder whether to upload them again. -->
+    <div id="fromRfq" style="display:none;margin:0 0 16px;padding:11px 13px;background:#eefaf1;
+         border:1px solid #bfe3c9;border-radius:8px;font-size:13px;color:#264;"></div>
+
     <div id="resume" style="display:none;margin:0 0 16px;padding:11px 13px;background:#f0f6fc;
          border:1px solid #cfe0f2;border-radius:8px;font-size:13px;color:#334;">
       💾 You have a saved take-off for this project.
@@ -491,7 +497,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.53 (2026-07-29)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.54 (2026-09-09)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -548,6 +554,58 @@
         "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
       if (el) el.style.display = "block";
     }
+    // ── DOCUMENTS THAT CAME WITH THE RFQ ────────────────────────────────────
+    // A quote started in triage can arrive carrying its drawings. Asking for
+    // them again here is how a real job ended up with an empty bill of material:
+    // the estimator dropped nine sheets into triage, made the project, and never
+    // learned that this screen was a separate upload. So we fetch them.
+    //
+    // PDFs join the run. Anything else (a photo of a pencil take-off, a
+    // spreadsheet) is named but not loaded — the take-off reads PDFs only, and
+    // silently dropping the rest would repeat the same mistake one level down.
+    let sourceFilesDone = false;
+    async function loadSourceFiles() {
+      if (sourceFilesDone || !params.project_id) return;
+      sourceFilesDone = true;
+      const box = document.getElementById("fromRfq");
+      let d;
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/triage/source-files/" + encodeURIComponent(params.project_id));
+        d = await r.json();
+      } catch (e) { return; }
+      const all = (d && d.files) || [];
+      if (!all.length) return;
+      const pdfs = all.filter((f) => /pdf$/i.test(f.media_type || "") || /\.pdf$/i.test(f.name || ""));
+      const others = all.filter((f) => pdfs.indexOf(f) < 0);
+      if (box) {
+        box.style.display = "block";
+        box.innerHTML = "📎 Loading " + pdfs.length + " document" + (pdfs.length === 1 ? "" : "s") + " that came with this RFQ…";
+      }
+      let loaded = 0;
+      for (const f of pdfs) {
+        const key = f.name + "|" + f.size;
+        if (docs.some((x) => x.key === key)) continue;
+        try {
+          const r = await fetch(RAILWAY_URL + "/api/files/project/" + encodeURIComponent(params.project_id) +
+                                "/" + encodeURIComponent(f.id) + "?as=base64");
+          const j = await r.json();
+          if (!j || !j.ok || !j.data) continue;
+          docs.push({ key, name: f.name, b64: j.data, mb: f.size / 1024 / 1024, fromRfq: true });
+          loaded++;
+        } catch (e) { /* one bad file must not stop the rest */ }
+      }
+      if (box) {
+        const bits = [];
+        if (loaded) bits.push("<b>" + loaded + "</b> document" + (loaded === 1 ? "" : "s") + " from the RFQ " + (loaded === 1 ? "is" : "are") + " loaded below — you do not need to upload " + (loaded === 1 ? "it" : "them") + " again.");
+        if (others.length) bits.push("<b>" + others.length + "</b> other file" + (others.length === 1 ? "" : "s") +
+          " came with the RFQ but " + (others.length === 1 ? "is" : "are") + " not a PDF, so " + (others.length === 1 ? "it is" : "they are") +
+          " not part of the take-off: " + others.map((f) => escHtml(f.name)).join(", ") + ".");
+        if (!loaded && !others.length) { box.style.display = "none"; return; }
+        box.innerHTML = "📎 " + bits.join(" ");
+      }
+      if (loaded) { renderFiles(); maybeAutoPreview(); }
+    }
+
     // If the Zoho SDK is present, prefer its query params (more reliable in-iframe).
     if (window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.init) {
       ZOHO.CREATOR.init().then(() => {
@@ -556,10 +614,13 @@
           params = { project_id: p.project_id || params.project_id,
                      manufacturer_id: p.manufacturer_id || params.manufacturer_id };
         } catch (e) { /* keep URL params */ }
-        showResume();
+        showResume(); loadSourceFiles();
       });
     }
     showResume();
+    // Deferred one turn so the file list, renderFiles and the preview hook below
+    // are all defined before the fetch can come back and reach for them.
+    setTimeout(loadSourceFiles, 0);
 
     const fileEl = document.getElementById("file");
     const drop = document.getElementById("drop");

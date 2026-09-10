@@ -19,6 +19,7 @@ const Anthropic = _Anthropic.default || _Anthropic;   // 0.40.x CJS interop
 const axios = require('axios');
 const { getGraphAccessToken, effectiveConfig } = require('./outlook');
 const { renderTriagePage, renderOpportunityDetail } = require('./triagePage');
+const filestore = require('./filestore');
 
 const EXTRACT_MODEL = 'claude-haiku-4-5-20251001';     // bump to 'claude-sonnet-4-6' if extraction quality lags
 
@@ -768,6 +769,54 @@ function registerTriageRoutes(app, deps) {
   // ---- Triage UI (Step 5) ----
   app.get('/triage', (req, res) => res.send(renderTriagePage()));
 
+  // The same detail page, addressed by PROJECT instead of by opportunity.
+  //
+  // This is what makes "View source RFQ" work from a saved project. The Zoho
+  // viewer page prefers a quote_id from the create URL and otherwise falls back
+  // to the project's Source_Opportunity_ID — a field that is blank on every
+  // project, so reopening a project always reported no source RFQ. Resolving it
+  // here from Linked_Project needs no Zoho field, no workflow and no Deluge.
+  // MUST be registered above /triage/opportunity/:id or that route swallows it.
+  app.get('/triage/opportunity/by-project/:projectId', async (req, res) => {
+    try {
+      const row = await opportunityForProject(req.params.projectId);
+      res.status(row ? 200 : 404).send(renderOpportunityDetail(row, row ? keptFiles(row.ID) : []));
+    } catch (err) {
+      console.error('[triage] detail-by-project error:', err.response?.data || err.message);
+      res.status(500).send('<p style="font-family:system-ui;padding:40px">Failed to load the source RFQ.</p>');
+    }
+  });
+
+  // The documents a project inherited from the RFQ it came from. The take-off
+  // screen calls this on load so the estimator is not asked for drawings the
+  // platform is already holding. The copy into the project's own scope happens
+  // here, on first read, so a later decision on the opportunity can never pull
+  // documents out from under a live job.
+  app.get('/api/triage/source-files/:projectId', async (req, res) => {
+    const projectId = req.params.projectId;
+    try {
+      let files = [];
+      try { files = filestore.listFiles('project', projectId); } catch (e) { /* bad id */ }
+      let opp = null;
+      if (!files.length) {
+        opp = await opportunityForProject(projectId);
+        if (opp && opp.ID) {
+          try { filestore.copyOwner('opportunity', opp.ID, 'project', projectId); } catch (e) { console.error('[triage] copy to project failed:', e.message); }
+          try { files = filestore.listFiles('project', projectId); } catch (e) { /* leave empty */ }
+        }
+      }
+      res.json({
+        ok: true, project_id: projectId, files,
+        durable: filestore.isDurable(),
+        opportunity: opp ? { id: opp.ID, project: opp.Project || '', summary: opp.Summary || '' } : null,
+      });
+    } catch (err) {
+      if (isQuotaError(err)) return res.json({ ok: true, project_id: projectId, files: [], quota: true });
+      console.error('[triage] source-files error:', err.response?.data || err.message);
+      res.status(500).json({ ok: false, error: err.response?.data?.message || err.message, files: [] });
+    }
+  });
+
   // Standalone RFQ detail page (linked from the project's "View source RFQ").
   // Reads the single Quote_Opportunity record (all fields, incl Extracted_JSON).
   app.get('/triage/opportunity/:id', async (req, res) => {
@@ -779,7 +828,7 @@ function registerTriageRoutes(app, deps) {
         const r = await axios.get(base + '/report/' + OPP_REPORT + '/' + req.params.id, { headers: zohoHeaders(token) });
         row = (r.data && r.data.data) || null;
       } catch (e) { if (!isNoRecords(e)) throw e; }
-      res.status(row ? 200 : 404).send(renderOpportunityDetail(row));
+      res.status(row ? 200 : 404).send(renderOpportunityDetail(row, row ? keptFiles(row.ID) : []));
     } catch (err) {
       console.error('[triage] opportunity detail error:', err.response?.data || err.message);
       res.status(500).send('<p style="font-family:system-ui;padding:40px">Failed to load RFQ detail.</p>');
@@ -800,7 +849,40 @@ function registerTriageRoutes(app, deps) {
       confidence: parseFloat(row.Confidence) || 0, from_name: row.From_Name || '',
       source, summary: row.Summary || '', material_scope: row.Material_Scope || '',
       received: row.Received_Date || '', web_link: webLink, status: row.Status || '',
+      // What this row is carrying. A card that says "9 documents held" is the
+      // only place the estimator learns the drawings did not evaporate.
+      files: keptFiles(row.ID).length,
     };
+  }
+
+  function keptFiles(oppId) {
+    try { return filestore.listFiles('opportunity', oppId); } catch (e) { return []; }
+  }
+
+  // Which opportunity, if any, a project came from. Deliberately keyed on
+  // Linked_Project, which the conversion already sets, rather than on the
+  // project's own Source_Opportunity_ID field — that field is empty on every
+  // project in the system, so anything depending on it silently finds nothing.
+  async function opportunityForProject(projectId) {
+    if (!/^[0-9]{6,25}$/.test(String(projectId || ''))) return null;
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    try {
+      const r = await axios.get(
+        base + '/report/' + OPP_REPORT + '?criteria=' + encodeURIComponent('(Linked_Project==' + projectId + ')') + '&limit=1',
+        { headers: zohoHeaders(token) });
+      throwIfQuota(r);
+      const row = (r.data && r.data.data && r.data.data[0]) || null;
+      if (!row) return null;
+      // The list read returns report columns only; the detail page wants the lot.
+      try {
+        const full = await axios.get(base + '/report/' + OPP_REPORT + '/' + row.ID, { headers: zohoHeaders(token) });
+        return (full.data && full.data.data) || row;
+      } catch (e) { return row; }
+    } catch (e) {
+      if (isNoRecords(e)) return null;
+      throw e;
+    }
   }
 
   // Live opportunities for the triage page, scoped by status (+ manufacturer).
@@ -912,8 +994,8 @@ function registerTriageRoutes(app, deps) {
         Confidence: typeof out.confidence === 'number' ? Math.round(out.confidence * 100) / 100 : 0,
         Status: 'New',
         // No webLink, so the card shows no Open email button. The marker records
-        // what was supplied without storing the files, which have no home on this
-        // form — they are re-attached at take-off time, where they are needed.
+        // what was supplied; the files themselves are kept in the file store
+        // against this row's id, which is what the take-off later picks up.
         Extracted_JSON: JSON.stringify({
           source: 'manual',
           entered_at: nowIso,
@@ -929,7 +1011,21 @@ function registerTriageRoutes(app, deps) {
         console.error('[triage] manual insert failed:', JSON.stringify(result.raw));
         return res.status(500).json({ ok: false, error: 'The record was refused [code ' + result.code + ']: ' + (result.message || 'unknown') });
       }
-      res.json({ ok: true, id: result.id, dates_dropped: !!result.dateDropped, extracted: out });
+      // KEEP THE FILES. They are already in memory here, decoded once for the
+      // extraction — writing them to the store costs nothing extra and is the
+      // whole difference between this row carrying its drawings forward and the
+      // estimator being asked for them a second time on a screen they have not
+      // found yet. A store failure must not lose the row, so it is caught.
+      let kept = 0, keptRejected = [];
+      try {
+        const out2 = filestore.saveFiles('opportunity', result.id, files);
+        kept = out2.saved.length; keptRejected = out2.rejected;
+      } catch (e) { console.error('[triage] could not keep intake files:', e.message); }
+
+      res.json({
+        ok: true, id: result.id, dates_dropped: !!result.dateDropped, extracted: out,
+        files_kept: kept, files_rejected: keptRejected, files_durable: filestore.isDurable(),
+      });
     } catch (err) {
       console.error('[triage] manual intake error:', err.response?.data || err.message);
       res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });

@@ -5,7 +5,12 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-09-08-2';
+const BUILD_TAG = 'triage-ui-2026-09-09-1';
+
+// The narrated walkthrough of this page. Published separately, linked rather
+// than embedded: this page is itself inside an iframe on the Zoho dashboard and
+// a nested iframe with sound in it is a bad place to put a video.
+const HOWTO_VIDEO = 'https://claude.ai/code/artifact/4994983d-9773-40af-ae15-f9fc5cb13458';
 
 function renderTriagePage() {
   return `<!doctype html>
@@ -33,6 +38,11 @@ function renderTriagePage() {
   .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;border-radius:12px 0 0 12px;background:var(--accent,#cbd3dd)}
   .card.gone{opacity:0;transform:translateX(40px);height:0;padding:0;margin:0;border:0;overflow:hidden}
   .card.quoted{outline:2px solid var(--good);outline-offset:-2px}
+  /* Where the row landed after Quote. It pulses once, then goes quiet — long
+     enough to catch the eye, short enough not to become decoration. */
+  .card.landed{outline:2px solid var(--good);outline-offset:-2px;animation:landed 2.6s ease-out}
+  @keyframes landed{0%{box-shadow:0 0 0 0 rgba(26,127,55,.45)}45%{box-shadow:0 0 0 9px rgba(26,127,55,0)}100%{box-shadow:0 1px 3px rgba(20,30,40,.05)}}
+  @media (prefers-reduced-motion: reduce){.card.landed{animation:none}}
   .row1{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
   .proj{font-size:17px;font-weight:700;margin:0 0 4px;line-height:1.25}
   .meta{font-size:12.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 14px}
@@ -111,16 +121,36 @@ function renderTriagePage() {
   .ask-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:24px 26px;max-width:440px;box-shadow:0 8px 30px rgba(20,30,40,.18)}
   .ask-card p{margin:0 0 18px;font-size:14px;line-height:1.6;white-space:pre-line}
   .ask-row{display:flex;gap:8px;justify-content:flex-end}
+  .howto{text-decoration:none;border-color:var(--line);color:var(--muted)}
+  .howto:hover{background:#f0f3f7;color:var(--ink)}
+  /* The three steps of getting a quote out of this page. It is drawn always-on
+     because the failure this fixes was not a mistake anyone made — it was not
+     knowing there were three steps at all. */
+  .steps{display:flex;gap:0;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:16px}
+  .step{flex:1;padding:11px 14px;border-right:1px solid var(--line);font-size:12.5px;color:var(--muted);line-height:1.5}
+  .step:last-child{border-right:0}
+  .step b{display:block;color:var(--ink);font-size:13px;font-weight:700;margin-bottom:2px}
+  .step .n{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;
+    background:var(--mc-blue);color:#fff;font-size:10.5px;font-weight:700;margin-right:6px;vertical-align:1px}
+  .files-badge{font-size:11.5px;background:#eefaf1;color:#1a6b34;border:1px solid #bfe3c9;padding:3px 9px;border-radius:14px;font-weight:600}
+  .nextup{margin-top:11px;padding:10px 12px;background:#f7fafd;border:1px solid #dce6f3;border-radius:8px;font-size:12.5px;color:#3d4955;line-height:1.55}
+  .nextup b{color:var(--ink)}
 </style></head>
 <body><div class="wrap">
   <div class="head">
     <div class="title"><h1>Quote Triage</h1><span class="count" id="count">…</span></div>
     <div class="headright">
       <span class="mfg" id="mfg"></span>
+      <a class="btn howto" href="${HOWTO_VIDEO}" target="_blank" rel="noopener" title="A short narrated walkthrough of this page">▶ How this works</a>
       <a id="connectBtn" class="btn connectbtn" target="_blank" rel="noopener" title="Connect an Outlook / Microsoft 365 mailbox so its quote requests appear here">✉️ Connect inbox</a>
     </div>
   </div>
   <div class="sub">Potential quotes pulled from your inbox. Decide <b>Quote</b> or <b>Skip</b> on each.</div>
+  <div class="steps">
+    <div class="step"><b><span class="n">1</span>Decide</b>Quote it or skip it. Quoting keeps it on your list; skipping files it under Declined, never deletes it.</div>
+    <div class="step"><b><span class="n">2</span>Create the project</b>On the Quoting tab. The name, bid date and client are filled in for you — press Submit on the form that opens.</div>
+    <div class="step"><b><span class="n">3</span>Run the take-off</b>From the project page. Any drawings attached here open with it already loaded. That is the step that builds the bill of material.</div>
+  </div>
   <div class="toolbar">
     <div class="seg" id="seg">
       <button data-status="New" class="active">New</button>
@@ -145,8 +175,10 @@ function renderTriagePage() {
   <div class="intake" id="intake">
     <h3>Start a quote from what you have</h3>
     <p class="hint">Paste anything — an email thread, a scope list, your own notes. Add files if you have them:
-      photos of a handwritten take-off, a supplier quotation, a drawing, a spreadsheet.
-      It gets read and lands in this list as an ordinary opportunity, so Quote and the take-off work on it as usual.</p>
+      drawings, photos of a handwritten take-off, a supplier quotation, a spreadsheet.
+      It gets read and lands in this list as an ordinary opportunity, so Quote and the take-off work on it as usual.<br>
+      <b>Drawings you add here are kept.</b> When you turn this into a project, the take-off opens with them already
+      loaded — you will not be asked for them twice.</p>
     <textarea id="intakeText" placeholder="Paste or type here. Rough is fine — a project name, a customer, a bid date and a few lines of scope is plenty to start."></textarea>
     <div class="drop" id="intakeDrop">Drop files here, or click to choose — images, PDFs, text and CSV</div>
     <input type="file" id="intakeFiles" multiple accept="image/*,application/pdf,text/plain,text/csv,.csv,.txt" style="display:none">
@@ -187,7 +219,7 @@ function renderTriagePage() {
   // "An embedded page at <host> says" above the message, which puts the hosting
   // platform's name in front of the user on every error. These keep the page's
   // own branding and read better besides.
-  function notify(msg,kind){
+  function notify(msg,kind,sticky){
     var wrap=document.getElementById('toasts');
     var t=document.createElement('div');
     t.className='toast'+(kind?' '+kind:'');
@@ -196,8 +228,10 @@ function renderTriagePage() {
     x.setAttribute('aria-label','Dismiss');
     x.onclick=function(){ if(t.parentNode) wrap.removeChild(t); };
     t.appendChild(x); wrap.appendChild(t);
-    // Errors stay until dismissed; anything else clears itself.
-    if(kind!=='bad') setTimeout(function(){ if(t.parentNode) wrap.removeChild(t); },6000);
+    // Errors stay until dismissed, and so does anything marked sticky — a note
+    // telling someone what to do next is useless if it leaves before they have
+    // finished reading the step it is describing. Everything else clears itself.
+    if(kind!=='bad' && !sticky) setTimeout(function(){ if(t.parentNode) wrap.removeChild(t); },6000);
   }
   function askConfirm(msg,onYes){
     var box=document.getElementById('ask');
@@ -240,6 +274,25 @@ function renderTriagePage() {
     if(!scope||!scope.trim()) return '<span class="chip blank">Material scope — pending</span>';
     return scope.split(/[;|]/).map(function(s){s=s.trim();return s?'<span class="chip">'+esc(s)+'</span>':''}).join('');
   }
+  // Say what this row is holding. Before this existed, files dropped into the
+  // manual intake left no trace anywhere in the product after the moment they
+  // were read, and there was no way to tell an RFQ with drawings behind it from
+  // one without.
+  function filesBadge(o){
+    var n=Number(o.files)||0;
+    if(!n) return '';
+    return '<span class="files-badge">📎 '+n+' document'+(n===1?'':'s')+' held</span>';
+  }
+  // The one sentence that says what to do next with THIS row, rather than in
+  // general. On the Quoting tab a row is one press away from a project and two
+  // from a bill of material, and neither is obvious from a button labelled
+  // "Create Project".
+  function nextStepText(o){
+    var n=Number(o.files)||0;
+    return n
+      ? 'Next: create the project, press Submit on the form that opens, then run the take-off from the project page. Its '+n+' document'+(n===1?'':'s')+' will already be loaded.'
+      : 'Next: create the project, press Submit on the form that opens, then run the take-off from the project page with the drawings for this job.';
+  }
   function card(o){
     var di=dueInfo(o.due_date);
     var cust = o.customer ? '<span><b>'+esc(o.customer)+'</b></span>' : '<span><b>Customer —</b> <i style="color:#999">not in email</i></span>';
@@ -256,7 +309,8 @@ function renderTriagePage() {
       + (o.summary?'<p class="summary">'+esc(o.summary)+'</p>':'')
       + '<div class="chips">'+chips(o.material_scope)+'</div>'
       + '<div class="duewrap"><span class="due'+(di.past?' past':(di.soon?' soon':''))+'"><span class="lbl">Bid due</span> '+esc(di.txt)+(di.past?' · PAST DUE':'')+'</span>'
-      + (o.received?'<span class="meta">Received '+esc(o.received)+'</span>':'')+'</div>'
+      + (o.received?'<span class="meta">Received '+esc(o.received)+'</span>':'')
+      + filesBadge(o)+'</div>'
       + (status==='New' ? '<div class="actions">'
           + '<button class="btn quote" onclick="decide(this,\\'quote\\')">✓ Quote</button>'
           + '<button class="btn skip" onclick="decide(this,\\'skip\\')">✗ Skip</button>'
@@ -264,6 +318,7 @@ function renderTriagePage() {
         : status==='Quoting' ? '<div class="actions">'
           + '<button class="btn project" onclick="createProject(this)">＋ Create Project</button>'
           + link + '</div>'
+          + '<div class="nextup">'+esc(nextStepText(o))+'</div>'
         : '<div class="actions">'+link+'</div>')
       + '</div>';
   }
@@ -301,8 +356,22 @@ function renderTriagePage() {
         }
         else { ls.innerHTML='🕓 Auto-scans daily · or hit <b>Scan inbox</b> anytime'; }
         render();
+        flashFollowed();
       })
       .catch(function(e){ document.getElementById('state').textContent='Failed to load: '+e; });
+  }
+  // A quoted row leaves the New list, and for anyone who does not yet know there
+  // are three tabs it simply disappeared. So follow it: switch to the tab it
+  // moved to, find it, and light it up. The row is never out of sight.
+  var following='';
+  function flashFollowed(){
+    if(!following) return;
+    var id=following; following='';
+    var el=document.querySelector('.card[data-id="'+id+'"]');
+    if(!el){ notify('Moved to the Quoting tab.','good'); return; }
+    el.classList.add('landed');
+    try{ el.scrollIntoView({behavior:'smooth',block:'center'}); }catch(e){ }
+    setTimeout(function(){ el.classList.remove('landed'); },2800);
   }
   window.decide=function(btn,decision){
     var c=btn.closest('.card'); var id=c.getAttribute('data-id');
@@ -314,7 +383,17 @@ function renderTriagePage() {
         if(!res.ok){ notify('Could not save that decision: '+(res.error||'unknown error'),'bad'); Array.prototype.forEach.call(c.querySelectorAll('button'),function(b){b.disabled=false}); return; }
         c.classList.add('gone');
         all=all.filter(function(o){return String(o.id)!==String(id)});
-        setTimeout(render,260);
+        if(decision==='quote'){
+          // Clear the search first, or a filter left in the box can hide the very
+          // row we just promised to show.
+          document.getElementById('search').value='';
+          following=id;
+          setTimeout(function(){ setActiveTab('Quoting'); load(); },300);
+          notify('Quoting. Here it is on the Quoting tab — create the project from this card when you are ready.','good');
+        } else {
+          setTimeout(render,260);
+          notify('Skipped. It is on the Declined tab, not deleted.','good');
+        }
       })
       .catch(function(e){ notify('Could not save that decision: '+e,'bad'); });
   };
@@ -396,6 +475,16 @@ function renderTriagePage() {
         status='New';
         Array.prototype.forEach.call(document.querySelectorAll('#seg button'),function(b){ b.classList.toggle('active', b.getAttribute('data-status')==='New'); });
         load();
+        // Say what happened to the files, by name of the count, and what the
+        // next two steps are. This is the exact moment the old build let someone
+        // believe the job was done.
+        var kept=Number(res.files_kept)||0;
+        var msg = kept
+          ? 'Added, and ' + kept + ' document' + (kept===1?'':'s') + ' ' + (kept===1?'is':'are') + ' kept with it.\\n\\nNext: press Quote on the new card, then Create Project on the Quoting tab, then run the take-off from the project page. The take-off will open with ' + (kept===1?'this document':'these documents') + ' already loaded.'
+          : 'Added to your list.\\n\\nNext: press Quote on the new card, then Create Project on the Quoting tab, then run the take-off from the project page with the drawings for this job.';
+        notify(msg,'good',true);
+        var rej=(res.files_rejected||[]).filter(function(f){ return f && f.why!=='already stored'; });
+        if(rej.length) notify(rej.length+' file'+(rej.length===1?' was':'s were')+' not kept: '+rej.map(function(f){return f.name+' ('+f.why+')';}).join(', '),'bad');
         if(res.dates_dropped) notify('Added, but the bid date could not be saved in the expected format. Set it on the card.','bad');
       })
       .catch(function(e){ notify('Could not add it: '+e,'bad'); })
@@ -450,6 +539,15 @@ function renderTriagePage() {
     if(o.client_id) qp+='&client_id='+encodeURIComponent(o.client_id);
     if(MFG) qp+='&manufacture='+encodeURIComponent(MFG);
     window.open(PORTAL_NEW_PROJECT+qp,'_blank');
+    // A project form opened in another tab is only half the step. Nothing is
+    // created until it is submitted, and the bill of material comes from the
+    // take-off after that — the two facts behind a project that sat empty.
+    var n=Number(o.files)||0;
+    notify('The project form is open in a new tab, filled in from this RFQ.\\n\\n'
+      + '1. Press SUBMIT NEW PROJECT on that form. Nothing is saved until you do.\\n'
+      + '2. On the project page, press Run AI Take-off.'
+      + (n ? '\\n\\nIts ' + n + ' document' + (n===1?'':'s') + ' will be loaded there for you.' : '\\n\\nHave the drawings ready to upload there.'),
+      'good', true);
   };
   document.getElementById('seg').addEventListener('click',function(e){
     var b=e.target.closest('button'); if(!b)return;
@@ -500,16 +598,35 @@ function renderTriagePage() {
 // Standalone RFQ detail page — the richer source-of-record for one opportunity,
 // linked to from the project ("View source RFQ"). Shows the full summary, full
 // scope, contact, attachments, and the original-email link.
-function renderOpportunityDetail(row){
+function renderOpportunityDetail(row, kept){
   var esc=function(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])})};
   if(!row){ return '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:48px;color:#23303b;background:#f4f6f9">RFQ opportunity not found.</body>'; }
   var j={}; try{ j=JSON.parse(row.Extracted_JSON||'{}'); }catch(e){}
   var atts=(j.attachments||[]);
+  var files=(kept&&kept.length)?kept:[];
   var webLink=row.Web_Link||j.webLink||'';
   var pct=Math.round((parseFloat(row.Confidence)||0)*100);
   var scope=row.Material_Scope||j.material_scope||'';
   var scopeHtml = scope.trim() ? '<ul>'+scope.split(/[;|]/).map(function(s){s=s.trim();return s?'<li>'+esc(s)+'</li>':'';}).join('')+'</ul>' : '<p class="blank">Not specified in the email.</p>';
-  var attHtml = atts.length ? '<ul>'+atts.map(function(a){return '<li>📎 '+esc(a)+'</li>';}).join('')+'</ul>' : '<p class="blank">No attachments.</p>';
+  // A stored file is a link you can open. A name with no file behind it is a
+  // record of what arrived, which is all an emailed attachment leaves behind.
+  // Manual-entry names arrive as objects, so read .name before printing — this
+  // printed "[object Object]" for every file on a hand-entered RFQ.
+  var attName=function(a){ return (a&&typeof a==='object') ? (a.name||'document') : a; };
+  var mb=function(n){ n=Number(n)||0; return n>1048576 ? (n/1048576).toFixed(1)+' MB' : Math.max(1,Math.round(n/1024))+' KB'; };
+  var attHtml;
+  if(files.length){
+    attHtml='<ul>'+files.map(function(f){
+      return '<li>📎 <a href="/api/files/opportunity/'+esc(row.ID)+'/'+esc(f.id)+'" target="_blank">'+esc(f.name)+'</a>'
+        +' <span class="blank">('+mb(f.size)+')</span></li>';
+    }).join('')+'</ul>'
+    +'<p class="blank" style="margin-top:8px">Held with this RFQ. The take-off on the linked project opens with these already loaded.</p>';
+  } else if(atts.length){
+    attHtml='<ul>'+atts.map(function(a){return '<li>📎 '+esc(attName(a))+'</li>';}).join('')+'</ul>'
+      +'<p class="blank" style="margin-top:8px">Named on the original message. The files themselves are not held here.</p>';
+  } else {
+    attHtml='<p class="blank">No attachments.</p>';
+  }
   function meta(label,val){ var has=val!=null&&String(val).trim()!==''; return '<div class="m"><div class="ml">'+esc(label)+'</div><div class="mv'+(has?'':' blank')+'">'+(has?esc(val):'—')+'</div></div>'; }
   var fromVal=(row.From_Name||'')+(row.From_Email?' <'+row.From_Email+'>':'');
   return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
