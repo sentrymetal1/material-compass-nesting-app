@@ -48,8 +48,6 @@ body{background:var(--ground);color:var(--ink);font-family:'DM Sans',system-ui,'
 .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .btn svg{width:15px;height:15px;fill:currentColor}
 .clock{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.vsel{border:1px solid var(--line);background:var(--panel-2);color:var(--ink-2);border-radius:8px;padding:6px 8px;font:inherit;font-size:11.5px;max-width:170px}
-.vsel:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 .cap{display:flex;gap:14px;align-items:flex-start;padding:14px 16px 16px;border-top:1px solid var(--line);background:var(--panel-2);min-height:76px}
 .cap-idx{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:4px 8px;flex:none;letter-spacing:.5px}
@@ -258,7 +256,6 @@ body{background:var(--ground);color:var(--ink);font-family:'DM Sans',system-ui,'
       <button class="btn" id="voice" aria-label="Narration" aria-pressed="true" hidden><svg id="vico" viewBox="0 0 24 24"><path d="M4 9v6h4l5 5V4L8 9H4z"/></svg></button>
       <div class="pbar" id="pbar" role="slider" tabindex="0" aria-label="Timeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="pfill"></span></div>
       <div class="clock" id="clock">0:00 / 0:00</div>
-      <select class="vsel" id="vsel" aria-label="Narration voice" hidden></select>
     </div>
 
     <div class="cap" id="cap">
@@ -269,7 +266,7 @@ body{background:var(--ground);color:var(--ink);font-family:'DM Sans',system-ui,'
 
   <nav class="chapters" id="chapters" aria-label="Chapters"></nav>
 
-  <p class="foot"><b>Drawn in code rather than recorded</b>, so it updates by editing this page. Figures are sandbox demo values modelled on real bid invitations. Narration uses the voice built into your browser, so nothing is fetched and no audio ships with the page; browsers refuse to speak until you click, which is why play starts the voice. Pick a different voice from the dropdown if the default reads flat — the ones marked with a star are the natural-sounding ones. The speaker button mutes it and the captions carry the same words.</p>
+  <p class="foot"><b>Drawn in code rather than recorded</b>, so it updates by editing this page. Figures are sandbox demo values modelled on real bid invitations. Narration uses the voice built into your browser, so nothing is fetched and no audio ships with the page; browsers refuse to speak until you click, which is why play starts the voice. The speaker button mutes it and the captions carry the same words.</p>
 </div>
 
 <script>
@@ -372,7 +369,13 @@ function voiceDone(now){
   if(!started) return now - queuedAt > 2500;
   try{ return !speechSynthesis.speaking && !speechSynthesis.pending; }catch(e){ return true; }
 }
-const VOICE_PREF = [/Michelle/i,/Sonia/i,/Aria/i,/Ava/i,/Allison/i,/Susan/i,/Samantha/i,
+/* Ava first, deliberately: she is the voice this film was tuned against and the
+   only one a viewer now gets, since there is no picker any more. The exact
+   "Microsoft Ava Online (Natural)" is preferred over the Multilingual build,
+   which reads the same script a shade flatter. Everything after Ava is a
+   fallback for a machine that does not have her. */
+const VOICE_PREF = [/^Microsoft Ava Online/i,/\bAva\b.*Online/i,/\bAva\b/i,
+  /Michelle/i,/Sonia/i,/Aria/i,/Allison/i,/Susan/i,/Samantha/i,
   /Google UK English Female/i,/Emma/i,/Libby/i,/Jenny/i,/Google US English/i,/Zira/i,/Hazel/i];
 function enVoices(){ try{ return speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang)); }catch(e){ return []; } }
 function isNatural(v){ return !!v && /natural|neural|online|premium|enhanced|siri|google/i.test(v.name); }
@@ -381,7 +384,8 @@ function pitchFor(v){ return isNatural(v) ? .97 : .94; }
 function pickVoice(){
   const all = enVoices();
   if(!all.length) return null;
-  try{ const s = localStorage.getItem('mc_voice'); if(s){ const hit = all.find(v=>v.name===s); if(hit) return hit; } }catch(e){}
+  // No stored preference is consulted. With the picker gone, a voice remembered
+  // from an earlier visit would be a choice the viewer can no longer undo.
   for(const p of VOICE_PREF){ const h = all.find(v=>p.test(v.name)); if(h) return h; }
   return all.find(v=>/en[-_]US/i.test(v.lang)) || all[0];
 }
@@ -670,26 +674,12 @@ $('pbar').onkeydown = e => {
 const SPK_ON  = 'M4 9v6h4l5 5V4L8 9H4zm12.5 3a4 4 0 0 0-2.5-3.7v7.4a4 4 0 0 0 2.5-3.7z';
 const SPK_OFF = 'M4 9v6h4l5 5V4L8 9H4zm17.4-.6L20 7l-2.3 2.3L15.4 7 14 8.4l2.3 2.3L14 13l1.4 1.4 2.3-2.3 2.3 2.3 1.4-1.4-2.3-2.3z';
 if(CAN){
-  const vb = $('voice'), sel = $('vsel');
-  vb.hidden = false; sel.hidden = false;
+  const vb = $('voice');
+  vb.hidden = false;
   const paintVoice = () => {
     $('vico').innerHTML = `<path d="${narrate?SPK_ON:SPK_OFF}"/>`;
     vb.setAttribute('aria-pressed', String(narrate));
     vb.title = narrate ? ('Narration on'+(voice?' · '+voice.name:'')) : 'Narration off';
-    if(voice) sel.value = voice.name;
-  };
-  const fillVoices = () => {
-    const all = enVoices();
-    if(!all.length){ sel.hidden = true; return; }
-    sel.hidden = false;
-    sel.innerHTML = all.map(v=>`<option value="${v.name.replace(/"/g,'')}">${isNatural(v)?'★ ':''}${v.name}</option>`).join('');
-    if(voice) sel.value = voice.name;
-  };
-  sel.onchange = () => {
-    const v = enVoices().find(x=>x.name===sel.value);
-    if(!v) return;
-    voice = v; try{ localStorage.setItem('mc_voice', v.name); }catch(e){}
-    unlocked = true; narrate = true; spoken = -1; sayStep(idx); paintVoice();
   };
   vb.onclick = () => {
     narrate = !narrate; unlocked = true;
@@ -697,7 +687,7 @@ if(CAN){
     else { spoken = -1; sayStep(idx); }
     paintVoice();
   };
-  const loadVoices = () => { voice = pickVoice(); fillVoices(); paintVoice(); };
+  const loadVoices = () => { voice = pickVoice(); paintVoice(); };
   speechSynthesis.onvoiceschanged = loadVoices;
   loadVoices();
   addEventListener('beforeunload', () => { try{ speechSynthesis.cancel(); }catch(e){} });
