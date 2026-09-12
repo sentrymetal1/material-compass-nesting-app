@@ -180,7 +180,9 @@
     const R=loadResult();
     if(!R || R.__demo || !params.project_id || !Array.isArray(R.rows) || !R.rows.length) return;
     setSaveInd("saving…","var(--mut)");
-    const pkg={ rows:R.rows, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd };
+    // drawing_files travels with the package so Approve can still put the PDFs on their
+    // drawing records after this take-off is re-opened on another day or another machine.
+    const pkg={ rows:R.rows, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[] };
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:params.project_id, package:pkg})});
@@ -1595,12 +1597,26 @@
       try{
         const recId = await submitToZoho(R.import_csv, params.project_id, params.manufacturer_id);
         captureLearning();  // store this shop's decisions for future take-offs (best-effort)
+        // The drawings move onto the project HERE, at approval — until now they lived in
+        // the project's own file store, where the estimator could close this page and come
+        // back to them. Each sheet's PDF goes on its own drawing record. Best-effort: the
+        // BOM is already committed and a refused upload must not read as a failed approval.
+        let att=null;
+        try{
+          const dmap=arr(R.drawing_files);
+          if(dmap.length){
+            c.innerHTML='<span class="spin"></span>Putting the drawings on the project…';
+            const ar=await fetch(RAILWAY_URL+"/api/takeoff/attach-drawings",{method:"POST",headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({project_id:params.project_id, map:dmap})});
+            att=await ar.json();
+          }
+        }catch(e){ console.error("[attach-drawings]",e); }
         if(Z.REVIEW_PAGE){
-          c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks);
+          c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks,att);
           const url=Z.REVIEW_PAGE+"?import_id="+encodeURIComponent(recId||"")+"&project_id="+encodeURIComponent(params.project_id)+"&client_id="+encodeURIComponent(params.manufacturer_id||"");
           setTimeout(()=>window.open(url,"_top"),1200);
         } else {
-          c.innerHTML='<b>✓ BOM sent to staging review.</b> Open your project’s BOM staging to review &amp; Import Approved Rows.'+commitList(picks);
+          c.innerHTML='<b>✓ BOM sent to staging review.</b> Open your project’s BOM staging to review &amp; Import Approved Rows.'+commitList(picks,att);
         }
       }catch(e){ ap.disabled=false; c.innerHTML='<b style="color:var(--red)">Commit failed:</b> '+esc(e.message); }
     } else {
@@ -1610,9 +1626,21 @@
     }
     c.scrollIntoView({behavior:"smooth"});
   }
-  function commitList(picks){
+  function commitList(picks,att){
+    // Say what actually happened to the drawings rather than claiming it in the abstract:
+    // "skipped" means a record already had a file on it and was deliberately left alone.
+    let dl='<li><b>Drawings</b> → the PDFs stay on the project\'s file store <span class="src">(none mapped to sheets)</span></li>';
+    if(att && att.ok){
+      const bits=[];
+      if(att.attached) bits.push(att.attached+' PDF'+(att.attached===1?'':'s')+' put on their drawing records');
+      if(att.skipped)  bits.push(att.skipped+' already had a file — left alone');
+      if(arr(att.failed).length)  bits.push(arr(att.failed).length+' could not be attached');
+      if(arr(att.missing).length) bits.push(arr(att.missing).length+' had no drawing record on the project');
+      dl='<li><b>Drawings</b> → '+(bits.length?esc(bits.join(' · ')):'nothing to attach')+'</li>';
+    }
     return '<ul>'+
       '<li><b>BOM</b> → CSV Import Tool → staging review</li>'+
+      dl+
       '<li><b>Buyout</b> → outsource / RFQ subform <span class="src">(WIRE)</span></li>'+
       '<li><b>Scope of Work</b> → project record <span class="src">(WIRE: Save_Scope_Of_Work)</span></li>'+
       '<li><b>Gaps + conflicts</b> → project alerts / verify list <span class="src">(WIRE)</span></li>'+

@@ -161,6 +161,18 @@ function registerFileRoutes(app) {
     catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
 
+  // A document the estimator drops onto the take-off screen belongs to the project
+  // exactly as much as one that arrived with the RFQ. Without this it lived only in
+  // that browser tab: close the tab and the take-off could not be re-run from it, and
+  // nothing downstream could attach it to the project. Same-name-same-size is treated
+  // as the same document, so re-sending the RFQ's own files is a no-op.
+  app.post('/api/files/:scope/:owner', (req, res) => {
+    try {
+      const out = saveFiles(req.params.scope, req.params.owner, (req.body && req.body.files) || []);
+      res.json({ ok: true, durable: isDurable(), saved: out.saved, rejected: out.rejected, total: out.total });
+    } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
+  });
+
   // ?as=base64 is what the take-off screen uses — it needs the bytes in the page,
   // not a URL, because the model is called with the document inline.
   app.get('/api/files/:scope/:owner/:id', (req, res) => {

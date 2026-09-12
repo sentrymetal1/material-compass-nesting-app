@@ -6,11 +6,13 @@ const path = require('path');
 const FormData = require('form-data');
 const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler } = require('./takeoff/route');
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
+const filestore = require('./filestore');        // the project's own copy of the drawings
 
 const app = express();
 app.use(cors());
 app.use('/api/takeoff', express.json({ limit: '60mb' })); // AI take-off: base64 PDFs are large; must precede the 10mb global json
 app.use('/api/triage/manual', express.json({ limit: '40mb' })); // manual intake carries base64 photos/PDFs; same reason, same placement
+app.use('/api/files', express.json({ limit: '60mb' })); // drawings saved to the project store are base64 PDFs; same reason, same placement
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 
@@ -1203,8 +1205,11 @@ app.post('/api/takeoff/commit', async (req, res) => {
 // lived only in the take-off's own file store, where nothing outside that screen could reach
 // them. The bytes come from the browser, which already holds them, so this needs no second read.
 //
-// Body: { project_id, files:[{key,name,b64}], map:[{drawing_number,key}], force? }
-// Files are sent ONCE and referenced by key — a 40-sheet PDF is not re-posted 40 times.
+// Body: { project_id, map:[{drawing_number, file_id}], files?:[{key,name,b64}], force? }
+// The bytes normally come from the PROJECT'S OWN FILE STORE, by file_id — that is what lets
+// this run from the review page at Approve time, long after the tab that did the upload is
+// gone. `files` stays supported for a caller that still holds them, and a file sent that way
+// is referenced by key so a 40-sheet PDF is not re-posted 40 times.
 app.post('/api/takeoff/attach-drawings', async (req, res) => {
   try {
     const project_id = req.body && req.body.project_id;
@@ -1215,6 +1220,18 @@ app.post('/api/takeoff/attach-drawings', async (req, res) => {
 
     const byKey = {};
     files.forEach(function (f) { if (f && f.key != null) byKey[String(f.key)] = f; });
+    // Read each store file at most once however many sheets cite it.
+    const storeCache = {};
+    function fromStore(fileId) {
+      const k = String(fileId || '');
+      if (!k) return null;
+      if (!(k in storeCache)) {
+        let got = null;
+        try { got = filestore.readFile('project', project_id, k); } catch (e) { got = null; }
+        storeCache[k] = got;
+      }
+      return storeCache[k];
+    }
 
     // The project's drawing records, keyed by number. Drawing_Number carries no uniqueness
     // rule, so the FIRST record for a number wins — re-running a take-off must not scatter
@@ -1239,12 +1256,19 @@ app.post('/api/takeoff/attach-drawings', async (req, res) => {
       // Already carrying a file: leave it alone. A re-run must never overwrite a drawing
       // someone attached by hand. `force` is the deliberate way past that.
       if (!force && String(rec.Drawing_Attachment || '').trim()) { skipped++; continue; }
-      const f = byKey[String((m && m.key) || '')];
-      if (!f || !f.b64) { failed.push({ drawing: num, error: 'no file supplied' }); continue; }
+      // Prefer the store — it is the copy that outlives the browser.
+      const got = fromStore(m && m.file_id);
+      const f = got ? { name: got.rec.name, buf: got.buf } : null;
+      const sent = f || (function () {
+        const s = byKey[String((m && m.key) || '')];
+        if (!s || !s.b64) return null;
+        try { return { name: s.name, buf: Buffer.from(s.b64, 'base64') }; } catch (e) { return null; }
+      })();
+      if (!sent || !sent.buf || !sent.buf.length) { failed.push({ drawing: num, error: 'no file supplied' }); continue; }
       try {
         const fd = new FormData();
-        fd.append('file', Buffer.from(f.b64, 'base64'), {
-          filename: String(f.name || (num + '.pdf')).replace(/[\\/:*?"<>|]/g, '_'),
+        fd.append('file', sent.buf, {
+          filename: String(sent.name || (num + '.pdf')).replace(/[\\/:*?"<>|]/g, '_'),
           contentType: 'application/pdf',
         });
         await axios.post(base + '/report/All_Project_Drawing_Details/' + rec.ID + '/Drawing_Attachment/upload', fd,
@@ -3426,7 +3450,7 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
 // file's Zoho token helpers so there's no duplicate auth machinery.
 require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Quote Triage poller (Step 4): GET /api/triage/poll ----
-require('./filestore').registerFileRoutes(app);
+filestore.registerFileRoutes(app);
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
 require('./fittingMatch').registerFittingMatchRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError });

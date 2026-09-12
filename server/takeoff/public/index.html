@@ -497,7 +497,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.55 (2026-09-12)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.56 (2026-09-12)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -590,7 +590,7 @@
                                 "/" + encodeURIComponent(f.id) + "?as=base64");
           const j = await r.json();
           if (!j || !j.ok || !j.data) continue;
-          docs.push({ key, name: f.name, b64: j.data, mb: f.size / 1024 / 1024, fromRfq: true });
+          docs.push({ key, name: f.name, b64: j.data, mb: f.size / 1024 / 1024, fromRfq: true, fileId: f.id });
           loaded++;
         } catch (e) { /* one bad file must not stop the rest */ }
       }
@@ -688,6 +688,26 @@
       });
     }
 
+    // Save one uploaded document into the PROJECT'S file store and remember the id it
+    // comes back with. The id is the handle everything later uses: the take-off package
+    // carries it to the review page, and Approve hands it to the server so the PDF can be
+    // put on its drawing record without the bytes ever going through the browser again.
+    async function keepOnProject(doc) {
+      if (!params.project_id || !doc || !doc.b64 || doc.fileId) return;
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/files/project/" + encodeURIComponent(params.project_id), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files: [{ name: doc.name, kind: "pdf", media_type: "application/pdf", data: doc.b64 }] }),
+        });
+        const j = await r.json();
+        if (j && j.ok && j.saved && j.saved.length) { doc.fileId = j.saved[0].id; return; }
+        // "already stored" — the same document under a different route. Find the id it has.
+        const l = await (await fetch(RAILWAY_URL + "/api/files/project/" + encodeURIComponent(params.project_id))).json();
+        const hit = ((l && l.files) || []).find((f) => f.name === doc.name);
+        if (hit) doc.fileId = hit.id;
+      } catch (e) { /* the take-off still runs; only the project copy is missed */ }
+    }
+
     // ADD (not replace) — accumulate across multiple picks/drops, skipping duplicates
     // (same name + size). Clearing fileEl.value lets the SAME file be re-selected later.
     async function addFiles(fileListLike) {
@@ -698,8 +718,14 @@
       for (const f of incoming) {
         const key = f.name + "|" + f.size;
         if (docs.some((d) => d.key === key)) { dupes++; continue; }
-        docs.push({ key, name: f.name, b64: await readAsB64(f), mb: f.size / 1024 / 1024 });
+        const doc = { key, name: f.name, b64: await readAsB64(f), mb: f.size / 1024 / 1024 };
+        docs.push(doc);
         added++;
+        // Keep it on the project, not just in this tab. It is what lets the take-off be
+        // re-opened later, and what Approve reads from when it puts the PDF on the drawing
+        // record — by then this page is long gone. Best-effort: a store failure must not
+        // stop a file being taken off.
+        keepOnProject(doc);
       }
       if (added) invalidateScan();
       // Mid-conversation, say so — the answer above was given without this file in front of it.
@@ -2673,29 +2699,22 @@
       if (e.target.closest("#goCancel")) { e.preventDefault(); document.getElementById("preflight").innerHTML = ""; }
     });
 
-    // Put the PDFs on the project once the run is done. Every sheet the read found has a
-    // drawing record by now and knows which uploaded file it came from, so the file can go
-    // onto the record and a drawing number on the project page becomes something you can
-    // open. Each file is sent once however many sheets it carries, and the number sent is
-    // the PROJECT's number where an alias was agreed — the record is filed under that one.
-    async function attachDrawingsToProject() {
-      if (!params.project_id || !sheets.length || !docs.length) return null;
-      const used = {}, map = [];
+    // Which stored PDF each sheet was read from. This is the whole handoff: the PDFs stay
+    // in the project's store while the estimator works, and the map travels inside the
+    // take-off package so that Approve — on a different page, possibly a different day —
+    // can put each file on its drawing record without re-reading anything. The number
+    // recorded is the PROJECT's number wherever an alias was agreed, because that is the
+    // number the drawing record is filed under.
+    function buildDrawingFileMap() {
+      const map = [];
+      if (!sheets.length || !docs.length) return map;
       sheets.forEach((s) => {
         const num = String(aliases[_norm(s.number)] || s.number || "").trim();
-        const di = (Number(s.doc) || 1) - 1;
-        const d = docs[di];
-        if (!num || !d || !d.b64) return;
-        used[di] = d;
-        map.push({ drawing_number: num, key: String(di) });
+        const d = docs[(Number(s.doc) || 1) - 1];
+        if (!num || !d || !d.fileId) return;
+        map.push({ drawing_number: num, file_id: d.fileId });
       });
-      if (!map.length) return null;
-      const files = Object.keys(used).map((k) => ({ key: String(k), name: used[k].name, b64: used[k].b64 }));
-      const r = await fetch(RAILWAY_URL + "/api/takeoff/attach-drawings", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_id: params.project_id, files: files, map: map }),
-      });
-      return await r.json();
+      return map;
     }
 
     async function runTakeoff() {
@@ -2776,19 +2795,10 @@
           return;
         }
 
-        // ---- success: the drawings go onto the project ------------------------
-        // Done here rather than at the scope commit because this is the moment the estimator
-        // called "complete", and it is the last point the browser still holds the bytes. A
-        // refusal from Zoho must not cost anyone the take-off they just paid for, so the
-        // whole thing is best-effort and the result is only reported.
-        let attachInfo = null;
-        try {
-          showBusy("Putting the drawings on your project…",
-            "Attaching each sheet's PDF to its drawing record, so the project page can open it.",
-            "Almost done.");
-          attachInfo = await attachDrawingsToProject();
-        } catch (e) { console.error("[attach-drawings]", e); }
-        finally { hideBusy(); }
+        // The sheet-to-PDF map rides with the package. Nothing is written to Zoho here —
+        // the files stay in the project's store, where the estimator can close this tab and
+        // come back, and only Approve moves them onto the drawing records.
+        data.drawing_files = buildDrawingFileMap();
 
         // ---- success: summary + actions --------------------------------------
         const cls = data.low_confidence ? "warn" : "";
@@ -2804,10 +2814,7 @@
           showBusy("Take-off complete — opening your review…",
             "<b>" + (data.count || 0) + "</b> BOM rows" +
             (data.fitting_count ? " · <b>" + data.fitting_count + "</b> fittings" : "") +
-            (data.cost_usd != null ? " · $" + data.cost_usd : "") +
-            (attachInfo && attachInfo.attached
-              ? "<br>" + attachInfo.attached + " drawing" + (attachInfo.attached === 1 ? "" : "s") + " attached to the project"
-              : ""), "&nbsp;");
+            (data.cost_usd != null ? " · $" + data.cost_usd : ""), "&nbsp;");
           data.__project = proj;  // tag so the review page can't confuse it with another project's take-off
           try { sessionStorage.setItem("takeoff_result", JSON.stringify(data)); } catch (e) {}
           try { if (proj) localStorage.setItem("mc_takeoff_" + proj, JSON.stringify(data)); } catch (e) {}
