@@ -1196,6 +1196,73 @@ app.post('/api/takeoff/commit', async (req, res) => {
   }
 });
 
+// AI take-off → THE DRAWINGS THEMSELVES ONTO THE PROJECT. By the time a run finishes, every
+// sheet the read found has a drawing record on the project and the take-off knows which
+// uploaded file it came from. Putting the two together is what makes a drawing number on the
+// project page something you can open: Drawing_Attachment was empty on every row, and the PDFs
+// lived only in the take-off's own file store, where nothing outside that screen could reach
+// them. The bytes come from the browser, which already holds them, so this needs no second read.
+//
+// Body: { project_id, files:[{key,name,b64}], map:[{drawing_number,key}], force? }
+// Files are sent ONCE and referenced by key — a 40-sheet PDF is not re-posted 40 times.
+app.post('/api/takeoff/attach-drawings', async (req, res) => {
+  try {
+    const project_id = req.body && req.body.project_id;
+    const files = Array.isArray(req.body && req.body.files) ? req.body.files : [];
+    const map = Array.isArray(req.body && req.body.map) ? req.body.map : [];
+    if (!project_id) return res.status(400).json({ ok: false, error: 'project_id required' });
+    if (!map.length) return res.json({ ok: true, attached: 0, skipped: 0, failed: [], missing: [] });
+
+    const byKey = {};
+    files.forEach(function (f) { if (f && f.key != null) byKey[String(f.key)] = f; });
+
+    // The project's drawing records, keyed by number. Drawing_Number carries no uniqueness
+    // rule, so the FIRST record for a number wins — re-running a take-off must not scatter
+    // copies of the same sheet across duplicate rows.
+    const rows = await fetchAllZohoPages('/report/All_Project_Drawing_Details?criteria=(MCP_Customer_Project_Form==' + project_id + ')');
+    const byNum = {};
+    rows.forEach(function (r) {
+      const n = String(r.Drawing_Number || '').trim().toLowerCase();
+      if (n && !byNum[n]) byNum[n] = r;
+    });
+
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+    const force = !!(req.body && req.body.force);
+    let attached = 0, skipped = 0;
+    const failed = [], missing = [];
+
+    for (const m of map) {
+      const num = String((m && m.drawing_number) || '').trim();
+      const rec = num ? byNum[num.toLowerCase()] : null;
+      if (!rec) { missing.push(num); continue; }
+      // Already carrying a file: leave it alone. A re-run must never overwrite a drawing
+      // someone attached by hand. `force` is the deliberate way past that.
+      if (!force && String(rec.Drawing_Attachment || '').trim()) { skipped++; continue; }
+      const f = byKey[String((m && m.key) || '')];
+      if (!f || !f.b64) { failed.push({ drawing: num, error: 'no file supplied' }); continue; }
+      try {
+        const fd = new FormData();
+        fd.append('file', Buffer.from(f.b64, 'base64'), {
+          filename: String(f.name || (num + '.pdf')).replace(/[\\/:*?"<>|]/g, '_'),
+          contentType: 'application/pdf',
+        });
+        await axios.post(base + '/report/All_Project_Drawing_Details/' + rec.ID + '/Drawing_Attachment/upload', fd,
+          { headers: { ...zohoHeaders(token), ...fd.getHeaders() } });
+        attached++;
+      } catch (e) {
+        // One refused upload must not cost the other thirteen.
+        failed.push({ drawing: num, error: (e.response && e.response.data && e.response.data.message) || e.message });
+      }
+    }
+    res.json({ ok: true, attached, skipped, failed, missing });
+  } catch (err) {
+    const detail = err.response ? err.response.data : (err.message || String(err));
+    console.error('attach-drawings error:', detail);
+    res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
 // AI take-off SAVE — persist the take-off package on a per-project Zoho record so it survives
 // the browser, re-opens from any device, and feeds the learning loop. Upsert by Project_ID.
 app.post('/api/takeoff/save', async (req, res) => {

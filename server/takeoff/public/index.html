@@ -497,7 +497,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.54 (2026-09-09)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.55 (2026-09-12)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -2673,6 +2673,31 @@
       if (e.target.closest("#goCancel")) { e.preventDefault(); document.getElementById("preflight").innerHTML = ""; }
     });
 
+    // Put the PDFs on the project once the run is done. Every sheet the read found has a
+    // drawing record by now and knows which uploaded file it came from, so the file can go
+    // onto the record and a drawing number on the project page becomes something you can
+    // open. Each file is sent once however many sheets it carries, and the number sent is
+    // the PROJECT's number where an alias was agreed — the record is filed under that one.
+    async function attachDrawingsToProject() {
+      if (!params.project_id || !sheets.length || !docs.length) return null;
+      const used = {}, map = [];
+      sheets.forEach((s) => {
+        const num = String(aliases[_norm(s.number)] || s.number || "").trim();
+        const di = (Number(s.doc) || 1) - 1;
+        const d = docs[di];
+        if (!num || !d || !d.b64) return;
+        used[di] = d;
+        map.push({ drawing_number: num, key: String(di) });
+      });
+      if (!map.length) return null;
+      const files = Object.keys(used).map((k) => ({ key: String(k), name: used[k].name, b64: used[k].b64 }));
+      const r = await fetch(RAILWAY_URL + "/api/takeoff/attach-drawings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: params.project_id, files: files, map: map }),
+      });
+      return await r.json();
+    }
+
     async function runTakeoff() {
       // Last check before spending anything: re-read the project and make sure what's on screen is
       // still what's on the record. Components and drawings can be edited on the project page (or
@@ -2751,6 +2776,20 @@
           return;
         }
 
+        // ---- success: the drawings go onto the project ------------------------
+        // Done here rather than at the scope commit because this is the moment the estimator
+        // called "complete", and it is the last point the browser still holds the bytes. A
+        // refusal from Zoho must not cost anyone the take-off they just paid for, so the
+        // whole thing is best-effort and the result is only reported.
+        let attachInfo = null;
+        try {
+          showBusy("Putting the drawings on your project…",
+            "Attaching each sheet's PDF to its drawing record, so the project page can open it.",
+            "Almost done.");
+          attachInfo = await attachDrawingsToProject();
+        } catch (e) { console.error("[attach-drawings]", e); }
+        finally { hideBusy(); }
+
         // ---- success: summary + actions --------------------------------------
         const cls = data.low_confidence ? "warn" : "";
         const left = (data.free_left != null || data.credits_left != null)
@@ -2765,7 +2804,10 @@
           showBusy("Take-off complete — opening your review…",
             "<b>" + (data.count || 0) + "</b> BOM rows" +
             (data.fitting_count ? " · <b>" + data.fitting_count + "</b> fittings" : "") +
-            (data.cost_usd != null ? " · $" + data.cost_usd : ""), "&nbsp;");
+            (data.cost_usd != null ? " · $" + data.cost_usd : "") +
+            (attachInfo && attachInfo.attached
+              ? "<br>" + attachInfo.attached + " drawing" + (attachInfo.attached === 1 ? "" : "s") + " attached to the project"
+              : ""), "&nbsp;");
           data.__project = proj;  // tag so the review page can't confuse it with another project's take-off
           try { sessionStorage.setItem("takeoff_result", JSON.stringify(data)); } catch (e) {}
           try { if (proj) localStorage.setItem("mc_takeoff_" + proj, JSON.stringify(data)); } catch (e) {}
