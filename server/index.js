@@ -3451,6 +3451,8 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
 require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Quote Triage poller (Step 4): GET /api/triage/poll ----
 filestore.registerFileRoutes(app);
+// ---- Project purge (the delete cascade, behind a preview + typed confirm) ----
+require('./purge').registerPurgeRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
 require('./fittingMatch').registerFittingMatchRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError });
