@@ -353,7 +353,7 @@ function load(){
           d.deleted+' of '+d.total+' records removed'+(d.failed_count?', '+d.failed_count+' refused':'')+'.</div>'+
           (d.quota?'<div class="stop">'+esc(d.note)+'</div>':'')+
           (d.failed_count?'<div class="note">'+d.failed.map(esc).join('<br>')+'</div>':'')+
-          '<div class="note">You can close this tab. Refresh the projects list to see it gone.</div></div>');
+          '<div class="note">You can close this window. Refresh the projects list to see it gone.</div></div>');
       }).catch(function(e){
         document.getElementById('msg').innerHTML = '<span style="color:#b3261e">'+esc(e)+'</span>'; go.disabled=false;
       });
