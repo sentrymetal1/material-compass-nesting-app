@@ -333,7 +333,7 @@ function load(){
       '<div class="card"><b>Type '+esc(p.number)+' to confirm.</b>'+
       '<div class="note">Read it off the row above rather than copying it, so this is a decision and not a reflex.</div>'+
       '<div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">'+
-      '<input id="cf" placeholder="'+esc(p.number)+'" autocomplete="off"/>'+
+      '<input id="cf" placeholder="project number" autocomplete="off"/>'+
       '<button class="del" id="go" disabled>Delete permanently</button></div>'+
       '<div id="msg" class="note"></div></div>');
 
