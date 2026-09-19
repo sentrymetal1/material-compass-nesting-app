@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { mcAlert } from '../mcDialog';
 
 // Supplier Profile tab — editable company details, plus full CRUD for locations
 // and representatives (reps nested under their location).
@@ -56,10 +57,10 @@ export default function ProfileView({ email }) {
         method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined,
       });
       const j = await r.json();
-      if (!r.ok || !j.ok) { window.alert('Error: ' + (j.message || j.error || ('HTTP ' + r.status))); return; }
+      if (!r.ok || !j.ok) { mcAlert('Error: ' + (j.message || j.error || ('HTTP ' + r.status))); return; }
       setEdit(null); setAdd(null);
       await load();
-    } catch (e) { window.alert('Error: ' + (e.message || e)); }
+    } catch (e) { mcAlert('Error: ' + (e.message || e)); }
     finally { setBusy(false); }
   };
   const removeIt = (kind, id, label, note) => setConfirm({ kind, id, label, note });

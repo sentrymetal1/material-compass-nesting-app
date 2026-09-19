@@ -7,6 +7,7 @@
 
   <!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
   <script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
+  <script src="mc-dialog.js"></script>
 
   <style>
     :root { --blue:#5F94CE; --w:1780px; }
@@ -1097,9 +1098,10 @@
           const into = compById(t.value);
           if (from && into && String(from.id) !== String(into.id) && from.drawings.length) {
             const n = from.drawings.length;
-            if (window.confirm("Move all " + n + " drawing" + (n === 1 ? "" : "s") + " from “" + from.name +
+            if (await mcConfirm("Move all " + n + " drawing" + (n === 1 ? "" : "s") + " from “" + from.name +
                 "” into “" + into.name + "” on the project?\n\n" +
-                "That's how you clear up a duplicate component — the drawings move, they aren't dropped.")) {
+                "That's how you clear up a duplicate component — the drawings move, they aren't dropped.",
+                { title: "AI Take-off", okText: "Move drawings" })) {
               const failed = [];
               for (let z = 0; z < from.drawings.length; z++) {
                 const d = from.drawings[z];
@@ -1264,9 +1266,10 @@
     async function deleteRecord(kind, id, label) {
       if (!id) return;
       const what = kind === "component" ? "component" : "drawing";
-      if (!window.confirm("Delete the " + what + " “" + label + "” from the PROJECT?\n\n" +
+      if (!(await mcConfirm("Delete the " + what + " “" + label + "” from the PROJECT?\n\n" +
           "This removes the record from the project itself — not just from this take-off.\n" +
-          "(To leave it out of this take-off only, use ✕.)")) return;
+          "(To leave it out of this take-off only, use ✕.)",
+          { title: "AI Take-off", okText: "Delete", danger: true }))) return;
       setScopeStatus('<span class="spin"></span>Deleting “' + escHtml(label) + "” on the project…");
       try {
         await scopeApi("delete", { kind: kind, id: id });
@@ -2151,10 +2154,11 @@
       if (!scope[ci] || !scope[ci].cid) { setScopeStatus("Pick a component first."); return; }
       const list = coverage().open.filter((x) => x.state === "missing").map((x) => x.s);
       if (!list.length) return;
-      if (!window.confirm("Add all " + list.length + " unplaced drawing" + (list.length === 1 ? "" : "s") +
+      if (!(await mcConfirm("Add all " + list.length + " unplaced drawing" + (list.length === 1 ? "" : "s") +
         " to the project under “" + scope[ci].name + "”" + (asRef ? " as REFERENCE ONLY" : "") + "?\n\n" +
         "That creates " + list.length + " drawing record" + (list.length === 1 ? "" : "s") + " on the project" +
-        (asRef ? ", and the take-off will read them for context without raising BOM rows from them." : "."))) return;
+        (asRef ? ", and the take-off will read them for context without raising BOM rows from them." : "."),
+        { title: "AI Take-off", okText: "Add drawings" }))) return;
       const failed = [];
       for (let n = 0; n < list.length; n++) {
         const s = list[n];
@@ -2729,9 +2733,9 @@
           scopeFromProject(); renderScope();
           if (JSON.stringify(buildScopeTree()) !== before) {
             go.disabled = false;
-            window.alert("The project's components or drawings changed since this screen loaded, so " +
+            mcAlert("The project's components or drawings changed since this screen loaded, so " +
               "the list has been refreshed.\n\nCheck it over and start the take-off again — this is " +
-              "the list the AI tags every BOM row against.");
+              "the list the AI tags every BOM row against.", { title: "AI Take-off" });
             setScopeStatus("Re-read the project — the components and drawings on screen had changed. " +
               "Check them, then run again.");
             return;

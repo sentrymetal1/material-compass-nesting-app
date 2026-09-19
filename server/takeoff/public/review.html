@@ -6,6 +6,7 @@
 <title>AI Take-off — Project Review</title>
 <!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
 <script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
+<script src="mc-dialog.js"></script>
 <!--
   LIVE approval page (build 3b). Renders a real take-off result {rows, import_csv, synopsis}.
   Data source, in order: window.TAKEOFF_RESULT  →  sessionStorage 'takeoff_result'
@@ -405,7 +406,7 @@
     const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json();
     if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
-    if(d.warning) alert("Added, but: "+d.warning);   // e.g. bidirectional link name rejected
+    if(d.warning) mcAlert("Added, but: "+d.warning,{title:"AI Take-off"});   // e.g. bidirectional link name rejected
     PROJECT_SCOPE=PROJECT_SCOPE||{components:[],drawings:[]};
     if(kind==='component') PROJECT_SCOPE.components.push({id:d.id,name:value});
     else PROJECT_SCOPE.drawings.push({id:d.id,number:value});
@@ -414,16 +415,16 @@
   async function reconAddIdx(kind,i){
     const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(!t) return;
     try{ await reconAdd(kind,t.value); render(); }
-    catch(e){ alert("Add to project failed: "+e.message); }
+    catch(e){ mcAlert("Add to project failed: "+e.message,{title:"AI Take-off"}); }
   }
   // Bulk add only. Components go first so drawings can attach to the records just created.
   async function reconAddAll(kind){
     const list=(RECON[kind]&&RECON[kind].takeoffOnly||[]).slice(); if(!list.length) return;
-    if(!confirm("Add "+list.length+" "+kind+(list.length===1?"":"s")+" to the project?")) return;
+    if(!(await mcConfirm("Add "+list.length+" "+kind+(list.length===1?"":"s")+" to the project?",{title:"AI Take-off",okText:"Add"}))) return;
     const failed=[];
     for(let i=0;i<list.length;i++){ try{ await reconAdd(kind,list[i].value); }catch(e){ failed.push(list[i].value+" — "+e.message); } }
     render();
-    if(failed.length) alert("Added "+(list.length-failed.length)+" of "+list.length+".\n\nFailed:\n"+failed.join("\n"));
+    if(failed.length) mcAlert("Added "+(list.length-failed.length)+" of "+list.length+".\n\nFailed:\n"+failed.join("\n"),{title:"AI Take-off"});
   }
 
   // Free-text rename straight from the "On your project" box — the one control that covers
@@ -464,7 +465,7 @@
 
   async function reconRenameIdx(kind,i){
     const p=RECON[kind]&&RECON[kind].near[i]; if(!p) return;
-    if(!confirm('Rename "'+p.entered.name+'" to "'+p.takeoff.value+'" on the project?')) return;
+    if(!(await mcConfirm('Rename "'+p.entered.name+'" to "'+p.takeoff.value+'" on the project?',{title:"AI Take-off",okText:"Rename"}))) return;
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/update",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({kind:kind,id:p.entered.id,value:p.takeoff.value})});
@@ -473,22 +474,22 @@
       const list=kind==='component'?arr(PROJECT_SCOPE.components):arr(PROJECT_SCOPE.drawings);
       list.forEach(function(x){ if(String(x.id)===String(p.entered.id)){ if(kind==='component') x.name=p.takeoff.value; else x.number=p.takeoff.value; } });
       render();
-    }catch(e){ alert("Rename failed: "+e.message); }
+    }catch(e){ mcAlert("Rename failed: "+e.message,{title:"AI Take-off"}); }
   }
 
   async function reconDeleteIdx(kind,i){
     const e=RECON[kind]&&RECON[kind].enteredOnly[i]; if(!e) return;
-    if(!confirm('Delete "'+e.name+'" from the project?\n\nThis removes the record permanently. It is blocked if anything is still linked to it.')) return;
+    if(!(await mcConfirm('Delete "'+e.name+'" from the project?\n\nThis removes the record permanently. It is blocked if anything is still linked to it.',{title:"AI Take-off",okText:"Delete",danger:true}))) return;
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/delete",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({kind:kind,id:e.id})});
       const d=await r.json();
-      if(r.status===409){ alert("Can't delete \""+e.name+"\".\n\n"+d.error); return; }
+      if(r.status===409){ mcAlert("Can't delete \""+e.name+"\".\n\n"+d.error,{title:"AI Take-off"}); return; }
       if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
       if(kind==='component') PROJECT_SCOPE.components=arr(PROJECT_SCOPE.components).filter(function(x){return String(x.id)!==String(e.id);});
       else PROJECT_SCOPE.drawings=arr(PROJECT_SCOPE.drawings).filter(function(x){return String(x.id)!==String(e.id);});
       render();
-    }catch(e2){ alert("Delete failed: "+e2.message); }
+    }catch(e2){ mcAlert("Delete failed: "+e2.message,{title:"AI Take-off"}); }
   }
   // How much of the BOM the take-off actually tagged. When this is zero the panel has nothing to
   // compare against, and "0 matched" reads as a matching failure when it's really an input failure
@@ -967,7 +968,7 @@
           : (streams.length
               ? streams.map(([k,lbl,items])=>'<div class="stream"><div class="tag '+k+'">'+lbl+'</div>'+
                   '<div class="items">'+items.map(esc).join(" · ")+
-                  (k==="buy"?' <span class="pillbtn" onclick="alert(\'Mock: builds the RFQ / outsource subform from these buyout items.\')">→ build RFQ</span>':'')+
+                  (k==="buy"?' <span class="pillbtn" onclick="mcAlert(\'Coming soon: this will build the RFQ / outsource list from these buyout items.\',{title:\'AI Take-off\'})">→ build RFQ</span>':'')+
                   '</div></div>').join("")
               : '<div style="color:var(--mut);font-size:13px">No scope items.</div>'))+
         '</div></div>':'')+
@@ -1337,12 +1338,12 @@
         const isImg=/^image\//.test(f.type)||["png","jpg","jpeg","webp","gif"].indexOf(ext)>-1;
         const isPdf=f.type==="application/pdf"||ext==="pdf";
         const isText=["csv","txt"].indexOf(ext)>-1||/^text\//.test(f.type);
-        if(f.size>20*1024*1024){ alert("“"+f.name+"” is over 20 MB — attach a smaller file."); continue; }
+        if(f.size>20*1024*1024){ mcAlert("“"+f.name+"” is over 20 MB — attach a smaller file.",{title:"AI Take-off"}); continue; }
         if(isText){ REVISE_ATTACHMENTS.push({kind:"text",name:f.name,text:await f.text()}); }
         else if(isImg){ REVISE_ATTACHMENTS.push({kind:"image",name:f.name,media_type:f.type||"image/png",data:await fileB64(f)}); }
         else if(isPdf){ REVISE_ATTACHMENTS.push({kind:"pdf",name:f.name,media_type:"application/pdf",data:await fileB64(f)}); }
-        else { alert("“"+f.name+"” — unsupported type. Use PDF, image, or CSV/TXT. (Excel: save as PDF or CSV first.)"); }
-      }catch(e){ alert("Could not read “"+f.name+"”: "+e.message); }
+        else { mcAlert("“"+f.name+"” — unsupported type. Use PDF, image, or CSV/TXT. (Excel: save as PDF or CSV first.)",{title:"AI Take-off"}); }
+      }catch(e){ mcAlert("Could not read “"+f.name+"”: "+e.message,{title:"AI Take-off"}); }
     }
     input.value="";
     render();
@@ -1360,14 +1361,14 @@
   }
   async function addPastedImage(f, mime){
     try{
-      if(f.size>20*1024*1024){ alert("Pasted image is over 20 MB — paste a smaller crop."); return; }
+      if(f.size>20*1024*1024){ mcAlert("Pasted image is over 20 MB — paste a smaller crop.",{title:"AI Take-off"}); return; }
       const keep=(document.getElementById("aiInput")||{}).value;
       const data=await fileB64(f);
       const n=REVISE_ATTACHMENTS.filter(function(a){return a.kind==="image";}).length+1;
       REVISE_ATTACHMENTS.push({kind:"image", name:"screenshot-"+n+".png", media_type:mime||f.type||"image/png", data:data});
       render();
       const inp=document.getElementById("aiInput"); if(inp){ inp.value=keep||""; inp.focus(); }
-    }catch(err){ alert("Could not read pasted image: "+err.message); }
+    }catch(err){ mcAlert("Could not read pasted image: "+err.message,{title:"AI Take-off"}); }
   }
   function attachChipsHtml(){
     return REVISE_ATTACHMENTS.map(function(a,i){
@@ -1577,7 +1578,7 @@
       const un=reconcile('component').takeoffOnly;
       if(un.length){
         const names=un.slice(0,6).map(function(t){return "• "+t.value;}).join("\n")+(un.length>6?"\n…":"");
-        if(!confirm(un.length+" component"+(un.length===1?"":"s")+" the drawings reference aren't on your project:\n\n"+names+"\n\nTheir material will import without a component link. Map or add them first, or continue anyway?")) return;
+        if(!(await mcConfirm(un.length+" component"+(un.length===1?"":"s")+" the drawings reference aren't on your project:\n\n"+names+"\n\nTheir material will import without a component link. Map or add them first, or continue anyway?",{title:"Approve & Submit",okText:"Continue anyway",cancelText:"Go back"}))) return;
       }
     }
     // Material that can't resolve becomes an error row in staging — say so before committing.
@@ -1586,8 +1587,8 @@
       const list=matProbs.slice(0,6).map(function(p){
         return "• "+(p.row.component||"—")+" · "+(p.row.form_type||"")+" · "+(p.row.size?('"'+p.row.size+'"'):"(no material)");
       }).join("\n")+(matProbs.length>6?"\n…":"");
-      if(!confirm(matProbs.length+" row"+(matProbs.length===1?"":"s")+" have a material your catalog doesn't have:\n\n"+
-        list+"\n\nThey'll land in staging as errors. Fix them in the Material check card, or continue anyway?")) return;
+      if(!(await mcConfirm(matProbs.length+" row"+(matProbs.length===1?"":"s")+" have a material your catalog doesn't have:\n\n"+
+        list+"\n\nThey'll land in staging as errors. Fix them in the Material check card, or continue anyway?",{title:"Approve & Submit",okText:"Continue anyway",cancelText:"Go back"}))) return;
     }
     const ap=document.getElementById("approve"); ap.disabled=true;
     const c=document.getElementById("commit"); c.style.display="block";

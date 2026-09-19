@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { mcAlert } from '../mcDialog';
 
 // Supplier Stock tab.
 //  Structural: searchable, grouped (by Form Type) toggle list -> Stocked_Material_List.
@@ -63,7 +64,7 @@ export default function StockView({ email }) {
       if (!r.ok || !j.ok) throw new Error(j.message || j.error || ('HTTP ' + r.status));
     } catch (e) {
       setState(s => ({ ...s, data: { ...s.data, structural: s.data.structural.map(x => x.id === it.id ? { ...x, stocked: it.stocked } : x) } }));
-      window.alert('Could not save: ' + (e.message || e));
+      mcAlert('Could not save: ' + (e.message || e));
     } finally { setSaving(s => { const n = { ...s }; delete n[it.id]; return n; }); }
   };
 
@@ -91,7 +92,7 @@ export default function StockView({ email }) {
       if (isNew) setAddPick({ type_id: '', make_id: '', end_id: '' });
       setOpenFit(null);
       await load();
-    } catch (e) { window.alert('Could not save: ' + (e.message || e)); }
+    } catch (e) { mcAlert('Could not save: ' + (e.message || e)); }
     finally { setFitBusy(false); }
   };
 
