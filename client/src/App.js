@@ -3247,7 +3247,7 @@ export default function App() {
               and the cut patterns will appear here.
             </p>
             <div className="card-footer">
-              <button onClick={() => setStep(1)} className="btn">← {isStandalone ? 'Edit Parts' : 'Select Items'}</button>
+              <button onClick={() => setStep(1)} className="btn btn-secondary">← {isStandalone ? 'Edit Parts' : 'Select Items'}</button>
               <button onClick={() => setStep(2)} className="btn btn-primary" disabled={selected.size === 0}>
                 Configure →
               </button>
@@ -3904,8 +3904,8 @@ export default function App() {
 
             <div className="card-footer">
               <div className="btn-group">
-                <button onClick={() => setStep(1)} className="btn">← {isStandalone ? 'Edit Parts' : 'Select Items'}</button>
-                <button onClick={() => setStep(2)} className="btn">← Reconfigure</button>
+                <button onClick={() => setStep(1)} className="btn btn-secondary">← {isStandalone ? 'Edit Parts' : 'Select Items'}</button>
+                <button onClick={() => setStep(2)} className="btn btn-secondary">← Reconfigure</button>
               </div>
               <div className="btn-group" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
                 {isStandalone && runTitle && (
@@ -3942,7 +3942,7 @@ export default function App() {
                     >
                       Preview Purchase List
                     </button>
-                    <button onClick={fetchSavedPurchaseList} className="btn btn-small" disabled={loadingSavedPurchase}>
+                    <button onClick={fetchSavedPurchaseList} className="btn btn-secondary" disabled={loadingSavedPurchase}>
                       {loadingSavedPurchase ? 'Loading...' : 'View Saved'}
                     </button>
                   </>

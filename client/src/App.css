@@ -200,6 +200,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* When both button groups don't fit, the groups drop to a new line as whole
+     units instead of crushing each other's buttons. */
+  flex-wrap: wrap;
+  gap: 12px;
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--gray-200);
@@ -219,6 +223,9 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   transition: all 0.15s;
+  /* A squeezed footer used to split "← SELECT ITEMS" over two lines with the
+     arrow alone on the first. A button label never wraps; the row does. */
+  white-space: nowrap;
 }
 
 .btn:hover {
