@@ -1816,7 +1816,11 @@ app.get('/api/bom-lookups/__fields', async (req, res) => {
 
 app.get('/api/bom-lookups/__debug', async (req, res) => {
   try {
-    const token = await getAccessToken(true); // force refresh
+    // Cached token, NOT a forced refresh. Forcing one on every call gets Zoho to
+    // throttle token requests after a handful of reads, and a refused refresh
+    // clears the token the whole app is holding — so a debugging session could
+    // take every live Zoho call down with it until the throttle lifted.
+    const token = await getAccessToken();
     const report = req.query.report || 'Form_Types_Report';
     const criteria = req.query.criteria ? '&criteria=' + req.query.criteria : '';
     const url = creatorApiBase() + '/report/' + report + '?from=1&limit=3' + criteria;
