@@ -170,20 +170,53 @@ const MANUAL_SYSTEM = EXTRACT_SYSTEM
 // as native blocks so the model actually looks at them; anything already text is
 // inlined and truncated, because a pasted thread can be enormous and the tail of
 // it is rarely the part that carries the bid date.
-function manualContent(text, attachments) {
+// The API refuses any PDF over 100 pages outright — the whole request 400s, so one long
+// document takes the entire intake down with it. A 200-page BOM did exactly that.
+// Triage only has to recognise the opportunity, not read the job, and the FULL file is stored
+// for the take-off either way, so the fix is to send the first 100 pages and say so. Nothing
+// is lost; the take-off still gets every page.
+const PDF_PAGE_LIMIT = 100;
+
+async function capPdfPages(a) {
+  try {
+    const { PDFDocument } = require('pdf-lib');
+    const src = await PDFDocument.load(Buffer.from(a.data, 'base64'), { ignoreEncryption: true });
+    const total = src.getPageCount();
+    if (total <= PDF_PAGE_LIMIT) return { data: a.data, total: total, kept: total };
+    const out = await PDFDocument.create();
+    const pages = await out.copyPages(src, Array.from({ length: PDF_PAGE_LIMIT }, (_, i) => i));
+    pages.forEach(p => out.addPage(p));
+    const bytes = await out.save();
+    console.log('[triage] "' + (a.name || 'file') + '" is ' + total + ' pages — sending the first ' + PDF_PAGE_LIMIT + ' for triage');
+    return { data: Buffer.from(bytes).toString('base64'), total: total, kept: PDF_PAGE_LIMIT };
+  } catch (e) {
+    // Unreadable or encrypted: let it through untouched rather than dropping it. If it really
+    // is over the limit the API says so, which is a better error than one we invented.
+    console.log('[triage] could not measure "' + (a.name || 'file') + '": ' + e.message);
+    return { data: a.data, total: null, kept: null };
+  }
+}
+
+async function manualContent(text, attachments) {
   const content = [];
   const note = String(text || '').trim();
   if (note) content.push({ type: 'text', text: 'ESTIMATOR NOTES / PASTED MATERIAL:\n' + note.slice(0, 60000) });
-  (Array.isArray(attachments) ? attachments : []).forEach(a => {
-    if (!a) return;
+  for (const a of (Array.isArray(attachments) ? attachments : [])) {
+    if (!a) continue;
     if (a.kind === 'image' && a.data) {
       content.push({ type: 'image', source: { type: 'base64', media_type: a.media_type || 'image/png', data: a.data } });
     } else if (a.kind === 'text' && a.text) {
       content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ':\n' + String(a.text).slice(0, 60000) });
     } else if (a.data) {
-      content.push({ type: 'document', source: { type: 'base64', media_type: a.media_type || 'application/pdf', data: a.data } });
+      const cap = await capPdfPages(a);
+      if (cap.total && cap.kept < cap.total) {
+        content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ' is ' + cap.total +
+          ' pages. Only the first ' + cap.kept + ' are shown here, which is the API limit. Do not ' +
+          'treat this as the whole document; the complete file is on the job for the take-off.' });
+      }
+      content.push({ type: 'document', source: { type: 'base64', media_type: a.media_type || 'application/pdf', data: cap.data } });
     }
-  });
+  }
   if (!content.length) content.push({ type: 'text', text: '(no material supplied)' });
   return content;
 }
@@ -195,7 +228,7 @@ async function extractManual(client, text, attachments) {
     system: MANUAL_SYSTEM,
     tools: [EXTRACT_TOOL],
     tool_choice: { type: 'tool', name: 'submit_opportunity' },
-    messages: [{ role: 'user', content: manualContent(text, attachments) }],
+    messages: [{ role: 'user', content: await manualContent(text, attachments) }],
   });
   const toolUse = resp.content.find(b => b.type === 'tool_use');
   return { out: toolUse ? toolUse.input : null, usage: resp.usage };
