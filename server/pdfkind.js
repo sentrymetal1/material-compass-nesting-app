@@ -37,8 +37,16 @@ const LARGE_FORMAT_MIN_SIDE = 700;   // pt. Letter/legal sit at 612; 11x17 at 79
 // Only consulted when the sheet is letter-sized, where size cannot decide.
 const DENSE_CHARS_PER_PAGE = 700;
 
-const NAME_SAYS_TEXT = /\b(bom|bill[\s_-]*of[\s_-]*material|material[\s_-]*list|parts?[\s_-]*list|schedule|spec(ification)?s?|scope|letter|proposal|quote|rfq|addend|instruction)\b/i;
-const NAME_SAYS_DRAWING = /\b(dwg|drawing|sht|sheet|plan|elev(ation)?|section|detail|iso|p&id|pid|layout)\b/i;
+// Matched against a NORMALISED filename, because \b does not fire around an underscore:
+// "AAP0093679-GAMMADG_DWG_00_03.pdf" has no word boundary either side of DWG, so a plain \b
+// pattern silently never matched the very filenames this is meant to read. Punctuation is
+// turned into spaces first, then the boundaries work.
+const NAME_SAYS_TEXT = /\b(bom|bills? of materials?|material list|parts? list|schedule|spec|specs|specification|specifications|scope|letter|proposal|quote|rfq|addend\w*|instructions?)\b/i;
+const NAME_SAYS_DRAWING = /\b(dwg|dwgs|drawing|drawings|sht|sheet|plan|elev|elevation|section|detail|details|iso|pid|layout)\b/i;
+
+function normName(name) {
+  return String(name || '').replace(/\.[a-z0-9]+$/i, '').replace(/[^a-z0-9]+/gi, ' ').trim();
+}
 
 async function readPdf(b64) {
   const { PDFParse } = require('pdf-parse');
@@ -73,7 +81,7 @@ async function shortestSide(b64) {
 function inches(pt) { return (pt / 72).toFixed(1).replace(/\.0$/, ''); }
 
 async function inspect(name, b64) {
-  const fname = String(name || '');
+  const fname = normName(name);
 
   // Size first, because it is the signal that does not lie. It also survives a scan, where
   // there is no text to measure at all.
@@ -94,9 +102,16 @@ async function inspect(name, b64) {
   }
   const perPage = pages ? Math.round(chars / pages) : 0;
 
-  // Letter-sized. Now density decides: a parts list or a spec is dense, a small-format sketch
-  // is not. A scan of either yields nothing, and correctly falls to the image path, which is
-  // the only one that can work on it.
+  // Letter-sized, so size cannot decide. Ask the name FIRST, both ways — a half-size set, a
+  // sketch or a single detail sheet is a real drawing printed on letter, and it is usually
+  // text-rich, so density alone would wrongly call it a document. Size is the reliable signal
+  // and this branch has already lost it.
+  if (NAME_SAYS_DRAWING.test(fname) && !NAME_SAYS_TEXT.test(fname)) {
+    return { pages, chars, perPage, kind: 'drawing', why: 'letter-sized, but named like a drawing' };
+  }
+
+  // Now density: a parts list or a spec is dense, a sketch is not. A scan of either yields
+  // nothing and falls to the image path, which is the only one that can work on it.
   if (perPage >= DENSE_CHARS_PER_PAGE) {
     return { pages, chars, perPage, kind: 'text', why: perPage + ' characters a page on a letter sheet — reads as a document' };
   }
