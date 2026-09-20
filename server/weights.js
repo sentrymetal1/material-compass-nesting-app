@@ -27,6 +27,18 @@
 //  So the shape functions here are for items a user ADDS, not for a backfill.
 // =============================================================================
 
+// ── UNITS: EVERYTHING IN THIS FILE IS POUNDS. NOTHING LEAVES IT IN KILOGRAMS. ──
+// Densities are lb/in³ and every return value is lb or lb/ft. Catalogues are not
+// consistent about this: NIBCO and the US fitting catalogues print NET WT./LBS.,
+// but the Global SupplyLine B16.5 flange chart is in kilograms. A kilogram
+// mistaken for a pound understates a flange by more than half and nothing
+// downstream would question it. Convert AT THE POINT OF IMPORT, with kgToLb,
+// never later.
+function kgToLb(kg) {
+  const n = toNumber(kg);
+  return n == null ? null : n * 2.2046226218;
+}
+
 // lb per cubic inch. The only three that matter for structural; the alloys sit
 // close enough to stainless that using it for them is better than refusing.
 const DENSITY = {
@@ -209,7 +221,7 @@ function buttWeldFittingLb(spec) {
 }
 
 module.exports = {
-  density, toNumber,
+  density, toNumber, kgToLb,
   rolledShapeLbPerFt, structuralLbPerFt, plateLbPerSqFt,
   pipeSectionLbPerIn, outsideDiaFrom, buttWeldFittingLb,
   DENSITY, FITTING_LENGTH_IN,
