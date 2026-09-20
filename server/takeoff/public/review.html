@@ -26,6 +26,11 @@
   .appbar .brand{font-weight:800;font-size:16px;color:var(--blue);letter-spacing:.2px;}
   .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
   .applybtn{font-size:11px;color:#fff;background:var(--blue);border:0;border-radius:5px;padding:2px 9px;cursor:pointer;margin-left:4px;}
+  /* Fittings grid inputs — quiet until touched, so 58 rows don't read as a wall of boxes */
+  .fin{font:inherit;font-size:12px;padding:2px 5px;margin:0 3px 2px 0;border:1px solid transparent;
+    border-radius:4px;background:#f7f9fb;color:var(--ink);}
+  .fin:hover{border-color:#dfe5ec;background:#fff;}
+  .fin:focus{border-color:var(--blue);background:#fff;outline:none;}
   /* Material check — rows that can't resolve against the shop's catalog */
   .matrow{border-top:1px solid #f2e4e4;padding:9px 0;font-size:13px;}
   .matrow:first-of-type{border-top:0;}
@@ -132,7 +137,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.49 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.50 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -526,33 +531,77 @@
     const anyMulti = f.some(function(x){ return (Number(x.units)||1) > 1; });
     const tot = function(x){ const t=Number(x.quantity_total);
       return (Number.isFinite(t)&&t>0)?t:(Number(x.quantity)||0)*Math.max(1,Number(x.units)||1); };
-    const TD='padding:5px 9px;border-bottom:1px solid #eceff3;font-size:12.5px;vertical-align:top';
-    const rows = f.slice().sort(function(a,b){
-      return String(a.component||"").localeCompare(String(b.component||"")) ||
-             String(a.fitting_type||"").localeCompare(String(b.fitting_type||"")); })
-      .map(function(x){
+    const TD='padding:4px 8px;border-bottom:1px solid #eceff3;font-size:12.5px;vertical-align:top';
+    // Carry each fitting's ORIGINAL index through the sort. The table is displayed grouped by
+    // component, so a display position is not a position in R.fittings — editing by the wrong
+    // one would silently change a different fitting.
+    const rows = f.map(function(x,i){ return {x:x,i:i}; })
+      .sort(function(a,b){
+        return String(a.x.component||"").localeCompare(String(b.x.component||"")) ||
+               String(a.x.fitting_type||"").localeCompare(String(b.x.fitting_type||"")); })
+      .map(function(p){
+        const x=p.x, i=p.i;
         const c=Number(x.confidence)||0;
-        const spec=[x.fitting_make,x.specification].filter(Boolean).join(' · ');
-        const how=[x.end_type,x.connection_type].filter(Boolean).join(' · ');
+        const inp=function(field,val,w){
+          return '<input class="fin" style="width:'+w+'" value="'+escAttr(val==null?'':val)+'" '+
+            'onchange="fitEdit('+i+',\''+field+'\',this.value)">'; };
         return '<tr><td style="'+TD+'"><span class="dot d-'+confClass(c)+'"></span>'+c.toFixed(2)+'</td>'+
-          '<td style="'+TD+'"><b>'+esc(x.fitting_type||'?')+'</b></td>'+
-          '<td style="'+TD+'">'+esc(x.size||'')+(x.schedule_or_class?' <span class="src">'+esc(x.schedule_or_class)+'</span>':'')+'</td>'+
-          '<td style="'+TD+'">'+esc(how||'—')+'</td>'+
-          '<td style="'+TD+'">'+esc(spec||'—')+'</td>'+
-          '<td style="'+TD+'">'+(Number(x.units)>1
-              ? esc(x.quantity)+' <span class="src">×'+x.units+'</span> <b>= '+tot(x)+'</b>'
-              : esc(x.quantity))+'</td>'+
+          '<td style="'+TD+'">'+inp('fitting_type',x.fitting_type,'88px')+'</td>'+
+          '<td style="'+TD+'">'+inp('size',x.size,'96px')+inp('schedule_or_class',x.schedule_or_class,'70px')+'</td>'+
+          '<td style="'+TD+'">'+inp('end_type',x.end_type,'104px')+inp('connection_type',x.connection_type,'96px')+'</td>'+
+          '<td style="'+TD+'">'+inp('fitting_make',x.fitting_make,'112px')+inp('specification',x.specification,'104px')+'</td>'+
+          '<td style="'+TD+'"><input class="fin" type="number" min="0" step="1" style="width:56px" value="'+
+            (Number(x.quantity)||0)+'" onchange="fitEdit('+i+',\'quantity\',this.value)">'+
+            (Number(x.units)>1?' <span class="src">×'+x.units+' = <b>'+tot(x)+'</b></span>':'')+'</td>'+
           '<td style="'+TD+'"><span class="src">'+esc(x.component||'')+(x.source_sheet?' · '+esc(x.source_sheet):'')+
-            (x.note?'<br>'+esc(x.note):'')+'</span></td></tr>';
+            (x.note?'<br>'+esc(x.note):'')+'</span></td>'+
+          '<td style="'+TD+'"><button class="applybtn" style="background:#9aa6b2;padding:1px 7px" '+
+            'onclick="fitDelete('+i+')" title="Remove this fitting">✕</button></td></tr>';
       }).join("");
     return '<div class="card"><h2>⌇ Pipe fittings <span class="lt">— '+f.length+' item'+(f.length===1?'':'s')+
         ', quoted separately from the BOM</span></h2><div class="body" style="padding:0">'+
-      '<table><thead><tr><th>Conf</th><th>Type</th><th>Size</th><th>End · connection</th><th>Make · spec</th>'+
-      '<th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Where</th></tr></thead><tbody>'+rows+'</tbody></table>'+
-      '<div style="padding:10px 18px;font-size:12px;color:var(--mut)">These are <b>not</b> in the BOM or its CSV — '+
-      'fittings are bought complete and roll up separately on the component. Writing them onto the project\'s '+
-      'fittings quote is the next step; for now use this list to build the quote, or ask <b>Tell the AI</b> to '+
-      'change anything above.</div></div></div>';
+      '<table><thead><tr><th>Conf</th><th>Type</th><th>Size · sch/class</th><th>End · connection</th>'+
+      '<th>Make · spec</th><th>'+(anyMulti?'Qty / unit':'Qty')+'</th><th>Where</th><th></th></tr></thead><tbody>'+
+      rows+'</tbody></table>'+
+      '<div style="padding:10px 18px;font-size:12px;color:var(--mut)">'+
+      '<button class="applybtn" onclick="fitAdd()">+ Add a fitting</button> '+
+      'Edit any cell directly — changes save to this take-off as you leave the field. These are <b>not</b> in '+
+      'the BOM or its CSV: fittings are bought complete and roll up separately on the component.</div>'+
+      '</div></div>';
+  }
+
+  // NB these inputs use escAttr (line ~207), not esc. A fitting value is full of quotes —
+  // 1/2", 2" x 1/2" x 1/2" — and esc() only handles "<", so the raw quote would end the value=
+  // attribute and truncate the field. Same trap that killed the decision buttons.
+
+  // Edits go straight into the stored take-off, with NO re-render — re-rendering on every change
+  // would tear the focused input out from under the cursor mid-edit.
+  function fitEdit(i,field,val){
+    const R=loadResult(); const f=arr(R.fittings)[i]; if(!f) return;
+    if(field==="quantity"){
+      const q=Math.max(0,Number(val)||0);
+      f.quantity=q;
+      f.quantity_total=q*Math.max(1,Number(f.units)||1);   // keep the job total in step with the per-unit qty
+    } else {
+      f[field]=String(val==null?"":val).trim();
+    }
+    if(!(Number(f.confidence)>0.5)) f.confidence=0.5;      // a human touched it
+    saveResult(R);
+  }
+  function fitDelete(i){
+    const R=loadResult(); const f=arr(R.fittings); if(!f[i]) return;
+    f.splice(i,1); R.fittings=f; saveResult(R); render();
+  }
+  function fitAdd(){
+    const R=loadResult(); const f=arr(R.fittings);
+    // Component is copied from the last row so a fitting added to a one-component job lands
+    // somewhere sensible rather than nowhere.
+    const last=f[f.length-1]||{};
+    f.push({ fitting_type:"", size:"", schedule_or_class:"", end_type:"", connection_type:"",
+      fitting_make:"", specification:"", quantity:1, units:Number(last.units)||1,
+      quantity_total:Number(last.units)||1, component:last.component||"", source_sheet:"",
+      confidence:0.5, note:"added by hand" });
+    R.fittings=f; saveResult(R); render();
   }
 
   // ---- THE BOM EDITOR, ON AN UNCOMMITTED TAKE-OFF -------------------------
