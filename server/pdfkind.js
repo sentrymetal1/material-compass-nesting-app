@@ -84,13 +84,16 @@ async function inspect(name, b64) {
   const fname = normName(name);
 
   // Size first, because it is the signal that does not lie. It also survives a scan, where
-  // there is no text to measure at all.
+  // there is no text to measure at all. Carried on every answer so the screen can warn when a
+  // person's override contradicts it.
   const side = await shortestSide(b64);
-  if (side >= LARGE_FORMAT_MIN_SIDE) {
+  const facts = { sheetInches: side ? Number(inches(side)) : 0, largeFormat: side >= LARGE_FORMAT_MIN_SIDE };
+
+  if (facts.largeFormat) {
     let pages = 0, chars = 0;
     try { const r = await readPdf(b64); pages = r.pages; chars = r.text.trim().length; } catch (e) {}
-    return { pages, chars, perPage: pages ? Math.round(chars / pages) : 0, kind: 'drawing',
-      why: inches(side) + ' inch sheet — large format, so a drawing' };
+    return Object.assign({ pages, chars, perPage: pages ? Math.round(chars / pages) : 0, kind: 'drawing',
+      why: inches(side) + ' inch sheet — large format, so a drawing' }, facts);
   }
 
   let pages = 0, chars = 0;
@@ -98,7 +101,8 @@ async function inspect(name, b64) {
     const r = await readPdf(b64);
     pages = r.pages; chars = r.text.trim().length;
   } catch (e) {
-    return { pages: 0, chars: 0, perPage: 0, kind: 'drawing', why: 'could not read it — treating as a drawing' };
+    return Object.assign({ pages: 0, chars: 0, perPage: 0, kind: 'drawing',
+      why: 'could not read it — treating as a drawing' }, facts);
   }
   const perPage = pages ? Math.round(chars / pages) : 0;
 
@@ -107,18 +111,18 @@ async function inspect(name, b64) {
   // text-rich, so density alone would wrongly call it a document. Size is the reliable signal
   // and this branch has already lost it.
   if (NAME_SAYS_DRAWING.test(fname) && !NAME_SAYS_TEXT.test(fname)) {
-    return { pages, chars, perPage, kind: 'drawing', why: 'letter-sized, but named like a drawing' };
+    return Object.assign({ pages, chars, perPage, kind: 'drawing', why: 'letter-sized, but named like a drawing' }, facts);
   }
 
   // Now density: a parts list or a spec is dense, a sketch is not. A scan of either yields
   // nothing and falls to the image path, which is the only one that can work on it.
   if (perPage >= DENSE_CHARS_PER_PAGE) {
-    return { pages, chars, perPage, kind: 'text', why: perPage + ' characters a page on a letter sheet — reads as a document' };
+    return Object.assign({ pages, chars, perPage, kind: 'text', why: perPage + ' characters a page on a letter sheet — reads as a document' }, facts);
   }
   if (NAME_SAYS_TEXT.test(fname) && !NAME_SAYS_DRAWING.test(fname)) {
-    return { pages, chars, perPage, kind: 'text', why: 'named like a document, though it holds little text' };
+    return Object.assign({ pages, chars, perPage, kind: 'text', why: 'named like a document, though it holds little text' }, facts);
   }
-  return { pages, chars, perPage, kind: 'drawing', why: perPage ? (perPage + ' characters a page — reads as a drawing') : 'no text in it — a scan or a drawing' };
+  return Object.assign({ pages, chars, perPage, kind: 'drawing', why: perPage ? (perPage + ' characters a page — reads as a drawing') : 'no text in it — a scan or a drawing' }, facts);
 }
 
 // The document as text. Truncates only at a size no realistic document reaches,

@@ -1115,7 +1115,13 @@ function registerTriageRoutes(app, deps) {
         pages: r.pages,
         per_page: r.perPage,
         why: r.why,
-        // What it costs each way, so the screen can explain the choice rather than assert it.
+        // The facts behind the guess, so the screen can WARN when a choice contradicts them
+        // rather than silently accepting it. A 24-inch sheet read as text loses its geometry;
+        // a 149-page document read as a drawing gets trimmed to the budget.
+        chars: r.chars || 0,
+        has_text: (r.chars || 0) >= 200,
+        sheet_inches: r.sheetInches || 0,
+        large_format: !!r.largeFormat,
         est_tokens_as_text: Math.round((r.chars || 0) / 4),
         est_tokens_as_images: (r.pages || 0) * 2000,
       });

@@ -76,8 +76,21 @@ function renderTriagePage() {
   .intake .files{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px;color:#3d4955}
   /* How a PDF is read: seen as a drawing, or read as a document. Shown per row because it
      decides whether a long file goes in whole or gets trimmed. */
-  .intake .readas{font:inherit;font-size:11.5px;padding:2px 6px;margin-left:8px;border:1px solid var(--line);
-    border-radius:6px;background:#fff;color:#3d4955;cursor:pointer}
+  .intake .explain{margin:10px 0 2px;padding:9px 11px;background:#f4f8fc;border:1px solid #dbe6f0;
+    border-radius:8px;font-size:12px;line-height:1.55;color:#3d4955}
+  .intake .files li{display:block;padding:5px 0}
+  .intake .frow{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .intake .pills{display:inline-flex;margin-left:8px;border:1px solid var(--line);border-radius:999px;
+    overflow:hidden;background:#fff;vertical-align:middle}
+  .intake .pill{font:inherit;font-size:11px;font-weight:600;padding:3px 11px;border:0;background:#fff;
+    color:#6b7683;cursor:pointer;line-height:1.6}
+  .intake .pill+.pill{border-left:1px solid var(--line)}
+  .intake .pill:hover{background:#f2f6fa;color:#3d4955}
+  .intake .pill.on{background:var(--mc-blue);color:#fff}
+  .intake .pill.on:hover{background:var(--mc-blue);color:#fff}
+  .intake .fwarn{margin:3px 0 0 2px;font-size:11.5px;line-height:1.5;color:#9a6400}
+  .intake .files .rm{border:0;background:transparent;color:#9aa5b1;cursor:pointer;font-size:13px}
+  .intake .files .rm:hover{color:var(--bad)}
   .intake .whytag{display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;margin-left:6px;
     border-radius:50%;background:#e8edf3;color:#6b7683;font-size:10px;font-weight:700;cursor:help}
   .intake .files li{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid #f2f4f7}
@@ -193,6 +206,7 @@ function renderTriagePage() {
     <textarea id="intakeText" placeholder="Paste or type here. Rough is fine — a project name, a customer, a bid date and a few lines of scope is plenty to start."></textarea>
     <div class="drop" id="intakeDrop">Drop files here, or click to choose — images, PDFs, text and CSV</div>
     <input type="file" id="intakeFiles" multiple accept="image/*,application/pdf,text/plain,text/csv,.csv,.txt" style="display:none">
+    <div class="explain" id="intakeExplain" style="display:none"></div>
     <ul class="files" id="intakeList"></ul>
     <div class="bar">
       <button class="btn quote" id="intakeSubmit">Read it and add to triage</button>
@@ -429,22 +443,50 @@ function renderTriagePage() {
   // text for roughly a fifth the cost, and goes in WHOLE. Guessed as each file is added and
   // shown here so it can be corrected; the person looking at the file knows better than the
   // heuristic does.
+  // Where a choice disagrees with what the file actually IS. Returns a warning or ''. The
+  // choice is never overridden — the estimator may know something the file does not show —
+  // but a contradiction is said out loud instead of silently accepted.
+  function readAsWarning(f){
+    if(f.kind!=='pdf'||!f.read_as) return '';
+    if(f.read_as==='text'){
+      if(f.has_text===false) return 'There is no text in this one — it will be read as a drawing regardless.';
+      if(f.large_format) return 'This is a '+f.sheet_inches+' inch sheet. Read as text, the geometry is lost — only the notes and title block survive.';
+    } else {
+      if(f.pages>DRAW_PAGE_BUDGET) return f.pages+' pages as a drawing: only '+DRAW_PAGE_BUDGET+' will be looked at. As a document the whole thing is read.';
+      if(f.has_text && !f.large_format && f.pages>3) return 'Letter-sized and full of text — that usually means a document.';
+    }
+    return '';
+  }
+
   function renderIntakeFiles(){
     var ul=document.getElementById('intakeList');
+    var anyPdf=intakeFiles.some(function(f){return f.kind==='pdf'});
     ul.innerHTML=intakeFiles.map(function(f,i){
-      var pick='';
+      var pick='', warn='';
       if(f.kind==='pdf'){
         var k=f.read_as||'';
-        pick='<select class="readas" onchange="setIntakeReadAs('+i+',this.value)" title="How this file is read">'
-          + '<option value="drawing"'+(k==='drawing'?' selected':'')+'>drawing — seen</option>'
-          + '<option value="text"'+(k==='text'?' selected':'')+'>document — read in full</option>'
-          + '</select>';
+        pick='<span class="pills" role="group" aria-label="How this file is read">'
+          + '<button type="button" class="pill'+(k==='drawing'?' on':'')+'" onclick="setIntakeReadAs('+i+',\\'drawing\\')">Drawing</button>'
+          + '<button type="button" class="pill'+(k==='text'?' on':'')+'" onclick="setIntakeReadAs('+i+',\\'text\\')">Document</button>'
+          + '</span>';
+        var w=readAsWarning(f);
+        if(w) warn='<div class="fwarn">'+esc(w)+'</div>';
       }
-      return '<li><span>'+esc(f.name)+' <span style="color:#9aa5b1">'+esc(f.kindLabel)+' · '+fmtBytes(f.size)
-        + (f.pages?(' · '+f.pages+'p'):'')+'</span> '+pick
+      return '<li><div class="frow"><span>'+esc(f.name)+' <span style="color:#9aa5b1">'+esc(f.kindLabel)+' · '+fmtBytes(f.size)
+        + (f.pages?(' · '+f.pages+'p'):'')+(f.sheet_inches?(' · '+f.sheet_inches+'"'):'')+'</span> '+pick
         + (f.why?'<span class="whytag" title="'+esc(f.why)+'">?</span>':'')+'</span>'
-        + '<button title="Remove" onclick="removeIntakeFile('+i+')">✕</button></li>';
+        + '<button class="rm" title="Remove" onclick="removeIntakeFile('+i+')">✕</button></div>'+warn+'</li>';
     }).join('');
+    // Said once, above the list, because the distinction is not obvious and getting it wrong
+    // is quiet: a drawing read as text loses its geometry, and nothing looks broken.
+    var ex=document.getElementById('intakeExplain');
+    if(ex){
+      ex.style.display = anyPdf ? '' : 'none';
+      ex.innerHTML = '<b>Drawing or document?</b> A <b>drawing</b> is looked at as a picture, so shapes and '
+        + 'dimensions are read — but that is costly, so a long set gets trimmed to '+DRAW_PAGE_BUDGET+' pages. '
+        + 'A <b>document</b> (a BOM, a spec, a scope letter) is read as text for about a fifth the cost, so '
+        + 'the whole file goes in however long it is. Guessed from the sheet size; change it if the guess is wrong.';
+    }
     var total=intakeFiles.reduce(function(s,f){return s+f.size},0);
     var drawPages=0, docPages=0, unknown=false;
     intakeFiles.forEach(function(f){
@@ -488,6 +530,8 @@ function renderTriagePage() {
               if(!d||!d.ok) return;
               if(!rec.read_as) rec.read_as=d.kind;      // don't overwrite a choice already made
               rec.pages=d.pages; rec.why=d.why;
+              // The facts behind the guess, kept so a contradicting choice can be warned about.
+              rec.has_text=d.has_text; rec.large_format=d.large_format; rec.sheet_inches=d.sheet_inches;
               renderIntakeFiles();
             })
             .catch(function(){ if(!rec.read_as) rec.read_as='drawing'; renderIntakeFiles(); });
