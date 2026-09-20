@@ -132,7 +132,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.48 · 2026-07-29";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.49 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1061,7 +1061,12 @@
             '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px;flex:none" onclick="dismissDecision(\''+d.id+'\')" title="Remove this decision (it won\'t apply to the take-off)">✕</button>'+
           '</div>'+
           '<div class="why">'+esc(d.why)+(d.where?' <span class="src">· '+esc(d.where)+'</span>':'')+'</div>'+
-          '<div class="opts">'+d.options.map(o=>'<span class="opt '+(d.sel===o?'sel ':'')+(d.rec===o?'rec':'')+'" onclick="pick(\''+d.id+'\',\''+esc(o).replace(/\x27/g,"")+'\')">'+esc(o)+'</span>').join("")+'</div>'+
+          // Pass the option's INDEX, never its text. esc() only escapes "<", so an option
+          // containing a double quote — 3" plate, 1/2" base — ended the onclick attribute
+          // early and left a truncated handler that silently did nothing when clicked. Every
+          // other decision on the page happened to have no quote in it, so only that one was
+          // dead. An index cannot break an attribute.
+          '<div class="opts">'+d.options.map((o,oi)=>'<span class="opt '+(d.sel===o?'sel ':'')+(d.rec===o?'rec':'')+'" onclick="pick(\''+d.id+'\','+oi+')">'+esc(o)+'</span>').join("")+'</div>'+
           (undec?'<div class="decnote">★ needs your decision.</div>':'')+'</div>';
       }).join("");
     }
@@ -1073,8 +1078,12 @@
       : '<span style="color:var(--grn)">ready ✓</span>';
     const ap=document.getElementById("approve"); if(ap) ap.disabled = left>0;
   }
-  function pick(id,v){
+  // `which` is an option index. A string is still accepted, because a stale page rendered by
+  // the previous build may call it that way.
+  function pick(id,which){
     const d=DECISIONS.find(function(x){return x.id===id;}); if(!d) return;
+    const v = (typeof which === "number") ? d.options[which] : which;
+    if(v==null) return;
     d.sel=v; renderDecisions();
     const idx=parseInt(String(id).replace("dec",""),10);
     const R=loadResult();
@@ -1269,9 +1278,14 @@
             return '<option value="'+esc(s)+'"'+(near[0]===s?" selected":"")+">"+esc(s)+"</option>"; }).join("")+"</select>"+
           ' <button class="applybtn" onclick="applyMaterial('+p.idx+')">Use this</button>'
         : "";
-      const quick=near.slice(0,3).map(function(s){
+      // Same trap as the decision options, and worse here: a size almost always carries a
+      // double quote (1/2", 4 x 3 x 5/16"). Only single quotes were escaped, so the double
+      // quote ended the onclick attribute and the button did nothing. The value is stashed on
+      // the element and read back on click, so nothing depends on quoting at all.
+      const quick=near.slice(0,3).map(function(s,qi){
+        MATQUICK[p.idx+":"+qi]=s;
         return '<button class="applybtn" style="background:#fff;color:var(--ink);border:1px solid #cdd3da" '+
-          "onclick=\"applyMaterialValue("+p.idx+",'"+String(s).replace(/'/g,"\\'")+"')\">"+esc(s)+"</button>"; }).join(" ");
+          'onclick="applyMaterialQuick('+p.idx+','+qi+')">'+esc(s)+"</button>"; }).join(" ");
       return '<div class="matrow"><div><b>'+esc(r.component||"—")+"</b> · "+esc(r.source_sheet||"no sheet")+
         " · qty "+esc(r.quantity)+'</div><div class="src">'+why+"</div>"+
         (quick?'<div class="matquick">Nearest in your catalog: '+quick+"</div>":"")+
@@ -1282,6 +1296,14 @@
       '<div class="body"><div class="src" style="margin-bottom:8px">These rows have no material, or a material that isn’t in '+
       "your catalog. Fix them here and they’ll import clean — leave them and they land in staging as errors.</div>"+
       probs.map(row).join("")+"</div></div>";
+  }
+  // Nearest-size suggestions, keyed "rowIndex:buttonIndex". Holding the value here rather than
+  // in the markup is what keeps a size like 4 x 3 x 5/16" from breaking its own button.
+  const MATQUICK = {};
+  function applyMaterialQuick(idx,qi){
+    const v = MATQUICK[idx+":"+qi];
+    if(v==null) return;
+    applyMaterialValue(idx,v);
   }
   function applyMaterialValue(idx,val){
     const R=loadResult(); if(!R.rows||!R.rows[idx]) return;
