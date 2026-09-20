@@ -764,8 +764,13 @@ async function buildLiveCatalogContext() {
 // the model can copy values verbatim instead of inventing "90 ELL BW". Ends and connections are
 // listed under the fitting type they belong to, and specs under their make, because that is how the
 // project's own cascade filters them — offering the full list flat would invite invalid combinations.
-async function buildFittingsCatalogContext() {
-  const cat = await cachedLookup('takeoff:fittings-catalog', 12 * 60 * 60 * 1000, async () => {
+// The five fittings catalog tables, WITH their record ids. Every one of them, including the three
+// that used to be loaded name-only — the prompt never needed their ids, but the review page's
+// pickers do, and so does anything that writes a fitting to the project. A fitting that reaches
+// Zoho without these ids resolves to nothing and prices at zero, silently
+// ([[feedback_fitting_id_catalog_coverage]]).
+async function fittingsCatalogData() {
+  return cachedLookup('takeoff:fittings-catalog', 12 * 60 * 60 * 1000, async () => {
     const lkId = (r, f) => String((r && r[f] && (r[f].ID || r[f].id)) || '');
     const [types, makes, ends, conns, specs] = await Promise.all([
       fetchAllZohoPages('/report/Fitting_Type_Report'),
@@ -777,11 +782,26 @@ async function buildFittingsCatalogContext() {
     return {
       types: (types || []).map(r => ({ id: String(r.ID), name: String(r.Fitting_Type || '').trim() })).filter(x => x.name),
       makes: (makes || []).map(r => ({ id: String(r.ID), name: String(r.Fitting_Make || '').trim() })).filter(x => x.name),
-      ends: (ends || []).map(r => ({ name: String(r.End_Type || '').trim(), typeId: lkId(r, 'Fitting_Type') })).filter(x => x.name),
-      connections: (conns || []).map(r => ({ name: String(r.Connection_Type || '').trim(), typeId: lkId(r, 'Fitting_Type') })).filter(x => x.name),
-      specs: (specs || []).map(r => ({ name: String(r.Fitting_Specification || '').trim(), makeId: lkId(r, 'Fitting_Make') })).filter(x => x.name),
+      ends: (ends || []).map(r => ({ id: String(r.ID), name: String(r.End_Type || '').trim(), typeId: lkId(r, 'Fitting_Type') })).filter(x => x.name),
+      connections: (conns || []).map(r => ({ id: String(r.ID), name: String(r.Connection_Type || '').trim(), typeId: lkId(r, 'Fitting_Type') })).filter(x => x.name),
+      specs: (specs || []).map(r => ({ id: String(r.ID), name: String(r.Fitting_Specification || '').trim(), makeId: lkId(r, 'Fitting_Make') })).filter(x => x.name),
     };
   });
+}
+
+// The pickers on the review page: the real catalog, with ids and the parent links that drive the
+// cascade (end types and connections belong to a fitting type; specifications belong to a make).
+app.get('/api/takeoff/fittings-catalog', async (req, res) => {
+  try {
+    res.json(Object.assign({ ok: true }, await fittingsCatalogData()));
+  } catch (err) {
+    console.error('[takeoff] fittings-catalog:', err.response?.data || err.message);
+    res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
+  }
+});
+
+async function buildFittingsCatalogContext() {
+  const cat = await fittingsCatalogData();
   if (!cat.types.length) return '';
   const uniq = a => Array.from(new Set(a));
   const perType = cat.types.map(t => {

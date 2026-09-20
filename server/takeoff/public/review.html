@@ -31,6 +31,9 @@
     border-radius:4px;background:#f7f9fb;color:var(--ink);}
   .fin:hover{border-color:#dfe5ec;background:#fff;}
   .fin:focus{border-color:var(--blue);background:#fff;outline:none;}
+  /* A value the catalog does not contain. It stays selected and visible rather than being
+     quietly swapped for something valid — an unresolvable fitting prices at zero. */
+  .fin.bad{border-color:var(--red);background:#fff6f6;color:var(--red);font-weight:600;}
   /* Material check — rows that can't resolve against the shop's catalog */
   .matrow{border-top:1px solid #f2e4e4;padding:9px 0;font-size:13px;}
   .matrow:first-of-type{border-top:0;}
@@ -137,7 +140,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.50 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.51 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -545,11 +548,31 @@
         const inp=function(field,val,w){
           return '<input class="fin" style="width:'+w+'" value="'+escAttr(val==null?'':val)+'" '+
             'onchange="fitEdit('+i+',\''+field+'\',this.value)">'; };
+        // A picker bound to a real catalog table. The current value is kept as an option even
+        // when the catalog has no such row, so an AI answer is never silently replaced — it
+        // shows as "✗ <value>" and has to be dealt with.
+        const sel=function(field,val,list,w){
+          if(!list) return inp(field,val,w);
+          const v=String(val==null?"":val).trim();
+          const known=list.some(function(o){ return o.name===v; });
+          let h='<select class="fin'+(v&&!known?' bad':'')+'" style="width:'+w+'" '+
+            'onchange="fitPick('+i+',\''+field+'\',this.value)">';
+          h+='<option value=""'+(v?'':' selected')+'>—</option>';
+          if(v&&!known) h+='<option value="'+escAttr(v)+'" selected>✗ '+esc(v)+'</option>';
+          list.forEach(function(o){
+            h+='<option value="'+escAttr(o.name)+'"'+(o.name===v?' selected':'')+'>'+esc(o.name)+'</option>'; });
+          return h+'</select>'; };
+        const typeId=FITCAT?fitIdOf(FITCAT.types,x.fitting_type):"";
+        const makeId=FITCAT?fitIdOf(FITCAT.makes,x.fitting_make):"";
         return '<tr><td style="'+TD+'"><span class="dot d-'+confClass(c)+'"></span>'+c.toFixed(2)+'</td>'+
-          '<td style="'+TD+'">'+inp('fitting_type',x.fitting_type,'88px')+'</td>'+
+          '<td style="'+TD+'">'+sel('fitting_type',x.fitting_type,FITCAT&&FITCAT.types,'104px')+'</td>'+
           '<td style="'+TD+'">'+inp('size',x.size,'96px')+inp('schedule_or_class',x.schedule_or_class,'70px')+'</td>'+
-          '<td style="'+TD+'">'+inp('end_type',x.end_type,'104px')+inp('connection_type',x.connection_type,'96px')+'</td>'+
-          '<td style="'+TD+'">'+inp('fitting_make',x.fitting_make,'112px')+inp('specification',x.specification,'104px')+'</td>'+
+          // End type and connection belong to the fitting TYPE, so they narrow to it.
+          '<td style="'+TD+'">'+sel('end_type',x.end_type,FITCAT&&fitChildren(FITCAT.ends,'typeId',typeId),'116px')+
+            sel('connection_type',x.connection_type,FITCAT&&fitChildren(FITCAT.connections,'typeId',typeId),'110px')+'</td>'+
+          // Specification belongs to the MAKE.
+          '<td style="'+TD+'">'+sel('fitting_make',x.fitting_make,FITCAT&&FITCAT.makes,'124px')+
+            sel('specification',x.specification,FITCAT&&fitChildren(FITCAT.specs,'makeId',makeId),'116px')+'</td>'+
           '<td style="'+TD+'"><input class="fin" type="number" min="0" step="1" style="width:56px" value="'+
             (Number(x.quantity)||0)+'" onchange="fitEdit('+i+',\'quantity\',this.value)">'+
             (Number(x.units)>1?' <span class="src">×'+x.units+' = <b>'+tot(x)+'</b></span>':'')+'</td>'+
@@ -565,14 +588,73 @@
       rows+'</tbody></table>'+
       '<div style="padding:10px 18px;font-size:12px;color:var(--mut)">'+
       '<button class="applybtn" onclick="fitAdd()">+ Add a fitting</button> '+
-      'Edit any cell directly — changes save to this take-off as you leave the field. These are <b>not</b> in '+
-      'the BOM or its CSV: fittings are bought complete and roll up separately on the component.</div>'+
+      (FITCAT
+        ? 'Type, end, connection, make and spec come from your fittings catalog — end types and connections '+
+          'narrow to the type, specifications narrow to the make. Anything marked <b style="color:var(--red)">✗</b> '+
+          'is not in the catalog and will not price; pick a real one or add it to the catalog.'
+        : 'Loading your fittings catalog…')+
+      ' These are <b>not</b> in the BOM or its CSV: fittings are bought complete and roll up separately '+
+      'on the component.</div>'+
       '</div></div>';
   }
 
   // NB these inputs use escAttr (line ~207), not esc. A fitting value is full of quotes —
   // 1/2", 2" x 1/2" x 1/2" — and esc() only handles "<", so the raw quote would end the value=
   // attribute and truncate the field. Same trap that killed the decision buttons.
+
+  // ---- the shop's fittings catalog, for the pickers -------------------------
+  // A fitting has to resolve to REAL catalog records or it is worthless downstream: no ids means
+  // no price and no rollup, and it fails silently rather than loudly
+  // ([[feedback_fitting_id_catalog_coverage]]). So the editor offers the catalog rather than a
+  // free-text box, and stores the record id alongside the name.
+  let FITCAT=null, FITCAT_LOADING=false;
+  function fitIdOf(list,name){
+    const v=String(name==null?"":name).trim(); if(!v||!list) return "";
+    const hit=list.find(function(o){ return o.name===v; });
+    return hit?hit.id:"";
+  }
+  function fitChildren(list,key,parentId){
+    if(!list) return null;
+    if(!parentId) return list;                    // parent not chosen yet — offer everything
+    const kids=list.filter(function(o){ return String(o[key]||"")===String(parentId); });
+    return kids.length?kids:list;                 // catalog has no children for it: don't strand the user
+  }
+  function loadFittingsCatalog(){
+    if(FITCAT||FITCAT_LOADING) return;
+    FITCAT_LOADING=true;
+    fetch(RAILWAY_URL+"/api/takeoff/fittings-catalog")
+      .then(function(r){return r.json()})
+      .then(function(d){ if(d&&d.ok){ FITCAT=d; render(); } })
+      .catch(function(){ /* pickers fall back to plain inputs */ })
+      .then(function(){ FITCAT_LOADING=false; });
+  }
+
+  // Picking from a catalog list stores the NAME and its record id together, and clears any child
+  // value the new parent invalidates — a Butt Weld end type left behind on a fitting switched to
+  // Threaded is worse than a blank.
+  function fitPick(i,field,val){
+    const R=loadResult(); const f=arr(R.fittings)[i]; if(!f) return;
+    const v=String(val==null?"":val).trim();
+    f[field]=v;
+    if(FITCAT){
+      if(field==="fitting_type"){
+        f.fitting_type_id=fitIdOf(FITCAT.types,v);
+        const ends=fitChildren(FITCAT.ends,'typeId',f.fitting_type_id)||[];
+        const conns=fitChildren(FITCAT.connections,'typeId',f.fitting_type_id)||[];
+        if(f.end_type && !ends.some(function(o){return o.name===f.end_type;})) { f.end_type=""; f.end_type_id=""; }
+        if(f.connection_type && !conns.some(function(o){return o.name===f.connection_type;})) { f.connection_type=""; f.connection_type_id=""; }
+      } else if(field==="fitting_make"){
+        f.fitting_make_id=fitIdOf(FITCAT.makes,v);
+        const specs=fitChildren(FITCAT.specs,'makeId',f.fitting_make_id)||[];
+        if(f.specification && !specs.some(function(o){return o.name===f.specification;})) { f.specification=""; f.specification_id=""; }
+      } else if(field==="end_type"){        f.end_type_id=fitIdOf(FITCAT.ends,v);
+      } else if(field==="connection_type"){ f.connection_type_id=fitIdOf(FITCAT.connections,v);
+      } else if(field==="specification"){   f.specification_id=fitIdOf(FITCAT.specs,v); }
+    }
+    if(!(Number(f.confidence)>0.5)) f.confidence=0.5;
+    saveResult(R);
+    render();   // a parent change reshapes its children's lists, so this one does re-render
+  }
 
   // Edits go straight into the stored take-off, with NO re-render — re-rendering on every change
   // would tear the focused input out from under the cursor mid-edit.
@@ -893,6 +975,7 @@
     // Catalog arrives async; the first render just skips the material card and re-renders once
     // it's in. Never blocks the page on a lookup.
     if(CATALOG===null && !CATALOG_LOADING){ CATALOG_LOADING=true; loadCatalog().then(function(){ render(); }); }
+    if(arr(R.fittings).length) loadFittingsCatalog();   // only fetched when there are fittings to edit
     const _aiKeep = (document.getElementById("aiInput")||{}).value;  // preserve in-progress chat text across re-render
     const R = loadResult();
     const rows = arr(R.rows);
