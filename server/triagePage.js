@@ -74,6 +74,12 @@ function renderTriagePage() {
   .intake .drop{margin-top:10px;border:1.5px dashed #ccd5e0;border-radius:8px;padding:14px;text-align:center;color:var(--muted);font-size:13px;cursor:pointer}
   .intake .drop:hover,.intake .drop.over{border-color:var(--mc-blue);background:#f7fafd;color:var(--mc-blue)}
   .intake .files{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px;color:#3d4955}
+  /* How a PDF is read: seen as a drawing, or read as a document. Shown per row because it
+     decides whether a long file goes in whole or gets trimmed. */
+  .intake .readas{font:inherit;font-size:11.5px;padding:2px 6px;margin-left:8px;border:1px solid var(--line);
+    border-radius:6px;background:#fff;color:#3d4955;cursor:pointer}
+  .intake .whytag{display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;margin-left:6px;
+    border-radius:50%;background:#e8edf3;color:#6b7683;font-size:10px;font-weight:700;cursor:help}
   .intake .files li{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid #f2f4f7}
   .intake .files button{border:0;background:transparent;color:var(--soon);cursor:pointer;font-size:14px;line-height:1}
   .intake .bar{display:flex;align-items:center;gap:10px;margin-top:14px}
@@ -409,6 +415,7 @@ function renderTriagePage() {
   // at take-off time, which is the step that actually needs to read drawings.
   var intakeFiles = [];
   var MAX_INTAKE_BYTES = 25 * 1024 * 1024;   // server accepts 40mb of JSON; base64 inflates by ~4/3
+  var DRAW_PAGE_BUDGET = 40;                 // mirrors PDF_PAGE_BUDGET in triage.js — drawings only
   function fmtBytes(n){ return n>1048576 ? (n/1048576).toFixed(1)+' MB' : Math.max(1,Math.round(n/1024))+' KB'; }
   function intakeKind(f){
     var t=(f.type||'').toLowerCase();
@@ -416,17 +423,49 @@ function renderTriagePage() {
     if(t==='application/pdf') return 'pdf';
     return 'text';
   }
+  // A PDF is read one of two ways, and the difference decides whether a long document fits.
+  // A DRAWING is seen — page images, about 2,000 tokens a page, so drawings share a page
+  // budget and a long one gets trimmed. A DOCUMENT (a BOM, a spec, a scope letter) is read as
+  // text for roughly a fifth the cost, and goes in WHOLE. Guessed as each file is added and
+  // shown here so it can be corrected; the person looking at the file knows better than the
+  // heuristic does.
   function renderIntakeFiles(){
     var ul=document.getElementById('intakeList');
     ul.innerHTML=intakeFiles.map(function(f,i){
-      return '<li><span>'+esc(f.name)+' <span style="color:#9aa5b1">'+esc(f.kindLabel)+' · '+fmtBytes(f.size)+'</span></span>'
+      var pick='';
+      if(f.kind==='pdf'){
+        var k=f.read_as||'';
+        pick='<select class="readas" onchange="setIntakeReadAs('+i+',this.value)" title="How this file is read">'
+          + '<option value="drawing"'+(k==='drawing'?' selected':'')+'>drawing — seen</option>'
+          + '<option value="text"'+(k==='text'?' selected':'')+'>document — read in full</option>'
+          + '</select>';
+      }
+      return '<li><span>'+esc(f.name)+' <span style="color:#9aa5b1">'+esc(f.kindLabel)+' · '+fmtBytes(f.size)
+        + (f.pages?(' · '+f.pages+'p'):'')+'</span> '+pick
+        + (f.why?'<span class="whytag" title="'+esc(f.why)+'">?</span>':'')+'</span>'
         + '<button title="Remove" onclick="removeIntakeFile('+i+')">✕</button></li>';
     }).join('');
     var total=intakeFiles.reduce(function(s,f){return s+f.size},0);
-    document.getElementById('intakeNote').textContent = intakeFiles.length
+    var drawPages=0, docPages=0, unknown=false;
+    intakeFiles.forEach(function(f){
+      if(f.kind!=='pdf') return;
+      if(!f.pages){ unknown=true; return; }
+      if(f.read_as==='text') docPages+=f.pages; else drawPages+=f.pages;
+    });
+    var note = intakeFiles.length
       ? intakeFiles.length+' file'+(intakeFiles.length===1?'':'s')+' · '+fmtBytes(total)
       : '';
+    if(drawPages||docPages){
+      note += ' · ';
+      if(docPages) note += docPages+' page'+(docPages===1?'':'s')+' read in full';
+      if(docPages&&drawPages) note += ', ';
+      if(drawPages) note += drawPages+' drawing page'+(drawPages===1?'':'s')
+        + (drawPages>DRAW_PAGE_BUDGET?(' — only '+DRAW_PAGE_BUDGET+' will be looked at'):'');
+    }
+    if(unknown) note += ' · still measuring…';
+    document.getElementById('intakeNote').textContent = note;
   }
+  window.setIntakeReadAs=function(i,v){ if(intakeFiles[i]){ intakeFiles[i].read_as=v; renderIntakeFiles(); } };
   window.removeIntakeFile=function(i){ intakeFiles.splice(i,1); renderIntakeFiles(); };
   function addIntakeFiles(fileList){
     var pending=Array.prototype.slice.call(fileList||[]);
@@ -438,6 +477,21 @@ function renderTriagePage() {
         if(kind==='text'){ rec.text=String(reader.result||''); }
         else { var s=String(reader.result||''); rec.data=s.slice(s.indexOf(',')+1); }
         intakeFiles.push(rec); renderIntakeFiles();
+        // Ask the server what kind of PDF this is. It comes back with a guess, a page count
+        // and a reason, which the row then shows. A failure here never blocks the upload —
+        // the file simply stays on the drawing path, which is the budgeted one.
+        if(kind==='pdf' && rec.data){
+          fetch('/api/triage/inspect-file',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({name:rec.name, data:rec.data})})
+            .then(function(r){return r.json()})
+            .then(function(d){
+              if(!d||!d.ok) return;
+              if(!rec.read_as) rec.read_as=d.kind;      // don't overwrite a choice already made
+              rec.pages=d.pages; rec.why=d.why;
+              renderIntakeFiles();
+            })
+            .catch(function(){ if(!rec.read_as) rec.read_as='drawing'; renderIntakeFiles(); });
+        }
       };
       reader.onerror=function(){ notify('Could not read '+f.name,'bad'); };
       if(kind==='text') reader.readAsText(f); else reader.readAsDataURL(f);
@@ -468,7 +522,9 @@ function renderTriagePage() {
     document.getElementById('intakeNote').textContent='Reading your material…';
     fetch('/api/triage/manual',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({manufacture:MFG, text:text, attachments:intakeFiles.map(function(f){
-        return {kind:f.kind, name:f.name, media_type:f.media_type, data:f.data, text:f.text};
+        // read_as carries the drawing/document choice through, so the server honours what is
+        // on screen rather than guessing again and possibly differently.
+        return {kind:f.kind, name:f.name, media_type:f.media_type, data:f.data, text:f.text, read_as:f.read_as};
       })})})
       .then(function(r){return r.json()})
       .then(function(res){

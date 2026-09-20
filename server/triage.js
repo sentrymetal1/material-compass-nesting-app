@@ -18,6 +18,7 @@ const _Anthropic = require('@anthropic-ai/sdk');
 const Anthropic = _Anthropic.default || _Anthropic;   // 0.40.x CJS interop
 const axios = require('axios');
 const { getGraphAccessToken, effectiveConfig } = require('./outlook');
+const pdfkind = require('./pdfkind');   // is this PDF something to look at, or something to read?
 const { renderTriagePage, renderOpportunityDetail } = require('./triagePage');
 const filestore = require('./filestore');
 
@@ -237,17 +238,47 @@ async function manualContent(text, attachments, budget) {
   const note = String(text || '').trim();
   if (note) content.push({ type: 'text', text: 'ESTIMATOR NOTES / PASTED MATERIAL:\n' + note.slice(0, 60000) });
   const list = (Array.isArray(attachments) ? attachments : []).filter(Boolean);
-  // Measure and share out the page budget BEFORE building any blocks — the ceiling applies to
-  // the request as a whole, so it cannot be decided one document at a time.
+  const pdfs = list.filter(a => a.data && a.kind !== 'image' && a.kind !== 'text');
+
+  // Split the PDFs by how they have to be READ, before anything is budgeted.
+  // A drawing has to be seen and costs image tokens per page, so it lives inside the page
+  // budget. A BOM or a spec only has to be read, and as text it costs about a fifth as much —
+  // which means the WHOLE document goes rather than the first N pages of it. Sending both down
+  // the image path is what made a customer's bill of material fail while drawings went through.
+  // read_as comes from the user when they have corrected the guess on the intake screen.
+  const asDocument = [];
+  for (const a of pdfs) {
+    let kind = String(a.read_as || '').toLowerCase();
+    if (kind !== 'text' && kind !== 'drawing') {
+      try { kind = (await pdfkind.inspect(a.name, a.data)).kind; }
+      catch (e) { kind = 'drawing'; }   // safe: the drawing path is the budgeted one
+    }
+    if (kind === 'text') asDocument.push(a);
+  }
+  const asDrawing = pdfs.filter(a => asDocument.indexOf(a) < 0);
+
+  // Only drawings compete for the page budget now.
   const alloc = new Map();
-  (await allocatePdfPages(list.filter(a => a.data && a.kind !== 'image' && a.kind !== 'text'), budget))
-    .forEach(c => alloc.set(c.ref, c));
+  (await allocatePdfPages(asDrawing, budget)).forEach(c => alloc.set(c.ref, c));
 
   for (const a of list) {
     if (a.kind === 'image' && a.data) {
       content.push({ type: 'image', source: { type: 'base64', media_type: a.media_type || 'image/png', data: a.data } });
     } else if (a.kind === 'text' && a.text) {
       content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ':\n' + String(a.text).slice(0, 60000) });
+    } else if (a.data && asDocument.indexOf(a) > -1) {
+      // Read, not seen. No budget, no truncation — the whole document goes.
+      try {
+        const t = await pdfkind.extractText(a.data);
+        console.log('[triage] "' + (a.name || 'file') + '" read as TEXT: ' + t.pages + ' pages, ' +
+          t.text.length + ' chars (~' + Math.round(t.text.length / 4) + ' tokens, against ~' +
+          (t.pages * 2000) + ' as page images)');
+        content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ' (' + t.pages +
+          ' pages, read as text' + (t.truncated ? ', truncated' : ' in full') + '):\n' + t.text });
+      } catch (e) {
+        console.log('[triage] text extraction failed on "' + (a.name || 'file') + '": ' + e.message);
+        content.push({ type: 'document', source: { type: 'base64', media_type: a.media_type || 'application/pdf', data: a.data } });
+      }
     } else if (a.data) {
       const c = alloc.get(a) || {};
       let data = a.data;
@@ -255,9 +286,9 @@ async function manualContent(text, attachments, budget) {
         try {
           data = await trimPdf(a.data, c.keep);
           content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ' is ' + c.pages +
-            ' pages. Only the first ' + c.keep + ' are shown here, because the request has a ' +
-            'hundred-page ceiling shared across all the files. Do not treat this as the whole ' +
-            'document; the complete file is on the job for the take-off.' });
+            ' pages. Only the first ' + c.keep + ' are shown here, because drawings share a page ' +
+            'budget. Do not treat this as the whole document; the complete file is on the job ' +
+            'for the take-off.' });
         } catch (e) {
           console.log('[triage] could not trim "' + (a.name || 'file') + '": ' + e.message);
         }
@@ -1059,6 +1090,33 @@ function registerTriageRoutes(app, deps) {
   // It deliberately produces an ORDINARY Quote_Opportunity, so the row behaves
   // like every other card — same Quote/Skip, same project creation, same
   // take-off afterwards. One queue, one process, no second path to maintain.
+  // What kind of PDF is this? Called as each file is added, so the intake screen can show the
+  // guess and what it will cost BEFORE the estimator presses the button, instead of a length
+  // error arriving afterwards. The guess is shown, never applied silently — the person looking
+  // at the file knows better than the heuristic, and can flip it.
+  app.post('/api/triage/inspect-file', async (req, res) => {
+    try {
+      const { name, data } = req.body || {};
+      if (!data) return res.status(400).json({ ok: false, error: 'data required' });
+      const r = await pdfkind.inspect(name, data);
+      res.json({
+        ok: true,
+        name: name || 'file',
+        kind: r.kind,
+        pages: r.pages,
+        per_page: r.perPage,
+        why: r.why,
+        // What it costs each way, so the screen can explain the choice rather than assert it.
+        est_tokens_as_text: Math.round((r.chars || 0) / 4),
+        est_tokens_as_images: (r.pages || 0) * 2000,
+      });
+    } catch (err) {
+      // Never block an upload on a failed guess — default to drawing, which is the budgeted path.
+      res.json({ ok: true, name: (req.body && req.body.name) || 'file', kind: 'drawing', pages: 0,
+        why: 'could not read it — treating as a drawing' });
+    }
+  });
+
   app.post('/api/triage/manual', async (req, res) => {
     try {
       const { manufacture, text, attachments } = req.body || {};
