@@ -181,7 +181,13 @@ const MANUAL_SYSTEM = EXTRACT_SYSTEM
 //
 // Triage only has to recognise the opportunity, not read the job, and the FULL file is stored
 // for the take-off regardless, so nothing is lost downstream.
-const PDF_PAGE_BUDGET = 100;
+// 100 is the API's page ceiling, but it is not the binding constraint: a hundred PDF pages
+// came to ~207,000 tokens against a 200,000 limit, so the request failed on length instead.
+// PDF pages cost roughly 2,000 tokens each, and that varies — a dense BOM page costs far more
+// than a drawing. So the default sits well under the ceiling, and extractManual halves it and
+// retries if a particular set still comes out too long. Triage only has to RECOGNISE the
+// opportunity; it does not need forty pages of bill of material to tell that it is one.
+const PDF_PAGE_BUDGET = 40;
 
 function pdfPageCount(b64) {
   try {
@@ -202,17 +208,18 @@ async function trimPdf(b64, keep) {
 
 // Hands back, per PDF, how many pages it may send. Unmeasurable files are left alone —
 // they cannot be trimmed, and the API's own complaint beats one we invented.
-async function allocatePdfPages(pdfs) {
+async function allocatePdfPages(pdfs, budget) {
+  const PDF_BUDGET = budget || PDF_PAGE_BUDGET;
   const counted = [];
   for (const p of pdfs) counted.push({ ref: p, pages: await pdfPageCount(p.data) });
   const known = counted.filter(c => c.pages != null);
   const total = known.reduce((s, c) => s + c.pages, 0);
-  if (total <= PDF_PAGE_BUDGET) { counted.forEach(c => { c.keep = c.pages; }); return counted; }
+  if (total <= PDF_BUDGET) { counted.forEach(c => { c.keep = c.pages; }); return counted; }
 
   // Shortest first, so anything that fits within its fair share is granted in full and its
   // unused share rolls forward to the documents that actually need the room.
   const queue = known.slice().sort((a, b) => a.pages - b.pages);
-  let left = PDF_PAGE_BUDGET, n = queue.length;
+  let left = PDF_BUDGET, n = queue.length;
   queue.forEach((c) => {
     const share = Math.max(1, Math.floor(left / n));
     c.keep = Math.min(c.pages, share);
@@ -220,21 +227,21 @@ async function allocatePdfPages(pdfs) {
   });
   counted.filter(c => c.pages == null).forEach(c => { c.keep = null; });
   console.log('[triage] ' + total + ' PDF pages across ' + known.length + ' file(s) exceeds the ' +
-    PDF_PAGE_BUDGET + '-page request budget — sending ' +
+    PDF_BUDGET + '-page request budget — sending ' +
     queue.map(c => '"' + (c.ref.name || 'file') + '" ' + c.keep + '/' + c.pages).join(', '));
   return counted;
 }
 
-async function manualContent(text, attachments) {
+async function manualContent(text, attachments, budget) {
   const content = [];
   const note = String(text || '').trim();
   if (note) content.push({ type: 'text', text: 'ESTIMATOR NOTES / PASTED MATERIAL:\n' + note.slice(0, 60000) });
   const list = (Array.isArray(attachments) ? attachments : []).filter(Boolean);
   // Measure and share out the page budget BEFORE building any blocks — the ceiling applies to
   // the request as a whole, so it cannot be decided one document at a time.
-  const budget = new Map();
-  (await allocatePdfPages(list.filter(a => a.data && a.kind !== 'image' && a.kind !== 'text')))
-    .forEach(c => budget.set(c.ref, c));
+  const alloc = new Map();
+  (await allocatePdfPages(list.filter(a => a.data && a.kind !== 'image' && a.kind !== 'text'), budget))
+    .forEach(c => alloc.set(c.ref, c));
 
   for (const a of list) {
     if (a.kind === 'image' && a.data) {
@@ -242,7 +249,7 @@ async function manualContent(text, attachments) {
     } else if (a.kind === 'text' && a.text) {
       content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ':\n' + String(a.text).slice(0, 60000) });
     } else if (a.data) {
-      const c = budget.get(a) || {};
+      const c = alloc.get(a) || {};
       let data = a.data;
       if (c.pages != null && c.keep != null && c.keep < c.pages) {
         try {
@@ -262,17 +269,33 @@ async function manualContent(text, attachments) {
   return content;
 }
 
+// Page count is only a proxy for token cost, and a rough one: a dense BOM page costs several
+// times a drawing sheet. So when a particular set still comes out over the context limit,
+// halve the page budget and try again rather than handing the estimator a raw 400. Triage only
+// has to recognise the opportunity, so fewer pages still answers the question it is asking.
 async function extractManual(client, text, attachments) {
-  const resp = await client.messages.create({
-    model: EXTRACT_MODEL,
-    max_tokens: 1024,
-    system: MANUAL_SYSTEM,
-    tools: [EXTRACT_TOOL],
-    tool_choice: { type: 'tool', name: 'submit_opportunity' },
-    messages: [{ role: 'user', content: await manualContent(text, attachments) }],
-  });
-  const toolUse = resp.content.find(b => b.type === 'tool_use');
-  return { out: toolUse ? toolUse.input : null, usage: resp.usage };
+  let budget = PDF_PAGE_BUDGET, lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const resp = await client.messages.create({
+        model: EXTRACT_MODEL,
+        max_tokens: 1024,
+        system: MANUAL_SYSTEM,
+        tools: [EXTRACT_TOOL],
+        tool_choice: { type: 'tool', name: 'submit_opportunity' },
+        messages: [{ role: 'user', content: await manualContent(text, attachments, budget) }],
+      });
+      const toolUse = resp.content.find(b => b.type === 'tool_use');
+      return { out: toolUse ? toolUse.input : null, usage: resp.usage };
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      if (!/prompt is too long|too many tokens|maximum context/i.test(msg)) throw e;
+      lastErr = e;
+      budget = Math.max(4, Math.floor(budget / 2));
+      console.log('[triage] prompt too long — retrying with a ' + budget + '-page budget');
+    }
+  }
+  throw lastErr;
 }
 
 async function extractOpportunity(client, email) {
