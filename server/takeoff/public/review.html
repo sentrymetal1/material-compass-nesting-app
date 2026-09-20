@@ -140,7 +140,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.51 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.52 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -975,9 +975,12 @@
     // Catalog arrives async; the first render just skips the material card and re-renders once
     // it's in. Never blocks the page on a lookup.
     if(CATALOG===null && !CATALOG_LOADING){ CATALOG_LOADING=true; loadCatalog().then(function(){ render(); }); }
-    if(arr(R.fittings).length) loadFittingsCatalog();   // only fetched when there are fittings to edit
     const _aiKeep = (document.getElementById("aiInput")||{}).value;  // preserve in-progress chat text across re-render
     const R = loadResult();
+    // AFTER R exists. Putting this above the declaration threw a ReferenceError on every render
+    // — R is a const, so it is in its temporal dead zone until that line runs — and the page sat
+    // on "Loading take-off…" forever. A parse check cannot catch it; only running it can.
+    if(arr(R.fittings).length) loadFittingsCatalog();   // only fetched when there are fittings to edit
     const rows = arr(R.rows);
     const s = R.synopsis || {};
     DECISIONS = arr(s.decisions).map((d,i)=>({
