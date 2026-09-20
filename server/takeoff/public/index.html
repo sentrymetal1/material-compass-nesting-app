@@ -119,6 +119,21 @@
     .foot { text-align:center; color:#aab; font-size:11px; margin-top:18px; }
     /* Scope tree — the estimator's components → drawings, sent as scope_tree. */
     .scope { margin-top:0; }
+    /* Type of Project picker */
+    .ptype { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 10px;
+      padding:8px 10px; background:#f7f9fc; border:1px solid #e3e8ef; border-radius:8px; }
+    .ptype label { font-size:12px; font-weight:700; color:#2b3340; }
+    .ptype select, .ptype input { font:inherit; font-size:12.5px; padding:5px 8px;
+      border:1px solid #cfd6de; border-radius:6px; background:#fff; max-width:100%; }
+    .ptype #ptypeSel { min-width:210px; }
+    .ptypehint { font-size:11.5px; color:#6b7683; }
+    .ptypehint.warn { color:#b3261e; font-weight:600; }
+    .ptypenew { display:none; width:100%; gap:8px; margin-top:6px; flex-wrap:wrap; }
+    .ptypenew.show { display:flex; }
+    .ptypenew input { flex:1 1 220px; }
+    .ptypenew button { font:inherit; font-size:12.5px; font-weight:600; padding:6px 14px;
+      border:0; border-radius:6px; background:var(--blue); color:#fff; cursor:pointer; }
+    .ptypenew button.ghost { background:#fff; color:#2b3340; border:1px solid #cfd6de; }
     .scope > .lbl { font-size:12px; color:#556; margin-bottom:8px;
                     display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
     .scope > .lbl .opt { color:#8893a0; font-weight:400; }
@@ -447,6 +462,24 @@
           <span>Components &amp; drawings</span>
           <a class="reload" id="reloadScope" title="Re-pull the project's components &amp; drawings">↻ Reload from project</a>
         </div>
+        <!-- Type of Project. The project form REQUIRES it on every component, but a component
+             created without one saves happily here and only fails on the next Update of the
+             project, as "Invalid entries found" naming no row. So it is asked for before any
+             component is created, and applied to all of them. -->
+        <div class="ptype" id="ptypeBox">
+          <label for="ptypeSel">Type of project</label>
+          <select id="ptypeSel"><option value="">Loading…</option></select>
+          <span class="ptypehint" id="ptypeHint"></span>
+          <div class="ptypenew" id="ptypeNew">
+            <input type="text" id="ptypeName" placeholder="New type name, e.g. Skid Fabrication" />
+            <select id="ptypeDiff">
+              <option value="">Difficulty…</option>
+              <option>Basic</option><option>Moderate</option><option>Difficult</option>
+            </select>
+            <button type="button" id="ptypeSave">Add</button>
+            <button type="button" id="ptypeCancel" class="ghost">Cancel</button>
+          </div>
+        </div>
         <div class="lbl">
           <span class="opt">These are the project’s own records — pick from them so every BOM row ties back to a
             real component and drawing. ✎ renames and 🗑 deletes on the project itself; ✕ just leaves it out of
@@ -498,7 +531,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.56 (2026-09-12)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.57 (2026-09-20)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -897,7 +930,96 @@
         }));
     }
 
+    // ---- Type of Project ----------------------------------------------------
+    // The project form requires it on every component. A component created without one saves
+    // here without complaint and then fails the project's NEXT Update as "Invalid entries
+    // found", naming no row — the error lands nowhere near its cause. So it is chosen once,
+    // up front, and stamped on every component this page creates.
+    let projectTypes = [], selectedType = "";
+
+    function ptypeHint(msg, warn) {
+      const el = document.getElementById("ptypeHint");
+      if (!el) return;
+      el.textContent = msg || "";
+      el.className = "ptypehint" + (warn ? " warn" : "");
+    }
+
+    function renderProjectTypes() {
+      const sel = document.getElementById("ptypeSel");
+      if (!sel) return;
+      const opts = ['<option value="">— choose —</option>'];
+      projectTypes.forEach((t) => {
+        opts.push('<option value="' + escHtml(t.id) + '"' + (t.id === selectedType ? " selected" : "") + ">" +
+          escHtml(t.name) + (t.difficulty ? " (" + escHtml(t.difficulty) + ")" : "") + "</option>");
+      });
+      opts.push('<option value="__new">+ Add a new type…</option>');
+      sel.innerHTML = opts.join("");
+      const t = projectTypes.find((x) => x.id === selectedType);
+      if (t) ptypeHint(t.notes || "Applied to every component created here.");
+      else if (projectTypes.length) ptypeHint("Pick one before adding components.", true);
+      else ptypeHint("No types set up yet — add one.", true);
+    }
+
+    async function loadProjectTypes() {
+      const mfg = params.manufacturer_id;
+      if (!mfg) { projectTypes = []; renderProjectTypes(); ptypeHint("Open from the project page so the type list can load.", true); return; }
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/takeoff/project-types?manufacturer_id=" + encodeURIComponent(mfg));
+        const d = await r.json();
+        if (!r.ok || d.ok === false) throw new Error(d.error || ("HTTP " + r.status));
+        projectTypes = d.types || [];
+        // One type and nothing chosen? Choose it. There is no decision to make.
+        if (!selectedType && projectTypes.length === 1) selectedType = projectTypes[0].id;
+        renderProjectTypes();
+      } catch (e) {
+        projectTypes = []; renderProjectTypes();
+        ptypeHint("Could not load types: " + (e.message || e), true);
+      }
+    }
+
+    function showNewType(on) {
+      const box = document.getElementById("ptypeNew");
+      if (box) box.className = "ptypenew" + (on ? " show" : "");
+      if (on) setTimeout(() => { const n = document.getElementById("ptypeName"); if (n) n.focus(); }, 0);
+    }
+
+    document.getElementById("ptypeSel").addEventListener("change", (e) => {
+      if (e.target.value === "__new") { e.target.value = selectedType; showNewType(true); return; }
+      selectedType = e.target.value;
+      renderProjectTypes();
+    });
+    document.getElementById("ptypeCancel").addEventListener("click", () => showNewType(false));
+    document.getElementById("ptypeSave").addEventListener("click", async () => {
+      const name = (document.getElementById("ptypeName").value || "").trim();
+      const diff = document.getElementById("ptypeDiff").value || "";
+      if (!name) { ptypeHint("Give the new type a name.", true); return; }
+      if (!diff) { ptypeHint("Pick a difficulty — it feeds labour.", true); return; }
+      ptypeHint("Adding…");
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/takeoff/project-types", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ manufacturer_id: params.manufacturer_id, name: name, difficulty: diff }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.ok === false) throw new Error(d.error || ("HTTP " + r.status));
+        selectedType = d.type.id;
+        document.getElementById("ptypeName").value = "";
+        document.getElementById("ptypeDiff").value = "";
+        showNewType(false);
+        await loadProjectTypes();
+        ptypeHint('Added "' + d.type.name + '".');
+      } catch (e) {
+        ptypeHint(e.message || String(e), true);
+      }
+    });
+
     async function scopeApi(path, body) {
+      // Stamp the chosen type on every component this page creates, here rather than at the
+      // three call sites, so a new one cannot be added later that quietly forgets it.
+      if (path === "add" && body && body.kind === "component" && !body.type_of_project) {
+        if (!selectedType) throw new Error("Choose a Type of project first — the project form requires it on every component.");
+        body = Object.assign({}, body, { type_of_project: selectedType });
+      }
       const r = await fetch(RAILWAY_URL + "/api/takeoff/project-scope/" + path, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
@@ -1870,6 +1992,7 @@
           aliases = (st.aliases && typeof st.aliases === "object") ? st.aliases : {};
         }
       } catch (e) {}
+      loadProjectTypes();
       pullProjectScope(false);
     }
     document.getElementById("reloadScope").addEventListener("click", (e) => { e.preventDefault(); pullProjectScope(true); });

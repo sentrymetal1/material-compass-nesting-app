@@ -214,9 +214,86 @@ app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
 // Component: set Project_LU (the field the staging validator resolves on) at create; the
 // MCP_Customer_Project_Form link goes on as a best-effort patch (mirrors /save) so a lookup
 // rejection can never fail the add. Drawing: MCP_Customer_Project_Form is the direct link.
+// The manufacturer's own list of project types, for the take-off's Type of Project picker.
+// A component created without one fails the project form's validation on the NEXT Update, with
+// a bare "Invalid entries found" that names no row — so the take-off has to ask up front.
+// Each type carries a difficulty that feeds labour, which is why this is a real choice and
+// cannot be defaulted quietly.
+app.get('/api/takeoff/project-types', async (req, res) => {
+  try {
+    const mfg = String(req.query.manufacturer_id || '').trim();
+    if (!/^[0-9]{6,25}$/.test(mfg)) return res.status(400).json({ ok: false, error: 'manufacturer_id required' });
+    const token = await getAccessToken();
+    const r = await axios.get(creatorApiBase() + '/report/Type_Of_Projects_Report?criteria=(Manufacture==' + mfg + ')',
+      { headers: zohoHeaders(token) });
+    const types = ((r.data && r.data.data) || []).map((x) => ({
+      id: String(x.ID),
+      name: String(x.Project_Type || '').trim(),
+      difficulty: String(x.Project_Difficulty || '').trim(),
+      notes: String(x.Type_of_Project_Notes || '').trim(),
+    })).filter((x) => x.name);
+    res.json({ ok: true, types });
+  } catch (err) {
+    const code = err.response?.data?.code;
+    if (code === 9280 || code === 3100) return res.json({ ok: true, types: [] });  // no rows for this tenant
+    console.error('[takeoff] project-types:', err.response?.data || err.message);
+    res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
+  }
+});
+
+// Add a project type the manufacturer does not have yet. Same principle as the rest of the
+// flag-and-add work: never let a missing catalogue entry stop a quote. Difficulty is asked for
+// rather than defaulted because it feeds labour — a wrong one is worse than an absent one.
+app.post('/api/takeoff/project-types', async (req, res) => {
+  try {
+    const mfg = String((req.body && req.body.manufacturer_id) || '').trim();
+    const name = String((req.body && req.body.name) || '').trim();
+    const difficulty = String((req.body && req.body.difficulty) || '').trim();
+    if (!/^[0-9]{6,25}$/.test(mfg)) return res.status(400).json({ ok: false, error: 'manufacturer_id required' });
+    if (!name) return res.status(400).json({ ok: false, error: 'A name is required.' });
+    if (!difficulty) return res.status(400).json({ ok: false, error: 'A difficulty is required — it feeds labour.' });
+
+    const token = await getAccessToken();
+    const base = creatorApiBase();
+
+    // Existing types for this tenant, for two reasons: reject a duplicate name before creating
+    // a near-twin, and copy Account_User_Email off a sibling row. An API insert gets none of
+    // the form's defaults, so anything the form would have filled has to be set here.
+    let siblings = [];
+    try {
+      const r = await axios.get(base + '/report/Type_Of_Projects_Report?criteria=(Manufacture==' + mfg + ')',
+        { headers: zohoHeaders(token) });
+      siblings = (r.data && r.data.data) || [];
+    } catch (e) { /* none yet — first type for this tenant */ }
+
+    const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const dupe = siblings.find((x) => norm(x.Project_Type) === norm(name));
+    if (dupe) return res.status(409).json({ ok: false, error: 'You already have a type called "' + String(dupe.Project_Type).trim() + '".', id: String(dupe.ID) });
+
+    const data = {
+      Project_Type: name,
+      Manufacture: mfg,
+      ID_Lookup_Number: mfg,          // mirrors the manufacturer id, as the existing rows do
+      Project_Difficulty: difficulty,
+      Type_of_Project_Notes: String((req.body && req.body.notes) || ''),
+    };
+    const email = siblings.length ? String(siblings[0].Account_User_Email || '').trim() : '';
+    if (email) data.Account_User_Email = email;
+
+    const ins = await axios.post(base + '/form/Type_Of_Projects', { data }, { headers: zohoHeaders(token) });
+    const id = String(ins.data?.data?.ID || '');
+    if (!id) return res.status(502).json({ ok: false, error: 'Zoho accepted the call but returned no id.' });
+    console.log('[takeoff] new project type "' + name + '" (' + difficulty + ') for mfg ' + mfg + ' -> ' + id);
+    res.json({ ok: true, type: { id, name, difficulty } });
+  } catch (err) {
+    console.error('[takeoff] project-types create:', err.response?.data || err.message);
+    res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
+  }
+});
+
 app.post('/api/takeoff/project-scope/add', async (req, res) => {
   try {
-    const { project_id, kind, value, component_id } = req.body || {};
+    const { project_id, kind, value, component_id, type_of_project } = req.body || {};
     if (!project_id) return res.status(400).json({ ok: false, error: 'project_id required' });
     const v = String(value || '').trim();
     if (!v) return res.status(400).json({ ok: false, error: 'value required' });
@@ -233,6 +310,9 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
       // link (best-effort patch below). Setting only the first two is what broke the page.
       // A natively-entered component carries Quantity 1 and zeroed money/weight fields. Left blank,
       // anything that multiplies by Quantity or sums those columns is working from nothing.
+      // Type_Of_Project is REQUIRED by the project form. Without it the component saves fine
+      // here, and then the next Update on the project is rejected with "Invalid entries found"
+      // naming no row — the failure lands far from its cause. The take-off asks for it.
       data = {
         Project_Component: v, Project_LU: project_id, Project_Bi_Directional_Lookup: project_id,
         Quantity: 1,
@@ -241,6 +321,7 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
         Total_Structural_Est_Matl_Amt: 0,
         Unit_Weight_Of_Component: 0,
       };
+      if (/^[0-9]{6,25}$/.test(String(type_of_project || ''))) data.Type_Of_Project = String(type_of_project);
       mcpBestEffort = true;
     } else if (kind === 'drawing') {
       form = 'Project_Drawing_Details_Form'; report = 'All_Project_Drawing_Details';
