@@ -170,51 +170,92 @@ const MANUAL_SYSTEM = EXTRACT_SYSTEM
 // as native blocks so the model actually looks at them; anything already text is
 // inlined and truncated, because a pasted thread can be enormous and the tail of
 // it is rarely the part that carries the bid date.
-// The API refuses any PDF over 100 pages outright — the whole request 400s, so one long
-// document takes the entire intake down with it. A 200-page BOM did exactly that.
+// The 100-page ceiling is PER REQUEST, summed across every PDF — not per document. Capping
+// each file at 100 was not enough: a 149-page BOM trimmed to 100, plus three short drawings,
+// still failed. So the budget has to be shared out.
+//
+// Shared max-min fair: small documents get every page they have, and whatever is left over
+// goes to the long one. Three one-page drawings and a 149-page BOM means the drawings arrive
+// whole and the BOM gets 97. That is the right way round — each drawing is a distinct thing
+// triage needs to see, while the BOM only has to be recognisable as a BOM.
+//
 // Triage only has to recognise the opportunity, not read the job, and the FULL file is stored
-// for the take-off either way, so the fix is to send the first 100 pages and say so. Nothing
-// is lost; the take-off still gets every page.
-const PDF_PAGE_LIMIT = 100;
+// for the take-off regardless, so nothing is lost downstream.
+const PDF_PAGE_BUDGET = 100;
 
-async function capPdfPages(a) {
+function pdfPageCount(b64) {
   try {
     const { PDFDocument } = require('pdf-lib');
-    const src = await PDFDocument.load(Buffer.from(a.data, 'base64'), { ignoreEncryption: true });
-    const total = src.getPageCount();
-    if (total <= PDF_PAGE_LIMIT) return { data: a.data, total: total, kept: total };
-    const out = await PDFDocument.create();
-    const pages = await out.copyPages(src, Array.from({ length: PDF_PAGE_LIMIT }, (_, i) => i));
-    pages.forEach(p => out.addPage(p));
-    const bytes = await out.save();
-    console.log('[triage] "' + (a.name || 'file') + '" is ' + total + ' pages — sending the first ' + PDF_PAGE_LIMIT + ' for triage');
-    return { data: Buffer.from(bytes).toString('base64'), total: total, kept: PDF_PAGE_LIMIT };
-  } catch (e) {
-    // Unreadable or encrypted: let it through untouched rather than dropping it. If it really
-    // is over the limit the API says so, which is a better error than one we invented.
-    console.log('[triage] could not measure "' + (a.name || 'file') + '": ' + e.message);
-    return { data: a.data, total: null, kept: null };
-  }
+    return PDFDocument.load(Buffer.from(b64, 'base64'), { ignoreEncryption: true })
+      .then(d => d.getPageCount()).catch(() => null);
+  } catch (e) { return Promise.resolve(null); }
+}
+
+async function trimPdf(b64, keep) {
+  const { PDFDocument } = require('pdf-lib');
+  const src = await PDFDocument.load(Buffer.from(b64, 'base64'), { ignoreEncryption: true });
+  const out = await PDFDocument.create();
+  const pages = await out.copyPages(src, Array.from({ length: keep }, (_, i) => i));
+  pages.forEach(p => out.addPage(p));
+  return Buffer.from(await out.save()).toString('base64');
+}
+
+// Hands back, per PDF, how many pages it may send. Unmeasurable files are left alone —
+// they cannot be trimmed, and the API's own complaint beats one we invented.
+async function allocatePdfPages(pdfs) {
+  const counted = [];
+  for (const p of pdfs) counted.push({ ref: p, pages: await pdfPageCount(p.data) });
+  const known = counted.filter(c => c.pages != null);
+  const total = known.reduce((s, c) => s + c.pages, 0);
+  if (total <= PDF_PAGE_BUDGET) { counted.forEach(c => { c.keep = c.pages; }); return counted; }
+
+  // Shortest first, so anything that fits within its fair share is granted in full and its
+  // unused share rolls forward to the documents that actually need the room.
+  const queue = known.slice().sort((a, b) => a.pages - b.pages);
+  let left = PDF_PAGE_BUDGET, n = queue.length;
+  queue.forEach((c) => {
+    const share = Math.max(1, Math.floor(left / n));
+    c.keep = Math.min(c.pages, share);
+    left -= c.keep; n -= 1;
+  });
+  counted.filter(c => c.pages == null).forEach(c => { c.keep = null; });
+  console.log('[triage] ' + total + ' PDF pages across ' + known.length + ' file(s) exceeds the ' +
+    PDF_PAGE_BUDGET + '-page request budget — sending ' +
+    queue.map(c => '"' + (c.ref.name || 'file') + '" ' + c.keep + '/' + c.pages).join(', '));
+  return counted;
 }
 
 async function manualContent(text, attachments) {
   const content = [];
   const note = String(text || '').trim();
   if (note) content.push({ type: 'text', text: 'ESTIMATOR NOTES / PASTED MATERIAL:\n' + note.slice(0, 60000) });
-  for (const a of (Array.isArray(attachments) ? attachments : [])) {
-    if (!a) continue;
+  const list = (Array.isArray(attachments) ? attachments : []).filter(Boolean);
+  // Measure and share out the page budget BEFORE building any blocks — the ceiling applies to
+  // the request as a whole, so it cannot be decided one document at a time.
+  const budget = new Map();
+  (await allocatePdfPages(list.filter(a => a.data && a.kind !== 'image' && a.kind !== 'text')))
+    .forEach(c => budget.set(c.ref, c));
+
+  for (const a of list) {
     if (a.kind === 'image' && a.data) {
       content.push({ type: 'image', source: { type: 'base64', media_type: a.media_type || 'image/png', data: a.data } });
     } else if (a.kind === 'text' && a.text) {
       content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ':\n' + String(a.text).slice(0, 60000) });
     } else if (a.data) {
-      const cap = await capPdfPages(a);
-      if (cap.total && cap.kept < cap.total) {
-        content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ' is ' + cap.total +
-          ' pages. Only the first ' + cap.kept + ' are shown here, which is the API limit. Do not ' +
-          'treat this as the whole document; the complete file is on the job for the take-off.' });
+      const c = budget.get(a) || {};
+      let data = a.data;
+      if (c.pages != null && c.keep != null && c.keep < c.pages) {
+        try {
+          data = await trimPdf(a.data, c.keep);
+          content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ' is ' + c.pages +
+            ' pages. Only the first ' + c.keep + ' are shown here, because the request has a ' +
+            'hundred-page ceiling shared across all the files. Do not treat this as the whole ' +
+            'document; the complete file is on the job for the take-off.' });
+        } catch (e) {
+          console.log('[triage] could not trim "' + (a.name || 'file') + '": ' + e.message);
+        }
       }
-      content.push({ type: 'document', source: { type: 'base64', media_type: a.media_type || 'application/pdf', data: cap.data } });
+      content.push({ type: 'document', source: { type: 'base64', media_type: a.media_type || 'application/pdf', data: data } });
     }
   }
   if (!content.length) content.push({ type: 'text', text: '(no material supplied)' });
@@ -1168,4 +1209,6 @@ function registerTriageRoutes(app, deps) {
   console.log('[triage] poll route registered: GET /api/triage/poll (+ /debug, daily auto-scan armed)');
 }
 
-module.exports = { registerTriageRoutes };
+// allocatePdfPages is exported so the page-budget share-out can be tested directly. It is the
+// piece with arithmetic in it, and getting it wrong 400s the whole intake.
+module.exports = { registerTriageRoutes, allocatePdfPages };
