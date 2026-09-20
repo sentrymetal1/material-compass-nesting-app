@@ -246,14 +246,27 @@ async function manualContent(text, attachments, budget) {
   // which means the WHOLE document goes rather than the first N pages of it. Sending both down
   // the image path is what made a customer's bill of material fail while drawings went through.
   // read_as comes from the user when they have corrected the guess on the intake screen.
-  const asDocument = [];
+  // Extraction is attempted HERE, before anything is budgeted, because a document that cannot
+  // be read as text is not a document — it is a drawing, and it has to go back into the page
+  // budget. Deciding that later meant a failed extraction fell through to sending the whole
+  // untrimmed file, which sailed past the budget and 400'd the request. Classify, then commit.
+  const asDocument = [], docText = new Map();
   for (const a of pdfs) {
     let kind = String(a.read_as || '').toLowerCase();
     if (kind !== 'text' && kind !== 'drawing') {
       try { kind = (await pdfkind.inspect(a.name, a.data)).kind; }
       catch (e) { kind = 'drawing'; }   // safe: the drawing path is the budgeted one
     }
-    if (kind === 'text') asDocument.push(a);
+    if (kind !== 'text') continue;
+    try {
+      const t = await pdfkind.extractText(a.data);
+      if (!t.text || t.text.length < 40) throw new Error('no text in it');
+      docText.set(a, t);
+      asDocument.push(a);
+    } catch (e) {
+      console.log('[triage] "' + (a.name || 'file') + '" was marked a document but yielded no text (' +
+        e.message + ') — putting it back on the drawing budget');
+    }
   }
   const asDrawing = pdfs.filter(a => asDocument.indexOf(a) < 0);
 
@@ -266,19 +279,15 @@ async function manualContent(text, attachments, budget) {
       content.push({ type: 'image', source: { type: 'base64', media_type: a.media_type || 'image/png', data: a.data } });
     } else if (a.kind === 'text' && a.text) {
       content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ':\n' + String(a.text).slice(0, 60000) });
-    } else if (a.data && asDocument.indexOf(a) > -1) {
-      // Read, not seen. No budget, no truncation — the whole document goes.
-      try {
-        const t = await pdfkind.extractText(a.data);
-        console.log('[triage] "' + (a.name || 'file') + '" read as TEXT: ' + t.pages + ' pages, ' +
-          t.text.length + ' chars (~' + Math.round(t.text.length / 4) + ' tokens, against ~' +
-          (t.pages * 2000) + ' as page images)');
-        content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ' (' + t.pages +
-          ' pages, read as text' + (t.truncated ? ', truncated' : ' in full') + '):\n' + t.text });
-      } catch (e) {
-        console.log('[triage] text extraction failed on "' + (a.name || 'file') + '": ' + e.message);
-        content.push({ type: 'document', source: { type: 'base64', media_type: a.media_type || 'application/pdf', data: a.data } });
-      }
+    } else if (a.data && docText.has(a)) {
+      // Read, not seen. No budget, no truncation — the whole document goes. The text was
+      // already pulled out above, so there is no failure path left to get wrong here.
+      const t = docText.get(a);
+      console.log('[triage] "' + (a.name || 'file') + '" read as TEXT: ' + t.pages + ' pages, ' +
+        t.text.length + ' chars (~' + Math.round(t.text.length / 4) + ' tokens, against ~' +
+        (t.pages * 2000) + ' as page images)');
+      content.push({ type: 'text', text: 'ATTACHED — ' + (a.name || 'file') + ' (' + t.pages +
+        ' pages, read as text' + (t.truncated ? ', truncated' : ' in full') + '):\n' + t.text });
     } else if (a.data) {
       const c = alloc.get(a) || {};
       let data = a.data;

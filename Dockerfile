@@ -1,4 +1,7 @@
-FROM node:18-alpine
+# Node 20+: pdf-parse declares "node": ">=20.16.0 <21 || >=22.3.0". On node:18 it installed
+# without complaint and then failed at runtime, so every PDF came back "could not read it" and
+# fell through to guessing by filename. Node 18 is also past end of life.
+FROM node:20-alpine
 
 WORKDIR /app
 
