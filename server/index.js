@@ -1928,7 +1928,10 @@ app.get('/api/bom-lookups/__debug', async (req, res) => {
     // take every live Zoho call down with it until the throttle lifted.
     const token = await getAccessToken();
     const report = req.query.report || 'Form_Types_Report';
-    const criteria = req.query.criteria ? '&criteria=' + req.query.criteria : '';
+    // Encoded, because a compound criteria contains "&&" — unencoded it splits the query
+    // string and Zoho reports the second field as an invalid parameter (code 1060), which
+    // reads exactly like the field not being filterable.
+    const criteria = req.query.criteria ? '&criteria=' + encodeURIComponent(req.query.criteria) : '';
     const url = creatorApiBase() + '/report/' + report + '?from=1&limit=3' + criteria;
     const r = await axios.get(url, { headers: zohoHeaders(token) });
     res.json({ ok: true, url, status: r.status, body: r.data });
