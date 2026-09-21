@@ -3566,6 +3566,8 @@ require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creator
 filestore.registerFileRoutes(app);
 // ---- Project purge (the delete cascade, behind a preview + typed confirm) ----
 require('./purge').registerPurgeRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
+// ---- Fitting index: every real fitting from the two detail tables, searchable ----
+require('./fittingIndex').registerFittingIndex(app, { fetchAllZohoPages, cachedLookup });
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
 require('./fittingMatch').registerFittingMatchRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError });
