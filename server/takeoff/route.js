@@ -18,7 +18,7 @@
 const { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, LOW_CONF } = require("./engine");
 const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
-const { snapRows } = require("./snap");
+const { snapRows, snapFittings } = require("./snap");
 
 // Errors from the upstream model API are shown to the user verbatim, and they name the vendor and
 // its model ids ("anthropic", "claude-sonnet-…"). The product is Material Compass AI, so rewrite
@@ -124,6 +124,18 @@ async function takeoffHandler(req, res, deps) {
     // matches on the string, so "1.5 x 1/8" and "1-1/2 x 1/8" are not the same row to it.
     const snap = deps.catalogGroups ? snapRows(rows, deps.catalogGroups) : { snapped: [], unmatched: [] };
     if (snap.snapped.length) console.log("[takeoff] snapped " + snap.snapped.length + " materials to catalog spelling");
+
+    // Same for the fitting names, and for the same reason: the review page resolves a type by
+    // exact string, so a family name or a plural costs the fitting its id and its price.
+    const fitSnap = snapFittings(fittings, deps.fittingTypes, deps.fittingEnds);
+    if (fitSnap.snapped.length) {
+      console.log("[takeoff] snapped fitting types: " +
+        fitSnap.snapped.map(function (s) { return s.from + " -> " + s.to; }).join(", "));
+    }
+    if (fitSnap.unmatched.length) {
+      console.log("[takeoff] fitting types not in the catalog: " +
+        fitSnap.unmatched.map(function (u) { return u.type || "(blank)"; }).join(", "));
+    }
 
     // 2. Build CSVs + counts.
     const import_csv = buildImportCsv(rows);

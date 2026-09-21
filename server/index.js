@@ -658,12 +658,17 @@ app.post('/api/takeoff', async (req, res) => {
   } catch (e) { console.error('live catalog unavailable, falling back to knowledge.md formats:', e.message || e); }
   // Fittings are a separate vocabulary and a separate destination on the project. Best-effort like
   // the size catalog: no fittings catalog just means no fittings stream, not a failed take-off.
-  try { fittingsCatalog = await buildFittingsCatalogContext(); }
-  catch (e) { console.error('fittings catalog unavailable — fittings will not be extracted:', e.message || e); }
+  let fittingTypes = null, fittingEnds = null;
+  try {
+    fittingsCatalog = await buildFittingsCatalogContext();
+    // The same cached object the prompt was built from, kept for the post-run name snap.
+    const fc = await fittingsCatalogData();
+    fittingTypes = fc.types; fittingEnds = fc.ends;
+  } catch (e) { console.error('fittings catalog unavailable — fittings will not be extracted:', e.message || e); }
 
   return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge,
     projectContext: projectContext, liveCatalog: liveCatalog, catalogGroups: catalogGroups,
-    fittingsCatalog: fittingsCatalog });
+    fittingsCatalog: fittingsCatalog, fittingTypes: fittingTypes, fittingEnds: fittingEnds });
 });
 
 // LIVE MATERIAL CATALOG for the take-off prompt — the shop's ACTUAL Form Type × Material Type ×

@@ -119,4 +119,92 @@ function snapRows(rows, groups) {
   return out;
 }
 
-module.exports = { snapRows, signature, toNum, sameSig, squareTubeCollapse };
+// -----------------------------------------------------------------------------
+//  The same idea for fittings, where the failure is a NAME rather than a size.
+//
+//  The review page matches a fitting type to the catalog on an exact string, so a
+//  name the shop does not use lands with no id and therefore no price
+//  ([[feedback_fitting_id_catalog_coverage]]).
+//
+//  The commonest way that happens is the drawing's own word. This catalog files
+//  branch outlets as TYPE "Olet" with the product on END TYPE — Weldolet, Sockolet,
+//  Threadolet, Elbolet — but a drawing says THREADOLET and nothing else, so the type
+//  and the end type have to be pulled apart. Written into `fitting_type`, "Threadolet"
+//  matches no type and the row arrives unlinked.
+//
+//  So: exact name first, then case and punctuation, then the end-type rule (a product
+//  name owned by exactly one type resolves to that type, and fills the end type too),
+//  then a family suffix. Only an unambiguous match snaps; two candidates is a question
+//  for a human, not a coin toss.
+// -----------------------------------------------------------------------------
+const plain = (s) => String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+function snapFittings(fittings, types, ends) {
+  const out = { snapped: [], unmatched: [], checked: 0 };
+  if (!Array.isArray(fittings) || !Array.isArray(types) || !types.length) return out;
+  const endList = Array.isArray(ends) ? ends : [];
+
+  fittings.forEach(function (f) {
+    const raw = String((f && f.fitting_type) == null ? "" : f.fitting_type).trim();
+    if (!raw) { out.unmatched.push({ type: "" }); return; }
+    out.checked++;
+
+    const exact = types.find(function (t) { return t.name === raw; });
+    if (exact) { f.fitting_type_id = exact.id; return; }   // already the catalog's own spelling
+
+    const key = plain(raw);
+    const singular = key.replace(/s$/, "");
+    const note = function (said) { f.note = f.note ? (String(f.note) + " · " + said) : said; };
+
+    let hits = types.filter(function (t) {
+      const k = plain(t.name);
+      return k === key || k === singular;
+    });
+
+    // The drawing's word is an END TYPE: "Threadolet" belongs to exactly one type.
+    if (!hits.length) {
+      const asEnd = endList.filter(function (e) { return plain(e.name) === key || plain(e.name) === singular; });
+      const owners = {};
+      asEnd.forEach(function (e) { if (e.typeId) owners[String(e.typeId)] = e; });
+      const ids = Object.keys(owners);
+      if (ids.length === 1) {
+        const owner = types.find(function (t) { return String(t.id) === ids[0]; });
+        if (owner) {
+          const end = owners[ids[0]];
+          out.snapped.push({ from: raw, to: owner.name + " + end type " + end.name });
+          f.fitting_type = owner.name;
+          f.fitting_type_id = owner.id;
+          // Only fill the end type if the model did not already choose one that belongs here.
+          const had = String(f.end_type || "").trim();
+          const belongs = had && endList.some(function (e) {
+            return String(e.typeId) === ids[0] && e.name === had;
+          });
+          if (!belongs) { f.end_type = end.name; f.end_type_id = end.id; }
+          note("drawing said '" + raw + "'");
+          return;
+        }
+      }
+    }
+
+    // "Olet", "olets", "outlet" — a family or a plural. One catalog member ending that
+    // way is an answer; several is not.
+    if (!hits.length && singular.length >= 4) {
+      hits = types.filter(function (t) { return plain(t.name).endsWith(singular); });
+    }
+    if (!hits.length && singular.length >= 4) {
+      hits = types.filter(function (t) { return plain(t.name).indexOf(singular) >= 0; });
+    }
+
+    if (hits.length === 1) {
+      out.snapped.push({ from: raw, to: hits[0].name });
+      f.fitting_type = hits[0].name;
+      f.fitting_type_id = hits[0].id;
+      note("read as '" + raw + "'");
+      return;
+    }
+    out.unmatched.push({ type: raw, candidates: hits.length });
+  });
+  return out;
+}
+
+module.exports = { snapRows, snapFittings, signature, toNum, sameSig, squareTubeCollapse };

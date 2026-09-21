@@ -67,9 +67,19 @@ const ROW_ITEM = {
 const FITTING_ITEM = {
   type: "object",
   properties: {
-    fitting_type:    { type: "string", description: "WHAT it is — copied verbatim from the FITTING TYPES list in the catalog block (Elbow, Tee, Flange, Reducer, Cap, Coupling, Cross, Nipple, Union, Olet, Stub End, Bushing)." },
+    /* The catalog block below is the list — these examples are NOT.
+       Naming types here invites the model to copy the example instead of the catalog,
+       and a name the catalog does not use matches nothing on the review page: the
+       fitting arrives with no id and therefore no price.
+
+       Note how the catalog splits a branch outlet: the TYPE is the family ("Olet") and
+       the product is the END TYPE ("Threadolet", "Weldolet", "Sockolet", "Elbolet").
+       A drawing says THREADOLET, so the pair has to be assembled, and the model has to
+       be told that in so many words or it writes the drawing's word into `fitting_type`
+       and loses the link. */
+    fitting_type:    { type: "string", description: "WHAT it is — copied character for character from the FITTING TYPES list in the shop's catalog block below, and ONLY from that list. Some types are families whose specific product is an END TYPE beneath them: a THREADOLET or WELDOLET on a drawing is fitting_type 'Olet' with that word as the end_type. Never put a product name here that the FITTING TYPES list does not contain. If nothing in the list fits, take the closest, set confidence ≤ 0.3, and name what the drawing actually called for in `note`." },
     fitting_make:    { type: "string", description: "The material family, verbatim from FITTING MAKES (e.g. 'Carbon Steel', 'Stainless Steel', 'Wrought - Carbon Steel', 'Iron - Malleable')." },
-    end_type:        { type: "string", description: "How it joins, verbatim from the END TYPES listed for that fitting type (e.g. 'Butt Weld', 'Socket Weld', 'Threaded - NPT', 'Weld Neck', 'Slip On', 'Blind', 'Weldolet')." },
+    end_type:        { type: "string", description: "How it joins, verbatim from the END TYPES listed under THAT fitting type in the catalog block — only the ones listed under it, never an end type borrowed from another type. This is also where the specific product goes when the type is a family: a threadolet is Olet + 'Threadolet', a weldolet is Olet + 'Weldolet'." },
     connection_type: { type: "string", description: "The geometry/face, verbatim from CONNECTION TYPES (e.g. '90° (Long Radius)', '45° (Long Radius)', 'Concentric', 'Eccentric', 'Raised Face', 'Flat Face', 'Equal', 'Reducing', 'Standard')." },
     specification:   { type: "string", description: "Grade/spec verbatim from the SPECIFICATIONS listed for that make (e.g. 'WPB | ASTM A234', 'A105 | ASTM A105', 'F304L | ASTM A182')." },
     size:            { type: "string", description: "Nominal size as written on the drawing — '6\"', '2-1/2\"'; for reducers and reducing tees give both, largest first: '6\" x 4\"'." },
@@ -238,7 +248,7 @@ function buildTakeoffTool(includeSynopsis) {
   if (includeSynopsis === undefined) includeSynopsis = true;
   const properties = {
     rows: { type: "array", description: "One row per distinct member size/length/spec combination. STRUCTURAL AND MISC-METAL MEMBERS ONLY — pipe fittings go in `fittings`, never here.", items: ROW_ITEM },
-    fittings: { type: "array", description: "Pipe fittings (elbows, tees, flanges, reducers, caps, couplings, olets, unions, nipples). One entry per distinct type+size+schedule+spec. Empty array if the package has none.", items: FITTING_ITEM },
+    fittings: { type: "array", description: "Pipe fittings — elbows, tees, flanges, reducers, caps, couplings, unions, nipples and branch outlets, each named as the catalog names it. One entry per distinct type+size+schedule+spec. Empty array if the package has none.", items: FITTING_ITEM },
     notes: { type: "string", description: "Anything ambiguous/illegible/assumed not captured elsewhere — for the human reviewer." },
   };
   if (includeSynopsis) properties.synopsis = SYNOPSIS_SCHEMA;
@@ -334,7 +344,7 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
   // form type, which is worse — it lands in the BOM as steel to fabricate.
   const fittingsRule = fittingsCatalog
     ? "\n\nPIPE FITTINGS GO IN `fittings`, NEVER IN `rows`. An elbow, tee, flange, reducer, cap, coupling, " +
-      "cross, nipple, union, olet, stub end or bushing is a BOUGHT item identified by type × make × end " +
+      "cross, nipple, union, branch outlet, stub end or bushing is a BOUGHT item identified by type × make × end " +
       "type × connection × specification — not by a size string — so it belongs in the `fittings` array, " +
       "with every value copied VERBATIM from the fittings catalog block below. The PIPE ITSELF is " +
       "structural: a run of 6\" SCH 40 pipe is a `rows` entry with form type Pipe; the elbows and flanges " +
