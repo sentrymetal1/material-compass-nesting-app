@@ -140,7 +140,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.53 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.54 · 2026-09-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -571,8 +571,10 @@
           '<td style="'+TD+'">'+sel('end_type',x.end_type,FITCAT&&fitChildren(FITCAT.ends,'typeId',typeId),'116px')+
             sel('connection_type',x.connection_type,FITCAT&&fitChildren(FITCAT.connections,'typeId',typeId),'110px')+'</td>'+
           // Specification belongs to the MAKE.
-          '<td style="'+TD+'">'+sel('fitting_make',x.fitting_make,FITCAT&&FITCAT.makes,'124px')+
-            sel('specification',x.specification,FITCAT&&fitChildren(FITCAT.specs,'makeId',makeId),'116px')+'</td>'+
+          // Spec needs the room: every value reads "A105 | ASTM A105", so at 116px they all
+          // truncated to "A105 | ASTM A1" and A105 was indistinguishable from A182.
+          '<td style="'+TD+'">'+sel('fitting_make',x.fitting_make,FITCAT&&FITCAT.makes,'132px')+
+            sel('specification',x.specification,FITCAT&&fitChildren(FITCAT.specs,'makeId',makeId),'200px')+'</td>'+
           '<td style="'+TD+'"><input class="fin" type="number" min="0" step="1" style="width:56px" value="'+
             (Number(x.quantity)||0)+'" onchange="fitEdit('+i+',\'quantity\',this.value)">'+
             (Number(x.units)>1?' <span class="src">×'+x.units+' = <b>'+tot(x)+'</b></span>':'')+'</td>'+
