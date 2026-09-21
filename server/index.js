@@ -778,6 +778,9 @@ async function buildLiveCatalogContext() {
 // different field names, different cache key. Two copies of one catalog drift, and the drift
 // shows up as two screens disagreeing about what the shop sells.
 const fittingsCatalogData = require('./fittingCatalog').makeFittingCatalogLoader({ fetchAllZohoPages, cachedLookup });
+// Every real fitting from the two detail tables — used here to tell the model which
+// combinations actually exist, and by the review page's picker.
+const buildFittingIndex = require('./fittingIndex').makeFittingIndexBuilder({ fetchAllZohoPages, cachedLookup });
 
 // The pickers on the review page: the real catalog, with ids and the parent links that drive the
 // cascade (end types and connections belong to a fitting type; specifications belong to a make).
@@ -805,9 +808,34 @@ async function buildFittingsCatalogContext() {
     const s = uniq(cat.specs.filter(x => x.makeId === m.id).map(x => x.name));
     return '- ' + m.name + (s.length ? ': ' + s.join(' · ') : ': (no specifications listed)');
   }).join('\n');
+  // THE COMBINATIONS THAT ACTUALLY EXIST, not five lists to mix freely.
+  // Given the vocabularies separately, the model assembles values that are each valid and
+  // together impossible — it returned Elbow + Butt Weld + "Wrought - Carbon Steel", a
+  // combination with zero rows in either detail table, so it could never resolve a size or a
+  // weight. The detail tables know every real combination; ~1,750 tokens buys that away.
+  let realCombos = '';
+  try {
+    const idx = await buildFittingIndex();
+    const seen = new Set();
+    (idx.items || []).forEach((x) => {
+      const k = [x.type, x.make, x.end].filter(Boolean).join(' | ');
+      if (k) seen.add(k);
+    });
+    if (seen.size) {
+      realCombos = '\n\nCOMBINATIONS THAT ACTUALLY EXIST IN THIS SHOP\'S TABLES — a fitting MUST match one ' +
+        'of these on type, make and end type together. A combination not listed here cannot be priced, ' +
+        'however plausible each part looks on its own. If the drawing calls for something not listed, ' +
+        'pick the closest listed combination, set confidence <= 0.3, and say in `note` exactly what the ' +
+        'drawing asked for so it can be added to the catalog:\n' +
+        Array.from(seen).sort().map((k) => '- ' + k).join('\n') + '\n';
+    }
+  } catch (e) {
+    console.error('fitting index unavailable — model gets the vocabularies only:', e.message || e);
+  }
+
   return "THIS SHOP'S FITTING CATALOG — the ONLY values allowed in a `fittings` entry. Copy them verbatim.\n\n" +
     'FITTING TYPES, each with the end types and connections that belong to it:\n' + perType + '\n\n' +
-    'FITTING MAKES, each with its specifications:\n' + perMake + '\n\n' +
+    'FITTING MAKES, each with its specifications:\n' + perMake + '\n' + realCombos + '\n' +
     'If a fitting on the drawings fits none of these combinations, choose the closest, set confidence ≤ 0.3, ' +
     'and say what the drawing actually called for in the `note` — a flagged near-miss can be corrected, an ' +
     'invented value cannot.\n';

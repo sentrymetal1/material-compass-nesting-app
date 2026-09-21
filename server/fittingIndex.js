@@ -39,7 +39,12 @@ const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+
 const disp = (x) => (x && typeof x === 'object' ? (x.zc_display_value || '') : (x == null ? '' : String(x)));
 const lkId = (r, f) => String((r && r[f] && (r[f].ID || r[f].id)) || r[f + '.ID'] || '');
 
-function registerFittingIndex(app, deps) {
+// The builder on its own, so the take-off prompt can use it too rather than the routes owning it.
+function makeFittingIndexBuilder(deps) {
+  return internals(deps).buildIndex;
+}
+
+function internals(deps) {
   const { fetchAllZohoPages, cachedLookup } = deps;
 
   // One normalised entry per real fitting.
@@ -87,6 +92,12 @@ function registerFittingIndex(app, deps) {
     });
   }
 
+  return { buildIndex: buildIndex, entry: entry };
+}
+
+function registerFittingIndex(app, deps) {
+  const buildIndex = internals(deps).buildIndex;
+
   // The whole index, for the review page to search in the browser. Big, but fetched once per
   // page and cached server-side for 12h, so it costs nothing per keystroke.
   app.get('/api/takeoff/fitting-index', async (req, res) => {
@@ -118,7 +129,7 @@ function registerFittingIndex(app, deps) {
     }
   });
 
-  return { buildIndex, ALIAS_SEED };
+  return { buildIndex: buildIndex, ALIAS_SEED: ALIAS_SEED };
 }
 
-module.exports = { registerFittingIndex, ALIAS_SEED };
+module.exports = { registerFittingIndex, makeFittingIndexBuilder, ALIAS_SEED };
