@@ -140,7 +140,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.52 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.53 · 2026-09-20";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -592,7 +592,10 @@
         ? 'Type, end, connection, make and spec come from your fittings catalog — end types and connections '+
           'narrow to the type, specifications narrow to the make. Anything marked <b style="color:var(--red)">✗</b> '+
           'is not in the catalog and will not price; pick a real one or add it to the catalog.'
-        : 'Loading your fittings catalog…')+
+        : FITCAT_ERR
+          ? '<b style="color:#9a6400">These are free-text boxes right now:</b> '+esc(FITCAT_ERR)+
+            ' Until the catalog loads, nothing typed here can be tied to a catalog record.'
+          : 'Loading your fittings catalog…')+
       ' These are <b>not</b> in the BOM or its CSV: fittings are bought complete and roll up separately '+
       'on the component.</div>'+
       '</div></div>';
@@ -619,13 +622,18 @@
     const kids=list.filter(function(o){ return String(o[key]||"")===String(parentId); });
     return kids.length?kids:list;                 // catalog has no children for it: don't strand the user
   }
+  let FITCAT_ERR="";
   function loadFittingsCatalog(){
-    if(FITCAT||FITCAT_LOADING) return;
+    if(FITCAT||FITCAT_LOADING||FITCAT_ERR) return;
     FITCAT_LOADING=true;
     fetch(RAILWAY_URL+"/api/takeoff/fittings-catalog")
       .then(function(r){return r.json()})
-      .then(function(d){ if(d&&d.ok){ FITCAT=d; render(); } })
-      .catch(function(){ /* pickers fall back to plain inputs */ })
+      .then(function(d){
+        if(d&&d.ok&&(d.types||[]).length){ FITCAT=d; }
+        else { FITCAT_ERR=catalogErrText(d&&d.error); }   // say WHY, don't sit on "Loading…"
+        render();
+      })
+      .catch(function(e){ FITCAT_ERR=catalogErrText(e&&e.message); render(); })
       .then(function(){ FITCAT_LOADING=false; });
   }
 
@@ -1346,13 +1354,31 @@
   // anything is committed. Nearest sizes are offered so a fix is a click, not a hunt.
   let CATALOG = null;                       // { "Form Type|Material Type": [size,...] }; null = not fetched yet
   let CATALOG_LOADING = false;
+  // A catalog that FAILED to load looks identical to an empty one, and the material check then
+  // blamed every row: "No catalog sizes for Plate · Carbon Steel", seventeen times, when the real
+  // cause was Zoho's daily API limit. A failure has to be distinguishable from a finding, or the
+  // page sends you hunting for a data problem that does not exist.
+  let CATALOG_ERR = "";
   async function loadCatalog(){
+    CATALOG_ERR="";
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/catalog-index");
       const d=await r.json();
-      CATALOG=(d&&d.ok&&d.groups)?d.groups:{};
-    }catch(e){ CATALOG={}; }
+      if(d && d.ok && d.groups && Object.keys(d.groups).length){ CATALOG=d.groups; }
+      else {
+        CATALOG={};
+        CATALOG_ERR=catalogErrText(d&&d.error);
+      }
+    }catch(e){ CATALOG={}; CATALOG_ERR=catalogErrText(e&&e.message); }
     return CATALOG;
+  }
+  // Zoho answers a spent quota with code 4000 rather than an outage, so say which it is — one is
+  // over by morning and the other is not.
+  function catalogErrText(raw){
+    const s=String(raw||"");
+    return /4000|API limit|Developer API/i.test(s)
+      ? "Your Zoho daily API limit is used up, so the catalog could not be loaded. The rows below are probably fine — re-open this page after the limit resets and check again before committing."
+      : "The catalog could not be loaded" + (s?" ("+s+")":"") + ", so nothing here could be checked against it.";
   }
   // Two comparisons on purpose. _mkey is the MEMBERSHIP test: case and padding don't matter, but
   // spacing does — "L5x3x1/4" is not the catalog's "L5 x 3 x 1/4", and that exact drift is what
@@ -1380,6 +1406,9 @@
   // Problems, worst first: no material at all, then a material the catalog doesn't have.
   function materialProblems(rows){
     if(!CATALOG) return [];
+    // The catalog failed to load, so every row would "fail" a check that never ran. Report none
+    // — the card says why separately, and the approve gate must not warn about phantom faults.
+    if(CATALOG_ERR) return [];
     const out=[];
     (rows||[]).forEach(function(r,idx){
       if((Number(r.quantity)||0)<=0) return;                 // gap rows are reviewed as gaps
@@ -1398,7 +1427,8 @@
   }
   function materialCardHtml(rows){
     const probs=materialProblems(rows);
-    if(!CATALOG||!probs.length) return "";
+    if(!CATALOG) return "";
+    if(!CATALOG_ERR && !probs.length) return "";
     const row=function(p){
       const r=p.row;
       const why = p.kind==="empty" ? "No material — the take-off couldn’t put a size to this member."
@@ -1426,6 +1456,13 @@
         (quick?'<div class="matquick">Nearest in your catalog: '+quick+"</div>":"")+
         (opts?'<div class="matquick">'+opts+"</div>":"")+"</div>";
     };
+    // The catalog never arrived, so NOTHING here was actually checked. Say that once, instead of
+    // accusing every row of a fault the catalog would probably have cleared.
+    if(CATALOG_ERR){
+      return '<div class="card" style="border-color:#f0d3a8"><h2 style="color:#9a6400">⚠ Material check '+
+        '<span class="lt">— could not run</span></h2><div class="body"><div class="src">'+
+        esc(CATALOG_ERR)+'</div></div></div>';
+    }
     return '<div class="card" style="border-color:#f3c2c2"><h2 style="color:var(--red)">⚠ Material check '+
       '<span class="lt">— '+probs.length+" row"+(probs.length===1?"":"s")+" can’t import as-is</span></h2>"+
       '<div class="body"><div class="src" style="margin-bottom:8px">These rows have no material, or a material that isn’t in '+
