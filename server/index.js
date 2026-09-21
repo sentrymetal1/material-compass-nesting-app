@@ -3581,6 +3581,8 @@ filestore.registerFileRoutes(app);
 require('./purge').registerPurgeRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting index: every real fitting from the two detail tables, searchable ----
 require('./fittingIndex').registerFittingIndex(app, { fetchAllZohoPages, cachedLookup });
+// ---- The take-off's fittings onto the project: the hole the whole chain waited on ----
+require('./fittingsCommit').registerFittingsCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
 require('./fittingMatch').registerFittingMatchRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError });

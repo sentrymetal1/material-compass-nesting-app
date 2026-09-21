@@ -140,7 +140,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.54 · 2026-09-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.55 · 2026-09-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1808,12 +1808,26 @@
             att=await ar.json();
           }
         }catch(e){ console.error("[attach-drawings]",e); }
+        // The fittings go on the project HERE too. Until this existed they were found, shown,
+        // corrected — and then dropped at approve, which is why nothing downstream of the
+        // take-off ever saw a fitting. Best-effort, like the drawings: the BOM is already
+        // committed and a refused fitting must not read as a failed approval.
+        let fit=null;
+        try{
+          const fl=arr(R.fittings);
+          if(fl.length && params.project_id){
+            c.innerHTML='<span class="spin"></span>Putting the fittings on the project…';
+            const fr=await fetch(RAILWAY_URL+"/api/takeoff/commit-fittings",{method:"POST",headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({project_id:params.project_id, fittings:fl})});
+            fit=await fr.json();
+          }
+        }catch(e){ console.error("[commit-fittings]",e); }
         if(Z.REVIEW_PAGE){
-          c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks,att);
+          c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks,att,fit);
           const url=Z.REVIEW_PAGE+"?import_id="+encodeURIComponent(recId||"")+"&project_id="+encodeURIComponent(params.project_id)+"&client_id="+encodeURIComponent(params.manufacturer_id||"");
           setTimeout(()=>window.open(url,"_top"),1200);
         } else {
-          c.innerHTML='<b>✓ BOM sent to staging review.</b> Open your project’s BOM staging to review &amp; Import Approved Rows.'+commitList(picks,att);
+          c.innerHTML='<b>✓ BOM sent to staging review.</b> Open your project’s BOM staging to review &amp; Import Approved Rows.'+commitList(picks,att,fit);
         }
       }catch(e){ ap.disabled=false; c.innerHTML='<b style="color:var(--red)">Commit failed:</b> '+esc(e.message); }
     } else {
@@ -1823,7 +1837,7 @@
     }
     c.scrollIntoView({behavior:"smooth"});
   }
-  function commitList(picks,att){
+  function commitList(picks,att,fit){
     // Say what actually happened to the drawings rather than claiming it in the abstract:
     // "skipped" means a record already had a file on it and was deliberately left alone.
     let dl='<li><b>Drawings</b> → the PDFs stay on the project\'s file store <span class="src">(none mapped to sheets)</span></li>';
@@ -1838,6 +1852,22 @@
     return '<ul>'+
       '<li><b>BOM</b> → CSV Import Tool → staging review</li>'+
       dl+
+      // Say what actually happened to the fittings, including what was refused and why — a
+      // fitting silently missing from the project is the failure this whole thread was about.
+      (function(){
+        if(!fit) return '<li><b>Fittings</b> → <span class="src">none on this take-off</span></li>';
+        if(fit.ok===false) return '<li><b>Fittings</b> → <span style="color:var(--red)">could not be written: '+esc(fit.error||'')+'</span></li>';
+        const bits=[];
+        if(fit.written) bits.push(fit.written+' written to the project\'s fittings quote');
+        if(arr(fit.skipped).length) bits.push(arr(fit.skipped).length+' refused (not matched to a catalog fitting)');
+        if(arr(fit.failed).length)  bits.push(arr(fit.failed).length+' failed');
+        let li='<li><b>Fittings</b> → '+(bits.length?esc(bits.join(' · ')):'nothing to write');
+        const bad=arr(fit.skipped).concat(arr(fit.failed));
+        if(bad.length) li+='<div class="src" style="margin-left:14px">'+
+          bad.slice(0,6).map(function(b){ return '• '+esc(b.what||'(unnamed)')+(b.why?' — '+esc(b.why):''); }).join('<br>')+
+          (bad.length>6?'<br>…':'')+'</div>';
+        return li+'</li>';
+      })()+
       '<li><b>Buyout</b> → outsource / RFQ subform <span class="src">(WIRE)</span></li>'+
       '<li><b>Scope of Work</b> → project record <span class="src">(WIRE: Save_Scope_Of_Work)</span></li>'+
       '<li><b>Gaps + conflicts</b> → project alerts / verify list <span class="src">(WIRE)</span></li>'+
