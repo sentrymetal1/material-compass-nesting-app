@@ -104,6 +104,8 @@ function zohoNow() {
 
 function registerSupplierRoutes(app, deps) {
   const { fetchAllZohoPages, cachedLookup, cacheBust, sendZohoAwareError, getAccessToken, creatorApiBase, zohoHeaders, axios } = deps;
+  // The five fittings cascade tables, shared with the take-off rather than loaded twice.
+  const loadFittingCatalog = require('./fittingCatalog').makeFittingCatalogLoader({ fetchAllZohoPages, cachedLookup });
   const bust = k => { if (typeof cacheBust === 'function') cacheBust(k); };
 
   // PATCH one Zoho record; returns {ok, code, message}. Surfaces per-record errors
@@ -1189,25 +1191,7 @@ function registerSupplierRoutes(app, deps) {
   const lkId = (r, key) => (r[key] && r[key].ID) || r[key + '.ID'] || '';
   app.get('/api/supplier/me/fitting-catalog', withSupplier, async (req, res) => {
     try {
-      const cat = await cachedLookup('fitting-catalog', 60 * 60 * 1000, async () => {
-        const [types, makes, ends, conns, specs] = await Promise.all([
-          fetchAllZohoPages('/report/Fitting_Type_Report'),
-          fetchAllZohoPages('/report/Fitting_Make_Report'),
-          fetchAllZohoPages('/report/End_Type_Report'),
-          fetchAllZohoPages('/report/Connection_Type_Report'),
-          fetchAllZohoPages('/report/Fitting_Specification_Report'),
-        ]);
-        // The three pickers are alphabetical — the reports come back in creation order,
-        // which reads as random once the catalog is more than a handful of rows.
-        const az = arr => arr.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
-        return {
-          types: az((types || []).map(r => ({ id: String(r.ID), name: r.Fitting_Type || '' })).filter(x => x.name)),
-          makes: az((makes || []).map(r => ({ id: String(r.ID), name: r.Fitting_Make || '' })).filter(x => x.name)),
-          ends: az((ends || []).map(r => ({ id: String(r.ID), name: r.End_Type || '', type_id: String(lkId(r, 'Fitting_Type')) })).filter(x => x.name)),
-          connections: (conns || []).map(r => ({ id: String(r.ID), name: r.Connection_Type || '', type_id: String(lkId(r, 'Fitting_Type')) })),
-          specs: (specs || []).map(r => ({ id: String(r.ID), name: r.Fitting_Specification || '', make_id: String(lkId(r, 'Fitting_Make')) })),
-        };
-      });
+      const cat = await loadFittingCatalog();   // shared loader — see server/fittingCatalog.js
       res.json({ ok: true, catalog: cat });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
