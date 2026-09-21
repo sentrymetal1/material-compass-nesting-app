@@ -196,4 +196,27 @@ function registerFileRoutes(app) {
   console.log('[files] store at ' + storeRoot() + (isDurable() ? ' (durable volume)' : ' (TEMPORARY — attach a Railway volume to keep files across deploys)'));
 }
 
-module.exports = { registerFileRoutes, saveFiles, listFiles, readFile, removeFile, copyOwner, isDurable, storeRoot, SCOPES };
+// ---- Small JSON records on the volume ---------------------------------------
+// For platform-side bookkeeping that is nobody's file and does not belong in Zoho: the
+// provisional-fitting ledger is the first. It lives here rather than in a Zoho table because a
+// provisional record must be indistinguishable from a confirmed one everywhere it appears, so
+// there is no flag to render — only an audit trail for Material Compass to review.
+// Written atomically: a half-written ledger read back as JSON would look like an empty one.
+function jsonPath(name) {
+  if (!/^[a-z0-9._-]{1,64}$/i.test(String(name || ''))) throw new Error('bad json store name');
+  return path.join(storeRoot(), String(name));
+}
+function readJson(name, fallback) {
+  try { return JSON.parse(fs.readFileSync(jsonPath(name), 'utf8')); }
+  catch (e) { return fallback === undefined ? null : fallback; }
+}
+function writeJson(name, value) {
+  const p = jsonPath(name);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const tmp = p + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
+  fs.renameSync(tmp, p);
+  return p;
+}
+
+module.exports = { registerFileRoutes, saveFiles, listFiles, readFile, removeFile, copyOwner, isDurable, storeRoot, readJson, writeJson, SCOPES };
