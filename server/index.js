@@ -780,7 +780,7 @@ async function buildLiveCatalogContext() {
 const fittingsCatalogData = require('./fittingCatalog').makeFittingCatalogLoader({ fetchAllZohoPages, cachedLookup });
 // Every real fitting from the two detail tables — used here to tell the model which
 // combinations actually exist, and by the review page's picker.
-const buildFittingIndex = require('./fittingIndex').makeFittingIndexBuilder({ fetchAllZohoPages, cachedLookup });
+const buildFittingIndex = require('./fittingIndex').makeFittingIndexBuilder({ fetchAllZohoPages, cachedLookup, filestore });
 
 // The pickers on the review page: the real catalog, with ids and the parent links that drive the
 // cascade (end types and connections belong to a fitting type; specifications belong to a make).
@@ -3580,7 +3580,7 @@ filestore.registerFileRoutes(app);
 // ---- Project purge (the delete cascade, behind a preview + typed confirm) ----
 require('./purge').registerPurgeRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting index: every real fitting from the two detail tables, searchable ----
-require('./fittingIndex').registerFittingIndex(app, { fetchAllZohoPages, cachedLookup });
+require('./fittingIndex').registerFittingIndex(app, { fetchAllZohoPages, cachedLookup, filestore });
 // ---- The take-off's fittings onto the project: the hole the whole chain waited on ----
 require('./fittingsCommit').registerFittingsCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 // ---- Adding a fitting the catalog doesn't have, without stopping the quote ----

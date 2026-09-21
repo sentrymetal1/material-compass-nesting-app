@@ -44,8 +44,13 @@ function makeFittingIndexBuilder(deps) {
   return internals(deps).buildIndex;
 }
 
+// The volume-backed append, so an added fitting shows up without a 53-call rebuild.
+function makeFittingIndexAppender(deps) {
+  return internals(deps).appendToIndex;
+}
+
 function internals(deps) {
-  const { fetchAllZohoPages, cachedLookup } = deps;
+  const { fetchAllZohoPages, cachedLookup, filestore } = deps;
 
   // One normalised entry per real fitting.
   function entry(r, tbl) {
@@ -75,8 +80,26 @@ function internals(deps) {
     };
   }
 
+  // ON DISK, not just in memory. Building this is ~53 paged reads against a 1,000/day ceiling,
+  // and an in-memory cache dies with every deploy — so a day of ordinary deploys silently cost
+  // hundreds of calls, and on 2026-09-21 a rebuild near the limit spent the last of the budget
+  // and returned nothing. The volume survives restarts, so this is at most one build a day.
+  const DISK = 'fitting-index.json';
+  const DISK_MAX_AGE = 24 * 60 * 60 * 1000;
+
   async function buildIndex() {
     return cachedLookup('takeoff:fitting-index', 12 * 60 * 60 * 1000, async () => {
+      // A recent copy on the volume is worth far more than a fresh one: these tables change when
+      // Mark edits them, which is rarely, and the alternative is 53 calls.
+      if (filestore) {
+        const saved = filestore.readJson(DISK, null);
+        if (saved && Array.isArray(saved.items) && saved.items.length &&
+            Date.now() - Date.parse(saved.built_at || 0) < DISK_MAX_AGE) {
+          console.log('[fittings] index loaded from the volume (' + saved.items.length + ' items, built ' +
+            saved.built_at + ') — no Zoho calls spent');
+          return saved;
+        }
+      }
       const [bw, sw] = await Promise.all([
         fetchAllZohoPages('/report/Tee_Reducing_NPS_Dimensions_Report'),
         fetchAllZohoPages('/report/Fittings_Socket_Weld_and_Threaded_Details_Report'),
@@ -86,13 +109,30 @@ function internals(deps) {
         .concat((sw || []).map((r) => entry(r, 'sw')))
         .filter((x) => x.type && x.size);
       const withWeight = items.filter((x) => x.weight != null).length;
-      console.log('[fittings] index built: ' + items.length + ' items (' + (bw || []).length + ' butt weld, ' +
-        (sw || []).length + ' socket/threaded), ' + withWeight + ' with a weight');
-      return { items: items, built_at: new Date().toISOString(), with_weight: withWeight };
+      const built = { items: items, built_at: new Date().toISOString(), with_weight: withWeight };
+      console.log('[fittings] index built from Zoho: ' + items.length + ' items (' + (bw || []).length +
+        ' butt weld, ' + (sw || []).length + ' socket/threaded), ' + withWeight + ' with a weight');
+      // Written even if the caller later fails — the calls have been spent either way, and
+      // throwing the result away is how the same 53 calls get spent twice.
+      if (filestore) { try { filestore.writeJson(DISK, built); } catch (e) { console.error('[fittings] index not saved to volume:', e.message); } }
+      return built;
     });
   }
 
-  return { buildIndex: buildIndex, entry: entry };
+  // A row added through the add-flow can be folded in without a rebuild, so the picker sees it
+  // immediately and the next restart still does not cost 53 calls.
+  function appendToIndex(item) {
+    if (!filestore) return false;
+    try {
+      const saved = filestore.readJson(DISK, null);
+      if (!saved || !Array.isArray(saved.items)) return false;
+      saved.items.push(item);
+      filestore.writeJson(DISK, saved);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  return { buildIndex: buildIndex, entry: entry, appendToIndex: appendToIndex };
 }
 
 function registerFittingIndex(app, deps) {
@@ -132,4 +172,4 @@ function registerFittingIndex(app, deps) {
   return { buildIndex: buildIndex, ALIAS_SEED: ALIAS_SEED };
 }
 
-module.exports = { registerFittingIndex, makeFittingIndexBuilder, ALIAS_SEED };
+module.exports = { registerFittingIndex, makeFittingIndexBuilder, makeFittingIndexAppender, ALIAS_SEED };
