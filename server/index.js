@@ -3580,7 +3580,9 @@ filestore.registerFileRoutes(app);
 // ---- Project purge (the delete cascade, behind a preview + typed confirm) ----
 require('./purge').registerPurgeRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting index: every real fitting from the two detail tables, searchable ----
-require('./fittingIndex').registerFittingIndex(app, { fetchAllZohoPages, cachedLookup, filestore });
+// cacheBust is needed for ?rebuild=1: without it a forced rebuild skips the volume copy
+// but still returns the 12h in-memory one, so newly added catalog rows stay invisible.
+require('./fittingIndex').registerFittingIndex(app, { fetchAllZohoPages, cachedLookup, filestore, cacheBust });
 // ---- The take-off's fittings onto the project: the hole the whole chain waited on ----
 require('./fittingsCommit').registerFittingsCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 // ---- Adding a fitting the catalog doesn't have, without stopping the quote ----

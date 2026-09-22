@@ -50,7 +50,7 @@ function makeFittingIndexAppender(deps) {
 }
 
 function internals(deps) {
-  const { fetchAllZohoPages, cachedLookup, filestore } = deps;
+  const { fetchAllZohoPages, cachedLookup, filestore, cacheBust } = deps;
 
   // One normalised entry per real fitting.
   function entry(r, tbl) {
@@ -87,11 +87,16 @@ function internals(deps) {
   const DISK = 'fitting-index.json';
   const DISK_MAX_AGE = 24 * 60 * 60 * 1000;
 
-  async function buildIndex() {
+  // force=true skips BOTH caches. Needed because the volume copy is good for 24h, so
+  // rows added to the detail tables are invisible here for up to a day — which from
+  // the estimator's seat looks like the catalog is missing them. It costs ~53 Zoho
+  // calls against a 1,000/day ceiling, so it is opt-in and never automatic.
+  async function buildIndex(force) {
+    if (force && typeof cacheBust === 'function') cacheBust('takeoff:fitting-index');
     return cachedLookup('takeoff:fitting-index', 12 * 60 * 60 * 1000, async () => {
       // A recent copy on the volume is worth far more than a fresh one: these tables change when
       // Mark edits them, which is rarely, and the alternative is 53 calls.
-      if (filestore) {
+      if (filestore && !force) {
         const saved = filestore.readJson(DISK, null);
         if (saved && Array.isArray(saved.items) && saved.items.length &&
             Date.now() - Date.parse(saved.built_at || 0) < DISK_MAX_AGE) {
@@ -142,7 +147,7 @@ function registerFittingIndex(app, deps) {
   // page and cached server-side for 12h, so it costs nothing per keystroke.
   app.get('/api/takeoff/fitting-index', async (req, res) => {
     try {
-      const idx = await buildIndex();
+      const idx = await buildIndex(String(req.query.rebuild || '') === '1');
       res.json({ ok: true, built_at: idx.built_at, count: idx.items.length,
         with_weight: idx.with_weight, aliases: ALIAS_SEED, items: idx.items });
     } catch (err) {
@@ -154,7 +159,7 @@ function registerFittingIndex(app, deps) {
   // A count-only view, so the index can be checked without shipping megabytes.
   app.get('/api/takeoff/fitting-index-check', async (req, res) => {
     try {
-      const idx = await buildIndex();
+      const idx = await buildIndex(String(req.query.rebuild || '') === '1');
       const byType = {};
       idx.items.forEach((x) => {
         const k = x.type + ' · ' + x.make;
