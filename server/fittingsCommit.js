@@ -100,8 +100,13 @@ function registerFittingsCommit(app, deps) {
           // quantity_total, never the per-unit figure: four skids means four sets of elbows.
           Quantity: num(f.quantity_total) != null ? num(f.quantity_total)
                   : (num(f.quantity) || 0) * Math.max(1, num(f.units) || 1),
-          Fitting_Description: [txt(f.fitting_type), txt(f.size), txt(f.schedule_or_class),
-                                txt(f.end_type), txt(f.fitting_make)].filter(Boolean).join(' · '),
+          // The detail row's OWN text, verbatim, so a take-off fitting is indistinguishable
+          // from one keyed on the form: both read "2\" | SCH 160 (.344\")". The joined
+          // fallback only appears when no detail row resolved, and is deliberately ugly so
+          // it is obvious which rows never matched the catalog.
+          Fitting_Description: txt(f.detail_label) ||
+            [txt(f.fitting_type), txt(f.size), txt(f.schedule_or_class),
+             txt(f.end_type), txt(f.fitting_make)].filter(Boolean).join(' · '),
         };
         LOOKUPS.forEach(([src, field]) => { if (txt(f[src])) data[field] = txt(f[src]); });
 
@@ -115,6 +120,14 @@ function registerFittingsCommit(app, deps) {
         // The detail-table row this fitting resolved to, which is where weight comes from later.
         if (txt(f.detail_id) && txt(f.detail_table) === 'bw') data.Fittings_Butt_Weld = txt(f.detail_id);
         if (txt(f.detail_id) && txt(f.detail_table) === 'sw') data.Fittings_Socket_Weld = txt(f.detail_id);
+
+        // THE TWO ARBITERS. Mark's design: `Fitting_ID` and `Fitting_Description_Text` are what
+        // say which catalog record a row actually is — the two Fittings_* lookups above are
+        // cascade helpers and are hidden or shown by Fitting_Style. Until this existed, every
+        // take-off fitting arrived with both blank, which is the same state as a row whose
+        // match was dropped ([[feedback_fitting_id_catalog_coverage]]).
+        if (txt(f.detail_id)) data.Fitting_ID = txt(f.detail_id);
+        if (txt(f.detail_label)) data.Fitting_Description_Text = txt(f.detail_label);
 
         try {
           await post(base, token, data);

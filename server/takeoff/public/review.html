@@ -566,7 +566,10 @@
         const makeId=FITCAT?fitIdOf(FITCAT.makes,x.fitting_make):"";
         return '<tr><td style="'+TD+'"><span class="dot d-'+confClass(c)+'"></span>'+c.toFixed(2)+'</td>'+
           '<td style="'+TD+'">'+sel('fitting_type',x.fitting_type,FITCAT&&FITCAT.types,'104px')+'</td>'+
-          '<td style="'+TD+'">'+inp('size',x.size,'96px')+inp('schedule_or_class',x.schedule_or_class,'70px')+'</td>'+
+          // Size and class are NOT two free-text boxes any more: they are one detail
+          // row, which is the only thing that carries a weight. Falls back to the old
+          // inputs while the index loads or when nothing in it matches.
+          '<td style="'+TD+'">'+detailCell(x,i)+'</td>'+
           // End type and connection belong to the fitting TYPE, so they narrow to it.
           '<td style="'+TD+'">'+sel('end_type',x.end_type,FITCAT&&fitChildren(FITCAT.ends,'typeId',typeId),'116px')+
             sel('connection_type',x.connection_type,FITCAT&&fitChildren(FITCAT.connections,'typeId',typeId),'110px')+'</td>'+
@@ -585,7 +588,7 @@
       }).join("");
     return '<div class="card"><h2>⌇ Pipe fittings <span class="lt">— '+f.length+' item'+(f.length===1?'':'s')+
         ', quoted separately from the BOM</span></h2><div class="body" style="padding:0">'+
-      '<table><thead><tr><th>Conf</th><th>Type</th><th>Size · sch/class</th><th>End · connection</th>'+
+      '<table><thead><tr><th>Conf</th><th>Type</th><th>Size · class · weight</th><th>End · connection</th>'+
       '<th>Make · spec</th><th>'+(anyMulti?'Qty / unit':'Qty')+'</th><th>Where</th><th></th></tr></thead><tbody>'+
       rows+'</tbody></table>'+
       '<div style="padding:10px 18px;font-size:12px;color:var(--mut)">'+
@@ -593,7 +596,9 @@
       (FITCAT
         ? 'Type, end, connection, make and spec come from your fittings catalog — end types and connections '+
           'narrow to the type, specifications narrow to the make. Anything marked <b style="color:var(--red)">✗</b> '+
-          'is not in the catalog and will not price; pick a real one or add it to the catalog.'
+          'is not in the catalog and will not price; pick a real one or add it to the catalog. '+
+          '<b>Size · class</b> is one choice, not two boxes: it picks the actual catalog row, and the weight '+
+          'comes with it. A fitting with no row picked reaches the project with no weight.'
         : FITCAT_ERR
           ? '<b style="color:#9a6400">These are free-text boxes right now:</b> '+esc(FITCAT_ERR)+
             ' Until the catalog loads, nothing typed here can be tied to a catalog record.'
@@ -639,6 +644,145 @@
       .then(function(){ FITCAT_LOADING=false; });
   }
 
+  // ---- the DETAIL rows: sizes, classes and the weight ----------------------
+  // The five catalog tables above say what KINDS of fitting exist. They hold no
+  // size, no class and no weight — those live in the two detail tables, and a
+  // fitting that never resolves to one of their rows reaches Zoho with no weight
+  // and no Fitting_ID, which is what was happening to every take-off fitting.
+  //
+  // fittingIndex.js flattens both detail tables into one searchable list where a
+  // fitting is ONE row rather than six independent choices. It is ~10k items but
+  // fetched once and cached server-side for 12h, which is exactly what it was
+  // built for.
+  let FITIDX=null, FITIDX_LOADING=false, FITIDX_ERR="";
+  function loadFittingIndex(){
+    if(FITIDX||FITIDX_LOADING||FITIDX_ERR) return;
+    FITIDX_LOADING=true;
+    fetch(RAILWAY_URL+"/api/takeoff/fitting-index")
+      .then(function(r){return r.json()})
+      .then(function(d){
+        if(d&&d.ok&&(d.items||[]).length){ FITIDX=d.items; autoResolveFittings(); }
+        else FITIDX_ERR=catalogErrText(d&&d.error);
+        render();
+      })
+      .catch(function(e){ FITIDX_ERR=catalogErrText(e&&e.message); render(); })
+      .then(function(){ FITIDX_LOADING=false; });
+  }
+
+  // The detail rows available to a fitting, given whatever it has been narrowed to.
+  // Matching is on the catalog RECORD IDS, never the display names — the same rule
+  // the Zoho form's own filtered lookup uses.
+  function fitDetailOptions(f){
+    if(!FITIDX) return null;
+    const want=function(a,b){ return !a || String(a)===String(b); };
+    return FITIDX.filter(function(it){
+      return want(f.fitting_type_id,it.typeId) && want(f.fitting_make_id,it.makeId) &&
+             want(f.end_type_id,it.endId) && want(f.connection_type_id,it.connId);
+    });
+  }
+
+  // '2"', '2 in', '2' all have to compare equal, because the drawing, the model and
+  // the catalog each write a size differently.
+  function fitSizeKey(s){
+    return String(s==null?'':s).toLowerCase().replace(/inch(es)?/g,'').replace(/[^0-9a-z/.-]/g,'');
+  }
+
+  // Match what the take-off already said against the catalog, and adopt the row when
+  // there is EXACTLY ONE candidate. Ambiguity is left alone deliberately: a confident
+  // wrong row carries a real weight for the wrong part, which survives every check
+  // downstream — far worse than an obvious blank.
+  function autoResolveFittings(){
+    if(!FITIDX) return 0;
+    const R=loadResult(); let n=0;
+    arr(R.fittings).forEach(function(f){
+      if(f.detail_id) return;
+      const opts=fitDetailOptions(f)||[];
+      const want=fitSizeKey(f.size);
+      if(!opts.length||!want) return;
+      let hits=opts.filter(function(o){ return fitSizeKey(o.size)===want; });
+      // Still more than one? The schedule or class decides between them.
+      const sch=fitSizeKey(f.schedule_or_class);
+      if(hits.length>1&&sch){
+        const narrowed=hits.filter(function(o){ return fitSizeKey(o.sched).indexOf(sch)>-1; });
+        if(narrowed.length) hits=narrowed;
+      }
+      if(hits.length!==1) return;
+      const it=hits[0];
+      f.detail_id=it.id; f.detail_table=it.tbl; f.detail_label=it.label;
+      f.weight=(it.weight==null?null:it.weight);
+      f.size=it.size||f.size; f.schedule_or_class=it.sched||f.schedule_or_class;
+      f.auto_matched=true;
+      n++;
+    });
+    if(n) saveResult(R);
+    return n;
+  }
+
+  // One cell for size + class + weight. Three states, and the difference matters:
+  // the index has not loaded (old free-text boxes), it loaded but nothing matches
+  // this combination (free-text boxes AND a warning, because that fitting cannot
+  // price), or it matched (a picker, and a weight).
+  function detailCell(x,i){
+    const box=function(field,val,w){
+      return '<input class="fin" style="width:'+w+'" value="'+escAttr(val==null?'':val)+'" '+
+        'onchange="fitEdit('+i+',\''+field+'\',this.value)">'; };
+    const plain=box('size',x.size,'96px')+box('schedule_or_class',x.schedule_or_class,'70px');
+    if(!FITIDX) return plain+(FITIDX_ERR?'<div class="src" style="color:#9a6400">'+esc(FITIDX_ERR)+'</div>':'');
+    const opts=fitDetailOptions(x)||[];
+    if(!opts.length){
+      return plain+'<div class="src" style="color:var(--red)">no catalog row for this '+
+        'type · make · end · connection — it cannot carry a weight</div>';
+    }
+    const cur=String(x.detail_id||'');
+    let h='<select class="fin'+(cur?'':' bad')+'" style="width:176px" '+
+      'onchange="fitPickDetail('+i+',this.value)">';
+    h+='<option value=""'+(cur?'':' selected')+'>— pick size · class —</option>';
+    // Long lists are normal (a common type/make has every size), so cap what is
+    // rendered rather than building a 900-option select on every keystroke.
+    opts.slice(0,400).forEach(function(o){
+      h+='<option value="'+escAttr(o.id)+'"'+(String(o.id)===cur?' selected':'')+'>'+
+        esc(o.label||((o.size||'')+' '+(o.sched||'')))+(o.weight!=null?'  ·  '+o.weight+' lb':'')+'</option>'; });
+    h+='</select>';
+    if(cur){
+      h+='<div class="src">'+(x.weight!=null
+        ? '<b>'+Number(x.weight).toFixed(3)+' lb</b> each'
+        : '<span style="color:#9a6400">catalog row has no weight</span>')+
+        (x.auto_matched?' · matched automatically':'')+'</div>';
+    } else {
+      // Say what the drawing was read as, or the estimator has nothing to pick FROM.
+      const said=[x.size,x.schedule_or_class].filter(Boolean).join(' · ');
+      h+='<div class="src">'+(said?'take-off read: <b>'+esc(said)+'</b>':'no size read from the drawing')+'</div>';
+    }
+    return h;
+  }
+
+  // Picking a detail row is the whole point: it sets the size, the class AND the
+  // weight together, and records which row they came from so the weight can be
+  // defended later.
+  function fitPickDetail(i,detailId){
+    const R=loadResult(); const f=arr(R.fittings)[i]; if(!f) return;
+    const it=(FITIDX||[]).find(function(x){ return String(x.id)===String(detailId); });
+    if(!it){ f.detail_id=""; f.detail_table=""; f.weight=null; f.detail_label=""; }
+    else {
+      f.detail_id=it.id; f.detail_table=it.tbl;
+      f.size=it.size||f.size; f.schedule_or_class=it.sched||f.schedule_or_class;
+      f.detail_label=it.label;
+      // A blank weight on the detail row stays blank. A zero would be read as an
+      // answer and would understate the job every time it was summed.
+      f.weight=(it.weight==null?null:it.weight);
+      // The row carries its own ids for all four, so adopt them rather than trusting
+      // the names that were there before.
+      f.fitting_type_id=it.typeId||f.fitting_type_id;
+      f.fitting_make_id=it.makeId||f.fitting_make_id;
+      f.end_type_id=it.endId||f.end_type_id;
+      f.connection_type_id=it.connId||f.connection_type_id;
+      f.fitting_type=it.type||f.fitting_type; f.fitting_make=it.make||f.fitting_make;
+      f.end_type=it.end||f.end_type; f.connection_type=it.conn||f.connection_type;
+    }
+    if(!(Number(f.confidence)>0.5)) f.confidence=0.5;
+    saveResult(R); render();
+  }
+
   // Picking from a catalog list stores the NAME and its record id together, and clears any child
   // value the new parent invalidates — a Butt Weld end type left behind on a fitting switched to
   // Threaded is worse than a blank.
@@ -660,6 +804,13 @@
       } else if(field==="end_type"){        f.end_type_id=fitIdOf(FITCAT.ends,v);
       } else if(field==="connection_type"){ f.connection_type_id=fitIdOf(FITCAT.connections,v);
       } else if(field==="specification"){   f.specification_id=fitIdOf(FITCAT.specs,v); }
+    }
+    // Changing any of the four narrowing fields can invalidate the detail row the
+    // size, class and weight came from. Leaving it behind would keep a weight that
+    // belongs to a different fitting — the failure this whole path exists to stop.
+    if(field!=="specification" && f.detail_id && FITIDX){
+      const still=(fitDetailOptions(f)||[]).some(function(o){ return String(o.id)===String(f.detail_id); });
+      if(!still){ f.detail_id=""; f.detail_table=""; f.detail_label=""; f.weight=null; }
     }
     if(!(Number(f.confidence)>0.5)) f.confidence=0.5;
     saveResult(R);
@@ -990,7 +1141,7 @@
     // AFTER R exists. Putting this above the declaration threw a ReferenceError on every render
     // — R is a const, so it is in its temporal dead zone until that line runs — and the page sat
     // on "Loading take-off…" forever. A parse check cannot catch it; only running it can.
-    if(arr(R.fittings).length) loadFittingsCatalog();   // only fetched when there are fittings to edit
+    if(arr(R.fittings).length){ loadFittingsCatalog(); loadFittingIndex(); }   // only fetched when there are fittings to edit
     const rows = arr(R.rows);
     const s = R.synopsis || {};
     DECISIONS = arr(s.decisions).map((d,i)=>({

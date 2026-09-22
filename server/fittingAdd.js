@@ -26,6 +26,7 @@
 // =============================================================================
 const axios = require('axios');
 const weights = require('./weights');
+const iron = require('./ironFittingWeights');
 
 const BW_FORM = 'Tee_Reducing_NPS_Dimensions';
 const SW_FORM = 'Fittings_Socket_Weld_and_Threaded_Details';
@@ -121,7 +122,7 @@ function registerFittingAdd(app, deps) {
       // Weight, computed rather than left blank where the geometry allows it. Mark: weights can
       // be backfilled, so a null here is acceptable — a zero never is.
       const wt = estimateWeight(f, size, sched);
-      if (wt != null) data.Weight = Number(wt.toFixed(4));
+      if (wt != null) data.Weight = Number(wt.lb.toFixed(4));
 
       const ins = await axios.post(base + '/form/' + (tbl === 'bw' ? BW_FORM : SW_FORM), { data }, { headers: zohoHeaders(token) });
       const newId = String(ins.data?.data?.ID || '');
@@ -136,16 +137,24 @@ function registerFittingAdd(app, deps) {
         manufacturer_id: txt(b.manufacturer_id), project_id: txt(b.project_id),
         type: txt(f.fitting_type), make: txt(f.fitting_make), end: txt(f.end_type),
         connection: txt(f.connection_type), size: size, schedule: sched,
-        description: txt(b.description), weight: wt == null ? null : Number(wt.toFixed(4)),
+        description: txt(b.description), weight: wt == null ? null : Number(wt.lb.toFixed(4)),
+        // Where the weight came from, so the review queue can tell a published figure from an
+        // estimate without re-deriving it.
+        weight_source: wt == null ? null : wt.source,
+        weight_confidence: wt == null ? null : wt.confidence,
+        weight_note: wt == null ? null : wt.note,
         unresolved: unresolved, source_sheet: txt(f.source_sheet), confirmed: false,
       });
 
       console.log('[fitting-add] ' + txt(f.fitting_type) + ' ' + size + (sched ? ' ' + sched : '') +
         ' -> ' + (tbl === 'bw' ? 'butt weld' : 'socket/threaded') + ' table, id ' + newId +
         (unresolved.length ? ' (unresolved: ' + unresolved.join(', ') + ')' : '') +
-        (wt == null ? ' (no weight)' : ' (weight ' + wt.toFixed(3) + ')'));
+        (wt == null ? ' (no weight)' : ' (weight ' + wt.lb.toFixed(3) + ' lb, ' + wt.confidence + ')'));
 
-      res.json({ ok: true, id: newId, table: tbl, weight: wt == null ? null : Number(wt.toFixed(4)),
+      res.json({ ok: true, id: newId, table: tbl,
+        weight: wt == null ? null : Number(wt.lb.toFixed(4)),
+        weight_source: wt == null ? null : wt.source,
+        weight_confidence: wt == null ? null : wt.confidence,
         unresolved: unresolved, size: size, schedule: sched });
     } catch (err) {
       console.error('[fitting-add] failed:', err.response?.data || err.message);
@@ -176,10 +185,26 @@ function registerFittingAdd(app, deps) {
     return String((row && row[field] && (row[field].ID || row[field].id)) || (row && row[field + '.ID']) || '');
   }
 
-  // Pipe-derived where the geometry is knowable. A socket-weld or threaded forged body is not
-  // derivable from a size alone, so it returns null and stays blank rather than inventing one.
+  // Two routes, and the order matters.
+  //
+  // A threaded IRON fitting is a casting, not a length of pipe, so no geometry gets near it —
+  // at 1/2" the elbow formula cannot reach the catalogued weight even with a solid body. Those
+  // come from a published table instead, so that route is tried first and for any end type.
+  //
+  // Everything else is pipe-derived where the geometry is knowable. A socket-weld or threaded
+  // FORGED body is not derivable from a size alone, so it returns null and stays blank rather
+  // than inventing one.
+  //
+  // Returns null, or { lb, source, confidence, note } — never a bare zero.
   function estimateWeight(f, size, sched) {
     try {
+      const fromTable = iron.ironFittingLb({
+        material: txt(f.fitting_make),
+        type: txt(f.fitting_type),
+        size: txt(size),
+      });
+      if (fromTable) return fromTable;
+
       if (!/butt\s*weld/i.test(txt(f.end_type))) return null;
       const nps = weights.toNumber(txt(size).replace(/["”]/g, ''));
       const wall = /(\d*\.?\d+)\s*\)?\s*$/.exec(txt(sched).replace(/[^0-9.().]/g, ' '));
@@ -193,7 +218,14 @@ function registerFittingAdd(app, deps) {
                 : /tee|cross/i.test(txt(f.fitting_type)) ? 'tee'
                 : /cap/i.test(txt(f.fitting_type)) ? 'cap' : null;
       if (!key) return null;
-      return weights.FITTING_LENGTH_IN[key](nps) * perIn;
+      const lb = weights.FITTING_LENGTH_IN[key](nps) * perIn;
+      if (!(lb > 0)) return null;
+      return {
+        lb: lb,
+        source: 'pipe-section-geometry',
+        confidence: 'estimated',
+        note: 'derived from the pipe section and a B16.9 centre-to-end length; not a published weight',
+      };
     } catch (e) { return null; }
   }
 }
