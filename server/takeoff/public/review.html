@@ -569,19 +569,22 @@
         const typeId=FITCAT?fitIdOf(FITCAT.types,x.fitting_type):"";
         const makeId=FITCAT?fitIdOf(FITCAT.makes,x.fitting_make):"";
         return '<tr><td style="'+TD+'"><span class="dot d-'+confClass(c)+'"></span>'+c.toFixed(2)+'</td>'+
+          // The columns run in the order the choices actually depend on each other:
+          // type -> make -> end -> connection -> spec -> description. The description
+          // is narrowed by all five, so it belongs LAST. It used to sit second, which
+          // asked for the answer before any of the questions.
           '<td style="'+TD+'">'+sel('fitting_type',x.fitting_type,FITCAT&&FITCAT.types,'104px')+'</td>'+
-          // Size and class are NOT two free-text boxes any more: they are one detail
-          // row, which is the only thing that carries a weight. Falls back to the old
-          // inputs while the index loads or when nothing in it matches.
-          '<td style="'+TD+'">'+detailCell(x,i)+'</td>'+
+          '<td style="'+TD+'">'+sel('fitting_make',x.fitting_make,FITCAT&&FITCAT.makes,'132px')+'</td>'+
           // End type and connection belong to the fitting TYPE, so they narrow to it.
           '<td style="'+TD+'">'+sel('end_type',x.end_type,FITCAT&&fitChildren(FITCAT.ends,'typeId',typeId),'116px')+
             sel('connection_type',x.connection_type,FITCAT&&fitChildren(FITCAT.connections,'typeId',typeId),'110px')+'</td>'+
-          // Specification belongs to the MAKE.
-          // Spec needs the room: every value reads "A105 | ASTM A105", so at 116px they all
-          // truncated to "A105 | ASTM A1" and A105 was indistinguishable from A182.
-          '<td style="'+TD+'">'+sel('fitting_make',x.fitting_make,FITCAT&&FITCAT.makes,'132px')+
-            sel('specification',x.specification,FITCAT&&fitChildren(FITCAT.specs,'makeId',makeId),'200px')+'</td>'+
+          // Specification belongs to the MAKE, and needs the room: every value reads
+          // "A105 | ASTM A105", so at 116px they all truncated to "A105 | ASTM A1" and
+          // A105 was indistinguishable from A182.
+          '<td style="'+TD+'">'+sel('specification',x.specification,FITCAT&&fitChildren(FITCAT.specs,'makeId',makeId),'200px')+'</td>'+
+          // Last, because it is the one narrowed by everything to its left — and the
+          // only one that carries a weight.
+          '<td style="'+TD+'">'+detailCell(x,i)+'</td>'+
           '<td style="'+TD+'"><input class="fin" type="number" min="0" step="1" style="width:56px" value="'+
             (Number(x.quantity)||0)+'" onchange="fitEdit('+i+',\'quantity\',this.value)">'+
             (Number(x.units)>1?' <span class="src">×'+x.units+' = <b>'+tot(x)+'</b></span>':'')+'</td>'+
@@ -592,17 +595,19 @@
       }).join("");
     return '<div class="card"><h2>⌇ Pipe fittings <span class="lt">— '+f.length+' item'+(f.length===1?'':'s')+
         ', quoted separately from the BOM</span></h2><div class="body" style="padding:0">'+
-      '<table><thead><tr><th>Conf</th><th>Type</th><th>Size · class · weight</th><th>End · connection</th>'+
-      '<th>Make · spec</th><th>'+(anyMulti?'Qty / unit':'Qty')+'</th><th>Where</th><th></th></tr></thead><tbody>'+
+      '<table><thead><tr><th>Conf</th><th>Type</th><th>Make</th><th>End · connection</th>'+
+      '<th>Specification</th><th>Size · class · weight</th>'+
+      '<th>'+(anyMulti?'Qty / unit':'Qty')+'</th><th>Where</th><th></th></tr></thead><tbody>'+
       rows+'</tbody></table>'+
       '<div style="padding:10px 18px;font-size:12px;color:var(--mut)">'+
       '<button class="applybtn" onclick="fitAdd()">+ Add a fitting</button> '+
       (FITCAT
-        ? 'Type, end, connection, make and spec come from your fittings catalog — end types and connections '+
-          'narrow to the type, specifications narrow to the make. Anything marked <b style="color:var(--red)">✗</b> '+
-          'is not in the catalog and will not price; pick a real one or add it to the catalog. '+
-          '<b>Size · class</b> is one choice, not two boxes: it picks the actual catalog row, and the weight '+
-          'comes with it. A fitting with no row picked reaches the project with no weight.'
+        ? 'Work left to right — each column narrows the next. End types and connections narrow to the '+
+          '<b>type</b>, specifications narrow to the <b>make</b>, and <b>size · class</b> narrows to all of '+
+          'them, which is why it comes last. It is one choice rather than two boxes: it picks the actual '+
+          'catalog row and the weight comes with it. A fitting with no row picked reaches the project with '+
+          'no weight. Anything marked <b style="color:var(--red)">✗</b> is not in the catalog and will not '+
+          'price; pick a real one or add it to the catalog.'
         : FITCAT_ERR
           ? '<b style="color:#9a6400">These are free-text boxes right now:</b> '+esc(FITCAT_ERR)+
             ' Until the catalog loads, nothing typed here can be tied to a catalog record.'
