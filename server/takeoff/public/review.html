@@ -538,10 +538,14 @@
     // Carry each fitting's ORIGINAL index through the sort. The table is displayed grouped by
     // component, so a display position is not a position in R.fittings — editing by the wrong
     // one would silently change a different fitting.
+    // Grouped by component, then by the order they came in — NOT by fitting type.
+    // Sorting on an EDITABLE field means the row you just changed jumps somewhere else
+    // mid-edit, because every change re-renders and re-sorts. Component is display-only
+    // in this table, so this order holds still while you work down it.
     const rows = f.map(function(x,i){ return {x:x,i:i}; })
       .sort(function(a,b){
         return String(a.x.component||"").localeCompare(String(b.x.component||"")) ||
-               String(a.x.fitting_type||"").localeCompare(String(b.x.fitting_type||"")); })
+               (a.i - b.i); })
       .map(function(p){
         const x=p.x, i=p.i;
         const c=Number(x.confidence)||0;
@@ -636,9 +640,9 @@
     fetch(RAILWAY_URL+"/api/takeoff/fittings-catalog")
       .then(function(r){return r.json()})
       .then(function(d){
-        if(d&&d.ok&&(d.types||[]).length){ FITCAT=d; }
+        if(d&&d.ok&&(d.types||[]).length){ FITCAT=d; autoResolveFittings(); }
         else { FITCAT_ERR=catalogErrText(d&&d.error); }   // say WHY, don't sit on "Loading…"
-        render();
+        render();   // whichever of the two lands second is the one that resolves
       })
       .catch(function(e){ FITCAT_ERR=catalogErrText(e&&e.message); render(); })
       .then(function(){ FITCAT_LOADING=false; });
@@ -672,13 +676,50 @@
   // The detail rows available to a fitting, given whatever it has been narrowed to.
   // Matching is on the catalog RECORD IDS, never the display names — the same rule
   // the Zoho form's own filtered lookup uses.
+  // A take-off fitting arrives with NAMES and no ids — the ids are only stored when a
+  // human picks from a dropdown. Treating a missing id as "no constraint" offered every
+  // row in both tables, so a cast-iron threaded bushing was being shown 30" SCH 10 pipe
+  // schedules. So: use the stored id, else resolve the name through the catalog, and if
+  // a name IS set but the catalog does not know it, match nothing rather than everything.
+  const NO_MATCH='__no_match__';
+  function fitNarrow(f,idField,nameField,list){
+    if(f[idField]) return String(f[idField]);
+    const nm=String(f[nameField]==null?'':f[nameField]).trim();
+    if(!nm) return '';                       // genuinely unconstrained
+    if(!FITCAT||!list) return '';            // catalog not loaded yet — cannot narrow
+    return fitIdOf(list,nm)||NO_MATCH;
+  }
   function fitDetailOptions(f){
     if(!FITIDX) return null;
     const want=function(a,b){ return !a || String(a)===String(b); };
+    const t=fitNarrow(f,'fitting_type_id','fitting_type',FITCAT&&FITCAT.types);
+    const m=fitNarrow(f,'fitting_make_id','fitting_make',FITCAT&&FITCAT.makes);
+    // End type and connection names REPEAT across fitting types: "Threaded - NPT" is a
+    // separate record for Bushing, Elbow, Tee and Cap, and "Equal" exists for both Tee
+    // and Cross. Resolving either by name alone returns whichever happens to come first,
+    // which is then a real id belonging to the wrong fitting — so resolve them WITHIN
+    // the type, the same way the pickers above already narrow their options.
+    const scoped=function(list){
+      return (FITCAT&&t&&t!==NO_MATCH)?fitChildren(list,'typeId',t):list; };
+    const e=fitNarrow(f,'end_type_id','end_type',FITCAT&&scoped(FITCAT.ends));
+    const c=fitNarrow(f,'connection_type_id','connection_type',FITCAT&&scoped(FITCAT.connections));
+    if([t,m,e,c].indexOf(NO_MATCH)>-1) return [];
     return FITIDX.filter(function(it){
-      return want(f.fitting_type_id,it.typeId) && want(f.fitting_make_id,it.makeId) &&
-             want(f.end_type_id,it.endId) && want(f.connection_type_id,it.connId);
-    });
+      return want(t,it.typeId)&&want(m,it.makeId)&&want(e,it.endId)&&want(c,it.connId);
+    }).sort(function(a,b){ return npsNum(a.size)-npsNum(b.size) ||
+        String(a.sched||'').localeCompare(String(b.sched||'')); });
+  }
+
+  // '1-1/2"' sorts after '1"' and before '2"', which a string compare does not manage:
+  // it puts 10", 12" and 30" between 1" and 2".
+  function npsNum(s){
+    const v=String(s==null?'':s).replace(/["”]/g,'').trim();
+    const mixed=v.match(/^(\d+)[\s-](\d+)\/(\d+)$/);
+    if(mixed) return Number(mixed[1])+Number(mixed[2])/Number(mixed[3]);
+    const frac=v.match(/^(\d+)\/(\d+)$/);
+    if(frac) return Number(frac[1])/Number(frac[2]);
+    const n=parseFloat(v);
+    return Number.isFinite(n)?n:0;
   }
 
   // '2"', '2 in', '2' all have to compare equal, because the drawing, the model and
@@ -692,7 +733,10 @@
   // wrong row carries a real weight for the wrong part, which survives every check
   // downstream — far worse than an obvious blank.
   function autoResolveFittings(){
-    if(!FITIDX) return 0;
+    // BOTH are required. The two fetches race, and without the catalog the four
+    // narrowing names cannot become ids — every fitting would then match the whole
+    // index and auto-adopt the first row of the right size, from any make.
+    if(!FITIDX||!FITCAT) return 0;
     const R=loadResult(); let n=0;
     arr(R.fittings).forEach(function(f){
       if(f.detail_id) return;
@@ -727,7 +771,8 @@
       return '<input class="fin" style="width:'+w+'" value="'+escAttr(val==null?'':val)+'" '+
         'onchange="fitEdit('+i+',\''+field+'\',this.value)">'; };
     const plain=box('size',x.size,'96px')+box('schedule_or_class',x.schedule_or_class,'70px');
-    if(!FITIDX) return plain+(FITIDX_ERR?'<div class="src" style="color:#9a6400">'+esc(FITIDX_ERR)+'</div>':'');
+    // Both are needed before a meaningful list can be offered — see fitDetailOptions.
+    if(!FITIDX||!FITCAT) return plain+(FITIDX_ERR?'<div class="src" style="color:#9a6400">'+esc(FITIDX_ERR)+'</div>':'');
     const opts=fitDetailOptions(x)||[];
     if(!opts.length){
       return plain+'<div class="src" style="color:var(--red)">no catalog row for this '+
