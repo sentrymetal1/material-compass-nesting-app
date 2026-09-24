@@ -627,10 +627,31 @@
   // ([[feedback_fitting_id_catalog_coverage]]). So the editor offers the catalog rather than a
   // free-text box, and stores the record id alongside the name.
   let FITCAT=null, FITCAT_LOADING=false;
-  function fitIdOf(list,name){
+  // The aliases the index route has always sent and this page has never read. The one that
+  // matters: the take-off assigns "Wrought - Carbon Steel" to butt-weld fittings, and the
+  // detail tables file those under "Carbon Steel" — so that make matched no catalog record,
+  // which narrowed the picker to nothing and made every butt-weld size lookup come back empty.
+  let FITALIAS={make:{},type:{},end:{}};
+  function fitNorm(s){ return String(s==null?"":s).toLowerCase().replace(/[^a-z0-9]+/g," ").trim(); }
+  function fitAlias(kind,name){
+    const m=(FITALIAS&&FITALIAS[kind])||{};
+    return m[fitNorm(name)]||"";
+  }
+  // Exact, then alias, then normalised — and a normalised name that hits two records is NOT a
+  // match. These are the same three steps the server uses in fittingResolve.js, on purpose:
+  // if the page and the commit disagree about what a fitting is, one of them is wrong at the
+  // worst possible moment. Ambiguity stays a blank for a human to settle.
+  function fitIdOf(list,name,kind){
     const v=String(name==null?"":name).trim(); if(!v||!list) return "";
     const hit=list.find(function(o){ return o.name===v; });
-    return hit?hit.id:"";
+    if(hit) return hit.id;
+    const al=kind?fitAlias(kind,v):"";
+    if(al){
+      const byAlias=list.filter(function(o){ return fitNorm(o.name)===fitNorm(al); });
+      if(byAlias.length===1) return byAlias[0].id;
+    }
+    const loose=list.filter(function(o){ return fitNorm(o.name)===fitNorm(v); });
+    return loose.length===1?loose[0].id:"";
   }
   function fitChildren(list,key,parentId){
     if(!list) return null;
@@ -670,7 +691,7 @@
     fetch(RAILWAY_URL+"/api/takeoff/fitting-index")
       .then(function(r){return r.json()})
       .then(function(d){
-        if(d&&d.ok&&(d.items||[]).length){ FITIDX=d.items; autoResolveFittings(); }
+        if(d&&d.ok&&(d.items||[]).length){ FITIDX=d.items; FITALIAS=d.aliases||FITALIAS; autoResolveFittings(); }
         else FITIDX_ERR=catalogErrText(d&&d.error);
         render();
       })
@@ -687,18 +708,18 @@
   // schedules. So: use the stored id, else resolve the name through the catalog, and if
   // a name IS set but the catalog does not know it, match nothing rather than everything.
   const NO_MATCH='__no_match__';
-  function fitNarrow(f,idField,nameField,list){
+  function fitNarrow(f,idField,nameField,list,kind){
     if(f[idField]) return String(f[idField]);
     const nm=String(f[nameField]==null?'':f[nameField]).trim();
     if(!nm) return '';                       // genuinely unconstrained
     if(!FITCAT||!list) return '';            // catalog not loaded yet — cannot narrow
-    return fitIdOf(list,nm)||NO_MATCH;
+    return fitIdOf(list,nm,kind)||NO_MATCH;
   }
   function fitDetailOptions(f){
     if(!FITIDX) return null;
     const want=function(a,b){ return !a || String(a)===String(b); };
-    const t=fitNarrow(f,'fitting_type_id','fitting_type',FITCAT&&FITCAT.types);
-    const m=fitNarrow(f,'fitting_make_id','fitting_make',FITCAT&&FITCAT.makes);
+    const t=fitNarrow(f,'fitting_type_id','fitting_type',FITCAT&&FITCAT.types,'type');
+    const m=fitNarrow(f,'fitting_make_id','fitting_make',FITCAT&&FITCAT.makes,'make');
     // End type and connection names REPEAT across fitting types: "Threaded - NPT" is a
     // separate record for Bushing, Elbow, Tee and Cap, and "Equal" exists for both Tee
     // and Cross. Resolving either by name alone returns whichever happens to come first,
@@ -706,7 +727,7 @@
     // the type, the same way the pickers above already narrow their options.
     const scoped=function(list){
       return (FITCAT&&t&&t!==NO_MATCH)?fitChildren(list,'typeId',t):list; };
-    const e=fitNarrow(f,'end_type_id','end_type',FITCAT&&scoped(FITCAT.ends));
+    const e=fitNarrow(f,'end_type_id','end_type',FITCAT&&scoped(FITCAT.ends),'end');
     const c=fitNarrow(f,'connection_type_id','connection_type',FITCAT&&scoped(FITCAT.connections));
     if([t,m,e,c].indexOf(NO_MATCH)>-1) return [];
     return FITIDX.filter(function(it){
@@ -860,8 +881,15 @@
         f.fitting_make_id=fitIdOf(FITCAT.makes,v);
         const specs=fitChildren(FITCAT.specs,'makeId',f.fitting_make_id)||[];
         if(f.specification && !specs.some(function(o){return o.name===f.specification;})) { f.specification=""; f.specification_id=""; }
-      } else if(field==="end_type"){        f.end_type_id=fitIdOf(FITCAT.ends,v);
-      } else if(field==="connection_type"){ f.connection_type_id=fitIdOf(FITCAT.connections,v);
+      // WITHIN THE TYPE. "Threaded - NPT" is a separate record for Bushing, Elbow, Tee and
+      // Cap, so resolving the picked name against the whole list returns whichever was created
+      // first — a real id belonging to the wrong fitting, which then joins to nothing and
+      // prices at $0. The dropdown already only OFFERS this type's children; this makes the
+      // id that gets stored agree with what was offered.
+      } else if(field==="end_type"){
+        f.end_type_id=fitIdOf(fitChildren(FITCAT.ends,'typeId',f.fitting_type_id)||FITCAT.ends,v,'end');
+      } else if(field==="connection_type"){
+        f.connection_type_id=fitIdOf(fitChildren(FITCAT.connections,'typeId',f.fitting_type_id)||FITCAT.connections,v);
       } else if(field==="specification"){   f.specification_id=fitIdOf(FITCAT.specs,v); }
     }
     // Changing any of the four narrowing fields can invalidate the detail row the
@@ -1637,6 +1665,24 @@
     });
     return out;
   }
+  // The same gate for fittings, and it checks the ONE thing that cannot be fixed after the
+  // fact: a fitting whose TYPE is not in the catalog. Everything else the commit now resolves
+  // for itself — names become ids, an existing detail row is matched, a missing one is created
+  // — but a type the Fitting_Type table has never heard of has no id to give, so that fitting
+  // is refused at commit and never reaches the project. Silently losing a fitting off a quote
+  // is the failure this whole chain was built to stop, so it gets named before approve, while
+  // the pickers are still on screen and it costs one click to fix.
+  function fittingProblems(fittings){
+    if(!FITCAT||FITCAT_ERR) return [];       // catalog never loaded — don't warn about phantoms
+    const out=[];
+    (fittings||[]).forEach(function(f,idx){
+      if(f.fitting_type_id) return;
+      const nm=String(f.fitting_type==null?"":f.fitting_type).trim();
+      if(!nm){ out.push({idx:idx,row:f,why:"no fitting type"}); return; }
+      if(!fitIdOf(FITCAT.types,nm,'type')) out.push({idx:idx,row:f,why:'"'+nm+'" is not a fitting type in your catalog'});
+    });
+    return out;
+  }
   function materialCardHtml(rows){
     const probs=materialProblems(rows);
     if(!CATALOG) return "";
@@ -1996,6 +2042,19 @@
       if(!(await mcConfirm(matProbs.length+" row"+(matProbs.length===1?"":"s")+" have a material your catalog doesn't have:\n\n"+
         list+"\n\nThey'll land in staging as errors. Fix them in the Material check card, or continue anyway?",{title:"Approve & Submit",okText:"Continue anyway",cancelText:"Go back"}))) return;
     }
+    // A fitting whose type the catalog does not have cannot be written at all — it would be
+    // dropped, not mispriced. Say so plainly, because "continue anyway" means the quote goes
+    // out short of those fittings.
+    const fitProbs=fittingProblems(arr(R.fittings));
+    if(fitProbs.length){
+      const flist=fitProbs.slice(0,6).map(function(p){
+        return "• "+(p.row.component||"—")+" · "+(p.row.fitting_type||"(no type)")+
+               (p.row.size?' '+p.row.size:"")+" — "+p.why;
+      }).join("\n")+(fitProbs.length>6?"\n…":"");
+      if(!(await mcConfirm(fitProbs.length+" fitting"+(fitProbs.length===1?"":"s")+" cannot be put on the project:\n\n"+
+        flist+"\n\nSet the type in the Fittings table and they'll link themselves. Continue without them?",
+        {title:"Approve & Submit",okText:"Continue without them",cancelText:"Go back"}))) return;
+    }
     const ap=document.getElementById("approve"); ap.disabled=true;
     const c=document.getElementById("commit"); c.style.display="block";
     const picks=DECISIONS.map(d=>'• '+esc(d.item)+'  →  <b>'+esc(d.sel)+'</b>').join("<br>")||"(none)";
@@ -2069,9 +2128,22 @@
         if(fit.ok===false) return '<li><b>Fittings</b> → <span style="color:var(--red)">could not be written: '+esc(fit.error||'')+'</span></li>';
         const bits=[];
         if(fit.written) bits.push(fit.written+' written to the project\'s fittings quote');
+        // Matched server-side from names alone — these are the ones that used to be dropped
+        // because ids only existed when a human picked from a dropdown.
+        if(arr(fit.matched).length) bits.push(arr(fit.matched).length+' matched to catalog rows automatically');
+        // A catalog row created here is not a warning — it is the fitting becoming priceable.
+        // Say it plainly, because these rows are provisional and somebody should confirm them.
+        if(arr(fit.provisional).length) bits.push(arr(fit.provisional).length+' new catalog row'+(arr(fit.provisional).length===1?'':'s')+' created so they carry a Fitting ID');
         if(arr(fit.skipped).length) bits.push(arr(fit.skipped).length+' refused (not matched to a catalog fitting)');
         if(arr(fit.failed).length)  bits.push(arr(fit.failed).length+' failed');
         let li='<li><b>Fittings</b> → '+(bits.length?esc(bits.join(' · ')):'nothing to write');
+        // Without a Fitting ID a fitting prices at $0 on the component and looks free rather
+        // than looks missing. Name them here; this is the only moment anyone is looking.
+        const noId=arr(fit.no_fitting_id);
+        if(noId.length) li+='<div class="src" style="margin-left:14px;color:var(--amber,#b26b00)">'+
+          noId.length+' went on without a Fitting ID — they will price at $0 until one is set:<br>'+
+          noId.slice(0,6).map(function(b){ return '• '+esc(b.what||'(unnamed)')+(b.why?' — '+esc(b.why):''); }).join('<br>')+
+          (noId.length>6?'<br>…':'')+'</div>';
         const bad=arr(fit.skipped).concat(arr(fit.failed));
         if(bad.length) li+='<div class="src" style="margin-left:14px">'+
           bad.slice(0,6).map(function(b){ return '• '+esc(b.what||'(unnamed)')+(b.why?' — '+esc(b.why):''); }).join('<br>')+

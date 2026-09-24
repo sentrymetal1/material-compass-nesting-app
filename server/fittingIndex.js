@@ -182,4 +182,6 @@ function registerFittingIndex(app, deps) {
   return { buildIndex: buildIndex, ALIAS_SEED: ALIAS_SEED };
 }
 
-module.exports = { registerFittingIndex, makeFittingIndexBuilder, makeFittingIndexAppender, ALIAS_SEED };
+// A row appended by the add-flow has to normalise its search text the SAME way a built row
+// does, or it is in the index and still unfindable by typing its own name.
+module.exports = { registerFittingIndex, makeFittingIndexBuilder, makeFittingIndexAppender, ALIAS_SEED, indexHay: norm };

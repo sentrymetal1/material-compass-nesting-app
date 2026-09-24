@@ -31,8 +31,16 @@ const LOOKUPS = [
   ['specification_id',  'Fitting_Specification'],
 ];
 
+const { resolveCatalogIds, matchDetailRow } = require('./fittingResolve');
+
+// NO CAP by default. An earlier draft capped catalog adds per commit to protect the record and
+// API ceilings; Mark's call is that a fitting which cannot price is the expensive thing and he
+// will buy records and calls as needed. Set FITTING_DETAIL_CREATE_CAP to put a ceiling back.
+const MAX_CREATES_PER_COMMIT = Number(process.env.FITTING_DETAIL_CREATE_CAP || 0) || Infinity;
+
 function registerFittingsCommit(app, deps) {
-  const { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages } = deps;
+  const { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages,
+          createDetailRow, buildFittingIndex, loadFittingCatalog } = deps;
 
   const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
   const txt = (v) => String(v == null ? '' : v).trim();
@@ -75,15 +83,123 @@ function registerFittingsCommit(app, deps) {
       const comps = await componentsOf(projectId);
       let line = await nextLineItem(projectId);
 
-      const written = [], skipped = [], failed = [];
+      const written = [], skipped = [], failed = [], provisional = [], unresolvedId = [], matched = [], nameGaps = [];
 
-      for (const f of list) {
+      // Built once, and only if something actually needs it. The index is ~53 paid reads when it
+      // is cold, so a commit where every fitting already matched must not pay for it at all.
+      let index = null, created = 0;
+      async function detailIndex() {
+        if (index === null) index = await buildFittingIndex();
+        return index;
+      }
+      // The five cascade tables, likewise once. This is how a NAME becomes an id.
+      let catalog = null;
+      async function fittingCatalog() {
+        if (catalog === null) catalog = typeof loadFittingCatalog === 'function' ? await loadFittingCatalog() : {};
+        return catalog;
+      }
+
+      for (const raw of list) {
+        // ── NAMES → IDS ───────────────────────────────────────────────────────────────────
+        // A take-off fitting arrives with names and no ids: the review page only stores an id
+        // when a human picks from a dropdown (review.html:684). This used to mean that a
+        // take-off nobody hand-edited row by row had every fitting REFUSED here — not
+        // mispriced, absent from the project. So the names are resolved against the same five
+        // cascade tables the page's pickers use, with the type-scoping the ids demand.
+        const f = Object.assign({}, raw);
+        let nameProblems = [];
+        try {
+          const r = resolveCatalogIds(f, await fittingCatalog());
+          Object.assign(f, r.ids);
+          nameProblems = r.unresolved;
+        } catch (e) {
+          console.error('[fittings] catalog resolve failed (falling back to whatever ids the row carried):', e.message);
+        }
+
         // A fitting with no resolved type is not a fitting, it is a note. Writing it would create
-        // a row that prices at zero and looks legitimate — refuse it and say which one.
+        // a row that prices at zero and looks legitimate — refuse it and say which one. After the
+        // resolve above this only fires on a type the Fitting_Type table does not contain, which
+        // is a catalog gap a human has to close.
         if (!txt(f.fitting_type_id)) {
           skipped.push({ what: txt(f.fitting_type) || '(no type)', size: txt(f.size),
-            why: 'not matched to a catalog fitting type' });
+            why: txt(f.fitting_type) ? '"' + txt(f.fitting_type) + '" is not a fitting type in your catalog'
+                                     : 'the take-off gave no fitting type' });
           continue;
+        }
+
+        // ── AN EXISTING ROW BEFORE A NEW ONE ──────────────────────────────────────────────
+        // The page's auto-match only runs when the page is open, so a commit has to do it too
+        // or it creates duplicates of rows the catalog already has.
+        if (!txt(f.detail_id)) {
+          try {
+            const hit = matchDetailRow(f, ((await detailIndex()) || {}).items || []);
+            if (hit) {
+              f.detail_id = String(hit.id); f.detail_table = hit.tbl;
+              f.detail_label = txt(hit.label);
+              if (num(f.weight) == null && hit.weight != null) f.weight = hit.weight;
+              matched.push({ what: f.detail_label, id: f.detail_id });
+            }
+          } catch (e) {
+            console.error('[fittings] detail match failed (will try to create instead):', e.message);
+          }
+        }
+
+        // ── THE FITTING_ID GAP ────────────────────────────────────────────────────────────
+        // Most non-blind flanges, every olet and every stub end have no row in either detail
+        // table, so the editor resolves the type and make and still hands over a blank
+        // detail_id. That blank becomes a blank `Fitting_ID`, and `Fitting_ID` is the join key
+        // across BOM → Quote → Purchase: the fitting then prices at $0 on the component, which
+        // reads as a free fitting rather than as a missing one
+        // ([[feedback_fitting_id_catalog_coverage]]).
+        //
+        // So the row the catalog is missing gets created, exactly as the add-flow creates it —
+        // same sibling-borrowed lookup ids, same ledger, same weight rules. A fitting that
+        // cannot be priced is the failure; a provisional catalog row is not.
+        let detailId = txt(f.detail_id), detailTable = txt(f.detail_table), detailLabel = txt(f.detail_label);
+        let weight = num(f.weight);
+        const schedule = txt(f.schedule_or_class) || txt(f.schedule);
+
+        if (!detailId && typeof createDetailRow === 'function' && txt(f.size)) {
+          if (created >= MAX_CREATES_PER_COMMIT) {
+            unresolvedId.push({ what: [txt(f.fitting_type), txt(f.size), schedule].filter(Boolean).join(' · '),
+              why: 'FITTING_DETAIL_CREATE_CAP (' + MAX_CREATES_PER_COMMIT + ') reached for this commit' });
+          } else {
+            try {
+              const made = await createDetailRow({
+                fitting: f, size: txt(f.size), schedule: schedule,
+                description: detailLabel, project_id: projectId, via: 'commit',
+              }, { index: await detailIndex() });
+              detailId = made.id; detailTable = made.table; detailLabel = made.label;
+              // Only ever fills a blank. A weight the take-off already established outranks one
+              // estimated here.
+              if (weight == null && made.weight != null) weight = made.weight;
+              // A reused row is an existing catalog record the editor simply did not match —
+              // it cost no write, it is not provisional, and nobody needs to review it.
+              if (!made.reused) {
+                created++;
+                provisional.push({ what: detailLabel, id: made.id,
+                  unresolved: made.unresolved, weight: made.weight });
+              }
+            } catch (e) {
+              // The fitting still goes on the project. Losing it over a failed catalog add would
+              // trade a $0 line for a missing line, which is strictly worse.
+              const why = e.response?.data?.message || e.message;
+              unresolvedId.push({ what: [txt(f.fitting_type), txt(f.size), schedule].filter(Boolean).join(' · '),
+                why: String(why).slice(0, 160) });
+              console.error('[fittings] catalog add failed (fitting still written):', why);
+            }
+          }
+        } else if (!detailId) {
+          unresolvedId.push({ what: [txt(f.fitting_type), txt(f.size), schedule].filter(Boolean).join(' · '),
+            why: txt(f.size) ? 'no catalog row and none could be created' : 'no size to create one from' });
+        }
+
+        // A name the catalog does not have. The fitting still links — the type resolved, or we
+        // would not be here — but the row it joins to is less specific than the drawing was, and
+        // that is a catalog gap worth naming while somebody is looking at it.
+        if (nameProblems.length) {
+          nameGaps.push({ what: detailLabel || [txt(f.fitting_type), txt(f.size)].filter(Boolean).join(' · '),
+            which: nameProblems });
         }
 
         const data = {
@@ -101,11 +217,12 @@ function registerFittingsCommit(app, deps) {
           Quantity: num(f.quantity_total) != null ? num(f.quantity_total)
                   : (num(f.quantity) || 0) * Math.max(1, num(f.units) || 1),
           // The detail row's OWN text, verbatim, so a take-off fitting is indistinguishable
-          // from one keyed on the form: both read "2\" | SCH 160 (.344\")". The joined
-          // fallback only appears when no detail row resolved, and is deliberately ugly so
-          // it is obvious which rows never matched the catalog.
-          Fitting_Description: txt(f.detail_label) ||
-            [txt(f.fitting_type), txt(f.size), txt(f.schedule_or_class),
+          // from one keyed on the form: both read "2\" | SCH 160 (.344\")". A row created
+          // just above supplies the same text, so it reads that way too. The joined
+          // fallback only appears when no detail row resolved AND none could be created, and
+          // is deliberately ugly so it is obvious which rows never matched the catalog.
+          Fitting_Description: detailLabel ||
+            [txt(f.fitting_type), txt(f.size), schedule,
              txt(f.end_type), txt(f.fitting_make)].filter(Boolean).join(' · '),
         };
         LOOKUPS.forEach(([src, field]) => { if (txt(f[src])) data[field] = txt(f[src]); });
@@ -115,19 +232,19 @@ function registerFittingsCommit(app, deps) {
 
         // Weight only when it is real. A blank weight is honest; a zero is an answer, and it
         // would understate the job every time it was summed.
-        if (num(f.weight) != null) data.Weight = num(f.weight);
-        if (num(f.weight) != null && data.Quantity) data.Total_Weight = num(f.weight) * data.Quantity;
+        if (weight != null) data.Weight = weight;
+        if (weight != null && data.Quantity) data.Total_Weight = weight * data.Quantity;
         // The detail-table row this fitting resolved to, which is where weight comes from later.
-        if (txt(f.detail_id) && txt(f.detail_table) === 'bw') data.Fittings_Butt_Weld = txt(f.detail_id);
-        if (txt(f.detail_id) && txt(f.detail_table) === 'sw') data.Fittings_Socket_Weld = txt(f.detail_id);
+        if (detailId && detailTable === 'bw') data.Fittings_Butt_Weld = detailId;
+        if (detailId && detailTable === 'sw') data.Fittings_Socket_Weld = detailId;
 
         // THE TWO ARBITERS. Mark's design: `Fitting_ID` and `Fitting_Description_Text` are what
         // say which catalog record a row actually is — the two Fittings_* lookups above are
         // cascade helpers and are hidden or shown by Fitting_Style. Until this existed, every
         // take-off fitting arrived with both blank, which is the same state as a row whose
         // match was dropped ([[feedback_fitting_id_catalog_coverage]]).
-        if (txt(f.detail_id)) data.Fitting_ID = txt(f.detail_id);
-        if (txt(f.detail_label)) data.Fitting_Description_Text = txt(f.detail_label);
+        if (detailId) data.Fitting_ID = detailId;
+        if (detailLabel) data.Fitting_Description_Text = detailLabel;
 
         try {
           await post(base, token, data);
@@ -140,8 +257,18 @@ function registerFittingsCommit(app, deps) {
       }
 
       console.log('[fittings] project ' + projectId + ': wrote ' + written.length + ' of ' + list.length +
+        (matched.length ? ', matched ' + matched.length + ' to existing catalog rows' : '') +
+        (provisional.length ? ', created ' + provisional.length + ' catalog row' + (provisional.length === 1 ? '' : 's') : '') +
+        (unresolvedId.length ? ', ' + unresolvedId.length + ' without a Fitting_ID' : '') +
         (skipped.length ? ', skipped ' + skipped.length : '') + (failed.length ? ', failed ' + failed.length : ''));
       res.json({ ok: true, written: written.length, lines: written, skipped: skipped, failed: failed,
+        // Rows the catalog did not have and now does — provisional, and in the add-flow's
+        // review queue. And the ones still carrying no join key, which are the ones that will
+        // price at $0 if nobody touches them.
+        provisional: provisional, no_fitting_id: unresolvedId,
+        // Resolved server-side rather than by a human in the editor: matched to a row that
+        // already existed, and names the catalog could not place.
+        matched: matched, name_gaps: nameGaps,
         total: list.length });
     } catch (err) {
       console.error('[fittings] commit failed:', err.response?.data || err.message);

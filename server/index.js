@@ -3583,10 +3583,21 @@ require('./purge').registerPurgeRoutes(app, { getAccessToken, creatorApiBase, zo
 // cacheBust is needed for ?rebuild=1: without it a forced rebuild skips the volume copy
 // but still returns the 12h in-memory one, so newly added catalog rows stay invisible.
 require('./fittingIndex').registerFittingIndex(app, { fetchAllZohoPages, cachedLookup, filestore, cacheBust });
-// ---- The take-off's fittings onto the project: the hole the whole chain waited on ----
-require('./fittingsCommit').registerFittingsCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 // ---- Adding a fitting the catalog doesn't have, without stopping the quote ----
-require('./fittingAdd').registerFittingAdd(app, { getAccessToken, creatorApiBase, zohoHeaders, cacheBust, buildFittingIndex, filestore });
+// ONE creator, two callers. The route below is the estimator's door; commit-fittings is the
+// other, because a take-off fitting with no detail row lands with a blank Fitting_ID and
+// Fitting_ID is the join key that makes it priceable. Sharing the instance means they also
+// share the ledger and the sibling-lookup cache rather than each paying for their own.
+const appendFittingIndex = require('./fittingIndex').makeFittingIndexAppender({ fetchAllZohoPages, cachedLookup, filestore });
+const fittingDetailRows = require('./fittingAdd').makeDetailRowCreator({
+  getAccessToken, creatorApiBase, zohoHeaders, cacheBust, buildFittingIndex, appendFittingIndex, filestore });
+require('./fittingAdd').registerFittingAdd(app, fittingDetailRows);
+// ---- The take-off's fittings onto the project: the hole the whole chain waited on ----
+// loadFittingCatalog is the five cascade tables — it is how the take-off's NAMES become the ids
+// every link downstream is keyed on. Without it a take-off nobody hand-edited had every fitting
+// refused here, because ids are only stored when a human picks from a dropdown.
+require('./fittingsCommit').registerFittingsCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages,
+  createDetailRow: fittingDetailRows.createDetailRow, buildFittingIndex, loadFittingCatalog: fittingsCatalogData });
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
 require('./fittingMatch').registerFittingMatchRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError });
