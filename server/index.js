@@ -3619,6 +3619,64 @@ require('./fittingsCommit').registerFittingsCommit(app, { getAccessToken, creato
   createDetailRow: fittingDetailRows.createDetailRow, buildFittingIndex, loadFittingCatalog: fittingsCatalogData,
   loadFittingLearning });
 
+// ── ONE ROW, FOR DELUGE ─────────────────────────────────────────────────────────────────────
+// The project form's BOM subform cannot match a fitting to its catalog row, and the reason is
+// not a missing row — it is punctuation. getFittingSizes() generates '1-1/4" | SCH 80 (.191")'
+// while the detail table stores '1-1/4" | SCH 80 (.191)', and the Deluge lookup compares the two
+// with ==. Across the butt-weld table 222 labels are written '(0.154")' and 2,152 '(.154")', so
+// exact equality can only ever hit a fraction of them.
+//
+// Rather than reimplement size and schedule normalisation in Deluge — a second copy of rules
+// that would drift from this one — the subform asks this. Same resolver as the take-off and the
+// commit: numeric sizes, normalised schedules, fuzzy names, this shop's learned corrections.
+//
+// Takes NAMES, because `update Lookups` already has them in hand (ftypeName, makeName, endName,
+// connName) and getting a subform lookup's raw id out of Deluge is fiddlier than it looks.
+// Read-only: it matches, it never creates.
+app.post('/api/fittings/resolve-row', async (req, res) => {
+  try {
+    const { resolveCatalogIds, matchDetailRow, detailCandidates } = require('./fittingResolve');
+    const b = req.body || {};
+    const s = (v) => String(v == null ? '' : v).trim();
+    // "1-1/4\" | SCH 80 (.191\")" -> size and schedule. Everything after the first pipe is the
+    // schedule or class, so a flange's '6" | Class 150 | SCH 40' keeps both halves.
+    const parts = s(b.description).split('|').map((x) => x.trim()).filter(Boolean);
+    const fitting = {
+      fitting_type_id: s(b.fitting_type_id), fitting_make_id: s(b.fitting_make_id),
+      end_type_id: s(b.end_type_id), connection_type_id: s(b.connection_type_id),
+      fitting_type: s(b.fitting_type), fitting_make: s(b.fitting_make),
+      end_type: s(b.end_type), connection_type: s(b.connection_type),
+      size: s(b.size) || parts[0] || '',
+      schedule_or_class: s(b.schedule_or_class) || parts.slice(1).join(' | '),
+    };
+    if (!fitting.size) return res.json({ ok: true, id: '', why: 'no size in the description' });
+
+    const [cat, learned, idx] = await Promise.all([
+      fittingsCatalogData(),
+      loadFittingLearning(b.manufacturer_id),
+      buildFittingIndex().catch(() => ({ items: [] })),
+    ]);
+    const r = resolveCatalogIds(fitting, cat, learned);
+    const merged = Object.assign({}, fitting, r.ids);
+    const items = (idx && idx.items) || [];
+    const hit = matchDetailRow(merged, items);
+    if (hit) {
+      return res.json({ ok: true, id: String(hit.id), table: hit.tbl, label: s(hit.label),
+        weight: hit.weight == null ? null : Number(hit.weight), how: r.how });
+    }
+    // Nothing adopted. Say WHY, because "several rows fit and they differ" is a different
+    // problem from "this combination does not exist" and they need different answers.
+    const cands = detailCandidates(merged, items);
+    res.json({ ok: true, id: '', candidates: cands.length,
+      why: cands.length > 1 ? cands.length + ' rows fit and they are different fittings'
+                            : 'no catalog row for this combination',
+      how: r.how });
+  } catch (err) {
+    console.error('[fittings] resolve-row:', err.response?.data || err.message);
+    res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
+  }
+});
+
 // ── ONE PLACE THAT DECIDES WHAT A FITTING IS ────────────────────────────────────────────────
 // The review page used to keep its own copy of these rules in the browser and the commit kept
 // another on the server, which is two things to keep in agreement and one of them was always
