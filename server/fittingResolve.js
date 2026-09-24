@@ -230,10 +230,23 @@ function resolveCatalogIds(f, catalog, learned) {
 //  ambiguity is refused. A confident wrong row carries a real weight for the
 //  wrong part and survives every check downstream — far worse than a blank.
 // ---------------------------------------------------------------------------
+// The rows still standing after every filter. matchDetailRow adopts one of these or refuses;
+// a caller that is about to CREATE a row wants to know the difference between "nothing like
+// this exists" (create it) and "several rows fit and they are not the same fitting" (do not —
+// ask). Creating in the second case adds a near-duplicate to a catalog that already has too many.
+function detailCandidates(f, items) {
+  return narrow(f, items).hits;
+}
+
 function matchDetailRow(f, items) {
-  if (!Array.isArray(items) || !items.length) return null;
+  return narrow(f, items).hit;
+}
+
+function narrow(f, items) {
+  const none = { hit: null, hits: [] };
+  if (!Array.isArray(items) || !items.length) return none;
   const want = sizeKey(f.size);
-  if (!want) return null;
+  if (!want) return none;
 
   // A name set but unresolved must narrow to nothing, so it is carried as NO_MATCH.
   const constrain = (idVal, nameVal) => (txt(idVal) ? txt(idVal) : (txt(nameVal) ? NO_MATCH : ''));
@@ -241,33 +254,60 @@ function matchDetailRow(f, items) {
   const m = constrain(f.fitting_make_id, f.fitting_make);
   const e = constrain(f.end_type_id, f.end_type);
   const c = constrain(f.connection_type_id, f.connection_type);
-  if ([t, m, e, c].indexOf(NO_MATCH) > -1) return null;
+  if ([t, m, e, c].indexOf(NO_MATCH) > -1) return none;
 
   const ok = (a, b) => !a || String(a) === String(b);
   const opts = items.filter((x) => ok(t, x.typeId) && ok(m, x.makeId) && ok(e, x.endId) && ok(c, x.connId));
-  if (!opts.length) return null;
+  if (!opts.length) return none;
 
   // A reducing pick reads '1/2" x 1/8"', but older rows keep only the RUN in `size` and the
   // pair in `rdims`. The pair is the more specific match, so it is tried first.
   let hits = opts.filter((o) => o.rdims && sizeKey(o.rdims) === want);
-  if (!hits.length) hits = opts.filter((o) => sizeKey(o.size) === want);
-  // Still nothing: compare the sizes as NUMBERS. '1-1/2"', '1 1/2 in' and '1.5' are one size
-  // written three ways, and no amount of string cleaning makes the third equal the first.
-  // This is arithmetic, not fuzziness — it cannot match one size to a different one.
   if (!hits.length) {
+    // BOTH size tests, and their UNION — not one then the other. The two tables write a size
+    // differently ('1-1/4"' vs '1-1/4" (1.660 OD)'), so taking the string matches and stopping
+    // there silently drops every row from the other table. That is how a Swage nipple asked for
+    // in SCH STD came back as the 3000 LB row: the only string match was the wrong one, the
+    // schedule filter then matched nothing, and the fallback handed that row back anyway.
     const n = npsNum(f.size);
-    if (n) hits = opts.filter((o) => npsNum(o.size) === n);
+    const byString = opts.filter((o) => sizeKey(o.size) === want);
+    const byNumber = n ? opts.filter((o) => npsNum(o.size) === n) : [];
+    const seen = {};
+    hits = byString.concat(byNumber).filter((o) => (seen[o.id] ? false : (seen[o.id] = 1)));
   }
+  if (!hits.length) return none;
+
   // The schedule or class decides between same-size rows. This is where most of the matching
   // actually happens: a 2" carbon steel butt-weld elbow has 73 rows behind it and they differ
   // only here.
   const sch = f.schedule_or_class || f.schedule;
-  if (hits.length > 1 && txt(sch)) {
+  if (txt(sch)) {
     const narrowed = hits.filter((o) => sameSched(o.sched, sch));
-    if (narrowed.length) hits = narrowed;
+    // The size exists but not in this schedule. That is a MISS, not a reason to fall back to a
+    // row in some other schedule — the fitting needs a row of its own.
+    if (!narrowed.length) return none;
+    hits = narrowed;
   }
-  return hits.length === 1 ? hits[0] : null;
+  if (hits.length === 1) return { hit: hits[0], hits: hits };
+
+  // ── DUPLICATES ARE NOT AMBIGUITY ────────────────────────────────────────────────────────
+  // The catalog carries the same fitting more than once — a 10" 80S stainless cap is in there
+  // twice, identical and both 9.5 lb, and a 24" 150 LB blind flange ten times. Refusing those
+  // means the commit creates an ELEVENTH. When the rows are interchangeable — same size, same
+  // schedule, same reducing dimensions, same weight — any of them is the right answer, so take
+  // the lowest id and take it consistently, so the same fitting lands on the same row every time.
+  //
+  // Rows that genuinely DIFFER are still refused. A reducing tee whose outlet size is unknown
+  // is a real question, and answering it by picking one is how a quote gets the wrong part.
+  const first = hits[0];
+  const same = hits.every((o) =>
+    npsNum(o.size) === npsNum(first.size) &&
+    schedKey(o.sched) === schedKey(first.sched) &&
+    sizeKey(o.rdims || '') === sizeKey(first.rdims || '') &&
+    ((o.weight == null && first.weight == null) || Number(o.weight) === Number(first.weight)));
+  if (!same) return { hit: null, hits: hits };
+  return { hit: hits.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)))[0], hits: hits };
 }
 
-module.exports = { resolveCatalogIds, matchDetailRow, resolveName, NO_MATCH, idByName, sizeKey,
-  npsNum, schedKey, sameSched, score };
+module.exports = { resolveCatalogIds, matchDetailRow, detailCandidates, resolveName, NO_MATCH,
+  idByName, sizeKey, npsNum, schedKey, sameSched, score };

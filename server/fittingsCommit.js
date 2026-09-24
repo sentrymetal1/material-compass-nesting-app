@@ -31,7 +31,7 @@ const LOOKUPS = [
   ['specification_id',  'Fitting_Specification'],
 ];
 
-const { resolveCatalogIds, matchDetailRow } = require('./fittingResolve');
+const { resolveCatalogIds, matchDetailRow, detailCandidates } = require('./fittingResolve');
 
 // NO CAP by default. An earlier draft capped catalog adds per commit to protect the record and
 // API ceilings; Mark's call is that a fitting which cannot price is the expensive thing and he
@@ -133,14 +133,22 @@ function registerFittingsCommit(app, deps) {
         // ── AN EXISTING ROW BEFORE A NEW ONE ──────────────────────────────────────────────
         // The page's auto-match only runs when the page is open, so a commit has to do it too
         // or it creates duplicates of rows the catalog already has.
+        // Set when real rows fit this fitting but are not the same fitting as each other — a
+        // reducing tee whose outlet the take-off did not give. Creating in that case would add a
+        // near-duplicate to a catalog that already carries too many, so it is left for a human.
+        let tooManyRows = 0;
         if (!txt(f.detail_id)) {
           try {
-            const hit = matchDetailRow(f, ((await detailIndex()) || {}).items || []);
+            const items = ((await detailIndex()) || {}).items || [];
+            const hit = matchDetailRow(f, items);
             if (hit) {
               f.detail_id = String(hit.id); f.detail_table = hit.tbl;
               f.detail_label = txt(hit.label);
               if (num(f.weight) == null && hit.weight != null) f.weight = hit.weight;
               matched.push({ what: f.detail_label, id: f.detail_id });
+            } else {
+              const cands = detailCandidates(f, items);
+              if (cands.length > 1) tooManyRows = cands.length;
             }
           } catch (e) {
             console.error('[fittings] detail match failed (will try to create instead):', e.message);
@@ -162,7 +170,11 @@ function registerFittingsCommit(app, deps) {
         let weight = num(f.weight);
         const schedule = txt(f.schedule_or_class) || txt(f.schedule);
 
-        if (!detailId && typeof createDetailRow === 'function' && txt(f.size)) {
+        if (!detailId && tooManyRows) {
+          unresolvedId.push({ what: [txt(f.fitting_type), txt(f.size), schedule].filter(Boolean).join(' · '),
+            why: tooManyRows + ' catalog rows fit this and they are different fittings — pick one ' +
+                 '(a reducing fitting needs its outlet size)' });
+        } else if (!detailId && typeof createDetailRow === 'function' && txt(f.size)) {
           if (created >= MAX_CREATES_PER_COMMIT) {
             unresolvedId.push({ what: [txt(f.fitting_type), txt(f.size), schedule].filter(Boolean).join(' · '),
               why: 'FITTING_DETAIL_CREATE_CAP (' + MAX_CREATES_PER_COMMIT + ') reached for this commit' });
