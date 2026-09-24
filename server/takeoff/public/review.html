@@ -748,7 +748,11 @@
       const opts=fitDetailOptions(f)||[];
       const want=fitSizeKey(f.size);
       if(!opts.length||!want) return;
-      let hits=opts.filter(function(o){ return fitSizeKey(o.size)===want; });
+      // A reducing pick reads "1/2\" x 1/8\"", but the older rows keep only the RUN in
+      // `size` and the pair in `rdims`. Try the pair first: it is the more specific
+      // match, and without it no reducing fitting can ever resolve automatically.
+      let hits=opts.filter(function(o){ return o.rdims && fitSizeKey(o.rdims)===want; });
+      if(!hits.length) hits=opts.filter(function(o){ return fitSizeKey(o.size)===want; });
       // Still more than one? The schedule or class decides between them.
       const sch=fitSizeKey(f.schedule_or_class);
       if(hits.length>1&&sch){
@@ -790,8 +794,13 @@
     // Long lists are normal (a common type/make has every size), so cap what is
     // rendered rather than building a 900-option select on every keystroke.
     opts.slice(0,400).forEach(function(o){
+      // Older reducing rows put only the RUN size in their description, so three
+      // different couplings all read "1/2" | 3000 PSI". Show the pair when the row
+      // carries one, or the estimator is picking between identical-looking options.
+      const base=o.label||((o.size||'')+' '+(o.sched||''));
+      const shown=(o.rdims && base.indexOf(' x ')<0) ? o.rdims+'  ·  '+base : base;
       h+='<option value="'+escAttr(o.id)+'"'+(String(o.id)===cur?' selected':'')+'>'+
-        esc(o.label||((o.size||'')+' '+(o.sched||'')))+(o.weight!=null?'  ·  '+o.weight+' lb':'')+'</option>'; });
+        esc(shown)+(o.weight!=null?'  ·  '+o.weight+' lb':'')+'</option>'; });
     h+='</select>';
     if(cur){
       h+='<div class="src">'+(x.weight!=null

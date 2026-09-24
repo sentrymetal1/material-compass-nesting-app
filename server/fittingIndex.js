@@ -72,6 +72,11 @@ function internals(deps) {
       end: end,   endId: lkId(r, 'End_Type'),
       conn: conn, connId: lkId(r, 'Connection_Type'),
       size: size, sched: sched,
+      // The small end of a reducing fitting. The older rows put ONLY the run size in
+      // their description, so three different reducing couplings can read "1/2" |
+      // 3000 PSI" and be indistinguishable in a picker. This is the field that tells
+      // them apart, and without it the estimator is choosing at random.
+      rdims: String(r.Reducer_Dims_Text || '').trim(),
       label: label || [size, sched].filter(Boolean).join(' | '),
       weight: w === '' ? null : Number(w),
       // What the search matches on: everything about the row, flattened. The style is in here
