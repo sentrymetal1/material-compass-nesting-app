@@ -58,8 +58,15 @@ function internals(deps) {
     const end = disp(r.End_Type), conn = disp(r.Connection_Type);
     const size = tbl === 'bw' ? (disp(r.NPS) || disp(r.NPS_Dimension))
                               : (String(r.NPS_Inch_Text || '') || disp(r['NPS_Dimensions.NPS_Inch']));
+    // Class is a LOOKUP, so String() on it yields "[object Object]" — which is what 7,930 of the
+    // 10,957 rows carried until 2026-09-23. It is invisible in the UI (the picker shows `label`,
+    // which comes from a text field) and quietly fatal underneath: every socket/threaded row of a
+    // given size had the SAME schedule string, so nothing could tell a Class 150 from a Class
+    // 3000, no fitting could be matched to its row, and the commit would have created a duplicate
+    // for one that already existed. disp() reads the display value the same way every other
+    // lookup on this row is read.
     const sched = tbl === 'bw' ? disp(r.NPS_Schedule)
-                               : [String(r.Class || ''), disp(r.Class_Type)].filter(Boolean).join(' ');
+                               : [disp(r.Class), disp(r.Class_Type)].filter(Boolean).join(' ');
     const label = tbl === 'bw' ? String(r.NPS_Dim_And_SCH_Text || '') : String(r.NPS_Dim_and_Class || '');
     // Weight is blank on most butt-weld rows (the June audit put it at ~95%). That is expected,
     // not an error — the size is still right, and the weight engine fills it later. A blank must

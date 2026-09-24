@@ -46,14 +46,44 @@ const NO_MATCH = '__no_match__';
 
 // '1-1/2"' → 1.5, '3/4 in' → 0.75, '2' → 2. Returns 0 for anything that is not a size, so a
 // zero never compares equal to a real one.
+//
+// THE SIZE IS THE LEADING TOKEN AND NOTHING ELSE. The catalog writes a butt-weld size as
+// '2-1/2" (2.875 OD)', so an anchored-to-end pattern never fires and parseFloat is left to read
+// '2-1/2 (2.875 OD)' as 2 — which silently makes a 2-1/2" fitting equal to a 2" one. Wrong size,
+// wrong weight, and nothing on screen to say so. So: match the leading size, allow anything
+// after it, and check the fraction forms BEFORE the plain number.
 function npsNum(s) {
-  const v = txt(s).replace(/["”]/g, '').replace(/inch(es)?|in\b/gi, '').trim();
-  const mixed = v.match(/^(\d+)[\s-](\d+)\/(\d+)$/);
+  const v = txt(s).replace(/["”]/g, ' ').replace(/inch(es)?\b|\bin\b/gi, ' ').trim();
+  const mixed = v.match(/^(\d+)\s*[-\s]\s*(\d+)\s*\/\s*(\d+)/);
   if (mixed) return Number(mixed[1]) + Number(mixed[2]) / Number(mixed[3]);
-  const frac = v.match(/^(\d+)\/(\d+)$/);
+  const frac = v.match(/^(\d+)\s*\/\s*(\d+)/);
   if (frac) return Number(frac[1]) / Number(frac[2]);
-  const n = parseFloat(v);
-  return Number.isFinite(n) ? n : 0;
+  const dec = v.match(/^(\d+(?:\.\d+)?)/);
+  return dec ? Number(dec[1]) : 0;
+}
+
+// A schedule or class, reduced to the part that identifies it.
+//
+// The two sides never write these the same way. A take-off says 'SCH 40', 'Schedule 40',
+// 'Class 150'; the catalog says '40 (0.154")', 'STD (0.133")', '3000 PSI'. The wall thickness
+// in parentheses is a DESCRIPTION of the schedule, not part of its name, and two different
+// schedules can carry the same wall — so it is dropped rather than compared.
+function schedKey(s) {
+  return txt(s)
+    .replace(/\([^)]*\)/g, ' ')                       // the wall thickness, which is not the name
+    .replace(/\b(sch|schedule|class|cl)\b\.?/gi, ' ') // the word, which only one side writes
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim().toLowerCase();
+}
+
+// Same schedule? Equal after normalising, or one is a whole token of the other — '3000' matches
+// '3000 psi', but '40' never matches '140'.
+function sameSched(a, b) {
+  const A = schedKey(a), B = schedKey(b);
+  if (!A || !B) return false;
+  if (A === B) return true;
+  const ta = A.split(' ').filter(Boolean), tb = B.split(' ').filter(Boolean);
+  return ta.every((w) => tb.indexOf(w) > -1) || tb.every((w) => ta.indexOf(w) > -1);
 }
 
 function aliasFor(kind, name) {
@@ -228,12 +258,16 @@ function matchDetailRow(f, items) {
     const n = npsNum(f.size);
     if (n) hits = opts.filter((o) => npsNum(o.size) === n);
   }
-  const sch = sizeKey(f.schedule_or_class || f.schedule);
-  if (hits.length > 1 && sch) {
-    const narrowed = hits.filter((o) => sizeKey(o.sched).indexOf(sch) > -1);
+  // The schedule or class decides between same-size rows. This is where most of the matching
+  // actually happens: a 2" carbon steel butt-weld elbow has 73 rows behind it and they differ
+  // only here.
+  const sch = f.schedule_or_class || f.schedule;
+  if (hits.length > 1 && txt(sch)) {
+    const narrowed = hits.filter((o) => sameSched(o.sched, sch));
     if (narrowed.length) hits = narrowed;
   }
   return hits.length === 1 ? hits[0] : null;
 }
 
-module.exports = { resolveCatalogIds, matchDetailRow, resolveName, NO_MATCH, idByName, sizeKey, npsNum, score };
+module.exports = { resolveCatalogIds, matchDetailRow, resolveName, NO_MATCH, idByName, sizeKey,
+  npsNum, schedKey, sameSched, score };
