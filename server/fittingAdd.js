@@ -148,12 +148,22 @@ function makeDetailRowCreator(deps) {
     }
 
     // Structural lookups come straight from the editor — already resolved against the catalog.
+    //
+    // Fitting_Style is set because EVERY existing row has one — checked against the live tables
+    // 2026-09-23: 10,957 rows, "Butt Weld" on every butt-weld row and "Forged" on every
+    // socket/threaded row, including last session's 524 iron ones. It is not decoration: the
+    // project subform shows or hides the two Fittings_* cascade lookups by this field, so a row
+    // without it is a row that joins correctly and still does not appear.
     const data = {
       Fitting_Type: txt(f.fitting_type_id),
+      Fitting_Style: tbl === 'bw' ? 'Butt Weld' : 'Forged',
     };
     if (txt(f.fitting_make_id))    data.Fitting_Make = txt(f.fitting_make_id);
     if (txt(f.end_type_id))        data.End_Type = txt(f.end_type_id);
     if (txt(f.connection_type_id)) data.Connection_Type = txt(f.connection_type_id);
+    // The small end of a reducing fitting, in the field the picker reads it from — without it
+    // three different reducing couplings are indistinguishable in the list.
+    if (txt(f.reducer_dims) && tbl === 'sw') data.Reducer_Dims_Text = txt(f.reducer_dims);
 
     // A sibling with this size anywhere in the same table gives us its dimension lookup id.
     const wantSize = sizeKey(size);

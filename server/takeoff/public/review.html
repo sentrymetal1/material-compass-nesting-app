@@ -758,7 +758,46 @@
   // there is EXACTLY ONE candidate. Ambiguity is left alone deliberately: a confident
   // wrong row carries a real weight for the wrong part, which survives every check
   // downstream — far worse than an obvious blank.
+  // ── THE SERVER RESOLVES, THE PAGE APPLIES ────────────────────────────────────────────────
+  // Names → ids, fuzzy matching and this shop's learned corrections all live in ONE place
+  // (server/fittingResolve.js), which is also what the commit calls. So what you see resolved
+  // here is exactly what gets written — the page cannot be right while the commit is wrong.
+  //
+  // Best-effort: if it fails, the local pass below still runs. It never blocks the estimator.
+  let FITRESOLVED=false;
+  function resolveFittingsViaServer(){
+    if(FITRESOLVED) return;
+    const R=loadResult(); const list=arr(R.fittings);
+    if(!list.length||R.__demo){ FITRESOLVED=true; return; }
+    FITRESOLVED=true;
+    fetch(RAILWAY_URL+"/api/takeoff/fitting-resolve",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({manufacturer_id:params.manufacturer_id,fittings:list})})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        if(!d||!d.ok||!Array.isArray(d.rows)) return;
+        const R2=loadResult(); const rows=arr(R2.fittings); let n=0;
+        d.rows.forEach(function(res,i){
+          const f=rows[i]; if(!f||!res) return;
+          // Only ever FILLS blanks. A value the estimator has already set outranks anything
+          // resolved here, whatever rule produced it.
+          Object.keys(res.ids||{}).forEach(function(k){ if(!f[k]){ f[k]=res.ids[k]; n++; } });
+          if(res.detail && !f.detail_id){
+            f.detail_id=res.detail.id; f.detail_table=res.detail.tbl; f.detail_label=res.detail.label;
+            f.size=res.detail.size||f.size; f.schedule_or_class=res.detail.sched||f.schedule_or_class;
+            if(f.weight==null) f.weight=(res.detail.weight==null?null:res.detail.weight);
+            f.auto_matched=true; n++;
+          }
+          // What could not be placed, kept on the row so the picker can offer the near misses
+          // instead of leaving the estimator to guess what the catalog calls it.
+          f.__unresolved=(res.unresolved&&res.unresolved.length)?res.unresolved:null;
+        });
+        if(n){ saveResult(R2); render(); }
+      })
+      .catch(function(){});
+  }
+
   function autoResolveFittings(){
+    resolveFittingsViaServer();
     // BOTH are required. The two fetches race, and without the catalog the four
     // narrowing names cannot become ids — every fitting would then match the whole
     // index and auto-adopt the first row of the right size, from any make.
@@ -842,8 +881,19 @@
   function fitPickDetail(i,detailId){
     const R=loadResult(); const f=arr(R.fittings)[i]; if(!f) return;
     const it=(FITIDX||[]).find(function(x){ return String(x.id)===String(detailId); });
+    if(!f.__ai) f.__ai={fitting_type:f.fitting_type,fitting_make:f.fitting_make,
+      end_type:f.end_type,connection_type:f.connection_type,specification:f.specification,
+      size:f.size,schedule_or_class:f.schedule_or_class};
     if(!it){ f.detail_id=""; f.detail_table=""; f.weight=null; f.detail_label=""; }
     else {
+      // How this shop writes a size and class, versus how the take-off wrote it. This is the
+      // fitting equivalent of the structural "material wording" correction, and it is the one
+      // that pays off most: sizes are where the spelling drifts.
+      const was=[String(f.__ai.size||"").trim(),String(f.__ai.schedule_or_class||"").trim()]
+        .filter(Boolean).join(" | ");
+      if(was && it.label && was!==it.label){
+        captureCorrection({context:"fitting size",ai_value:was,human_value:it.label,source:"fitting"});
+      }
       f.detail_id=it.id; f.detail_table=it.tbl;
       f.size=it.size||f.size; f.schedule_or_class=it.sched||f.schedule_or_class;
       f.detail_label=it.label;
@@ -866,9 +916,26 @@
   // Picking from a catalog list stores the NAME and its record id together, and clears any child
   // value the new parent invalidates — a Butt Weld end type left behind on a fitting switched to
   // Threaded is worse than a blank.
+  // Which vocabulary each editable field teaches, and the Context string it is stored under.
+  // Same Takeoff_Correction table the structural side has always written to.
+  const FIT_LEARN_CONTEXT={fitting_type:"fitting type",fitting_make:"fitting make",
+    end_type:"fitting end type",connection_type:"fitting connection",
+    specification:"fitting specification"};
   function fitPick(i,field,val){
     const R=loadResult(); const f=arr(R.fittings)[i]; if(!f) return;
     const v=String(val==null?"":val).trim();
+    // What the TAKE-OFF said, captured before the first edit overwrites it. After that the row
+    // carries the estimator's own words and comparing against them would teach nothing.
+    if(!f.__ai) f.__ai={fitting_type:f.fitting_type,fitting_make:f.fitting_make,
+      end_type:f.end_type,connection_type:f.connection_type,specification:f.specification,
+      size:f.size,schedule_or_class:f.schedule_or_class};
+    // A correction, stored the moment it happens, exactly as structural does it: this shop
+    // saying what their drawings mean. The resolver trusts it above every other rule, so the
+    // next take-off that writes the same word resolves without anyone touching it.
+    const was=String(f.__ai[field]==null?"":f.__ai[field]).trim();
+    if(FIT_LEARN_CONTEXT[field] && v && was && was!==v){
+      captureCorrection({context:FIT_LEARN_CONTEXT[field],ai_value:was,human_value:v,source:"fitting"});
+    }
     f[field]=v;
     if(FITCAT){
       if(field==="fitting_type"){
@@ -2087,7 +2154,7 @@
           if(fl.length && params.project_id){
             c.innerHTML='<span class="spin"></span>Putting the fittings on the project…';
             const fr=await fetch(RAILWAY_URL+"/api/takeoff/commit-fittings",{method:"POST",headers:{"Content-Type":"application/json"},
-              body:JSON.stringify({project_id:params.project_id, fittings:fl})});
+              body:JSON.stringify({project_id:params.project_id, manufacturer_id:params.manufacturer_id, fittings:fl})});
             fit=await fr.json();
           }
         }catch(e){ console.error("[commit-fittings]",e); }

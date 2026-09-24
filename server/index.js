@@ -1493,7 +1493,7 @@ async function fetchShopLearning(mfg) {
   // it from a menu, which is not what it is and not how the model should apply it.
   const kind = function (r) {
     const s = String(r.Source || '').toLowerCase().trim();
-    return (s === 'instruction' || s === 'material') ? s : 'decision';
+    return (s === 'instruction' || s === 'material' || s === 'fitting') ? s : 'decision';
   };
 
   // 1. DECISIONS — tally the human's choice per judgment call; the prevailing one is the default.
@@ -1537,6 +1537,18 @@ async function fetchShopLearning(mfg) {
     material.push('- ' + String(r.Context || '').replace(/ · [^·]*$/, '').trim() + ': "' + av + '" should be written "' + hv + '"');
   });
 
+  // 4. FITTING WORDING — the same idea as material, for the five fitting vocabularies. The
+  // resolver already applies these deterministically at commit; telling the model as well means
+  // the take-off writes the shop's own words in the first place, so there is nothing to correct.
+  const seenFit = {}, fitting = [];
+  recs.filter(function (r) { return kind(r) === 'fitting'; }).forEach(function (r) {
+    const av = String(r.AI_Value || '').trim(), hv = String(r.Human_Value || '').trim();
+    const k = (String(r.Context || '') + '|' + av + '=>' + hv).toLowerCase();
+    if (!av || !hv || seenFit[k] || fitting.length >= 40) return;
+    seenFit[k] = 1;
+    fitting.push('- ' + String(r.Context || 'fitting').trim() + ': "' + av + '" should be written "' + hv + '"');
+  });
+
   const out = [];
   if (decision.length) {
     out.push("THIS FABRICATOR'S PAST DECISIONS (apply as standing preferences): when the SAME judgment call " +
@@ -1552,6 +1564,10 @@ async function fetchShopLearning(mfg) {
   if (material.length) {
     out.push("SIZES THIS SHOP HAS RE-SPELLED BEFORE — the left side is what a take-off wrote, the right side " +
       "is what their catalog calls the same steel. Use the right-hand spelling:\n" + material.join('\n'));
+  }
+  if (fitting.length) {
+    out.push("FITTING WORDING THIS SHOP HAS CORRECTED — the left side is what a take-off wrote, the right side " +
+      "is what their fitting catalog calls the same thing. Use the right-hand spelling:\n" + fitting.join('\n'));
   }
   return out.join('\n\n');
 }
@@ -3593,11 +3609,52 @@ const fittingDetailRows = require('./fittingAdd').makeDetailRowCreator({
   getAccessToken, creatorApiBase, zohoHeaders, cacheBust, buildFittingIndex, appendFittingIndex, filestore });
 require('./fittingAdd').registerFittingAdd(app, fittingDetailRows);
 // ---- The take-off's fittings onto the project: the hole the whole chain waited on ----
+// What this shop has already taught us about fitting names — same Takeoff_Correction table the
+// structural side has always used, filtered to Source == "fitting".
+const { loadFittingLearning } = require('./fittingLearn').makeFittingLearning({ fetchAllZohoPages, cachedLookup });
 // loadFittingCatalog is the five cascade tables — it is how the take-off's NAMES become the ids
 // every link downstream is keyed on. Without it a take-off nobody hand-edited had every fitting
 // refused here, because ids are only stored when a human picks from a dropdown.
 require('./fittingsCommit').registerFittingsCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages,
-  createDetailRow: fittingDetailRows.createDetailRow, buildFittingIndex, loadFittingCatalog: fittingsCatalogData });
+  createDetailRow: fittingDetailRows.createDetailRow, buildFittingIndex, loadFittingCatalog: fittingsCatalogData,
+  loadFittingLearning });
+
+// ── ONE PLACE THAT DECIDES WHAT A FITTING IS ────────────────────────────────────────────────
+// The review page used to keep its own copy of these rules in the browser and the commit kept
+// another on the server, which is two things to keep in agreement and one of them was always
+// going to be wrong at the worst moment. Now the page asks this, and the commit calls the same
+// resolver directly — so what the estimator sees on screen is what gets written.
+//
+// Read-only: it resolves and suggests, it writes nothing.
+app.post('/api/takeoff/fitting-resolve', async (req, res) => {
+  try {
+    const { resolveCatalogIds, matchDetailRow } = require('./fittingResolve');
+    const list = Array.isArray(req.body && req.body.fittings) ? req.body.fittings : [];
+    if (!list.length) return res.json({ ok: true, rows: [] });
+    const [cat, learned, idx] = await Promise.all([
+      fittingsCatalogData(),
+      loadFittingLearning(req.body.manufacturer_id),
+      buildFittingIndex().catch(() => ({ items: [] })),
+    ]);
+    const rows = list.map((f) => {
+      const r = resolveCatalogIds(f, cat, learned);
+      const merged = Object.assign({}, f, r.ids);
+      const hasDetail = String(f.detail_id == null ? '' : f.detail_id).trim() !== '';
+      const hit = hasDetail ? null : matchDetailRow(merged, (idx && idx.items) || []);
+      return {
+        ids: r.ids, how: r.how, unresolved: r.unresolved, blocked: r.blocked,
+        detail: hit ? { id: String(hit.id), tbl: hit.tbl, label: hit.label,
+                        weight: hit.weight == null ? null : hit.weight,
+                        size: hit.size, sched: hit.sched } : null,
+      };
+    });
+    res.json({ ok: true, rows: rows,
+      learned: Object.keys(learned || {}).reduce((n, k) => n + Object.keys(learned[k]).length, 0) });
+  } catch (err) {
+    console.error('[takeoff] fitting-resolve:', err.response?.data || err.message);
+    res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
+  }
+});
 require('./triage').registerTriageRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting RFQ matching (off-Zoho brick #1): GET /api/supplier/:id/fitting-rfqs ----
 require('./fittingMatch').registerFittingMatchRoutes(app, { fetchAllZohoPages, cachedLookup, sendZohoAwareError });

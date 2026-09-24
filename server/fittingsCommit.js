@@ -40,7 +40,7 @@ const MAX_CREATES_PER_COMMIT = Number(process.env.FITTING_DETAIL_CREATE_CAP || 0
 
 function registerFittingsCommit(app, deps) {
   const { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages,
-          createDetailRow, buildFittingIndex, loadFittingCatalog } = deps;
+          createDetailRow, buildFittingIndex, loadFittingCatalog, loadFittingLearning } = deps;
 
   const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
   const txt = (v) => String(v == null ? '' : v).trim();
@@ -98,6 +98,9 @@ function registerFittingsCommit(app, deps) {
         if (catalog === null) catalog = typeof loadFittingCatalog === 'function' ? await loadFittingCatalog() : {};
         return catalog;
       }
+      // And what this shop has corrected before. Same Takeoff_Correction table structural uses.
+      const learned = typeof loadFittingLearning === 'function'
+        ? await loadFittingLearning(txt((req.body || {}).manufacturer_id)) : {};
 
       for (const raw of list) {
         // ── NAMES → IDS ───────────────────────────────────────────────────────────────────
@@ -109,7 +112,7 @@ function registerFittingsCommit(app, deps) {
         const f = Object.assign({}, raw);
         let nameProblems = [];
         try {
-          const r = resolveCatalogIds(f, await fittingCatalog());
+          const r = resolveCatalogIds(f, await fittingCatalog(), learned);
           Object.assign(f, r.ids);
           nameProblems = r.unresolved;
         } catch (e) {
