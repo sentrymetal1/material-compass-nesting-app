@@ -231,12 +231,18 @@ function registerFittingsCommit(app, deps) {
           // quantity_total, never the per-unit figure: four skids means four sets of elbows.
           Quantity: num(f.quantity_total) != null ? num(f.quantity_total)
                   : (num(f.quantity) || 0) * Math.max(1, num(f.units) || 1),
-          // The detail row's OWN text, verbatim, so a take-off fitting is indistinguishable
-          // from one keyed on the form: both read "2\" | SCH 160 (.344\")". A row created
-          // just above supplies the same text, so it reads that way too. The joined
-          // fallback only appears when no detail row resolved AND none could be created, and
-          // is deliberately ugly so it is obvious which rows never matched the catalog.
-          Fitting_Description: detailLabel ||
+          // ── NOT Fitting_Description ────────────────────────────────────────────────────
+          // That field is a DROPDOWN whose options are generated at runtime by
+          // getFittingSizes() inside the form session. The REST API has no session, so Zoho
+          // refuses every value with code 3001, "Invalid column value for Fitting_Description"
+          // — as an HTTP 200, which is why this went unnoticed: the insert "succeeded", the
+          // row was counted as written, and nothing was created. Not one take-off fitting had
+          // ever reached a project.
+          //
+          // Fitting_Description_Text is a plain text field and takes it. It is also what the
+          // Created workflow reads first when it computes the weight, and it is one of Mark's
+          // two arbiters, so nothing downstream is worse off.
+          Fitting_Description_Text: detailLabel ||
             [txt(f.fitting_type), txt(f.size), schedule,
              txt(f.end_type), txt(f.fitting_make)].filter(Boolean).join(' · '),
         };
@@ -245,10 +251,19 @@ function registerFittingsCommit(app, deps) {
         const comp = comps[txt(f.component).toLowerCase().replace(/\s+/g, ' ')];
         if (comp) data.Component = comp;
 
+        // The Butt Weld / Forged router. On a UI entry another workflow sets this; on an API
+        // insert nothing has, and the project subform shows or hides the two Fittings_*
+        // cascade lookups by it — so a row without it joins correctly and still does not show.
+        if (detailTable === 'bw') data.Fitting = 'Butt Weld';
+        else if (detailTable === 'sw') data.Fitting = 'Forged';
+
         // Weight only when it is real. A blank weight is honest; a zero is an answer, and it
         // would understate the job every time it was summed.
-        if (weight != null) data.Weight = weight;
-        if (weight != null && data.Quantity) data.Total_Weight = weight * data.Quantity;
+        // THREE decimals: a fourth is refused with code 3001, "has exceeded its maximum
+        // digits", and that refusal arrives as an HTTP 200 that creates nothing.
+        const round3 = (n) => Number(Number(n).toFixed(3));
+        if (weight != null) data.Weight = round3(weight);
+        if (weight != null && data.Quantity) data.Total_Weight = round3(weight * data.Quantity);
         // The detail-table row this fitting resolved to, which is where weight comes from later.
         if (detailId && detailTable === 'bw') data.Fittings_Butt_Weld = detailId;
         if (detailId && detailTable === 'sw') data.Fittings_Socket_Weld = detailId;
@@ -262,8 +277,8 @@ function registerFittingsCommit(app, deps) {
         if (detailLabel) data.Fitting_Description_Text = detailLabel;
 
         try {
-          await post(base, token, data);
-          written.push({ line: line, what: data.Fitting_Description });
+          const newId = await post(base, token, data);
+          written.push({ line: line, what: data.Fitting_Description_Text, id: newId });
           line++;
         } catch (e) {
           const msg = e.response?.data?.message || e.message;
@@ -293,15 +308,37 @@ function registerFittingsCommit(app, deps) {
 
   // One insert, with a single retry that drops the one field name I could not verify. Losing a
   // fitting over a guessed link name would be a poor trade for the guess.
+  //
+  // ── CHECK THE CODE. ALWAYS. ──────────────────────────────────────────────────────────────
+  // Zoho refuses a record with HTTP 200 and a code in the body. This function used to return
+  // the axios response and the caller counted it as written, so on 2026-09-24 a 58-fitting
+  // take-off logged "wrote 58 of 58" and created NOTHING — every row refused with 3001,
+  // "Invalid column value for Fitting_Description". A silent success is worse than a failure:
+  // the failure would have been fixed months ago.
+  // Returns the new record id, or throws with Zoho's own words.
   async function post(base, token, data) {
+    const send = async (payload) => {
+      const r = await axios.post(base + '/form/Project_BOM_Fittings_Quote_Form',
+        { data: payload }, { headers: zohoHeaders(token) });
+      const body = r.data || {};
+      if (body.code !== 3000) {
+        const why = [].concat(body.error || [], body.message || []).filter(Boolean).join('; ') ||
+          JSON.stringify(body).slice(0, 200);
+        const err = new Error('Zoho refused the row (code ' + body.code + '): ' + why);
+        err.zohoCode = body.code;
+        throw err;
+      }
+      const rec = Array.isArray(body.data) ? (body.data[0] || {}) : (body.data || {});
+      return String(rec.ID || rec.id || '');
+    };
     try {
-      return await axios.post(base + '/form/Project_BOM_Fittings_Quote_Form', { data }, { headers: zohoHeaders(token) });
+      return await send(data);
     } catch (e) {
-      const msg = String(e.response?.data?.message || e.message || '');
+      const msg = String(e.zohoCode ? e.message : (e.response?.data?.message || e.message || ''));
       if (/Project_LU/i.test(msg) && data.Project_LU) {
         const retry = Object.assign({}, data); delete retry.Project_LU;
         console.log('[fittings] Project_LU rejected — writing without it');
-        return await axios.post(base + '/form/Project_BOM_Fittings_Quote_Form', { data: retry }, { headers: zohoHeaders(token) });
+        return await send(retry);
       }
       throw e;
     }
