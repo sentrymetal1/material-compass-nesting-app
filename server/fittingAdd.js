@@ -36,6 +36,9 @@ const axios = require('axios');
 const weights = require('./weights');
 const iron = require('./ironFittingWeights');
 const { indexHay } = require('./fittingIndex');
+// The same size and schedule normalisation the matcher uses, so a sibling is found by what a
+// size IS rather than by how the table happens to spell it.
+const { npsNum, sameSched } = require('./fittingResolve');
 
 const BW_FORM = 'Tee_Reducing_NPS_Dimensions';
 const SW_FORM = 'Fittings_Socket_Weld_and_Threaded_Details';
@@ -165,14 +168,23 @@ function makeDetailRowCreator(deps) {
     // three different reducing couplings are indistinguishable in the list.
     if (txt(f.reducer_dims) && tbl === 'sw') data.Reducer_Dims_Text = txt(f.reducer_dims);
 
-    // A sibling with this size anywhere in the same table gives us its dimension lookup id.
-    const wantSize = sizeKey(size);
-    const sizeSib = items.find((x) => x.tbl === tbl && sizeKey(x.size) === wantSize) ||
-                    items.find((x) => sizeKey(x.size) === wantSize);
-    // ...and a sibling with this schedule or class gives us that one.
-    const wantSched = sizeKey(sched);
-    const schedSib = sched ? (items.find((x) => x.tbl === tbl && sizeKey(x.sched) === wantSched) ||
-                              items.find((x) => sizeKey(x.sched) === wantSched)) : null;
+    // ── SIBLINGS COME FROM THIS TABLE ONLY ──────────────────────────────────────────────
+    // The two detail tables have DIFFERENT dimension fields — NPS_Dimension on butt weld,
+    // NPS_Dimensions on socket/threaded — and different id spaces behind them. An earlier
+    // version fell back to a sibling in either table and then read it out of this table's
+    // report, which Zoho answers with "The specified record ID is incorrect or non-existent".
+    // A cross-table id would be worse if it HAD worked: a real id pointing at the wrong thing.
+    //
+    // Sizes are compared numerically as well as textually, because the two tables write a size
+    // differently: '1-1/4"' on socket/threaded against '1-1/4" (1.660 OD)' on butt weld. That
+    // difference alone is why no same-table sibling was being found here.
+    const sameTable = items.filter((x) => x.tbl === tbl);
+    const wantSize = sizeKey(size), wantNps = npsNum(size);
+    const sizeSib = sameTable.find((x) => sizeKey(x.size) === wantSize) ||
+                    (wantNps ? sameTable.find((x) => npsNum(x.size) === wantNps) : null);
+    // ...and a sibling with this schedule or class gives us that one. Same normalisation the
+    // matcher uses, so 'SCH 80 (.191")' finds the row filed as '80 (.191)'.
+    const schedSib = sched ? (sameTable.find((x) => sameSched(x.sched, sched)) || null) : null;
 
     // Raw rows carry the lookup ids; the index does not, so fetch just the two siblings.
     const unresolved = [];
@@ -185,7 +197,7 @@ function makeDetailRowCreator(deps) {
 
     if (sched) {
       if (schedSib) {
-        const row = await siblingIds(base, token, schedSib.tbl, schedSib.id);
+        const row = await siblingIds(base, token, tbl, schedSib.id);
         if (tbl === 'bw') {
           const sid = idOf(row, 'NPS_Schedule');
           if (sid) data.NPS_Schedule = sid; else unresolved.push('schedule');
