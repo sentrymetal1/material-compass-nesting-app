@@ -218,7 +218,11 @@ function makeDetailRowCreator(deps) {
     // Weight, computed rather than left blank where the geometry allows it. Mark: weights can
     // be backfilled, so a null here is acceptable — a zero never is.
     const wt = estimateWeight(f, size, sched);
-    if (wt != null) data.Weight = Number(wt.lb.toFixed(4));
+    // THREE decimals, not four. The Weight field on both detail tables refuses a fourth with
+    // code 3001, "Weight has exceeded its maximum digits" — an HTTP 200 that creates nothing,
+    // so it reads as a silent failure unless the code is checked. Every existing row is
+    // three or fewer: 0.240, 4.664, 562.000.
+    if (wt != null) data.Weight = Number(wt.lb.toFixed(3));
 
     const ins = await axios.post(base + '/form/' + (tbl === 'bw' ? BW_FORM : SW_FORM), { data }, { headers: zohoHeaders(token) });
     // The id can come back under `data` or, when the form answers per-record, as the first
@@ -243,7 +247,7 @@ function makeDetailRowCreator(deps) {
     // index, so the next build reloads the 24h copy on the volume — which does not have this row
     // in it. Appending first means the rebuilt index carries the new row without spending the
     // ~53 reads a forced rebuild would cost.
-    const weightLb = wt == null ? null : Number(wt.lb.toFixed(4));
+    const weightLb = wt == null ? null : Number(wt.lb.toFixed(3));
     const item = {
       id: newId, tbl: tbl,
       type: txt(f.fitting_type), typeId: txt(f.fitting_type_id),
