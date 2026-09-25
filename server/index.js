@@ -3667,10 +3667,43 @@ app.post('/api/fittings/resolve-row', async (req, res) => {
     // Nothing adopted. Say WHY, because "several rows fit and they differ" is a different
     // problem from "this combination does not exist" and they need different answers.
     const cands = detailCandidates(merged, items);
+    if (cands.length > 1) {
+      return res.json({ ok: true, id: '', candidates: cands.length,
+        why: cands.length + ' rows fit and they are different fittings', how: r.how });
+    }
+
+    // ── CREATE IT, IF ASKED ──────────────────────────────────────────────────────────────
+    // The cascade offers combinations the detail tables do not carry: getFittingSizes()
+    // generates the whole schedule range from literal arrays, while Carbon Steel 45° short
+    // radius elbows, for one, exist only in STD. So an estimator picks something perfectly
+    // real, and there is no row to join it to.
+    //
+    // Mark's call: create the row, with the lookup ids borrowed from a sibling and an
+    // approximate weight, flagged in the additions ledger for Material Compass to confirm or
+    // adjust — and let the quote carry on. Never on a half-finished selection: this only runs
+    // when the type resolved and a size is in hand.
+    if (String(b.create) === 'true' || b.create === true) {
+      if (!merged.fitting_type_id) {
+        return res.json({ ok: true, id: '', why: 'cannot create without a catalog fitting type', how: r.how });
+      }
+      try {
+        const made = await fittingDetailRows.createDetailRow({
+          fitting: merged, size: merged.size, schedule: merged.schedule_or_class,
+          description: s(b.description), project_id: s(b.project_id),
+          manufacturer_id: s(b.manufacturer_id), via: 'subform',
+        }, { index: idx });
+        return res.json({ ok: true, id: String(made.id), table: made.table, label: made.label,
+          weight: made.weight, created: !made.reused, reused: !!made.reused,
+          unresolved: made.unresolved, how: r.how });
+      } catch (e) {
+        const why = e.response?.data?.message || e.message;
+        console.error('[fittings] resolve-row create failed:', why);
+        return res.json({ ok: true, id: '', why: String(why).slice(0, 200), how: r.how });
+      }
+    }
+
     res.json({ ok: true, id: '', candidates: cands.length,
-      why: cands.length > 1 ? cands.length + ' rows fit and they are different fittings'
-                            : 'no catalog row for this combination',
-      how: r.how });
+      why: 'no catalog row for this combination', how: r.how });
   } catch (err) {
     console.error('[fittings] resolve-row:', err.response?.data || err.message);
     res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
