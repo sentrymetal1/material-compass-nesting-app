@@ -215,9 +215,18 @@ function makeDetailRowCreator(deps) {
     if (tbl === 'bw') data.NPS_Dim_And_SCH_Text = label;
     else { data.NPS_Inch_Text = size; data.NPS_Dim_and_Class = label; }
 
-    // Weight, computed rather than left blank where the geometry allows it. Mark: weights can
-    // be backfilled, so a null here is acceptable — a zero never is.
-    const wt = estimateWeight(f, size, sched);
+    // ── A GIVEN WEIGHT BEATS AN ESTIMATED ONE ───────────────────────────────────────────
+    // The project subform already knows the real figure when it calls in: getFittingWeight /
+    // getIronFittingWeight have just run on that row, and those are the authoritative engine
+    // for this platform. The geometry estimate below is a fallback for callers that have
+    // nothing — and it is only a fallback: on a 1-1/4" SCH 80 elbow it said 0.722 lb where the
+    // functions say 0.245, nearly 3x out. Writing that into the catalog would make a bad number
+    // permanent, so a supplied weight always wins.
+    const given = Number(b.weight);
+    const wt = (Number.isFinite(given) && given > 0)
+      ? { lb: given, source: 'deluge-fitting-functions', confidence: 'calculated',
+          note: 'computed by getFittingWeight / getIronFittingWeight on the project form' }
+      : estimateWeight(f, size, sched);
     // THREE decimals, not four. The Weight field on both detail tables refuses a fourth with
     // code 3001, "Weight has exceeded its maximum digits" — an HTTP 200 that creates nothing,
     // so it reads as a silent failure unless the code is checked. Every existing row is

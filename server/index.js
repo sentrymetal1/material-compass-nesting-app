@@ -3691,6 +3691,10 @@ app.post('/api/fittings/resolve-row', async (req, res) => {
           fitting: merged, size: merged.size, schedule: merged.schedule_or_class,
           description: s(b.description), project_id: s(b.project_id),
           manufacturer_id: s(b.manufacturer_id), via: 'subform',
+          // The caller's own figure, when it has one. The project subform computes the real
+          // weight with the Deluge functions immediately before calling here, and that number
+          // is better than anything this end can derive.
+          weight: b.weight,
         }, { index: idx });
         return res.json({ ok: true, id: String(made.id), table: made.table, label: made.label,
           weight: made.weight, created: !made.reused, reused: !!made.reused,
