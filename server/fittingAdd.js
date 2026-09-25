@@ -221,8 +221,20 @@ function makeDetailRowCreator(deps) {
     if (wt != null) data.Weight = Number(wt.lb.toFixed(4));
 
     const ins = await axios.post(base + '/form/' + (tbl === 'bw' ? BW_FORM : SW_FORM), { data }, { headers: zohoHeaders(token) });
-    const newId = String(ins.data?.data?.ID || '');
-    if (!newId) throw new Error('Zoho accepted the call but returned no id.');
+    // The id can come back under `data` or, when the form answers per-record, as the first
+    // element of an array. A quota-exhausted or validation-refused call is ALSO an HTTP 200
+    // here, so the code has to be read rather than assumed
+    // ([[feedback_zoho_api_code_4000]]).
+    const body = ins.data || {};
+    const first = Array.isArray(body.data) ? (body.data[0] || {}) : (body.data || {});
+    const newId = String(first.ID || first.id || '');
+    if (!newId) {
+      // Say what Zoho actually said. "Returned no id" on its own sent me looking in the wrong
+      // place for twenty minutes.
+      const detail = [body.code ? 'code ' + body.code : '', body.message || '',
+        first.message || '', JSON.stringify(body).slice(0, 300)].filter(Boolean).join(' · ');
+      throw new Error('Zoho accepted the call but returned no id — ' + detail);
+    }
 
     // Usable NOW. Without this the row exists but the picker cannot see it for up to 12 hours,
     // which from the estimator's seat is indistinguishable from the add having failed.
