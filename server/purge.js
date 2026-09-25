@@ -64,6 +64,11 @@ const CASCADE = [
   // ── the project's own children ────────────────────────────────────────
   { report: 'Project_Material_Allocated_Detail_Form_Report',   level: 'project',       fields: ['MCP_Customer_Project_Form', 'Project_Bi_Directional_Lookup', 'Project_LU'] },
   { report: 'Project_Bill_Of_Material_Detail_Form_Report',     level: 'project',       fields: ['MCP_Customer_Project_Form', 'Bi_Directional_Project_ID'] },
+  // The project's FITTINGS. Missing from this cascade until 2026-09-25, which was harmless only
+  // because no take-off fitting had ever successfully reached a project — the API insert was
+  // being refused and counted as written. Now that they land, purging without this leaves rows
+  // pointing at a project that no longer exists.
+  { report: 'Project_BOM_Fittings_Quote_Form_Report',          level: 'project',       fields: ['MCP_Customer_Project_Form', 'Project_Bi_Directional_Lookup', 'Project_LU'] },
   { report: 'All_Project_Drawing_Details',                     level: 'project',       fields: ['MCP_Customer_Project_Form', 'Project_ID_Relationship', 'Project_ID_Number'] },
   { report: 'All_Project_Components',                          level: 'project',       fields: ['MCP_Customer_Project_Form', 'Project_Bi_Directional_Lookup', 'Project_LU'] },
   { report: 'Import_BOM_Form_Report',                          level: 'project',       fields: ['Project_ID'] },
