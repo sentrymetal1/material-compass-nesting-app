@@ -855,12 +855,22 @@
         dz.querySelector("strong").textContent = docs.length ? "＋ Add more PDFs" : "Click to choose PDFs";
         dz.querySelector(".hint").textContent = docs.length ? "or drop them here" : "or drag them here";
       }
-      go.disabled = over || docs.length === 0;
+      // The project form requires a Type of Project on EVERY component, and the take-off
+      // creates components. Refusing at that moment - inside scopeApi, after the files and
+      // the depth are chosen and Run is pressed - is too late to be useful, so it is a
+      // condition of leaving this screen and it is said on the button like the others.
+      const noType = !selectedType;
+      go.disabled = over || docs.length === 0 || noType;
       // Say WHY it's disabled, on the button and beside it.
       const hint = document.getElementById("runHint");
       if (!docs.length) {
         go.title = "Load at least one PDF first";
         if (hint) hint.innerHTML = "Load at least one PDF under <b>Documents</b> to enable this.";
+      } else if (noType) {
+        go.title = "Choose a Type of project first";
+        if (hint) hint.innerHTML = "Choose a <b>Type of project</b> below before running. The project " +
+          "form requires it on every component, and a component saved without one fails later with " +
+          "&ldquo;Invalid entries found&rdquo; naming no row.";
       } else if (over) {
         go.title = "The documents total more than " + MAX_MB + " MB";
         if (hint) hint.innerHTML = "<b>" + totalMb.toFixed(1) + " MB loaded — over the ~" + MAX_MB +
@@ -1013,6 +1023,7 @@
         projectTypes = d.types || [];
         // One type and nothing chosen? Choose it. There is no decision to make.
         if (!selectedType && projectTypes.length === 1) selectedType = projectTypes[0].id;
+        renderFiles();      // one type auto-selects, which can un-gate Run
         renderProjectTypes();
       } catch (e) {
         projectTypes = []; renderProjectTypes();
@@ -1029,6 +1040,7 @@
     document.getElementById("ptypeSel").addEventListener("change", (e) => {
       if (e.target.value === "__new") { e.target.value = selectedType; showNewType(true); return; }
       selectedType = e.target.value;
+      renderFiles();        // the Run button is gated on this too
       renderProjectTypes();
     });
     document.getElementById("ptypeCancel").addEventListener("click", () => showNewType(false));
