@@ -643,14 +643,20 @@ function renderTriagePage() {
     if(o.id) qp+='&quote_id='+encodeURIComponent(o.id);
     if(o.client_id) qp+='&client_id='+encodeURIComponent(o.client_id);
     if(MFG) qp+='&manufacture='+encodeURIComponent(MFG);
+    // An RFQ already has its drawings held against it, and the take-off creates the
+    // components and drawings itself — so a triaged job goes down the AI path by
+    // default. The form's OnLoad reads this and ticks Project Entry Type, which is
+    // what sends it into the take-off on submit instead of holding it on COMPONENTS.
+    // A hand-created project carries no parameter and keeps the Detail Entry default.
+    qp+='&entry_type='+encodeURIComponent('AI Take-off');
     window.open(PORTAL_NEW_PROJECT+qp,'_blank');
     // A project form opened in another tab is only half the step. Nothing is
     // created until it is submitted, and the bill of material comes from the
     // take-off after that — the two facts behind a project that sat empty.
     var n=Number(o.files)||0;
     notify('The project form is open in a new tab, filled in from this RFQ.\\n\\n'
-      + '1. Press SUBMIT NEW PROJECT on that form. Nothing is saved until you do.\\n'
-      + '2. On the project page, press Run AI Take-off.'
+      + 'Press SUBMIT NEW PROJECT on that form. Nothing is saved until you do.\\n'
+      + 'The AI Take-off opens by itself straight after — there is no button to find.'
       + (n ? '\\n\\nIts ' + n + ' document' + (n===1?'':'s') + ' will be loaded there for you.' : '\\n\\nHave the drawings ready to upload there.'),
       'good', true);
   };

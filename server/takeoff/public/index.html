@@ -1083,8 +1083,9 @@
     function emptyScopeHtml() {
       return '<div class="aud warn" style="margin:0 0 10px"><b>This project has no components or drawings entered yet.</b>' +
         '<span class="sub2">The AI tags every BOM row to your component names and drawing numbers, so they have to exist ' +
-        "first. Enter them on the project page, or add them here with <b>+ Add component</b> — either way they are written " +
-        "to the project itself.</span></div>";
+        "first. Add them here with <b>+ Add component</b>, or upload the drawings and let the suggested " +
+        "breakdown propose them — either way they are written to the project itself. You can also enter " +
+        "them on the project page.</span></div>";
     }
 
     // The tallies. Its own element and its own render, because a coverage change moves these
@@ -1956,7 +1957,7 @@
         const nc = project.components.length;
         const nd = project.components.reduce((s, c) => s + c.drawings.length, 0) + project.unassigned.length;
         if (!nc && !nd) {
-          setScopeStatus("Nothing entered on this project yet — add it here or on the project page before running.");
+          setScopeStatus("No components or drawings on this project yet — add them below, or upload the drawings and let the breakdown propose them.");
           return false;
         }
         setScopeStatus("Loaded " + nc + " component" + (nc === 1 ? "" : "s") + " and " + nd + " drawing" +
