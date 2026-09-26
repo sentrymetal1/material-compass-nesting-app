@@ -1641,9 +1641,16 @@ function computeNestDims(row) {
 //   Panel Area (if SA):  ((L_in × W_in) / 144) × 2 × Quantity   (top + bottom faces)
 //   Linear Area (if SA): Quantity × Surface_Area_Per_Ft × (Length_FT + Length_INCH.Result / 12)
 //   Galv_LB = CalcWeight when Galv ticked, else 0
-//     (NB: Zoho workflow has bug `if (row.Galv = true)` — assignment, not comparison.
-//      That makes Galv_LB always set even when unchecked. Widget uses correct
-//      boolean check; if you ever want to mirror the buggy behavior, ping me.)
+//     (The Zoho workflow spells this `if (row.Galv = true)`. That is NOT a bug and
+//      Galv_LB is not always set: Deluge treats a single `=` inside an if() as a
+//      COMPARISON. An earlier note here called it an assignment and it was wrong —
+//      corrected 2026-09-26. Proof it compares: the `populate subforms` action on
+//      Job_Form loops the whole WO BOM guarded by `if(Work_Order_LU.Job_Form =
+//      input.ID)`; if that assigned, every WO BOM row on the platform would have
+//      been reassigned to the last job opened. Production data is intact.
+//      This matters here because Galv_LB is what a GALVANIZER quotes against —
+//      they price per pound, not per square foot — so an over-reported one would
+//      put weight on the RFQ for parts nobody is galvanizing.)
 // (Zoho workflow gates the whole unit-weight block behind `if CalcWeight != 0` —
 //  chicken-and-egg for new rows. Widget always computes, no gate.)
 function computeBomCalcs(row) {

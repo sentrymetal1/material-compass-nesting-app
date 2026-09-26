@@ -1,9 +1,19 @@
 // Paintable surface area, square feet.
 //
-// Why this exists: finishing is normally OUTSOURCED, so surface area is not a labour driver -
-// it is the quantity the coater quotes against. Today the BOM editor's AREA / SA columns are
-// all 0.00, so component Unit Surface Area rolls up zero and every coating RFQ goes out with
-// no quantity on it.
+// A FALLBACK, not a replacement. The BOM editor already computes this properly
+// (bom-editor.html, computeBomCalcs): plate gets both faces from its own dimensions, a linear
+// row gets Surface_Area_Per_Ft from the material catalog times its length, and Galv_LB carries
+// the weight for galvanizers, who price per pound rather than per square foot.
+//
+// What it does NOT survive is a blank catalog field. `meta.surface_area_per_ft || 0` turns an
+// empty Surface_Area_Per_Ft into a zero, so a row with SA ticked reports 0.00 sq ft and reads
+// exactly like a row that genuinely has no area - the same way a blank Weight_Per_Ft once
+// became a zero weight in nesting. A coating RFQ then goes out with no quantity on it and
+// nothing says why.
+//
+// So this computes the area from the geometry instead, for the case where the catalog cannot
+// answer. Whether a finish is quoted by area or by weight is a property of the FINISH, not of
+// this module: paint, powder, anodize per sq ft; galvanize per lb; small parts per each.
 //
 // Same shape as weights.js and deliberately so: geometry where the dimensions are known, a
 // DOCUMENTED allowance where they are not, and null where neither. Never zero - a zero is an
