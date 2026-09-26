@@ -32,6 +32,8 @@ function outward(err) {
 
 async function takeoffHandler(req, res, deps) {
   deps = deps || {};
+  // Declared out here so the catch below can stop it - the try block owns the interval.
+  let stopHeartbeatRef = null;
   const getManufacturer = deps.getManufacturer;
   const updateManufacturer = deps.updateManufacturer;
   const createLog = deps.createLog;
@@ -46,6 +48,7 @@ async function takeoffHandler(req, res, deps) {
 
     const docs = (Array.isArray(body.pdfs) && body.pdfs.length) ? body.pdfs : (body.pdf_base64 ? [body.pdf_base64] : []);
     if (!docs.length) return res.status(400).json({ ok: false, error: "pdfs[] or pdf_base64 required" });
+
 
     // Premium (default) returns the synopsis; Basic = BOM only (cheaper).
     const includeSynopsis = body.include_synopsis != null ? !!body.include_synopsis : body.tier !== "basic";
@@ -62,6 +65,21 @@ async function takeoffHandler(req, res, deps) {
         });
       }
     }
+
+    // The credit gate above still needs to answer 402 with a body, so the response is not
+    // opened until it has passed. Past this point the run takes minutes, and Railway's edge drops a connection that has
+    // sent nothing for about five of them. The browser then receives "upstream error", which
+    // is not JSON and surfaces as a parse failure with the run already paid for.
+    //
+    // Whitespace is legal before a JSON document, so a space every 15s keeps the socket alive
+    // and the body still parses. Headers go out now, so the error path below can no longer set
+    // a status code - it writes ok:false instead, which is what the page branches on anyway.
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    if (res.flushHeaders) res.flushHeaders();
+    const heartbeat = setInterval(function () { try { res.write(" "); } catch (e) {} }, 15000);
+    const stopHeartbeat = function () { clearInterval(heartbeat); };
+    stopHeartbeatRef = stopHeartbeat;
+    res.on("close", stopHeartbeat);
 
     // 1. Proven engine.
     const out = await runTakeoff({ docs: docs, modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog, fittingsCatalog: deps.fittingsCatalog });
@@ -156,6 +174,7 @@ async function takeoffHandler(req, res, deps) {
       } catch (e) { console.error("consume/log failed (rows still returned)", e); }
     }
 
+    stopHeartbeat();
     return res.json({
       ok: true,
       count: count,
@@ -216,6 +235,10 @@ async function takeoffHandler(req, res, deps) {
     });
   } catch (err) {
     console.error("takeoff error", err);
+    // The heartbeat may already have sent headers, so a status code is no longer available.
+    // The page checks ok:false, not the status.
+    if (typeof stopHeartbeatRef === "function") stopHeartbeatRef();
+    if (res.headersSent) return res.end(JSON.stringify({ ok: false, error: outward(err) }));
     return res.status(500).json({ ok: false, error: outward(err) });
   }
 }
