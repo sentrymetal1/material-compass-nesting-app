@@ -801,9 +801,19 @@ async function readSheetIndex(opts) {
       : "\n\nReturn exactly one entry per page, in order, including any page with no drawing number.") +
     "\nDo not take off materials.";
 
-  const resp = await anthropic.messages.create({
+  // ── THE CEILING HAS TO SCALE WITH THE PACKAGE ──────────────────────────────────────────
+  // This asks for one row per page, so a fixed 8000 was only ever right for the package size
+  // it was written against. On 2026-09-26 a 153-page set (a 149-page BOM plus three drawings)
+  // ran past it: the tool input was cut off mid-JSON, the parser turned that into [], and all
+  // 153 pages came back reported as "never came back from the read" with no error anywhere.
+  // A truncated index is not a partial index — it is nothing at all.
+  const pagesToIndex = totalPages || 60;
+  const maxTokens = Math.min(48000, Math.max(8000, pagesToIndex * 130 + 1500));
+  // Above ~16k a non-streamed call risks an HTTP timeout before the response completes, so
+  // large packages stream and take the final message.
+  const params = {
     model: model.id,
-    max_tokens: 8000,           // one row per page: a 100-page set needs the headroom
+    max_tokens: maxTokens,
     system: SHEET_SYSTEM,
     tools: [SHEET_INDEX_TOOL],
     tool_choice: { type: "tool", name: "submit_sheet_index" },
@@ -814,11 +824,26 @@ async function readSheetIndex(opts) {
         [{ type: "text", text: ask }]
       ),
     }],
-  });
+  };
+  const resp = maxTokens > 16000
+    ? await anthropic.messages.stream(params).finalMessage()
+    : await anthropic.messages.create(params);
+
+  // Say it out loud rather than returning an empty index. Silence here cost an afternoon.
+  if (resp.stop_reason === "max_tokens") {
+    throw new Error("The page index was cut off at " + maxTokens + " output tokens while indexing " +
+      pagesToIndex + " pages, so none of it could be read. Split the package into fewer pages per " +
+      "read, or raise the ceiling in readSheetIndex.");
+  }
 
   const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
   let raw = unwrap(toolUse ? toolUse.input.pages : [], []);
   if (!Array.isArray(raw)) raw = [];
+  // The model answered, but not with the tool. Another silent-empty path.
+  if (!toolUse) {
+    throw new Error("The read came back without a page index (stop_reason: " +
+      (resp.stop_reason || "unknown") + "). Nothing was indexed.");
+  }
 
   // Normalize, and keep only ONE entry per (doc,page) — the page is the primary key, so a
   // page the model reported twice can no longer become a second drawing.
