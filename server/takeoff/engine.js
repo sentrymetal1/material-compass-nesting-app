@@ -20,7 +20,10 @@ const TAKEOFF_MAX_OUT = 32000;
 const MODELS = {
   haiku:  { id: "claude-haiku-4-5-20251001", in: 1,  out: 5,  cacheWrite: 1.25,  cacheRead: 0.10 },
   sonnet: { id: "claude-sonnet-4-6",          in: 3,  out: 15, cacheWrite: 3.75,  cacheRead: 0.30 },
-  opus:   { id: "claude-opus-4-8",            in: 15, out: 75, cacheWrite: 18.75, cacheRead: 1.50 },
+  // Opus 4.8 is $5/$25 per MTok. This row carried $15/$75 - the old Opus 3 / 4.1 pricing -
+  // so every Deep run has been REPORTED at three times what it actually cost. Cache rates follow
+  // the base: write is 1.25x input, read is 0.1x.
+  opus:   { id: "claude-opus-4-8",            in: 5,  out: 25, cacheWrite: 6.25,  cacheRead: 0.50 },
 };
 
 const LOW_CONF = 0.6;
