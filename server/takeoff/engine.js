@@ -526,11 +526,18 @@ async function reviseTakeoff(opts) {
   if (attachLabels.length) {
     userContent.push({ type: "text", text: "The estimator attached " + attachLabels.length + " reference document(s): " + attachLabels.join(", ") + ". Apply them per the instruction below (reconcile / merge — do not blindly replace)." });
   }
+  // FITTINGS GO IN TOO. They were left out, so the estimator could ask for anything about the
+  // structural rows and nothing at all about the pipe fittings — the one table that generates
+  // the most questions was the one table the AI could not see. It answered as though the
+  // fittings did not exist, which reads as a refusal rather than a blind spot.
   userContent.push({ type: "text", text:
     "CURRENT TAKE-OFF PACKAGE (JSON):\n" +
-    JSON.stringify({ rows: current.rows || [], synopsis: current.synopsis || null }) +
+    JSON.stringify({ rows: current.rows || [], fittings: current.fittings || [],
+                     synopsis: current.synopsis || null }) +
     "\n\nESTIMATOR INSTRUCTION:\n" + instruction +
-    "\n\nApply the instruction and return the COMPLETE revised package via submit_takeoff." });
+    "\n\nApply the instruction and return the COMPLETE revised package via submit_takeoff. " +
+    "Return `fittings` whenever the package has any — omitting the array is read as 'unchanged', " +
+    "but returning a SHORT one deletes the fittings that are missing from it." });
 
   // Returns the COMPLETE revised package, so it carries the same ceiling problem as the run.
   const resp = await anthropic.messages.stream({
@@ -549,10 +556,16 @@ async function reviseTakeoff(opts) {
   const out = toolUse ? toolUse.input : { rows: [], notes: "(no tool_use returned)" };
   out.rows = unwrap(out.rows, []);
   if (!Array.isArray(out.rows)) out.rows = [];
+  // undefined and [] are DIFFERENT answers here. An omitted array means the instruction had
+  // nothing to do with fittings and the caller should keep what it has; an empty one is the
+  // model saying to clear them. Collapsing the two would silently drop every fitting on any
+  // revise that only touched the structural rows.
+  const fittings = unwrap(out.fittings, undefined);
   const synopsis = unwrap(out.synopsis, null);
 
   return {
     rows: out.rows,
+    fittings: Array.isArray(fittings) ? fittings : undefined,
     notes: out.notes || "",
     synopsis: synopsis,
     cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
@@ -612,7 +625,10 @@ async function chatTakeoff(opts) {
       else if (a.data) extra.push({ type: "document", source: { type: "base64", media_type: a.media_type || "application/pdf", data: a.data } });
     });
   }
-  extra.push({ type: "text", text: "CURRENT TAKE-OFF PACKAGE (JSON):\n" + JSON.stringify({ rows: current.rows || [], synopsis: current.synopsis || null }) + "\n\n(The message that follows is the user's latest turn.)" });
+  // Fittings are in here for the same reason they are in reviseTakeoff: without them "Ask AI"
+  // cannot see the pipe fittings at all, and answers questions about them as though the table
+  // were empty.
+  extra.push({ type: "text", text: "CURRENT TAKE-OFF PACKAGE (JSON):\n" + JSON.stringify({ rows: current.rows || [], fittings: current.fittings || [], synopsis: current.synopsis || null }) + "\n\n(The message that follows is the user's latest turn.)" });
   const last = msgs[msgs.length - 1];
   last.content = extra.concat(last.content);
 
@@ -636,8 +652,10 @@ async function chatTakeoff(opts) {
     const out = toolUse.input || {};
     out.rows = unwrap(out.rows, []);
     if (!Array.isArray(out.rows)) out.rows = [];
+    const fittings = unwrap(out.fittings, undefined);   // omitted = unchanged, [] = cleared
     const synopsis = unwrap(out.synopsis, null);
-    return { edited: true, rows: out.rows, synopsis: synopsis, notes: out.notes || "",
+    return { edited: true, rows: out.rows, fittings: Array.isArray(fittings) ? fittings : undefined,
+      synopsis: synopsis, notes: out.notes || "",
       reply: (out.notes && String(out.notes).trim()) || textOut || "Updated the take-off.",
       cost_usd: cost, usage: resp.usage, modelId: model.id };
   }

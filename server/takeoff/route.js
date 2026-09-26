@@ -282,6 +282,9 @@ async function reviseHandler(req, res, deps) {
       gap_count: gap_count,
       low_confidence: low_confidence,
       rows: rows,
+      // Only when the model actually returned them. Sending `fittings: undefined` drops the key
+      // from the JSON, which is what tells the page to keep the ones it has.
+      fittings: out.fittings,
       notes: out.notes,
       synopsis: out.synopsis,
       // The model hit the output ceiling and the tail was lost. Carried through so the page can
@@ -319,7 +322,7 @@ async function chatHandler(req, res, deps) {
       const rows = out.rows;
       return res.json({
         ok: true, edited: true, reply: out.reply, notes: out.notes,
-        rows: rows, synopsis: out.synopsis, cost_usd: out.cost_usd,
+        rows: rows, fittings: out.fittings, synopsis: out.synopsis, cost_usd: out.cost_usd,
         import_csv: buildImportCsv(rows), verify_csv: buildVerifyList(rows),
         count: rows.filter(function (r) { return (Number(r.quantity) || 0) > 0; }).length,
       });

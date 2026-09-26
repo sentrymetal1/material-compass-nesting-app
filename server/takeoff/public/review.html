@@ -605,9 +605,10 @@
         ? 'Work left to right — each column narrows the next. End types and connections narrow to the '+
           '<b>type</b>, specifications narrow to the <b>make</b>, and <b>size · class</b> narrows to all of '+
           'them, which is why it comes last. It is one choice rather than two boxes: it picks the actual '+
-          'catalog row and the weight comes with it. A fitting with no row picked reaches the project with '+
-          'no weight. Anything marked <b style="color:var(--red)">✗</b> is not in the catalog and will not '+
-          'price; pick a real one or add it to the catalog.'
+          'catalog row and the weight comes with it. A row left unpicked is <b>not</b> dropped — it still '+
+          'reaches the project and still quotes, but with no catalog weight behind it, so the job '+
+          'totals will read light. Anything marked <b style="color:var(--red)">✗</b> is a word the '+
+          'catalog does not know; pick a real one, or it cannot be tied to a record at all.'
         : FITCAT_ERR
           ? '<b style="color:#9a6400">These are free-text boxes right now:</b> '+esc(FITCAT_ERR)+
             ' Until the catalog loads, nothing typed here can be tied to a catalog record.'
@@ -844,8 +845,12 @@
     if(!FITIDX||!FITCAT) return plain+(FITIDX_ERR?'<div class="src" style="color:#9a6400">'+esc(FITIDX_ERR)+'</div>':'');
     const opts=fitDetailOptions(x)||[];
     if(!opts.length){
-      return plain+'<div class="src" style="color:var(--red)">no catalog row for this '+
-        'type · make · end · connection — it cannot carry a weight</div>';
+      // This said 'it cannot carry a weight', which stopped being true when the commit
+      // started creating the missing row. Saying a thing is impossible when it is merely
+      // automatic teaches the estimator to go and fix something that needs no fixing.
+      return plain+'<div class="src" style="color:#9a6400">nothing in the catalog matches '+
+        'this type · make · end · connection yet — leave it and a catalog row will be created '+
+        'from the size and class above, flagged for Material Compass to confirm</div>';
     }
     const cur=String(x.detail_id||'');
     let h='<select class="fin'+(cur?'':' bad')+'" style="width:176px" '+
@@ -870,7 +875,11 @@
     } else {
       // Say what the drawing was read as, or the estimator has nothing to pick FROM.
       const said=[x.size,x.schedule_or_class].filter(Boolean).join(' · ');
-      h+='<div class="src">'+(said?'take-off read: <b>'+esc(said)+'</b>':'no size read from the drawing')+'</div>';
+      // The red box alone reads as a refusal. It is not one: the row goes through either way,
+      // and what is actually lost is the weight. Say that here, where it is being decided.
+      h+='<div class="src">'+(said
+        ? 'take-off read: <b>'+esc(said)+'</b> · goes through unpicked, but with no weight'
+        : 'no size read from the drawing · goes through unpicked, but with no weight')+'</div>';
     }
     return h;
   }
@@ -1951,7 +1960,7 @@
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/chat",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,model:"sonnet",
-          messages:hist, current:{rows:cur.rows,synopsis:cur.synopsis}, attachments:sentAttach})});
+          messages:hist, current:{rows:cur.rows,fittings:cur.fittings,synopsis:cur.synopsis}, attachments:sentAttach})});
       const data=await r.json();
       const R2=loadResult(); R2.chat=(R2.chat||[]).filter(function(m){return !m.pending;});
       if(!r.ok||data.ok===false){
@@ -2003,7 +2012,39 @@
       totals:        _has(rs.totals)?rs.totals:os.totals,
       confidence:    _has(rs.confidence)?rs.confidence:os.confidence,
     };
-    return Object.assign({},cur,{rows:data.rows,synopsis:syn,import_csv:data.import_csv,verify_csv:data.verify_csv});
+    return Object.assign({},cur,{rows:data.rows,fittings:mergeFittings(cur.fittings,data.fittings),
+      synopsis:syn,import_csv:data.import_csv,verify_csv:data.verify_csv});
+  }
+
+  // ---- keeping what the estimator picked, across an AI revise ----------------
+  // The AI returns the COMPLETE package, so a naive assignment would throw away every
+  // size·class row picked by hand — the slowest work on the page, and the one thing the
+  // AI was never shown well enough to re-pick. An omitted `fittings` means the instruction
+  // had nothing to do with them, so the current ones stand untouched.
+  //
+  // When fittings DO come back, each returned one is matched to the current one describing
+  // the same fitting, and the resolved catalog row is carried across unless the AI changed
+  // something that would invalidate it. Anything left without a pick is re-resolved by
+  // autoResolveFittings() on the next render, so a genuine change still re-matches.
+  function fitIdentity(f){
+    return [f&&f.fitting_type,f&&f.fitting_make,f&&f.end_type,f&&f.connection_type,
+            f&&f.specification,f&&f.size,f&&f.schedule_or_class]
+      .map(function(v){ return String(v==null?'':v).trim().toLowerCase(); }).join('|');
+  }
+  function mergeFittings(curFit,newFit){
+    if(newFit===undefined||newFit===null) return curFit;      // omitted = unchanged
+    if(!Array.isArray(newFit)) return curFit;
+    const byId={}; arr(curFit).forEach(function(f){ const k=fitIdentity(f); if(!byId[k]) byId[k]=f; });
+    return newFit.map(function(f){
+      const was=byId[fitIdentity(f)];
+      if(!was||!was.detail_id) return f;
+      return Object.assign({},f,{detail_id:was.detail_id,detail_table:was.detail_table,
+        detail_label:was.detail_label,
+        // The weight belongs to the catalog row, so it travels with the pick — but only when
+        // the AI did not state one of its own.
+        weight:(f.weight==null?was.weight:f.weight),
+        auto_matched:was.auto_matched});
+    });
   }
 
   // The 3c revise loop — global status bar + button locking so it's obvious something is happening.
@@ -2023,7 +2064,7 @@
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/revise",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,
-          instruction:instruction,model:"sonnet",current:{rows:cur.rows,synopsis:cur.synopsis},
+          instruction:instruction,model:"sonnet",current:{rows:cur.rows,fittings:cur.fittings,synopsis:cur.synopsis},
           attachments:REVISE_ATTACHMENTS})});
       const data=await r.json();
       if(!r.ok||data.ok===false){

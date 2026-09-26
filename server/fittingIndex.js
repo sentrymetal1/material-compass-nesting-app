@@ -65,9 +65,22 @@ function internals(deps) {
     // 3000, no fitting could be matched to its row, and the commit would have created a duplicate
     // for one that already existed. disp() reads the display value the same way every other
     // lookup on this row is read.
-    const sched = tbl === 'bw' ? disp(r.NPS_Schedule)
-                               : [disp(r.Class), disp(r.Class_Type)].filter(Boolean).join(' ');
     const label = tbl === 'bw' ? String(r.NPS_Dim_And_SCH_Text || '') : String(r.NPS_Dim_and_Class || '');
+    // ── THE CLASS CAN BE IN THE TEXT AND NOT IN THE LOOKUP ──────────────────────────────
+    // A row created by the commit writes its class into the text field but cannot always set
+    // the Class lookup: 'STD' is a pipe schedule and is not an option on the forged-class
+    // table, so the lookup is left empty. sameSched() refuses an empty side, so the row could
+    // never be matched again — and the next take-off, finding nothing, CREATED ANOTHER. The
+    // catalog already carries two identical 1/2" | STD couplings from exactly that loop.
+    //
+    // So when the lookup is empty, read the class back out of the label, which is the same
+    // string the estimator is shown. 'null' is excluded: 96 butt-weld tee rows carry the
+    // literal label 'null | null' from a Deluge concatenation that ran on empty fields, and
+    // treating that as a class name would match it to anything.
+    const fromLookup = tbl === 'bw' ? disp(r.NPS_Schedule)
+                                    : [disp(r.Class), disp(r.Class_Type)].filter(Boolean).join(' ');
+    const fromLabel = String(label).split('|').slice(1).join('|').trim();
+    const sched = fromLookup || (/^null$/i.test(fromLabel) ? '' : fromLabel);
     // Weight is blank on most butt-weld rows (the June audit put it at ~95%). That is expected,
     // not an error — the size is still right, and the weight engine fills it later. A blank must
     // stay blank; a zero would be read as an answer.

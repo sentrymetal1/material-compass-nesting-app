@@ -166,7 +166,16 @@ function makeDetailRowCreator(deps) {
     if (txt(f.connection_type_id)) data.Connection_Type = txt(f.connection_type_id);
     // The small end of a reducing fitting, in the field the picker reads it from — without it
     // three different reducing couplings are indistinguishable in the list.
-    if (txt(f.reducer_dims) && tbl === 'sw') data.Reducer_Dims_Text = txt(f.reducer_dims);
+    // A take-off does not send reducer_dims separately - it reads '3" x 1-1/2"' off the drawing
+    // and that lands in the SIZE. Recording the pair here as well means the row can be found by
+    // its pair next time instead of only by its run, and the picker can tell it apart from the
+    // other reducers of the same run. Without this the row is created, then not recognised, then
+    // created again - which is how two identical 1/2" couplings got into the catalog.
+    // Matched on sizeKey rather than the raw text, so '3" x 1-1/2"', '3"x1-1/2"' and '3 X 1-1/2'
+    // are all recognised as a pair — sizeKey strips the quotes and spaces and keeps the x.
+    const rdims = txt(f.reducer_dims) ||
+      (/[0-9]x/.test(require('./fittingResolve').sizeKey(txt(b.size))) ? txt(b.size) : '');
+    if (rdims && tbl === 'sw') data.Reducer_Dims_Text = rdims;
 
     // ── SIBLINGS COME FROM THIS TABLE ONLY ──────────────────────────────────────────────
     // The two detail tables have DIFFERENT dimension fields — NPS_Dimension on butt weld,

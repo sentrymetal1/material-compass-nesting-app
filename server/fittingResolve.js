@@ -263,7 +263,28 @@ function narrow(f, items) {
   // A reducing pick reads '1/2" x 1/8"', but older rows keep only the RUN in `size` and the
   // pair in `rdims`. The pair is the more specific match, so it is tried first.
   let hits = opts.filter((o) => o.rdims && sizeKey(o.rdims) === want);
-  if (!hits.length) {
+
+  // ── A PAIR ASKED FOR IS A PAIR REQUIRED ─────────────────────────────────────────────────
+  // '3" x 1-1/2"' names both ends of a reducing fitting. Falling through to the run size
+  // alone returns every 3" bushing in the catalog — 3" x 3/4", x 1", x 1-1/4", x 2",
+  // x 2-1/2" — and reports them as five rows that 'fit'. Not one of them fits: they are five
+  // different parts, and putting them in front of an estimator invites a wrong pick that the
+  // quote then carries. (3" x 1-1/2" is simply not in the malleable bushing range; the
+  // catalog skips from x 1-1/4" to x 2".)
+  //
+  // The pair is written in `rdims` on 1,292 rows, in `size` on 98 more and in `label` on a
+  // handful, so all three are read. When none of them carries it the honest answer is that it
+  // is not in the catalog — and that is the answer that lets the commit create it, rather than
+  // an ambiguity that stops everything.
+  const wantsPair = /[0-9]x/.test(want);   // sizeKey turns '3" x 1-1/2"' into '3x1-1/2'
+  if (!hits.length && wantsPair) {
+    const seen = {};
+    hits = opts
+      .filter((o) => sizeKey(o.size) === want ||
+                     sizeKey(String(o.label || '').split('|')[0]) === want)
+      .filter((o) => (seen[o.id] ? false : (seen[o.id] = 1)));
+    if (!hits.length) return none;
+  } else if (!hits.length) {
     // BOTH size tests, and their UNION — not one then the other. The two tables write a size
     // differently ('1-1/4"' vs '1-1/4" (1.660 OD)'), so taking the string matches and stopping
     // there silently drops every row from the other table. That is how a Swage nipple asked for
