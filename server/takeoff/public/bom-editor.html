@@ -1658,6 +1658,11 @@ function computeBomCalcs(row) {
   const meta = materialMetaById[row.material];
   if (!meta || !meta.weight_per_ft) return null;
   const wpf = meta.weight_per_ft;
+  // A material record with no Surface_Area_Per_Ft collapses to 0 here, and a linear row with
+  // SA ticked then reports 0.00 ft² — indistinguishable on screen from a row that genuinely
+  // has no area. Same failure as a blank Weight_Per_Ft becoming a zero weight in nesting.
+  // The number still has to be a number for the Zoho write, so it stays 0; what changes is
+  // that the row now SAYS it is unknown, and the totals say how many.
   const sapf = meta.surface_area_per_ft || 0;
 
   const lengthFt    = Number(row.ftL) || 0;
@@ -1689,6 +1694,11 @@ function computeBomCalcs(row) {
     }
   }
 
+  // Asked for an area, on a linear row, and the catalog cannot supply the per-foot figure.
+  // That is UNKNOWN, not zero. Panel rows are exempt: their area comes from their own
+  // dimensions, so they never need the catalog value.
+  const areaUnknown = row.sa === true && !isPanelRow(row) && !(sapf > 0);
+
   // Galv_LB — only set if Galv checkbox is on.
   const galvLb = row.galv === true ? totWt : 0;
 
@@ -1696,6 +1706,9 @@ function computeBomCalcs(row) {
     unitWt: Math.round(unitWt * 100) / 100,
     totWt:  Math.round(totWt  * 100) / 100,
     area:   Math.round(area   * 100) / 100,
+    // Carried so the row and the totals can say the figure was never known, rather than
+    // letting a 0.00 pass for a measurement.
+    areaUnknown: areaUnknown,
     // Galv_LB Zoho field is configured for 0 decimal places — must be integer.
     galvLb: Math.round(galvLb),
     // Per-foot weight from the material catalog. Persisted to the BOM's
@@ -2032,7 +2045,27 @@ function updateStats() {
   const totalGalv  = kept.reduce((s,r) => s + (r.galvLb  || 0), 0);
   const totalAlloc = kept.reduce((s,r) => s + (r.allocatedAmt || 0), 0);
   document.getElementById('stat-weight').textContent  = Math.round(totalWt).toLocaleString() + ' lbs';
-  document.getElementById('stat-area').textContent    = totalArea.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ft²';
+  // ── AN AREA THAT WAS NEVER KNOWN MUST NOT READ AS ZERO ────────────────────────────────
+  // Surface area is what a COATER quotes against, so a silent 0.00 sends a paint or powder
+  // RFQ out with no quantity on it and nothing to say why. Counted here rather than threaded
+  // through every row update: same inputs, one place.
+  const areaUnknownRows = kept.filter(function (r) {
+    if (r.sa !== true || isPanelRow(r)) return false;      // panels need no catalog figure
+    const m = r.material ? materialMetaById[r.material] : null;
+    return !(m && m.surface_area_per_ft > 0);
+  }).length;
+  const areaEl = document.getElementById('stat-area');
+  areaEl.textContent = totalArea.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ft²';
+  if (areaUnknownRows) {
+    areaEl.textContent += '  (+' + areaUnknownRows + ' unknown)';
+    areaEl.style.color = '#9a6400';
+    areaEl.title = areaUnknownRows + ' row' + (areaUnknownRows === 1 ? ' has' : 's have') +
+      ' surface area ticked but no Surface Area Per FT on the material record, so they ' +
+      'contribute nothing to this total. The coating RFQ will be short by that much.';
+  } else {
+    areaEl.style.color = '';
+    areaEl.title = '';
+  }
   document.getElementById('stat-galv').textContent    = Math.round(totalGalv).toLocaleString() + ' lbs';
   document.getElementById('stat-dollars').textContent = '$' + totalAlloc.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
 }
