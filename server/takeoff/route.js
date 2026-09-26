@@ -30,6 +30,15 @@ function outward(err) {
     .replace(/\bx-api-key\b/gi, "API key");
 }
 
+// res.json() goes through res.send(), which sets Content-Length and an ETag. After the
+// keep-alive heartbeat has written its first space those headers are already out, and Express
+// throws rather than sending - losing a run that had completed. Write the body directly in
+// that case; the JSON is identical either way.
+function sendJson(res, payload) {
+  if (res.headersSent) return res.end(JSON.stringify(payload));
+  return res.json(payload);
+}
+
 async function takeoffHandler(req, res, deps) {
   deps = deps || {};
   // Declared out here so the catch below can stop it - the try block owns the interval.
@@ -175,7 +184,7 @@ async function takeoffHandler(req, res, deps) {
     }
 
     stopHeartbeat();
-    return res.json({
+    return sendJson(res, {
       ok: true,
       count: count,
       gap_count: gap_count,
