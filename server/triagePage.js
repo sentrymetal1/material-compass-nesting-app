@@ -643,12 +643,15 @@ function renderTriagePage() {
     if(o.id) qp+='&quote_id='+encodeURIComponent(o.id);
     if(o.client_id) qp+='&client_id='+encodeURIComponent(o.client_id);
     if(MFG) qp+='&manufacture='+encodeURIComponent(MFG);
-    // An RFQ already has its drawings held against it, and the take-off creates the
-    // components and drawings itself — so a triaged job goes down the AI path by
-    // default. The form's OnLoad reads this and ticks Project Entry Type, which is
-    // what sends it into the take-off on submit instead of holding it on COMPONENTS.
-    // A hand-created project carries no parameter and keeps the Detail Entry default.
-    qp+='&entry_type='+encodeURIComponent('AI Take-off');
+    // An RFQ already has its drawings held against it and the take-off creates the
+    // components and drawings itself, so a triaged job goes down the AI path by default.
+    // Project Entry Type is what routes it there on submit; a hand-created project carries
+    // no parameter and keeps the Detail Entry default.
+    //
+    // Spelled as the FIELD's link name on purpose: Zoho prefills a field natively when a URL
+    // parameter matches it. The other params here ('description', 'due', 'manufacture') match
+    // no field and have to be mapped by the page - this one may need no mapping at all.
+    qp+='&Project_Entry_Type='+encodeURIComponent('AI Take-off');
     window.open(PORTAL_NEW_PROJECT+qp,'_blank');
     // A project form opened in another tab is only half the step. Nothing is
     // created until it is submitted, and the bill of material comes from the
