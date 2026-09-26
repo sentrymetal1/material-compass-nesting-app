@@ -12,6 +12,11 @@ const Anthropic = _Anthropic.default || _Anthropic; // 0.40.x CJS interop
 const fs = require("fs");
 const path = require("path");
 
+// The whole take-off package comes back in ONE tool call, so this ceiling has to cover every
+// BOM row AND the synopsis the review page is built from. Requests this size are streamed; a
+// non-streamed call this large risks an HTTP timeout before the response completes.
+const TAKEOFF_MAX_OUT = 32000;
+
 const MODELS = {
   haiku:  { id: "claude-haiku-4-5-20251001", in: 1,  out: 5,  cacheWrite: 1.25,  cacheRead: 0.10 },
   sonnet: { id: "claude-sonnet-4-6",          in: 3,  out: 15, cacheWrite: 3.75,  cacheRead: 0.30 },
@@ -394,9 +399,13 @@ async function runTakeoff(opts) {
   const model = MODELS[modelKey] || MODELS.sonnet;
   const anthropic = opts.client || new Anthropic(); // ANTHROPIC_API_KEY from env
 
-  const resp = await anthropic.messages.create({
+  // ONE tool call carries the whole package - every row, the fittings, and the synopsis.
+  // 16000 was not enough for a large job: the rows came back, the synopsis was cut off the
+  // end, and the review page was skipped with no error anywhere. Streamed because a ceiling
+  // this high risks an HTTP timeout on a non-streamed call.
+  const resp = await anthropic.messages.stream({
     model: model.id,
-    max_tokens: 16000,
+    max_tokens: TAKEOFF_MAX_OUT,
     system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge, opts.projectContext, opts.liveCatalog, opts.fittingsCatalog),
     tools: [buildTakeoffTool(includeSynopsis)],
     tool_choice: { type: "tool", name: "submit_takeoff" },
@@ -407,7 +416,7 @@ async function runTakeoff(opts) {
         [{ type: "text", text: "Perform the full material take-off across ALL the attached documents (drawings + any specs). Cross-reference structural, architectural, and spec sheets." }]
       ),
     }],
-  });
+  }).finalMessage();
 
   const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
   const result = toolUse ? toolUse.input : { rows: [], notes: "(no tool_use returned)" };
@@ -419,10 +428,23 @@ async function runTakeoff(opts) {
   if (!Array.isArray(result.fittings)) result.fittings = [];
   const synopsis = includeSynopsis ? unwrap(result.synopsis, null) : null;
 
+  // A cut-off response is not an empty one. The rows are kept - they are paid for and
+  // usable - but the caller is TOLD, because a missing synopsis silently sends the
+  // estimator down a different path and looks like the take-off simply chose to.
+  const truncated = resp.stop_reason === "max_tokens";
+  let notes = result.notes || "";
+  if (truncated) {
+    notes = (notes ? notes + "\n\n" : "") +
+      "The read was cut off at " + TAKEOFF_MAX_OUT + " output tokens" +
+      (includeSynopsis && !synopsis ? ", so the scope synopsis is missing" : "") +
+      ". The rows below are what came back before the cut.";
+  }
+
   return {
     rows: result.rows,
     fittings: result.fittings,
-    notes: result.notes || "",
+    notes: notes,
+    truncated: truncated,
     synopsis: synopsis,
     cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
     usage: resp.usage,
@@ -507,9 +529,10 @@ async function reviseTakeoff(opts) {
     "\n\nESTIMATOR INSTRUCTION:\n" + instruction +
     "\n\nApply the instruction and return the COMPLETE revised package via submit_takeoff." });
 
-  const resp = await anthropic.messages.create({
+  // Returns the COMPLETE revised package, so it carries the same ceiling problem as the run.
+  const resp = await anthropic.messages.stream({
     model: model.id,
-    max_tokens: 16000,
+    max_tokens: TAKEOFF_MAX_OUT,
     system: [
       { type: "text", text: REVISE_SYSTEM },
       { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
@@ -517,7 +540,7 @@ async function reviseTakeoff(opts) {
     tools: [buildTakeoffTool(true)],
     tool_choice: { type: "tool", name: "submit_takeoff" },
     messages: [{ role: "user", content: userContent }],
-  });
+  }).finalMessage();
 
   const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
   const out = toolUse ? toolUse.input : { rows: [], notes: "(no tool_use returned)" };

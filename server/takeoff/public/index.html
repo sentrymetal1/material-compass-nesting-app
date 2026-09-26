@@ -2951,6 +2951,16 @@
           return;
         }
 
+        // No synopsis means no review page. When that is because the response was CUT OFF
+        // rather than because none was asked for, say so - otherwise the estimator just lands
+        // somewhere different with no idea why, which is exactly what happened on a 153-page job.
+        if (data.truncated && !data.synopsis) {
+          resultBox.innerHTML = '<div class="result warn"><b class="big">The read was cut off.</b>' +
+            '<div class="sub2">' + (data.count || 0) + ' BOM rows came back before the cut, and they are usable ' +
+            '- but the scope review could not be built, so this page is showing the plain BOM instead. ' +
+            'A smaller set of documents per run will get you the full review.</div></div>' + resultBox.innerHTML;
+        }
+
         const canAutoSubmit = AUTO_SUBMIT;  // commit goes through Railway now (no SDK needed)
         resultBox.innerHTML = '<div class="result ' + cls + '">' +
           '<b class="big">' + data.count + ' BOM rows ready.</b>' +

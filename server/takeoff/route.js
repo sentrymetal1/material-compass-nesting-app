@@ -166,6 +166,10 @@ async function takeoffHandler(req, res, deps) {
       fitting_count: fittings.length,
       notes: out.notes,
       synopsis: out.synopsis,
+      // The model hit the output ceiling and the tail was lost. Carried through so the page can
+      // say so: a missing synopsis quietly routes the estimator away from the review page, and
+      // without this that reads as a deliberate choice rather than a cut-off response.
+      truncated: !!out.truncated,
       cost_usd: out.cost_usd,
       import_csv: import_csv,
       verify_csv: verify_csv,
@@ -248,6 +252,10 @@ async function reviseHandler(req, res, deps) {
       rows: rows,
       notes: out.notes,
       synopsis: out.synopsis,
+      // The model hit the output ceiling and the tail was lost. Carried through so the page can
+      // say so: a missing synopsis quietly routes the estimator away from the review page, and
+      // without this that reads as a deliberate choice rather than a cut-off response.
+      truncated: !!out.truncated,
       cost_usd: out.cost_usd,
       import_csv: buildImportCsv(rows),
       verify_csv: buildVerifyList(rows),
