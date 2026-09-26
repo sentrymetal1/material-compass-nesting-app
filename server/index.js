@@ -4,7 +4,7 @@ const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
 const FormData = require('form-data');
-const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler } = require('./takeoff/route');
+const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler } = require('./takeoff/route');
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
 const filestore = require('./filestore');        // the project's own copy of the drawings
 
@@ -1275,6 +1275,9 @@ app.post('/api/takeoff/bom-preview', async (req, res) => {
 
 app.post('/api/takeoff/index', (req, res) => indexHandler(req, res)); // intake: read sheet numbers + page ranges
 app.post('/api/takeoff/ask', (req, res) => askHandler(req, res));     // intake: ask about the uploaded documents
+// What a run would cost per reading depth, before anything is spent. Rates come from the
+// engine's own table so the quote and the bill cannot drift apart.
+app.get('/api/takeoff/pricing', (req, res) => pricingHandler(req, res));
 
 // AI take-off COMMIT — write the reviewed BOM CSV into Import_BOM_Form (Zoho) server-side.
 // The widget runs standalone (no Creator SDK context), so the Zoho write happens here using the

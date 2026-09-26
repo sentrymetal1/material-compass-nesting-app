@@ -15,7 +15,7 @@
 //              cost_usd, import_csv, verify_csv, credits_left, free_left }
 // =============================================================================
 
-const { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, LOW_CONF } = require("./engine");
+const { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, LOW_CONF , MODELS } = require("./engine");
 const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
 const { snapRows, snapFittings } = require("./snap");
@@ -347,4 +347,42 @@ async function askHandler(req, res) {
   }
 }
 
-module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler };
+
+// GET /api/takeoff/pricing — what a run WOULD cost, per reading depth, before spending anything.
+//
+// The page quotes from this rather than carrying its own copy of the rates. That matters: the
+// MODELS table had Opus at three times its real price and every Deep run was reported at 3x,
+// because nothing ever compared the two.
+//
+// The estimate is deliberately simple and errs high:
+//   input  = pages x TOKENS_PER_PAGE + PROMPT_OVERHEAD
+//   output = OUTPUT_EST (what a full package with a synopsis typically runs to)
+// PDFs reach the model as page IMAGES, which is where the money goes - measured at ~2,000
+// tokens a page on a real 149-page bill of material (~298,000 tokens for the one file).
+const TOKENS_PER_PAGE = 2000;   // a rendered PDF page, measured not guessed
+const PROMPT_OVERHEAD = 25000;  // system + knowledge + catalogs + project context
+const OUTPUT_EST      = 12000;  // a full package with a synopsis
+
+function pricingHandler(req, res) {
+  try {
+    const pages = Math.max(0, parseInt(req.query.pages, 10) || 0);
+    const inTok = pages * TOKENS_PER_PAGE + PROMPT_OVERHEAD;
+    const tiers = [
+      { key: "haiku",  label: "Quick",    blurb: "cheapest, try first" },
+      { key: "sonnet", label: "Standard", blurb: "balanced (recommended)" },
+      { key: "opus",   label: "Deep",     blurb: "most accurate" },
+    ].map(function (t) {
+      const m = MODELS[t.key];
+      const cost = (inTok * m.in + OUTPUT_EST * m.out) / 1000000;
+      return { key: t.key, label: t.label, blurb: t.blurb, model: m.id,
+               in_rate: m.in, out_rate: m.out,
+               est_cost_usd: Number(cost.toFixed(4)) };
+    });
+    return res.json({ ok: true, pages: pages, est_input_tokens: inTok, est_output_tokens: OUTPUT_EST,
+                      tokens_per_page: TOKENS_PER_PAGE, tiers: tiers });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: outward(err) });
+  }
+}
+
+module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler };

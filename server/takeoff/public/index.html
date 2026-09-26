@@ -428,6 +428,7 @@
         </select>
         <div class="colhint">Standard suits most packages. Deep is worth it on dense or poorly
           scanned sets; Quick is for a first look.</div>
+        <div class="colhint" id="depthCostHint"></div>
       </div>
 
       <div class="panel">
@@ -598,6 +599,47 @@
     // spreadsheet) is named but not loaded — the take-off reads PDFs only, and
     // silently dropping the rest would repeat the same mistake one level down.
     let sourceFilesDone = false;
+    // ---- what each reading depth will cost, before committing to it ----------
+    // Asked of the server rather than worked out here, because the rates belong to the
+    // engine. Two copies of a price list is how Opus came to be reported at three times
+    // its real rate for months with nothing to catch it.
+    //
+    // These are COSTS - what the run costs to make. Anything Material Compass charges on
+    // top of that belongs elsewhere, deliberately.
+    let DEPTH_BASE = null;          // labels as they shipped, so a re-quote never stacks
+    let depthPriceReq = 0;
+    function refreshDepthPrices(pages) {
+      const sel = document.getElementById("model");
+      if (!sel) return;
+      if (!DEPTH_BASE) {
+        DEPTH_BASE = {};
+        Array.prototype.forEach.call(sel.options, function (o) { DEPTH_BASE[o.value] = o.textContent; });
+      }
+      const hint = document.getElementById("depthCostHint");
+      if (!pages) {                 // nothing loaded yet: plain labels
+        Array.prototype.forEach.call(sel.options, function (o) { o.textContent = DEPTH_BASE[o.value] || o.textContent; });
+        if (hint) hint.textContent = "";
+        return;
+      }
+      const mine = ++depthPriceReq;
+      fetch(RAILWAY_URL + "/api/takeoff/pricing?pages=" + encodeURIComponent(pages))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (mine !== depthPriceReq || !d || !d.ok) return;   // a newer file list won
+          const by = {};
+          (d.tiers || []).forEach(function (t) { by[t.key] = t; });
+          Array.prototype.forEach.call(sel.options, function (o) {
+            const t = by[o.value];
+            o.textContent = (DEPTH_BASE[o.value] || o.textContent) + (t ? "  ~$" + t.est_cost_usd.toFixed(2) : "");
+          });
+          if (hint) hint.innerHTML = "Estimated cost of the run for <b>" + pages + "</b> page" +
+            (pages === 1 ? "" : "s") + ". PDFs reach the model as page images, so pages are what " +
+            "it costs \u2014 a long bill of material costs as much as a long drawing set. The figure " +
+            "shown after the run is the real one.";
+        })
+        .catch(function () {});
+    }
+
     async function loadSourceFiles() {
       if (sourceFilesDone || !params.project_id) return;
       sourceFilesDone = true;
@@ -801,6 +843,7 @@
           '<button type="button" class="fx" data-i="' + i + '" title="Remove this file" aria-label="Remove">✕</button></div>';
       }).join("");
       const totalPages = docs.reduce((s, d) => s + (d.pages || 0), 0);
+      refreshDepthPrices(totalPages);
       document.getElementById("fileList").innerHTML = docs.length
         ? rows + '<div class="' + (over ? "big" : "") + '"><b>Total: ' + totalMb.toFixed(1) + " MB" +
             (totalPages ? " · " + totalPages + " page" + (totalPages === 1 ? "" : "s") : "") +
