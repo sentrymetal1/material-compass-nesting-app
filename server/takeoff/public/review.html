@@ -591,7 +591,14 @@
           '<td style="'+TD+'"><span class="src">'+esc(x.component||'')+(x.source_sheet?' · '+esc(x.source_sheet):'')+
             (x.note?'<br>'+esc(x.note):'')+'</span></td>'+
           '<td style="'+TD+'"><button class="applybtn" style="background:#9aa6b2;padding:1px 7px" '+
-            'onclick="fitDelete('+i+')" title="Remove this fitting">✕</button></td></tr>';
+            'onclick="fitDelete('+i+')" title="Remove this fitting">✕</button></td></tr>'+
+          // The explanation spans the whole row rather than being squeezed into the size
+          // column. Nine columns, so colspan 9.
+          (function(){ const n=fitRowNote(x); if(!n) return '';
+            const col = n.tone==='bad' ? 'var(--red)' : '#9a6400';
+            const bg  = n.tone==='bad' ? '#fff5f5' : '#fffaf0';
+            return '<tr><td colspan="9" style="padding:3px 8px 7px 34px;border-bottom:1px solid #eceff3;'+
+              'font-size:12px;color:'+col+';background:'+bg+'">'+n.html+'</td></tr>'; })();
       }).join("");
     return '<div class="card"><h2>⌇ Pipe fittings <span class="lt">— '+f.length+' item'+(f.length===1?'':'s')+
         ', quoted separately from the BOM</span></h2><div class="body" style="padding:0">'+
@@ -836,6 +843,41 @@
   // the index has not loaded (old free-text boxes), it loaded but nothing matches
   // this combination (free-text boxes AND a warning, because that fitting cannot
   // price), or it matched (a picker, and a weight).
+  // ── ONE SHORT NOTE, ON ITS OWN FULL-WIDTH ROW ──────────────────────────────────────────
+  // Returns {tone, html} for a fitting that needs the estimator to look at it, or null.
+  // Kept to one sentence: the previous wording ran to four lines inside a 176px column and
+  // was, in Mark's words, "a bit wordy".
+  function fitRowNote(x){
+    if(!FITIDX||!FITCAT) return null;
+    const opts=fitDetailOptions(x)||[];
+    const want=fitSizeKey(x.size);
+
+    // A specification the catalog does not carry for this make. It does NOT stop the row -
+    // but the field is left unwritten, so the supplier receives a line with no specification
+    // on it and cannot quote it properly. That is worth a look, unlike the size.
+    const specs=FITCAT?fitChildren(FITCAT.specs,'makeId',fitIdOf(FITCAT.makes,x.fitting_make)):null;
+    const specVal=String(x.specification||'').trim();
+    if(specVal && specs && !specs.some(function(o){ return o.name===specVal; })){
+      return {tone:'bad', html:'<b>'+esc(specVal)+'</b> is not a specification the catalog has for '+
+        esc(x.fitting_make||'this make')+' — pick one, or this line reaches the supplier without a specification.'};
+    }
+
+    if(x.detail_id) return null;                       // matched; nothing to say
+
+    // Will the commit CREATE a row? It does when nothing in the catalog carries this size -
+    // whether that is because there are no candidate rows at all, or because there are and
+    // none of them is this size. Both end the same way, so both read the same way.
+    const sizeExists = want && opts.some(function(o){
+      return (o.rdims && fitSizeKey(o.rdims)===want) || fitSizeKey(o.size)===want; });
+    if(!sizeExists){
+      return {tone:'warn', html:'Not in the catalog yet — <b>confirm the size and class are right</b> '+
+        '(edit them if not). A catalog row will be created from them when you Approve &amp; Submit, '+
+        'flagged for Material Compass.'};
+    }
+    // The size IS in the catalog and still nothing is picked, so the class is what is unresolved.
+    return {tone:'bad', html:'Pick a size · class — this size exists in the catalog. '+
+      'Left unpicked the line still reaches the project, but with no weight.'};
+  }
   function detailCell(x,i){
     const box=function(field,val,w){
       return '<input class="fin" style="width:'+w+'" value="'+escAttr(val==null?'':val)+'" '+
@@ -844,14 +886,10 @@
     // Both are needed before a meaningful list can be offered — see fitDetailOptions.
     if(!FITIDX||!FITCAT) return plain+(FITIDX_ERR?'<div class="src" style="color:#9a6400">'+esc(FITIDX_ERR)+'</div>':'');
     const opts=fitDetailOptions(x)||[];
-    if(!opts.length){
-      // This said 'it cannot carry a weight', which stopped being true when the commit
-      // started creating the missing row. Saying a thing is impossible when it is merely
-      // automatic teaches the estimator to go and fix something that needs no fixing.
-      return plain+'<div class="src" style="color:#9a6400">nothing in the catalog matches '+
-        'this type · make · end · connection yet — leave it and a catalog row will be created '+
-        'from the size and class above, flagged for Material Compass to confirm</div>';
-    }
+    // No candidate rows at all. The estimator types the size and class; the commit creates
+    // the catalog row from them. The explanation lives on the note row below, not in here -
+    // this column is 176px and the prose was wrapping to seven lines.
+    if(!opts.length) return plain;
     const cur=String(x.detail_id||'');
     let h='<select class="fin'+(cur?'':' bad')+'" style="width:176px" '+
       'onchange="fitPickDetail('+i+',this.value)">';
@@ -873,13 +911,10 @@
         : '<span style="color:#9a6400">catalog row has no weight</span>')+
         (x.auto_matched?' · matched automatically':'')+'</div>';
     } else {
-      // Say what the drawing was read as, or the estimator has nothing to pick FROM.
+      // Just what the drawing was read as. Why it matters is on the note row.
       const said=[x.size,x.schedule_or_class].filter(Boolean).join(' · ');
-      // The red box alone reads as a refusal. It is not one: the row goes through either way,
-      // and what is actually lost is the weight. Say that here, where it is being decided.
-      h+='<div class="src">'+(said
-        ? 'take-off read: <b>'+esc(said)+'</b> · goes through unpicked, but with no weight'
-        : 'no size read from the drawing · goes through unpicked, but with no weight')+'</div>';
+      h+='<div class="src">'+(said ? 'take-off read: <b>'+esc(said)+'</b>'
+                                    : 'no size read from the drawing')+'</div>';
     }
     return h;
   }
