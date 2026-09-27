@@ -218,9 +218,21 @@ function makeDetailRowCreator(deps) {
       } else unresolved.push(tbl === 'bw' ? 'schedule' : 'class');
     }
 
-    // The text the estimator typed goes on regardless, so the row reads correctly even where a
-    // lookup could not be resolved — a half-linked row that SAYS what it is beats a blank.
-    const label = txt(b.description) || [size, sched].filter(Boolean).join(' | ');
+    // ── WRITE THE CLASS THE WAY THE CATALOG WRITES IT ───────────────────────────────────
+    // The take-off reads a drawing, so it writes what the drawing says: '3000#'. The catalog
+    // files the same rating as '3000 PSI'. Both are correct English and only one of them is
+    // recognised by getFittingWeight, which parses the rating out of this very string — so a
+    // row created as '1-1/2" | 3000#' joins correctly, prices correctly and weighs NOTHING.
+    //
+    // Measured on MCP-10009, the first project to commit fittings end to end: of 60 rows,
+    // '3000 PSI' was weighed 5 times out of 5 and '3000#' 0 times out of 9; 'Class 150' 19 of
+    // 20 and bare '150' 0 of 1. Same ratings, different spelling, no weight.
+    //
+    // So the sibling that supplied the Class lookup also supplies the SPELLING. sameSched()
+    // already treats '3000#' and '3000 PSI' as the same rating, so this needs no table of
+    // synonyms to maintain — the catalog stays its own authority on how it writes things.
+    const schedText = (schedSib && txt(schedSib.sched)) || sched;
+    const label = txt(b.description) || [size, schedText].filter(Boolean).join(' | ');
     if (tbl === 'bw') data.NPS_Dim_And_SCH_Text = label;
     else { data.NPS_Inch_Text = size; data.NPS_Dim_and_Class = label; }
 
