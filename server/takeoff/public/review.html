@@ -922,10 +922,19 @@
   // Returns {tone, html} for a fitting that needs the estimator to look at it, or null.
   // Kept to one sentence: the previous wording ran to four lines inside a 176px column and
   // was, in Mark's words, "a bit wordy".
+  // Does any candidate row actually carry the size the take-off read? This is the question
+  // that decides everything else about the row: if nothing does, the commit CREATES a catalog
+  // row from the size and class on screen - so those two have to be editable, and the note
+  // has to say so. One definition, used by both, or they drift apart again.
+  function fitSizeInCatalog(x,opts){
+    const want=fitSizeKey(x.size);
+    if(!want) return false;
+    return (opts||[]).some(function(o){
+      return (o.rdims && fitSizeKey(o.rdims)===want) || fitSizeKey(o.size)===want; });
+  }
   function fitRowNote(x){
     if(!FITIDX||!FITCAT) return null;
     const opts=fitDetailOptions(x)||[];
-    const want=fitSizeKey(x.size);
 
     /* A field this tool changed on your behalf. Red, because it is an edit you have not
        seen yet, and the whole row hangs off it: the make chooses the specification list,
@@ -959,9 +968,7 @@
     // Will the commit CREATE a row? It does when nothing in the catalog carries this size -
     // whether that is because there are no candidate rows at all, or because there are and
     // none of them is this size. Both end the same way, so both read the same way.
-    const sizeExists = want && opts.some(function(o){
-      return (o.rdims && fitSizeKey(o.rdims)===want) || fitSizeKey(o.size)===want; });
-    if(!sizeExists){
+    if(!fitSizeInCatalog(x,opts)){
       return {tone:'warn', html:'Not in the catalog yet — <b>confirm the size and class are right</b> '+
         '(edit them if not). A catalog row will be created from them when you Approve &amp; Submit, '+
         'flagged for Material Compass.'};
@@ -983,9 +990,15 @@
     // this column is 176px and the prose was wrapping to seven lines.
     if(!opts.length) return plain;
     const cur=String(x.detail_id||'');
-    let h='<select class="fin'+(cur?'':' bad')+'" style="width:176px" '+
+    // Candidate rows exist, but none is this size. Same outcome as having none at all - the
+    // row gets created - so give the same control: the two editable values, with the picker
+    // below it in case the size was simply misread and one of the existing rows is right.
+    const willCreate = !cur && !fitSizeInCatalog(x,opts);
+    let h = willCreate ? plain+'<div style="height:3px"></div>' : '';
+    h+='<select class="fin'+((cur||willCreate)?'':' bad')+'" style="width:176px" '+
       'onchange="fitPickDetail('+i+',this.value)">';
-    h+='<option value=""'+(cur?'':' selected')+'>— pick size · class —</option>';
+    h+='<option value=""'+(cur?'':' selected')+'>'+
+      (willCreate?'— or pick an existing row —':'— pick size · class —')+'</option>';
     // Long lists are normal (a common type/make has every size), so cap what is
     // rendered rather than building a 900-option select on every keystroke.
     opts.slice(0,400).forEach(function(o){
@@ -1002,8 +1015,8 @@
         ? '<b>'+Number(x.weight).toFixed(3)+' lb</b> each'
         : '<span style="color:#9a6400">catalog row has no weight</span>')+
         (x.auto_matched?' · matched automatically':'')+'</div>';
-    } else {
-      // Just what the drawing was read as. Why it matters is on the note row.
+    } else if(!willCreate){
+      // Only worth saying when there is no editable box on screen showing the same thing.
       const said=[x.size,x.schedule_or_class].filter(Boolean).join(' · ');
       h+='<div class="src">'+(said ? 'take-off read: <b>'+esc(said)+'</b>'
                                     : 'no size read from the drawing')+'</div>';
