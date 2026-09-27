@@ -321,7 +321,18 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
         Total_Structural_Est_Matl_Amt: 0,
         Unit_Weight_Of_Component: 0,
       };
-      if (/^[0-9]{6,25}$/.test(String(type_of_project || ''))) data.Type_Of_Project = String(type_of_project);
+      // REFUSED, not optional. Without a Type_Of_Project the component saves happily here and
+      // the NEXT Update on the project is rejected with "Invalid entries found" naming no row —
+      // the failure lands far from its cause, and on 2026-09-27 it cost an afternoon on
+      // MCP-10009, presenting as the project page refusing to open. A required field has to be
+      // enforced where the record is written, not only in the screen in front of it.
+      if (!/^[0-9]{6,25}$/.test(String(type_of_project || ''))) {
+        return res.status(400).json({ ok: false,
+          error: 'type_of_project is required on a component. The project form demands it, and a ' +
+                 'component saved without one makes the next project save fail with "Invalid ' +
+                 'entries found" naming no row. Choose a Type of project first.' });
+      }
+      data.Type_Of_Project = String(type_of_project);
       mcpBestEffort = true;
     } else if (kind === 'drawing') {
       form = 'Project_Drawing_Details_Form'; report = 'All_Project_Drawing_Details';
@@ -393,6 +404,34 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
         await axios.patch(base + '/report/' + report + '/' + id, { data: { MCP_Customer_Project_Form: project_id } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
       } catch (e) { /* the native-subform link is optional; Project_LU already ties it for staging */ }
     }
+    // ── FLIP THE STAGE TRACKER THE UI WOULD HAVE FLIPPED ────────────────────────────────────
+    // `Project_Components_Added` / `Save_Scope_Of_Work` are set by an On Validate workflow named
+    // "Update Stage Trackers", which fires when the PROJECT FORM is submitted through the UI.
+    // An API insert never runs it, so the subforms fill up and the trackers stay "NO" — and the
+    // Load-of-form script branches on them to decide what to show. That is how an AI take-off
+    // project ended up rendering every section correctly with no tab strip at all.
+    //
+    // ⚠ Save_Scope_Of_Work, NOT Scope_Of_Work_Added. The display name is "Scope Of Work Added"
+    // and the link name is not — writing the display name would be accepted-looking and do
+    // nothing.
+    //
+    // Best-effort: the record is already written, and a project that failed to update its
+    // tracker is recoverable. Failing the add over it would not be.
+    if (id) {
+      const tracker = kind === 'component' ? 'Project_Components_Added'
+                    : kind === 'drawing'   ? 'Save_Scope_Of_Work' : null;
+      if (tracker) {
+        try {
+          await axios.patch(base + '/report/All_Projects/' + project_id,
+            { data: { [tracker]: 'YES' } },
+            { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+        } catch (e) {
+          console.error('[project-scope] tracker ' + tracker + ' not set on ' + project_id + ':',
+            e.response?.data?.message || e.message);
+        }
+      }
+    }
+
     res.json({ ok: true, id: id, warning: bidiWarning });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
