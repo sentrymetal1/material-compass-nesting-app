@@ -89,7 +89,12 @@ const FITTING_ITEM = {
     fitting_make:    { type: "string", description: "The material family, verbatim from FITTING MAKES (e.g. 'Carbon Steel', 'Stainless Steel', 'Wrought - Carbon Steel', 'Iron - Malleable')." },
     end_type:        { type: "string", description: "How it joins, verbatim from the END TYPES listed under THAT fitting type in the catalog block — only the ones listed under it, never an end type borrowed from another type. This is also where the specific product goes when the type is a family: a threadolet is Olet + 'Threadolet', a weldolet is Olet + 'Weldolet'." },
     connection_type: { type: "string", description: "The geometry/face, verbatim from CONNECTION TYPES (e.g. '90° (Long Radius)', '45° (Long Radius)', 'Concentric', 'Eccentric', 'Raised Face', 'Flat Face', 'Equal', 'Reducing', 'Standard')." },
-    specification:   { type: "string", description: "Grade/spec verbatim from the SPECIFICATIONS listed for that make (e.g. 'WPB | ASTM A234', 'A105 | ASTM A105', 'F304L | ASTM A182')." },
+    /* Make and specification are ONE choice, not two.
+       The catalog lists specifications underneath the make that owns them, and the
+       commonest wrong answer is a real spec filed under the wrong make — "Carbon Steel"
+       with "WPB | ASTM A234", which this catalog keeps under "Wrought - Carbon Steel".
+       The pair then matches no catalog row, so the line carries no weight and no price. */
+    specification:   { type: "string", description: "Grade/spec copied verbatim from the SPECIFICATIONS listed UNDER the make you chose — the two are one choice. If the grade the drawing calls for is listed under a different make, change fitting_make to that make rather than pairing a spec with a make the catalog does not file it under." },
     size:            { type: "string", description: "Nominal size as written on the drawing — '6\"', '2-1/2\"'; for reducers and reducing tees give both, largest first: '6\" x 4\"'." },
     schedule_or_class: { type: "string", description: "Wall or pressure rating as written: 'SCH 40', 'SCH 80', 'STD', 'XS', 'Class 150', 'Class 300', '3000#', '6000#'. Empty only if the documents genuinely never state it." },
     quantity:        { type: "number", description: "Pieces in ONE unit of the component — same rule as the BOM: never multiply by how many of the component the job builds." },

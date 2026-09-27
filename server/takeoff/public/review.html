@@ -804,8 +804,83 @@
       .catch(function(){});
   }
 
+  /**
+   * The specification is the anchor; the other fields move to meet it.
+   *
+   * A spec string either exists in this shop's catalog or it does not, and when it does
+   * it belongs to exactly one make. So "WPB | ASTM A234" under make "Carbon Steel" is not
+   * an unknown specification — it is the right specification filed under the wrong make,
+   * because the catalog keeps A234 under "Wrought - Carbon Steel". Leaving that to the
+   * estimator means retyping the make on every such row; the row is repaired here and
+   * marked in red for confirmation instead, because a field this tool changed is a field
+   * a human should still agree with.
+   *
+   * Unknown or ambiguous specs are left exactly as the model wrote them: the existing
+   * warning already asks for a choice, and guessing between two real makes would put the
+   * wrong material on a quote.
+   */
+  function repairFittingMakes(){
+    if(!FITCAT) return 0;
+    const R=loadResult(); let n=0;
+    arr(R.fittings).forEach(function(f){
+      const spec=String(f.specification||'').trim(); if(!spec) return;
+      const mine=fitChildren(FITCAT.specs,'makeId',fitIdOf(FITCAT.makes,f.fitting_make))||[];
+      if(mine.some(function(o){ return o.name===spec; })) return;   // already consistent
+      const owners={};
+      (FITCAT.specs||[]).forEach(function(o){ if(o.name===spec&&o.makeId) owners[String(o.makeId)]=1; });
+      const ids=Object.keys(owners);
+      if(ids.length!==1) return;                                    // unknown or shared: leave the warning
+      const make=(FITCAT.makes||[]).filter(function(m){ return String(m.id)===ids[0]; })[0];
+      if(!make||make.name===f.fitting_make) return;
+      f.auto_fix=(f.auto_fix||[]).concat([{field:'Make',from:f.fitting_make||'(blank)',to:make.name,why:spec}]);
+      f.fitting_make=make.name;
+      f.fitting_make_id=make.id;
+      n++;
+    });
+    if(n){ saveResult(R); console.log('[fittings] moved '+n+' make(s) to match the specification'); }
+    return n;
+  }
+
+  // ── SPECIFICATION TRUMPS THE OTHER FIELDS ───────────────────────────────────────────────
+  // A specification the catalog does not carry for the chosen make is far more likely to mean
+  // the MAKE is wrong than the specification. The specification is usually written on the
+  // drawing; the make is inferred from it. So when the specification exists under exactly one
+  // other make, move the make to it rather than asking for a different specification.
+  //
+  // Only ever when ONE make carries it - two is a genuine question and is asked, not guessed.
+  // What changed is recorded on the row so it can be shown in red and confirmed, and a manual
+  // edit to either field clears it (see fitPick).
+  function fitReconcileSpecs(){
+    if(!FITCAT) return 0;
+    const R=loadResult(); let n=0;
+    arr(R.fittings).forEach(function(f){
+      if(f.__specFix) return;                              // already moved, awaiting confirmation
+      const spec=String(f.specification||'').trim();
+      if(!spec) return;
+      const makeId=fitIdOf(FITCAT.makes,f.fitting_make);
+      const here=fitChildren(FITCAT.specs,'makeId',makeId)||[];
+      if(here.some(function(o){ return o.name===spec; })) return;   // valid where it is
+      // Which makes DO carry it?
+      const owners={};
+      (FITCAT.specs||[]).forEach(function(o){ if(o.name===spec) owners[String(o.makeId)]=1; });
+      const ids=Object.keys(owners);
+      if(ids.length!==1) return;                           // none, or ambiguous - leave it alone
+      const m=(FITCAT.makes||[]).find(function(x){ return String(x.id)===ids[0]; });
+      if(!m||m.name===f.fitting_make) return;
+      f.__specFix={from:f.fitting_make,to:m.name,spec:spec};
+      f.fitting_make=m.name;
+      // The make changed, so anything matched under the old one is no longer trustworthy.
+      f.detail_id=null; f.detail_table=null; f.detail_label=null; f.weight=null; f.auto_matched=false;
+      n++;
+    });
+    if(n) saveResult(R);
+    return n;
+  }
   function autoResolveFittings(){
+    // Specification first: it can change the make, and the make narrows everything after it.
+    fitReconcileSpecs();
     resolveFittingsViaServer();
+    repairFittingMakes();
     // BOTH are required. The two fetches race, and without the catalog the four
     // narrowing names cannot become ids — every fitting would then match the whole
     // index and auto-adopt the first row of the right size, from any make.
@@ -852,9 +927,26 @@
     const opts=fitDetailOptions(x)||[];
     const want=fitSizeKey(x.size);
 
+    /* A field this tool changed on your behalf. Red, because it is an edit you have not
+       seen yet, and the whole row hangs off it: the make chooses the specification list,
+       and the pair chooses the catalog row the weight and price come from. */
+    const fixed=arr(x.auto_fix);
+    if(fixed.length){
+      return {tone:'bad', html: fixed.map(function(c){
+        return '<b>'+esc(c.field)+' changed to '+esc(c.to)+'</b> (was '+esc(c.from)+') to match the ' +
+          'specification <b>'+esc(c.why)+'</b>, which the catalog files under it';
+      }).join(' · ')+' — <b>confirm this is right</b>, or pick a different specification.'};
+    }
+
     // A specification the catalog does not carry for this make. It does NOT stop the row -
     // but the field is left unwritten, so the supplier receives a line with no specification
     // on it and cannot quote it properly. That is worth a look, unlike the size.
+    // Moved to match its specification. Say so, in red, until it is confirmed.
+    if(x.__specFix){
+      return {tone:'bad', html:'<b>Make changed</b> from '+esc(x.__specFix.from)+' to <b>'+
+        esc(x.__specFix.to)+'</b> because specification <b>'+esc(x.__specFix.spec)+'</b> belongs to it. '+
+        'Confirm this is right, or change either field.'};
+    }
     const specs=FITCAT?fitChildren(FITCAT.specs,'makeId',fitIdOf(FITCAT.makes,x.fitting_make)):null;
     const specVal=String(x.specification||'').trim();
     if(specVal && specs && !specs.some(function(o){ return o.name===specVal; })){
@@ -968,6 +1060,9 @@
   function fitPick(i,field,val){
     const R=loadResult(); const f=arr(R.fittings)[i]; if(!f) return;
     const v=String(val==null?"":val).trim();
+    // Touching either side of a specification-driven make change IS the confirmation, so the
+    // red note clears and fitReconcileSpecs() stops reconsidering the row.
+    if(f.__specFix && (field==='fitting_make'||field==='specification')) delete f.__specFix;
     // What the TAKE-OFF said, captured before the first edit overwrites it. After that the row
     // carries the estimator's own words and comparing against them would teach nothing.
     if(!f.__ai) f.__ai={fitting_type:f.fitting_type,fitting_make:f.fitting_make,
@@ -981,6 +1076,9 @@
       captureCorrection({context:FIT_LEARN_CONTEXT[field],ai_value:was,human_value:v,source:"fitting"});
     }
     f[field]=v;
+    /* You have now looked at this row and set a field yourself, which is the confirmation
+       the red note was asking for. */
+    if(f.auto_fix && (field==="fitting_make"||field==="specification"||field==="fitting_type")) delete f.auto_fix;
     if(FITCAT){
       if(field==="fitting_type"){
         f.fitting_type_id=fitIdOf(FITCAT.types,v);
