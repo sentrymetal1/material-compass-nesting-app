@@ -557,6 +557,14 @@ async function reviseTakeoff(opts) {
     messages: [{ role: "user", content: userContent }],
   }).finalMessage();
 
+  // A cut-off revise is a PARTIAL package, and the caller reads a short `fittings` array as
+  // "delete the rest". Refuse it — the current take-off stays exactly as it was.
+  if (resp.stop_reason === "max_tokens") {
+    throw new Error("The revision was cut off at " + TAKEOFF_MAX_OUT + " output tokens before the AI " +
+      "finished rewriting the take-off, so nothing was changed. The package is too large to revise " +
+      "whole — make the change by hand, or ask for a narrower edit.");
+  }
+
   const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
   const out = toolUse ? toolUse.input : { rows: [], notes: "(no tool_use returned)" };
   out.rows = unwrap(out.rows, []);
@@ -653,6 +661,11 @@ async function chatTakeoff(opts) {
   const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
   const textOut = resp.content.filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n").trim();
 
+  if (toolUse && resp.stop_reason === "max_tokens") {   // partial package — never apply it
+    return { edited: false, cost_usd: cost, usage: resp.usage, modelId: model.id,
+      reply: "⚠ That edit was cut off before the AI finished rewriting the take-off, so nothing was " +
+             "changed. The package is too large to rewrite whole — make the change by hand, or ask for a narrower edit." };
+  }
   if (toolUse) {
     const out = toolUse.input || {};
     out.rows = unwrap(out.rows, []);

@@ -191,7 +191,9 @@
     setSaveInd("saving…","var(--mut)");
     // drawing_files travels with the package so Approve can still put the PDFs on their
     // drawing records after this take-off is re-opened on another day or another machine.
-    const pkg={ rows:R.rows, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[] };
+    // fittings MUST travel too. They were left out, so they lived only in this browser — reopen
+    // the take-off anywhere else (or after storage is cleared) and every fitting was gone.
+    const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[] };
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:params.project_id, package:pkg})});
@@ -1510,7 +1512,8 @@
       return (Number.isFinite(t)&&t>0)?t:(Number(r.quantity)||0)*unitsOf(r); };
     const anyMulti = rows.some(function(r){ return unitsOf(r)>1; });
     const memberRow=function(idx){
-      const r=rows[idx], c=Number(r.confidence)||0, cls=confClass(c);
+      const r=rows[idx], hasC=Number.isFinite(Number(r.confidence))&&r.confidence!==null&&r.confidence!=="";
+      const c=hasC?Number(r.confidence):0, cls=hasC?confClass(c):"md";
       const u=unitsOf(r);
       const qtyCell = editable
         ? '<input type="number" min="0" value="'+(Number(r.quantity)||0)+'" style="width:56px;padding:3px 5px;border:1px solid #cdd3da;border-radius:5px;font-size:12px;" onchange="editQty('+idx+',this.value)">'+
@@ -1519,7 +1522,9 @@
             ? esc(r.quantity)+' <span class="src">×'+u+'</span> <b>= '+totalOf(r)+'</b>'
             : esc(r.quantity));
       return '<tr class="'+(cls==="hi"?"":cls)+'">'+
-        '<td><span class="dot d-'+cls+'"></span>'+c.toFixed(2)+xcTag(r)+'</td>'+
+        // No score is shown as "—", not 0.00: a missing number is not a zero, and painting every
+        // row red for it buried the rows that really are low.
+        '<td><span class="dot d-'+cls+'"></span>'+(hasC?c.toFixed(2):'<span class="src" title="No confidence score on this row">—</span>')+xcTag(r)+'</td>'+
         '<td>'+esc(r.form_type)+'</td>'+
         '<td>'+esc(r.size)+(r.galvanized?' <span class="galv">galv</span>':'')+'</td>'+
         '<td>'+esc(r.specification)+'</td><td>'+qtyCell+'</td>'+
@@ -2139,6 +2144,23 @@
   // A synopsis section is kept from the revise ONLY if it came back populated; otherwise the original is
   // preserved (the model sometimes omits unchanged sections on a small edit — never let them vanish).
   function _has(v){ return v && (Array.isArray(v) ? v.length>0 : (typeof v==="object" ? Object.values(v).some(function(x){return Array.isArray(x)?x.length:x;}) : true)); }
+  // A revise returns the COMPLETE rows, and the model routinely drops `confidence` from rows it
+  // didn't change — on 2026-09-28 all 37 came back without one and every row read 0.00, red.
+  // Carry the score across from the matching current row; a row with no match keeps none.
+  function rowIdentity(r){
+    return [r&&r.form_type,r&&r.size,r&&r.specification,r&&r.component,r&&r.source_sheet]
+      .map(function(v){ return String(v==null?'':v).trim().toLowerCase(); }).join('|');
+  }
+  function carryRowConfidence(curRows,newRows){
+    if(!Array.isArray(newRows)) return newRows;
+    const pool={};
+    arr(curRows).forEach(function(r){ const k=rowIdentity(r); (pool[k]=pool[k]||[]).push(r); });
+    return newRows.map(function(r){
+      if(r && typeof r.confidence==="number") return r;
+      const hit=(pool[rowIdentity(r)]||[]).shift();
+      return (hit && typeof hit.confidence==="number") ? Object.assign({},r,{confidence:hit.confidence}) : r;
+    });
+  }
   function mergeResult(cur, data, opts){
     const os=cur.synopsis||{}, rs=data.synopsis||{};
     let conflicts;
@@ -2158,7 +2180,7 @@
       totals:        _has(rs.totals)?rs.totals:os.totals,
       confidence:    _has(rs.confidence)?rs.confidence:os.confidence,
     };
-    return Object.assign({},cur,{rows:data.rows,fittings:mergeFittings(cur.fittings,data.fittings),
+    return Object.assign({},cur,{rows:carryRowConfidence(cur.rows,data.rows),fittings:mergeFittings(cur.fittings,data.fittings),
       synopsis:syn,import_csv:data.import_csv,verify_csv:data.verify_csv});
   }
 

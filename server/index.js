@@ -347,7 +347,12 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
       };
       // The sheet title read off the title block — the Drawing Description column, which is how
       // these records are read by a human. We have it; there's no reason to write the row without it.
-      const desc = String((req.body && req.body.description) || '').trim();
+      // CAPPED: Zoho rejects the WHOLE create when this is over the field's 255-char limit, and a
+      // parts-list title read off a 149-page BOM runs ~270. The rejection sent every add down the
+      // bare retry below, which wrote records the project report can't see — the button spun and
+      // the drawing never appeared (2026-09-28, AAA3793679-22975_BOM).
+      let desc = String((req.body && req.body.description) || '').trim().replace(/\s+/g, ' ');
+      if (desc.length > 250) desc = desc.slice(0, 249).replace(/\s+\S*$/, '') + '…';
       if (desc) data.Drawing_Description = desc;
       // Native rows carry a date. A null date is the classic crash for a project page that formats
       // or compares it in Deluge ("Error occurred please contact application owner"), so give the
@@ -387,6 +392,15 @@ app.post('/api/takeoff/project-scope/add', async (req, res) => {
     }
     // Same idea for a drawing: the extra project columns are worth having, but not at the cost of
     // failing the add. Retry with just the fields that always worked, and say what was dropped.
+    // Drop the description FIRST, keeping the project links. The bare retry below omits
+    // Project_ID_Number / Project_ID_Relationship, and a record without them is saved but does not
+    // show on All_Project_Drawing_Details — Zoho returns an id that cannot then be read back.
+    if (kind === 'drawing' && zr.data && zr.data.code !== 3000 && 'Drawing_Description' in data) {
+      const firstMsg = (zr.data && zr.data.message) || 'no message';
+      data = Object.assign({}, data); delete data.Drawing_Description;
+      zr = await postForm(data);
+      if (zr.data && zr.data.code === 3000) bidiWarning = 'The drawing description was rejected and omitted (' + firstMsg + ').';
+    }
     if (kind === 'drawing' && zr.data && zr.data.code !== 3000) {
       const bare = { Drawing_Number: data.Drawing_Number, MCP_Customer_Project_Form: project_id };
       if (data.Components) bare.Components = data.Components;
