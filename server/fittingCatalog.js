@@ -48,7 +48,13 @@ function makeFittingCatalogLoader(deps) {
 
       return {
         types: az((types || []).map((r) => ({ id: String(r.ID), name: String(r.Fitting_Type || '').trim() })).filter((x) => x.name)),
-        makes: az((makes || []).map((r) => ({ id: String(r.ID), name: String(r.Fitting_Make || '').trim() })).filter((x) => x.name)),
+        // DENSITY COMES WITH THE MAKE. getFittingWeight ends `w = vol * density * bulk` and
+        // reads it from this same record, so carrying it here keeps the Railway-side weight
+        // and the Deluge one on one number instead of two tables that drift. (weights.js has
+        // its own density map for STRUCTURAL material - carbon steel 0.2836 there against
+        // 0.2833 here - which is why this does not reuse it.)
+        makes: az((makes || []).map((r) => ({ id: String(r.ID), name: String(r.Fitting_Make || '').trim(),
+          density: Number(r.Density) > 0 ? Number(r.Density) : null })).filter((x) => x.name)),
         ends: child(ends, 'End_Type', 'Fitting_Type', 'type_id', 'typeId'),
         connections: child(conns, 'Connection_Type', 'Fitting_Type', 'type_id', 'typeId'),
         specs: child(specs, 'Fitting_Specification', 'Fitting_Make', 'make_id', 'makeId'),

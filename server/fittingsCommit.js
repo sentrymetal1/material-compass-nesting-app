@@ -32,6 +32,8 @@ const LOOKUPS = [
 ];
 
 const { resolveCatalogIds, matchDetailRow, detailCandidates } = require('./fittingResolve');
+// Butt-weld geometry, ported from getFittingWeight and verified against its own 6.402.
+const { buttWeldFittingLb } = require('./buttWeldWeight');
 
 // NO CAP by default. An earlier draft capped catalog adds per commit to protect the record and
 // API ceilings; Mark's call is that a fitting which cannot price is the expensive thing and he
@@ -87,7 +89,7 @@ function registerFittingsCommit(app, deps) {
 
       // Built once, and only if something actually needs it. The index is ~53 paid reads when it
       // is cold, so a commit where every fitting already matched must not pay for it at all.
-      let index = null, created = 0;
+      let index = null, created = 0, computedBw = 0;
       async function detailIndex() {
         if (index === null) index = await buildFittingIndex();
         return index;
@@ -217,6 +219,37 @@ function registerFittingsCommit(app, deps) {
             which: nameProblems });
         }
 
+        // ── BUTT WELD: COMPUTE THE WEIGHT HERE, BECAUSE DELUGE DOES NOT ──────────────────
+        // getFittingWeight stays the authority and prices flanges and forged fittings on an
+        // API write - the forged couplings on MCP-10009 came back at 1.589 lb from a REST
+        // PATCH. Butt weld is the exception and has been since long before the take-off: ~95%
+        // of butt-weld rows carried no weight in the June 2026 audit.
+        //
+        // Everything that could explain it was eliminated one at a time - the label spelling,
+        // the getNpsDimMap key, the make's density, the Butt Weld / Forged router, the
+        // `Weight == null` guard, and whether the workflow fires at all. The function returns
+        // 6.402 when executed by hand for the exact stored string, and the same row saved
+        // through the Zoho UI gets 6.402; written by REST it stays blank. The butt-weld branch
+        // is the only one that calls thisapp.getNpsDimMap(), and the only one that never
+        // produces a weight over the API.
+        //
+        // These two do not fight: the workflow's guard is `Weight == null || == 0.0`, so a
+        // weight written here is never overwritten. Blank stays blank when the size is not in
+        // the dimension table - never a zero.
+        if (weight == null && detailTable === 'bw') {
+          const makeName = txt(f.fitting_make);
+          const mk = ((catalog && catalog.makes) || []).find((m) =>
+            m.name === makeName || (m.name && makeName && makeName.indexOf(m.name) > -1));
+          // 0.2833 is getFittingWeight's own fallback, used for the same reason it is there.
+          const dens = (mk && mk.density > 0) ? mk.density : 0.2833;
+          const got = buttWeldFittingLb({
+            fitting_type: txt(f.fitting_type), connection_type: txt(f.connection_type),
+            size_display: detailLabel || [txt(f.size), schedule].filter(Boolean).join(' | '),
+            density: dens,
+          });
+          if (got) { weight = got.lb; computedBw++; }
+        }
+
         const data = {
           // Both project links. The bidirectional one is what the project page dot-walks per
           // row; without it the record exists and the subform shows nothing
@@ -263,7 +296,14 @@ function registerFittingsCommit(app, deps) {
         // digits", and that refusal arrives as an HTTP 200 that creates nothing.
         const round3 = (n) => Number(Number(n).toFixed(3));
         if (weight != null) data.Weight = round3(weight);
-        if (weight != null && data.Quantity) data.Total_Weight = round3(weight * data.Quantity);
+        // TWO decimals on Total_Weight, not three. Weight takes three; Total_Weight refuses a
+        // third with code 3001, "Total_Weight has exceeded its maximum digits" — inside an
+        // HTTP 200, so it reads as a success that wrote nothing. It never surfaced before
+        // because the weights that reached here happened to multiply out to two places;
+        // 6.402 x 2 does not.
+        if (weight != null && data.Quantity) {
+          data.Total_Weight = Number((weight * data.Quantity).toFixed(2));
+        }
         // The detail-table row this fitting resolved to, which is where weight comes from later.
         if (detailId && detailTable === 'bw') data.Fittings_Butt_Weld = detailId;
         if (detailId && detailTable === 'sw') data.Fittings_Socket_Weld = detailId;
@@ -290,8 +330,12 @@ function registerFittingsCommit(app, deps) {
         (matched.length ? ', matched ' + matched.length + ' to existing catalog rows' : '') +
         (provisional.length ? ', created ' + provisional.length + ' catalog row' + (provisional.length === 1 ? '' : 's') : '') +
         (unresolvedId.length ? ', ' + unresolvedId.length + ' without a Fitting_ID' : '') +
+        (computedBw ? ', computed ' + computedBw + ' butt-weld weight' + (computedBw === 1 ? '' : 's') : '') +
         (skipped.length ? ', skipped ' + skipped.length : '') + (failed.length ? ', failed ' + failed.length : ''));
       res.json({ ok: true, written: written.length, lines: written, skipped: skipped, failed: failed,
+        // Butt-weld weights this commit supplied because the Deluge workflow does not
+        // produce them on an API write. Surfaced so the count is visible rather than implied.
+        computed_butt_weld_weights: computedBw,
         // Rows the catalog did not have and now does — provisional, and in the add-flow's
         // review queue. And the ones still carrying no join key, which are the ones that will
         // price at $0 if nobody touches them.
