@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
+const zlib = require('zlib');
 const FormData = require('form-data');
 const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler } = require('./takeoff/route');
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
@@ -1472,7 +1473,15 @@ app.post('/api/takeoff/save', async (req, res) => {
     if (!pkg) return res.status(400).json({ ok: false, error: 'package required' });
     const token = await getAccessToken();
     const base = creatorApiBase();
-    const json = typeof pkg === 'string' ? pkg : JSON.stringify(pkg);
+    const raw = typeof pkg === 'string' ? pkg : JSON.stringify(pkg);
+    // COMPRESSED. `Package` holds ~64 KB and Zoho TRUNCATES past that without an error — a
+    // take-off with its fittings ran to 65,398 chars on 2026-09-28, the tail was cut mid-string,
+    // and the saved take-off could no longer be read at all. gzip takes it to a fraction of that.
+    const json = 'gz:' + zlib.gzipSync(Buffer.from(raw, 'utf8')).toString('base64');
+    if (json.length > 60000) {
+      return res.status(413).json({ ok: false, error: 'This take-off is too large to save to the project even compressed (' +
+        json.length + ' chars against a ~64 KB field). Nothing was written; the copy in this browser is intact.' });
+    }
     const rows = (pkg && Array.isArray(pkg.rows)) ? pkg.rows : [];
     const rowCount = rows.filter(function (r) { return (Number(r.quantity) || 0) > 0; }).length;
     const data = {
@@ -1525,7 +1534,14 @@ app.get('/api/takeoff/saved/:project_id', async (req, res) => {
     } catch (e) { /* no records */ }
     if (!rec || !rec.Package) return res.json({ ok: true, found: false });
     let pkg;
-    try { pkg = JSON.parse(rec.Package); } catch (e) { return res.json({ ok: true, found: false }); }
+    try {
+      const s = String(rec.Package);
+      pkg = JSON.parse(s.indexOf('gz:') === 0 ? zlib.gunzipSync(Buffer.from(s.slice(3), 'base64')).toString('utf8') : s);
+    } catch (e) {
+      // Say so. Reporting a damaged save as "none" sent the page off to look elsewhere.
+      console.error('[takeoff] saved package for ' + project_id + ' does not parse (' + String(rec.Package).length + ' chars):', e.message);
+      return res.json({ ok: true, found: false, damaged: true });
+    }
     return res.json({ ok: true, found: true, package: pkg, updated_at: rec.Updated_At || null, id: rec.ID });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));

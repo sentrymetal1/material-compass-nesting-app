@@ -898,11 +898,13 @@
       // match, and without it no reducing fitting can ever resolve automatically.
       let hits=opts.filter(function(o){ return o.rdims && fitSizeKey(o.rdims)===want; });
       if(!hits.length) hits=opts.filter(function(o){ return fitSizeKey(o.size)===want; });
-      // Still more than one? The schedule or class decides between them.
+      // The schedule or class is a REQUIREMENT, not a tie-breaker — the same rule as the
+      // server's narrow(). Applied only when there were several rows, a lone row of the right
+      // size was adopted whatever its class: a 150# 3" weld-neck came back Class 2500 SCH 10
+      // at 94 lb (2026-09-28). The size in another class is a miss; the commit creates the row.
       const sch=fitSizeKey(f.schedule_or_class);
-      if(hits.length>1&&sch){
-        const narrowed=hits.filter(function(o){ return fitSizeKey(o.sched).indexOf(sch)>-1; });
-        if(narrowed.length) hits=narrowed;
+      if(sch){
+        hits=hits.filter(function(o){ return fitSizeKey(o.sched).indexOf(sch)>-1; });
       }
       if(hits.length!==1) return;
       const it=hits[0];
