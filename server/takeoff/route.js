@@ -19,6 +19,8 @@ const { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, LO
 const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
 const { snapRows, snapFittings } = require("./snap");
+const { extractPartsList, applyPartsList } = require("./partsList");
+const { extractText } = require("../pdfkind");
 
 // Errors from the upstream model API are shown to the user verbatim, and they name the vendor and
 // its model ids ("anthropic", "claude-sonnet-…"). The product is Material Compass AI, so rewrite
@@ -96,6 +98,33 @@ async function takeoffHandler(req, res, deps) {
     // Pipe fittings come back in their own stream: bought complete, quoted separately, and kept OUT
     // of the BOM CSV on purpose — they belong to the project's fittings quote, not the BOM.
     const fittings = Array.isArray(out.fittings) ? out.fittings : [];
+
+    // 1-0. A TEXT PARTS LIST IS READ, NOT INTERPRETED. Two runs over the same 149-page list
+    // disagreed on the steel — one dropped all 21 pipe lines, the other read the main angles at
+    // the wrong thickness. Where a document parses as an item/qty/unit list with raw stock on it,
+    // its steel rows replace the model's for the forms it carries. Everything else (plates, other
+    // components, drawings-only jobs) is left exactly as the model returned it.
+    let partsList = null;
+    try {
+      const bomDocs = (Array.isArray(body.attached_documents) ? body.attached_documents : [])
+        .filter(function (d) { return d && String(d.kind || "").toLowerCase() === "bom"; });
+      const bomDoc = bomDocs.length === 1 ? bomDocs[0] : null;
+      // The estimator marked the list reference-only: it is read for context and raises no rows.
+      const refOnly = bomDocs.length > 0 && bomDocs.every(function (d) { return d.reference_only; });
+      for (let i = 0; i < docs.length && !partsList && !refOnly; i++) {
+        const t = await extractText(docs[i]).catch(function () { return null; });
+        const list = t && t.text ? extractPartsList(t.text, deps.catalogGroups) : null;
+        if (!list) continue;
+        const scope = Array.isArray(body.scope_tree) ? body.scope_tree : [];
+        const comp = String((bomDoc && bomDoc.component) || (scope.length === 1 && scope[0] && scope[0].component) || "").trim();
+        const applied = applyPartsList(rows, list, { document: String((bomDoc && bomDoc.number) || "Parts list").trim(), component: comp });
+        rows.splice(0, rows.length, ...applied.rows);
+        partsList = applied.report;
+        console.log("[takeoff] parts list " + partsList.document + ": " + partsList.rows_from_list + " steel rows (" +
+          partsList.list_feet + " ft) replaced " + partsList.replaced.length + " model rows (" + partsList.ai_feet_replaced + " ft)");
+      }
+    } catch (e) { console.error("[takeoff] parts list read failed — model rows kept:", e.message || e); }
+    if (partsList && out.synopsis && typeof out.synopsis === "object") out.synopsis.parts_list = partsList;
 
     // 1a. Fill in from the confirmed scope what the model left blank. The intake established which
     // component each drawing belongs to, so a row that cites a sheet never needs to go without a
@@ -241,6 +270,7 @@ async function takeoffHandler(req, res, deps) {
       })(),
       credits_left: balance ? balance.credits_left : null,
       free_left: balance ? balance.free_left : null,
+      parts_list: partsList,
     });
   } catch (err) {
     console.error("takeoff error", err);

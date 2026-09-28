@@ -1589,6 +1589,7 @@
       materialCardHtml(rows)+
 
       // the cross-check: parts lists / drawing material tables vs what the sheets actually show
+      partsListCardHtml(s.parts_list)+
       crossCardHtml(rows, s.reconciliation)+
 
       // scope reconciliation — AI-read components/drawings vs. what you entered on the project
@@ -2153,6 +2154,26 @@
     return [r&&r.form_type,r&&r.size,r&&r.specification,r&&r.component,r&&r.source_sheet]
       .map(function(v){ return String(v==null?'':v).trim().toLowerCase(); }).join('|');
   }
+  // What the server read straight off a text parts list, and which of the AI's rows that replaced.
+  // Shown so a replaced row is never a silent loss: if the AI read something the list does not
+  // carry, it is here to see and add back by hand.
+  function partsListCardHtml(pl){
+    if(!pl||!pl.rows_from_list) return "";
+    const rep=arr(pl.replaced), skip=arr(pl.not_steel);
+    const dims=function(r){ return (Number(r.quantity)||0)+" × "+(Number(r.length_ft)||0).toFixed(2)+" ft"; };
+    return '<div class="card"><h2>📋 Parts list — read directly <span class="src" style="font-weight:400">'+esc(pl.document)+'</span></h2><div class="body">'+
+      '<div><b>'+pl.rows_from_list+' steel rows</b> ('+esc(pl.forms.join(", "))+', '+pl.list_feet+' ft) came straight off the parts list — '+
+      'item, part number and page are on each row, and they are marked confidence 1.00 because nothing was interpreted. '+
+      'Plates and anything not on the list are the AI\'s read of the drawings.</div>'+
+      (rep.length?'<details style="margin-top:8px"><summary>'+rep.length+' AI row'+(rep.length===1?'':'s')+' replaced ('+pl.ai_feet_replaced+' ft)</summary><ul>'+
+        rep.map(function(r){ return '<li>'+esc(r.form_type)+' '+esc(r.size)+' — '+dims(r)+(r.source_sheet?' <span class="src">'+esc(r.source_sheet)+'</span>':'')+
+          (r.note?'<br><span class="src">'+esc(r.note)+'</span>':'')+'</li>'; }).join("")+
+        '</ul><div class="src">If one of these is real and not on the parts list, add it back in the BOM editor.</div></details>':'')+
+      (skip.length?'<details style="margin-top:6px"><summary>'+skip.length+' raw-stock line'+(skip.length===1?'':'s')+' on the list not taken off as steel</summary><ul>'+
+        skip.map(function(x){ return '<li>'+esc(x.item)+' · '+esc(x.qty)+' · '+esc(x.desc)+' <span class="src">p.'+esc(x.page)+'</span></li>'; }).join("")+
+        '</ul></details>':'')+
+    '</div></div>';
+  }
   function carryRowConfidence(curRows,newRows){
     if(!Array.isArray(newRows)) return newRows;
     const pool={};
@@ -2181,6 +2202,7 @@
       compliance:    _has(rs.compliance)?rs.compliance:os.compliance,
       totals:        _has(rs.totals)?rs.totals:os.totals,
       confidence:    _has(rs.confidence)?rs.confidence:os.confidence,
+      parts_list:    os.parts_list,   // set by the server's parts-list read; the AI never owns it
     };
     return Object.assign({},cur,{rows:carryRowConfidence(cur.rows,data.rows),fittings:mergeFittings(cur.fittings,data.fittings),
       synopsis:syn,import_csv:data.import_csv,verify_csv:data.verify_csv});
