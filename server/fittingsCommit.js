@@ -61,6 +61,31 @@ function registerFittingsCommit(app, deps) {
     return byName;
   }
 
+  // ── THE DRAWING A FITTING WAS READ FROM ─────────────────────────────────────────────────
+  // A hand-entered fitting carries Drawing (text) and Drawing_LU (the record). An API-written
+  // one carried neither, so nothing on the project could say which sheet a fitting came from —
+  // found by diffing a hand-keyed row against a committed one on MCP-10009.
+  //
+  // The take-off already reads it: `source_sheet` is on every fitting, and the same take-off
+  // creates the drawing records. They were simply never joined up.
+  //
+  // Matched loosely because a drawing number is written a dozen ways: the record might be
+  // "AAA3793678-GAMMADG" where the fitting says "AAA3793678". Exact first, then either
+  // containing the other, so a partial reference still lands on the right sheet.
+  async function drawingsOf(projectId) {
+    const rows = await fetchAllZohoPages('/report/All_Project_Drawing_Details?criteria=' +
+      encodeURIComponent('(MCP_Customer_Project_Form==' + projectId + ')'));
+    return (rows || []).map((r) => ({ id: String(r.ID), name: txt(r.Drawing_Number) }))
+      .filter((d) => d.name);
+  }
+  function findDrawing(list, sheet) {
+    const s = txt(sheet).toLowerCase();
+    if (!s || !list.length) return null;
+    return list.find((d) => d.name.toLowerCase() === s)
+        || list.find((d) => d.name.toLowerCase().indexOf(s) > -1 || s.indexOf(d.name.toLowerCase()) > -1)
+        || null;
+  }
+
   // Highest Line_Item_Fitting already on the project. Read from the ROWS, not from a counter —
   // a counter and the records disagree the moment anything is deleted
   // ([[feedback_counter_table_not_sole_truth]]).
@@ -83,6 +108,7 @@ function registerFittingsCommit(app, deps) {
       const token = await getAccessToken();
       const base = creatorApiBase();
       const comps = await componentsOf(projectId);
+      const dwgs  = await drawingsOf(projectId);
       let line = await nextLineItem(projectId);
 
       const written = [], skipped = [], failed = [], provisional = [], unresolvedId = [], matched = [], nameGaps = [];
@@ -283,6 +309,20 @@ function registerFittingsCommit(app, deps) {
 
         const comp = comps[txt(f.component).toLowerCase().replace(/\s+/g, ' ')];
         if (comp) data.Component = comp;
+
+        // The sheet this fitting was read from. Both halves, because a hand entry carries both:
+        // Drawing is the text a person reads, Drawing_LU is the record the page joins on.
+        const dwg = findDrawing(dwgs, f.source_sheet);
+        if (dwg) { data.Drawing_LU = dwg.id; data.Drawing = dwg.name; }
+        else if (txt(f.source_sheet)) { data.Drawing = txt(f.source_sheet); }
+
+        // ZERO, NOT BLANK — and this is the one place a zero is right. A natively entered row
+        // carries 0.00 in both money columns; an API row left them null, and a null in Deluge
+        // arithmetic is not 0, it is nothing. Anything summing the column was working from
+        // nothing. Same trap the components form has, found the same way: by diffing a
+        // hand-keyed row against a committed one.
+        data.Total_Amount_Of_Est_Material = 0;
+        data.Total_Est_Line_Amount_Quote_Material = 0;
 
         // The Butt Weld / Forged router. On a UI entry another workflow sets this; on an API
         // insert nothing has, and the project subform shows or hides the two Fittings_*
