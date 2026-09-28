@@ -45,6 +45,20 @@ const lk = (v) => (v && typeof v === 'object') ? txt(v.ID) : txt(v);
 const FORGED = { 2000: 1, 3000: 1, 6000: 1, 9000: 1 };
 const FLANGE = { 150: 1, 300: 1, 600: 1, 900: 1, 1500: 1, 2500: 1 };
 
+// ── BUTT WELD: BARE "STD" CARRIES NO WALL, AND THE DIMENSION MAP IS KEYED ON ONE ────────────
+// getNpsDimMap() has NO "SCH STD" key below 4-1/2". Above it, STD is not a numbered schedule
+// and gets its own key (4-1/2", 7", 9", 12", 18"+). At or below 10", STD IS SCH 40 per ASME
+// B36.10 - so a row labelled '3" | STD' is the same pipe as '3" | SCH 40 (.216")', and only
+// the second one weighs.
+//
+// The walls are copied from getNpsDimMap itself rather than recalled, so this table cannot
+// drift from the function it has to match.
+const STD_WALL = {
+  '1/8': '.068', '1/4': '.088', '3/8': '.091', '1/2': '.109', '3/4': '.113', '1': '.133',
+  '1-1/4': '.140', '1-1/2': '.145', '2': '.154', '2-1/2': '.203', '3': '.216', '3-1/2': '.226',
+  '4': '.237', '5': '.258', '6': '.280', '8': '.322', '10': '.365',
+};
+
 function canonicalClass(cls) {
   const s = txt(cls);
   if (!s) return null;
@@ -59,13 +73,33 @@ function canonicalClass(cls) {
   return null;                                             // unknown rating - left alone
 }
 
+// The RUN size, off the front of the label: '4" x 3"' -> '4', '2-1/2"' -> '2-1/2'.
+function runSize(head) {
+  const m = txt(head).match(/^\s*([0-9]+(?:-[0-9]+\/[0-9]+)?|[0-9]+\/[0-9]+)\s*"/);
+  return m ? m[1] : '';
+}
+
 // '1-1/2" | 3000#' -> '1-1/2" | 3000 PSI'. Everything before the LAST pipe is untouched, so a
 // reducing pair and a wall thickness both survive.
-function fixText(s) {
+function fixText(s, style) {
   const t = txt(s);
   const i = t.lastIndexOf('|');
   if (i < 0) return null;
   const head = t.slice(0, i + 1), cls = t.slice(i + 1).trim();
+
+  // Butt weld, class written as a bare STD: give it the schedule and the wall, and keep STD on
+  // the end so the row still reads the way the drawing does. getFittingWeight strips that
+  // trailing marker before the lookup (Block C).
+  // Also 'SCH STD (.237")' — the wall is right but the schedule is spelled STD, and below
+  // 4-1/2" the map has no such key. Above 10" it DOES (12", 18", 26"+), and STD_WALL
+  // deliberately stops at 10" so those can never be rewritten.
+  if (String(style) === 'Butt Weld' && /^(SCH\s+)?STD(\s*\([^)]*\))?$/i.test(cls)) {
+    const nps = runSize(head);
+    const wall = STD_WALL[nps];
+    if (!wall) return null;                                // above 10" STD is its own schedule
+    return head + ' SCH 40 (' + wall + '") STD';
+  }
+
   const better = canonicalClass(cls);
   return better ? head + ' ' + better : null;
 }
@@ -111,7 +145,9 @@ async function patch(t, report, id, data) {
   const plan = [];
   rows.forEach((r) => {
     const was = txt(r.Fitting_Description_Text);
-    const now = fixText(was);
+    // The style decides whether STD is meaningful: butt weld is rated by schedule and forged by
+    // pressure class, and fgDim has no STD entry at all.
+    const now = fixText(was, (r.Fitting && r.Fitting.zc_display_value) || r.Fitting);
     if (!now) return;
     const bw = lk(r.Fittings_Butt_Weld), sw = lk(r.Fittings_Socket_Weld);
     plan.push({ rowId: r.ID, was: was, now: now,
