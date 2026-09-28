@@ -16,6 +16,9 @@ const path = require("path");
 // BOM row AND the synopsis the review page is built from. Requests this size are streamed; a
 // non-streamed call this large risks an HTTP timeout before the response completes.
 const TAKEOFF_MAX_OUT = 32000;
+// An edit lists only its changes. 8000 covers a reconcile against an attached list that touches
+// dozens of rows; a one-decision fix uses a few hundred.
+const EDIT_MAX_OUT = 8000;
 
 const MODELS = {
   haiku:  { id: "claude-haiku-4-5-20251001", in: 1,  out: 5,  cacheWrite: 1.25,  cacheRead: 0.10 },
@@ -257,6 +260,98 @@ const SYNOPSIS_SCHEMA = {
   },
 };
 
+// -----------------------------------------------------------------------------
+//  EDITS, NOT REWRITES. Revise and chat used to have the model return the COMPLETE package to
+//  change one thing. On a 149-page parts-list job that was a 4-minute answer that could be cut off
+//  at the output ceiling, and every row it copied was a row it could quietly change (confidence
+//  dropped from all 37, once). The model now returns only its changes, addressed by the row's
+//  index `i` in the package it was shown, and applyChanges() makes them. Rows it does not name
+//  are the same objects afterwards — catalog picks, parts-list rows, hand edits and all.
+// -----------------------------------------------------------------------------
+const CHANGE_ITEM = function (item) {
+  return {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["update", "delete", "add"], description: "update = change some fields of an existing entry; delete = remove it; add = a new entry." },
+      i:      { type: "number", description: "update/delete: the entry's `i` from the CURRENT package. Omit for add." },
+      set:    Object.assign({}, item, { required: [], description: "update: ONLY the fields that change. add: the complete new entry." }),
+    },
+    required: ["action"],
+  };
+};
+const EDIT_TOOL = {
+  name: "submit_changes",
+  description: "Apply the estimator's change to the take-off by listing ONLY what changes. Everything not listed stays exactly as it is.",
+  input_schema: {
+    type: "object",
+    properties: {
+      row_changes:     { type: "array", items: CHANGE_ITEM(ROW_ITEM), description: "Changes to BOM rows, addressed by `i`." },
+      fitting_changes: { type: "array", items: CHANGE_ITEM(FITTING_ITEM), description: "Changes to pipe fittings, addressed by `i`." },
+      synopsis:        { type: "object", description: "ONLY the synopsis sections you changed, each given IN FULL (e.g. the whole `conflicts` array with the resolved one removed; the whole `scope_of_work` object with all four streams). Omit a section to leave it unchanged.",
+                         properties: { scope_of_work: SYNOPSIS_SCHEMA.properties.scope_of_work, decisions: SYNOPSIS_SCHEMA.properties.decisions,
+                                       gaps: SYNOPSIS_SCHEMA.properties.gaps, conflicts: SYNOPSIS_SCHEMA.properties.conflicts,
+                                       compliance: SYNOPSIS_SCHEMA.properties.compliance, project: SYNOPSIS_SCHEMA.properties.project } },
+      notes:           { type: "string", description: "ONE short past-tense sentence saying exactly what changed. Shown to the estimator." },
+    },
+    required: ["notes"],
+  },
+};
+
+const FIT_IDENTITY = ["fitting_type", "fitting_make", "end_type", "connection_type", "specification", "size", "schedule_or_class"];
+const FIT_PICK = ["detail_id", "detail_table", "detail_label", "weight", "auto_matched",
+                  "fitting_type_id", "fitting_make_id", "end_type_id", "connection_type_id", "specification_id"];
+
+// The package as the model sees it for an edit: every entry carries its index.
+function indexedPackage(current) {
+  const tag = function (a) { return (Array.isArray(a) ? a : []).map(function (x, i) { return Object.assign({ i: i }, x); }); };
+  return { rows: tag(current.rows), fittings: tag(current.fittings), synopsis: current.synopsis || null };
+}
+
+// Apply the model's changes to the current package. Indexes refer to the package as SHOWN, so all
+// updates and deletes resolve against it before anything is appended. A change naming an index that
+// does not exist is skipped and reported — never guessed at.
+function applyChanges(current, input) {
+  input = input || {};
+  const skipped = [];
+  const one = function (list, changes, kind) {
+    const out = (Array.isArray(list) ? list : []).slice();
+    const gone = {};
+    const adds = [];
+    (Array.isArray(unwrap(changes, [])) ? unwrap(changes, []) : []).forEach(function (c) {
+      if (!c || !c.action) return;
+      const set = (c.set && typeof c.set === "object") ? c.set : {};
+      if (c.action === "add") { if (Object.keys(set).length) adds.push(set); return; }
+      const i = Number(c.i);
+      if (!Number.isInteger(i) || i < 0 || i >= out.length) { skipped.push(kind + " " + c.action + " i=" + c.i); return; }
+      if (c.action === "delete") { gone[i] = true; return; }
+      const patch = Object.assign({}, set); delete patch.i;
+      // A fitting's catalog pick belongs to what the fitting IS. Change its type, make, ends, spec,
+      // size or class and the old pick describes a different part — a class fix would otherwise keep
+      // the Class 2500 row it was correcting, weight and all. Drop it so the page re-matches.
+      if (kind === "fitting" && FIT_IDENTITY.some(function (k) {
+            return k in patch && String(patch[k] == null ? "" : patch[k]) !== String(out[i][k] == null ? "" : out[i][k]); })) {
+        out[i] = Object.assign({}, out[i]);                  // copy first: never touch the input
+        FIT_PICK.forEach(function (k) { delete out[i][k]; });
+      }
+      out[i] = Object.assign({}, out[i], patch);
+    });
+    return out.filter(function (_, i) { return !gone[i]; }).concat(adds);
+  };
+  const rows = one(current.rows, input.row_changes, "row");
+  const fittings = one(current.fittings, input.fitting_changes, "fitting");
+  const syn = Object.assign({}, current.synopsis || {});
+  const ch = unwrap(input.synopsis, null);
+  if (ch && typeof ch === "object") Object.keys(ch).forEach(function (k) { if (ch[k] !== undefined) syn[k] = ch[k]; });
+  // Totals are counted, not asked for — the model is no longer shown the whole BOM to add up.
+  const qty = function (r) { return Number(r.quantity) || 0; };
+  syn.totals = Object.assign({}, syn.totals || {}, {
+    fab_rows: rows.filter(function (r) { return qty(r) > 0 && String(r.disposition || "fabricate") === "fabricate"; }).length,
+    gap_count: rows.filter(function (r) { return qty(r) <= 0; }).length,
+    low_conf_count: rows.filter(function (r) { return typeof r.confidence === "number" && r.confidence <= LOW_CONF; }).length,
+  });
+  return { rows: rows, fittings: fittings, synopsis: syn, skipped: skipped };
+}
+
 function buildTakeoffTool(includeSynopsis) {
   if (includeSynopsis === undefined) includeSynopsis = true;
   const properties = {
@@ -468,31 +563,27 @@ async function runTakeoff(opts) {
 // -----------------------------------------------------------------------------
 const REVISE_SYSTEM =
   "You are REVISING an existing structural steel material take-off based on an estimator's instruction. " +
-  "You are given the current package (BOM rows + synopsis) and ONE instruction. Apply it PRECISELY and " +
-  "return the COMPLETE revised package (full rows + full synopsis) via submit_takeoff — NOT a diff, not " +
-  "only the changed parts.\n" +
-  "RULES: (1) Change ONLY what the instruction implies; copy every unaffected row and synopsis field " +
-  "through UNCHANGED. (2) To resolve a conflict or decision: edit the affected rows (e.g. set " +
-  "galvanized=true on the named members, change a spec, add or remove rows) AND remove the resolved item " +
-  "from synopsis.conflicts (or reflect the decision in scope_of_work). " +
-  "(2b) REMOVE/DISMISS: if the instruction says to remove, dismiss, delete, or ignore specific gaps or conflicts " +
-  "(without changing the BOM), return synopsis.gaps and/or synopsis.conflicts WITH THOSE ITEMS DROPPED — return " +
-  "the full remaining array (an EMPTY array [] if all were removed). NEVER omit the field and NEVER echo a removed " +
-  "item back. (2c) SCOPE OF WORK: to add/edit/remove a scope write-up you MUST actually modify the array in " +
-  "synopsis.scope_of_work (fabricate/buyout/by_others/send_out) and return the FULL scope_of_work object with the change " +
-  "applied (empty [] if a stream is now empty) — NEVER just describe it in notes while leaving scope_of_work unchanged. " +
-  "(3) Obey every catalog rule from the " +
-  "knowledge base (exact sub-typed form types, size formats, valid specs). (4) Recompute synopsis.totals. " +
-  "(5) OUTPUT DISCIPLINE: rows as a real JSON array; all analysis in the structured synopsis. " +
-  "(6) In the top-level `notes` field, write ONE short past-tense sentence stating EXACTLY what you changed " +
+  "You are given the current package (BOM rows + fittings + synopsis) and ONE instruction. Every row and " +
+  "fitting carries its index `i`. Apply the instruction PRECISELY by calling submit_changes with ONLY what " +
+  "changes — never the whole package.\n" +
+  "RULES: (1) Change ONLY what the instruction implies. Anything you do not list stays exactly as it is, so " +
+  "never list an entry to 'keep' it. (2) row_changes / fitting_changes: `update` with the entry's `i` and ONLY " +
+  "the fields that change in `set`; `delete` with its `i`; `add` with the complete new entry in `set`. The `i` " +
+  "is always the index in the package you were shown. (3) To resolve a conflict or decision: change the " +
+  "affected rows AND return the synopsis section that changes — e.g. the whole `conflicts` array without the " +
+  "resolved item, or the whole `scope_of_work` object. (3b) REMOVE/DISMISS gaps or conflicts: return that " +
+  "section IN FULL with those items dropped ([] if none remain); never echo a removed item. (3c) SCOPE OF WORK: " +
+  "return the FULL scope_of_work object with all four streams, the change applied — never only describe it in notes. " +
+  "(4) Obey every catalog rule from the knowledge base (exact sub-typed form types, size formats, valid specs). " +
+  "Totals are recounted for you; do not send them. " +
+  "(5) In `notes`, write ONE short past-tense sentence stating EXACTLY what you changed " +
   "(e.g. 'Set galvanized = Yes on 12 exterior lintels and shelf angles, and removed the lintel-finish conflict.'). " +
-  "This sentence is shown to the estimator as confirmation of the edit. " +
-  "(7) REFERENCE ATTACHMENTS: if the user attached document(s) (a BOM sheet, cut list, spec, vendor quote, " +
-  "marked-up drawing), treat them as REFERENCE to apply per the instruction — e.g. reconcile the current " +
-  "take-off against the attached BOM (add missing members, remove extras, correct quantities/sizes/specs to " +
-  "match), or merge in listed items. Do NOT blindly replace the package; reconcile per the instruction. Still " +
-  "obey every catalog rule (exact sub-typed form types, size formats, valid specs) when mapping attached items. " +
-  "Then call submit_takeoff. No prose.";
+  "It is shown to the estimator as confirmation of the edit. " +
+  "(6) REFERENCE ATTACHMENTS: if the user attached a document (a BOM sheet, cut list, spec, vendor quote, " +
+  "marked-up drawing), reconcile the take-off against it per the instruction — add what is missing, delete " +
+  "extras, update quantities/sizes/specs — as individual changes, obeying every catalog rule. " +
+  "(7) Rows whose note starts 'Parts list item' were read directly off the parts list; change them only when " +
+  "the instruction is explicitly about them. Then call submit_changes. No prose.";
 
 async function reviseTakeoff(opts) {
   opts = opts || {};
@@ -536,51 +627,39 @@ async function reviseTakeoff(opts) {
   // the most questions was the one table the AI could not see. It answered as though the
   // fittings did not exist, which reads as a refusal rather than a blind spot.
   userContent.push({ type: "text", text:
-    "CURRENT TAKE-OFF PACKAGE (JSON):\n" +
-    JSON.stringify({ rows: current.rows || [], fittings: current.fittings || [],
-                     synopsis: current.synopsis || null }) +
+    "CURRENT TAKE-OFF PACKAGE (JSON — every row and fitting carries its index `i`):\n" +
+    JSON.stringify(indexedPackage(current)) +
     "\n\nESTIMATOR INSTRUCTION:\n" + instruction +
-    "\n\nApply the instruction and return the COMPLETE revised package via submit_takeoff. " +
-    "Return `fittings` whenever the package has any — omitting the array is read as 'unchanged', " +
-    "but returning a SHORT one deletes the fittings that are missing from it." });
+    "\n\nApply the instruction by calling submit_changes with ONLY the changes." });
 
-  // Returns the COMPLETE revised package, so it carries the same ceiling problem as the run.
+  // Only the changes come back, so the answer is small whatever the size of the job.
   const resp = await anthropic.messages.stream({
     model: model.id,
-    max_tokens: TAKEOFF_MAX_OUT,
+    max_tokens: EDIT_MAX_OUT,
     system: [
       { type: "text", text: REVISE_SYSTEM },
       { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
     ],
-    tools: [buildTakeoffTool(true)],
-    tool_choice: { type: "tool", name: "submit_takeoff" },
+    tools: [EDIT_TOOL],
+    tool_choice: { type: "tool", name: "submit_changes" },
     messages: [{ role: "user", content: userContent }],
   }).finalMessage();
 
-  // A cut-off revise is a PARTIAL package, and the caller reads a short `fittings` array as
-  // "delete the rest". Refuse it — the current take-off stays exactly as it was.
+  // A cut-off change list is incomplete — applying half an instruction is worse than none.
   if (resp.stop_reason === "max_tokens") {
-    throw new Error("The revision was cut off at " + TAKEOFF_MAX_OUT + " output tokens before the AI " +
-      "finished rewriting the take-off, so nothing was changed. The package is too large to revise " +
-      "whole — make the change by hand, or ask for a narrower edit.");
+    throw new Error("The revision was cut off at " + EDIT_MAX_OUT + " output tokens before the AI " +
+      "finished listing its changes, so nothing was changed. Ask for a narrower edit.");
   }
 
   const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
-  const out = toolUse ? toolUse.input : { rows: [], notes: "(no tool_use returned)" };
-  out.rows = unwrap(out.rows, []);
-  if (!Array.isArray(out.rows)) out.rows = [];
-  // undefined and [] are DIFFERENT answers here. An omitted array means the instruction had
-  // nothing to do with fittings and the caller should keep what it has; an empty one is the
-  // model saying to clear them. Collapsing the two would silently drop every fitting on any
-  // revise that only touched the structural rows.
-  const fittings = unwrap(out.fittings, undefined);
-  const synopsis = unwrap(out.synopsis, null);
+  if (!toolUse) throw new Error("The AI returned no changes, so nothing was changed.");
+  const applied = applyChanges(current, toolUse.input);
 
   return {
-    rows: out.rows,
-    fittings: Array.isArray(fittings) ? fittings : undefined,
-    notes: out.notes || "",
-    synopsis: synopsis,
+    rows: applied.rows,
+    fittings: applied.fittings,
+    notes: (toolUse.input.notes || "") + (applied.skipped.length ? " (skipped, index not found: " + applied.skipped.join(", ") + ")" : ""),
+    synopsis: applied.synopsis,
     cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
     usage: resp.usage,
     modelId: model.id,
@@ -601,16 +680,14 @@ const CHAT_SYSTEM =
   "• If the user ASKS A QUESTION or just chats (e.g. 'what spec did you use for the angles?', 'how many tons?', " +
   "'why is this galvanized?'), reply in PLAIN TEXT — concise, specific, grounded in the current package. Do NOT call the tool.\n" +
   "• If the user REQUESTS A CHANGE (edit/add/remove rows, resolve a conflict, remove gaps/conflicts, reconcile against an " +
-  "attached doc, change spec/finish/markup), call submit_takeoff with the COMPLETE revised package (full rows + full synopsis), " +
-  "NOT a diff. Copy every unaffected row/field through UNCHANGED. Obey every catalog rule (exact sub-typed form types, size " +
-  "formats, valid specs). If removing/dismissing gaps or conflicts, return synopsis.gaps/synopsis.conflicts with those items " +
-  "DROPPED (empty [] if all removed); never echo a removed item back. " +
-  "SCOPE OF WORK edits: to add/edit/remove a scope write-up, you MUST actually modify the array in " +
-  "synopsis.scope_of_work (fabricate / buyout / by_others / send_out) and return the FULL scope_of_work object with all four " +
-  "arrays — the target item added, edited, or removed (an empty [] if that stream is now empty). NEVER just describe the change " +
-  "in `notes` while passing scope_of_work back unchanged. If the user pasted a screenshot/image, match the quoted text to the " +
-  "exact scope item and remove/edit THAT one. Recompute synopsis.totals. In the tool's top-level `notes`, " +
-  "write ONE short past-tense sentence stating exactly what you changed (shown to the estimator as confirmation).\n" +
+  "attached doc, change spec/finish/markup), call submit_changes with ONLY what changes. Every row and fitting carries its " +
+  "index `i`: `update` with that `i` and only the changed fields in `set`; `delete` with its `i`; `add` with the complete new " +
+  "entry. Anything not listed stays exactly as it is — never list an entry to keep it. Obey every catalog rule (exact " +
+  "sub-typed form types, size formats, valid specs). A synopsis section you change is returned IN FULL: removing gaps or " +
+  "conflicts → that whole array with them dropped ([] if none remain), never echoing a removed item; a scope edit → the FULL " +
+  "scope_of_work object with all four streams — never only described in `notes`. If the user pasted a screenshot/image, match " +
+  "the quoted text to the exact item and change THAT one. Totals are recounted for you. In `notes`, write ONE short " +
+  "past-tense sentence stating exactly what you changed (shown to the estimator as confirmation).\n" +
   "Use the prior conversation for context (the user may say 'now also…' or refer to earlier turns). Keep text replies brief.";
 
 async function chatTakeoff(opts) {
@@ -641,18 +718,18 @@ async function chatTakeoff(opts) {
   // Fittings are in here for the same reason they are in reviseTakeoff: without them "Ask AI"
   // cannot see the pipe fittings at all, and answers questions about them as though the table
   // were empty.
-  extra.push({ type: "text", text: "CURRENT TAKE-OFF PACKAGE (JSON):\n" + JSON.stringify({ rows: current.rows || [], fittings: current.fittings || [], synopsis: current.synopsis || null }) + "\n\n(The message that follows is the user's latest turn.)" });
+  extra.push({ type: "text", text: "CURRENT TAKE-OFF PACKAGE (JSON — every row and fitting carries its index `i`):\n" + JSON.stringify(indexedPackage(current)) + "\n\n(The message that follows is the user's latest turn.)" });
   const last = msgs[msgs.length - 1];
   last.content = extra.concat(last.content);
 
   const resp = await anthropic.messages.create({
     model: model.id,
-    max_tokens: 16000,
+    max_tokens: EDIT_MAX_OUT,
     system: [
       { type: "text", text: CHAT_SYSTEM },
       { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
     ],
-    tools: [buildTakeoffTool(true)],
+    tools: [EDIT_TOOL],
     tool_choice: { type: "auto" },
     messages: msgs,
   });
@@ -661,20 +738,18 @@ async function chatTakeoff(opts) {
   const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
   const textOut = resp.content.filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n").trim();
 
-  if (toolUse && resp.stop_reason === "max_tokens") {   // partial package — never apply it
+  if (toolUse && resp.stop_reason === "max_tokens") {   // an incomplete change list — never apply it
     return { edited: false, cost_usd: cost, usage: resp.usage, modelId: model.id,
-      reply: "⚠ That edit was cut off before the AI finished rewriting the take-off, so nothing was " +
-             "changed. The package is too large to rewrite whole — make the change by hand, or ask for a narrower edit." };
+      reply: "⚠ That edit was cut off before the AI finished listing its changes, so nothing was changed. " +
+             "Ask for a narrower edit." };
   }
   if (toolUse) {
-    const out = toolUse.input || {};
-    out.rows = unwrap(out.rows, []);
-    if (!Array.isArray(out.rows)) out.rows = [];
-    const fittings = unwrap(out.fittings, undefined);   // omitted = unchanged, [] = cleared
-    const synopsis = unwrap(out.synopsis, null);
-    return { edited: true, rows: out.rows, fittings: Array.isArray(fittings) ? fittings : undefined,
-      synopsis: synopsis, notes: out.notes || "",
-      reply: (out.notes && String(out.notes).trim()) || textOut || "Updated the take-off.",
+    const applied = applyChanges(current, toolUse.input);
+    const said = String(toolUse.input.notes || "").trim();
+    return { edited: true, rows: applied.rows, fittings: applied.fittings, synopsis: applied.synopsis,
+      notes: said,
+      reply: (said || textOut || "Updated the take-off.") +
+             (applied.skipped.length ? " (skipped, index not found: " + applied.skipped.join(", ") + ")" : ""),
       cost_usd: cost, usage: resp.usage, modelId: model.id };
   }
   return { edited: false, reply: textOut || "(no reply)", cost_usd: cost, usage: resp.usage, modelId: model.id };
@@ -1103,4 +1178,4 @@ async function askDocuments(opts) {
            usage: resp.usage, modelId: model.id };
 }
 
-module.exports = { runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, pdfPageCount, groupPagesIntoSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
+module.exports = { applyChanges, indexedPackage, EDIT_TOOL, runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, pdfPageCount, groupPagesIntoSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
