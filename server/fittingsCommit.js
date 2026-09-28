@@ -312,9 +312,15 @@ function registerFittingsCommit(app, deps) {
 
         // The sheet this fitting was read from. Both halves, because a hand entry carries both:
         // Drawing is the text a person reads, Drawing_LU is the record the page joins on.
+        // BOTH are lookups to the SAME drawing record, with different display fields:
+        // Drawing_LU shows Drawing_Number ("AAA3793678-GAMMADG") and Drawing shows
+        // Drawing_Description ("GAMMA_LUBE_RESERVOIR"). So both take the record id — writing
+        // the NAME into Drawing would be refused, or worse, silently stored as nothing.
+        // The _LU suffix on one and not the other is the only hint they are the same kind of
+        // field, which is exactly the trap Work_Order_Component_ID sets by being a lookup
+        // despite its _ID suffix.
         const dwg = findDrawing(dwgs, f.source_sheet);
-        if (dwg) { data.Drawing_LU = dwg.id; data.Drawing = dwg.name; }
-        else if (txt(f.source_sheet)) { data.Drawing = txt(f.source_sheet); }
+        if (dwg) { data.Drawing_LU = dwg.id; data.Drawing = dwg.id; }
 
         // ZERO, NOT BLANK — and this is the one place a zero is right. A natively entered row
         // carries 0.00 in both money columns; an API row left them null, and a null in Deluge
