@@ -44,12 +44,15 @@ const ITEM_REQUIREMENTS_CHOICES = [
 // Project_Quote_Status values (actively being sourced). Allowlist by design —
 // anything else (Awarded/Not Awarded/Canceled/Postpone/Quoted/blank) is hidden.
 const OPEN_PROJECT_STATUSES = new Set(['Open', 'Project Not Quoted', 'Project Revise']);
-// Account_User_Email is a multi-email field (admin + reps), so we match by
-// "contains", case-insensitive. Supplier_Entry's ID is the value stock rows store
-// in Supplier_ID — so this id flows straight into the fitting matcher.
+// Account_User_Email is a multi-email field (admin + reps). It is split into its addresses and
+// the login must EQUAL one of them, case-insensitive. It used to be a substring test, so
+// ?email=a or ?email=@theirdomain.com resolved to some supplier and acted as them (2026-09-28).
+// Supplier_Entry's ID is the value stock rows store in Supplier_ID — so this id flows straight
+// into the fitting matcher.
 function emailMatches(accountUserEmail, email) {
-  if (!accountUserEmail || !email) return false;
-  return String(accountUserEmail).toLowerCase().includes(String(email).toLowerCase());
+  const want = String(email || '').trim().toLowerCase();
+  if (!accountUserEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(want)) return false;
+  return String(accountUserEmail).toLowerCase().split(/[\s,;|]+/).some((e) => e === want);
 }
 
 // Composite Zoho fields (Name, URL) come back as objects; flatten to a display string.
@@ -152,7 +155,8 @@ function registerSupplierRoutes(app, deps) {
       if (!supplier) {
         return res.status(404).json({
           ok: false, error: 'No supplier found for this login.',
-          hint: email ? 'Email "' + email + '" is not in any Supplier_Entry Account_User_Email.' : 'No email supplied (?email= or X-Supplier-Email header).',
+          // Generic on purpose: echoing which address missed helps someone probe for real ones.
+          hint: email ? 'Sign in with the email on your supplier account.' : 'No email supplied.',
         });
       }
       req.supplier = supplier;

@@ -11,6 +11,42 @@ const filestore = require('./filestore');        // the project's own copy of th
 
 const app = express();
 app.use(cors());
+
+// ── ADMIN GATE ──────────────────────────────────────────────────────────────────────────────
+// Debug, diagnostic and admin routes that no customer page calls, but that were open to anyone:
+// delete a whole project, read ANY Zoho report with ANY criteria, read a connected Outlook inbox,
+// list every tenant's mailboxes, rewrite the cross-shop AI knowledge, force paid cache rebuilds.
+// (Inventory: Projects/TENANT_ISOLATION_INVENTORY.md, 2026-09-28.)
+// They now need MC_ADMIN_KEY, sent as the X-MC-Admin-Key header or ?key=. With no key configured
+// they are CLOSED, not open — a missing env var must never mean "no lock".
+const ADMIN_ROUTES = [
+  /^\/purge\/?$/,
+  /^\/api\/project\/[^/]+\/purge(-preview)?$/,
+  /^\/api\/project\/[^/]+\/nesting-runs-debug$/,
+  /^\/api\/bom-lookups\/__(debug|fields)$/,
+  /^\/api\/debug(-mfg|-stock)?$/,
+  /^\/api\/(token-status|cache-status|cache-clear)$/,
+  /^\/api\/lookups\/truncation$/,
+  /^\/api\/takeoff\/(mine|learning-check|catalog-check|catalog-check-text|fittings-catalog-check|fitting-index-check|fitting-additions)$/,
+  /^\/api\/triage\/debug$/,
+  /^\/connect\/outlook\/status$/,
+  /^\/triage\/opportunity\/by-project\//,
+  /^\/api\/supplier\/(?!me\/)[^/]+\/fitting-rfqs$/,
+];
+function adminKeyOk(req) {
+  const want = process.env.MC_ADMIN_KEY || '';
+  const got = String(req.get('X-MC-Admin-Key') || req.query.key || '');
+  if (!want || want.length < 16 || got.length !== want.length) return false;
+  return require('crypto').timingSafeEqual(Buffer.from(got), Buffer.from(want));
+}
+app.use((req, res, next) => {
+  const p = req.path;
+  // The fitting index is read by the review page; only a forced ?rebuild= (a paid Zoho rebuild) is admin.
+  const gated = ADMIN_ROUTES.some((re) => re.test(p)) || (p === '/api/takeoff/fitting-index' && req.query.rebuild);
+  if (!gated || adminKeyOk(req)) return next();
+  console.warn('[admin-gate] refused ' + req.method + ' ' + p + ' from ' + (req.get('x-forwarded-for') || req.ip));
+  return res.status(403).json({ ok: false, error: 'Not available.' });
+});
 app.use('/api/takeoff', express.json({ limit: '60mb' })); // AI take-off: base64 PDFs are large; must precede the 10mb global json
 app.use('/api/triage/manual', express.json({ limit: '40mb' })); // manual intake carries base64 photos/PDFs; same reason, same placement
 app.use('/api/files', express.json({ limit: '60mb' })); // drawings saved to the project store are base64 PDFs; same reason, same placement

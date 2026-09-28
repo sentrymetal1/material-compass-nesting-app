@@ -306,6 +306,8 @@ button{font:inherit;font-weight:600;padding:9px 16px;border-radius:7px;border:0;
 <div class="wrap" id="app"><div class="card"><span class="spin"></span>Reading the project…</div></div>
 <script>
 var P = new URLSearchParams(location.search).get('project_id') || '';
+// The admin key the page was opened with rides every call; the routes refuse without it.
+var K = new URLSearchParams(location.search).get('key') || '';
 var app = document.getElementById('app');
 var esc = function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');};
 
@@ -313,7 +315,7 @@ function show(html){ app.innerHTML = html; }
 
 function load(){
   if(!P){ show('<div class="card stop">No project was passed to this page.</div>'); return; }
-  fetch('/api/project/'+encodeURIComponent(P)+'/purge-preview').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/project/'+encodeURIComponent(P)+'/purge-preview',{headers:{'X-MC-Admin-Key':K}}).then(function(r){return r.json();}).then(function(d){
     if(!d.ok){ show('<div class="card stop">'+esc(d.error)+'</div>'); return; }
     var p = d.project;
     var rows = (d.forms||[]).map(function(f){
@@ -350,7 +352,7 @@ function load(){
       go.disabled = true;
       document.getElementById('msg').innerHTML = '<span class="spin"></span>Deleting, deepest records first…';
       fetch('/api/project/'+encodeURIComponent(P)+'/purge', {
-        method:'POST', headers:{'Content-Type':'application/json'},
+        method:'POST', headers:{'Content-Type':'application/json','X-MC-Admin-Key':K},
         body: JSON.stringify({confirm: cf.value.trim()})
       }).then(function(r){return r.json();}).then(function(d){
         if(!d.ok){ document.getElementById('msg').innerHTML = '<span style="color:#b3261e">'+esc(d.error)+'</span>'; go.disabled=false; return; }
