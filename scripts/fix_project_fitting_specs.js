@@ -18,6 +18,7 @@
 //
 //   node scripts/fix_project_fitting_specs.js MCP-10009          (dry run)
 //   node scripts/fix_project_fitting_specs.js MCP-10009 --apply
+//   add --no-std to leave STD couplings as they are
 require('dotenv').config();
 const axios = require('axios');
 
@@ -67,6 +68,8 @@ async function patch(t, id, data) {
 (async () => {
   const name = process.argv[2] || 'MCP-10009';
   const APPLY = process.argv.indexOf('--apply') > -1;
+  // STD -> 3000 PSI is a judgement call (Mark's). --no-std leaves those couplings alone.
+  const NO_STD = process.argv.indexOf('--no-std') > -1;
   const t = await token();
 
   const proj = await get(t, '/report/All_Projects?criteria=' + encodeURIComponent('(Project_Quote_Number=="' + name + '")') + '&limit=2');
@@ -80,7 +83,7 @@ async function patch(t, id, data) {
     const spec = disp(r.Fitting_Specification), text = txt(r.Fitting_Description_Text);
     const size = text.split('|')[0].trim();
 
-    if (style === 'Forged' && type === 'Coupling' && /\|\s*STD$/i.test(text) && COUPLING_3000[size]) {
+    if (!NO_STD && style === 'Forged' && type === 'Coupling' && /\|\s*STD$/i.test(text) && COUPLING_3000[size]) {
       plan.push({ id: r.ID, what: text + '  ->  ' + size + ' | 3000 PSI   (repointed at the existing catalog row)',
         data: { Fitting_Description_Text: size + ' | 3000 PSI',
                 Fitting_ID: COUPLING_3000[size], Fittings_Socket_Weld: COUPLING_3000[size] } });
