@@ -44,7 +44,13 @@ function registerFittingsCommit(app, deps) {
   const { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages,
           createDetailRow, buildFittingIndex, loadFittingCatalog, loadFittingLearning } = deps;
 
-  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+  // Blank is NOT zero. Number("") is 0, so a blank weight from the page used to arrive here as a
+  // weight of 0 - which skipped the butt-weld computation below (it only fills a blank) and was
+  // then written as 0.000. Every butt-weld fitting on MCP-10010 landed that way (2026-09-29).
+  const num = (v) => {
+    if (v == null || String(v).trim() === '') return null;
+    const n = Number(v); return Number.isFinite(n) ? n : null;
+  };
   const txt = (v) => String(v == null ? '' : v).trim();
 
   // The project's components, so a fitting's component NAME can become the record it belongs to.
@@ -115,7 +121,7 @@ function registerFittingsCommit(app, deps) {
 
       // Built once, and only if something actually needs it. The index is ~53 paid reads when it
       // is cold, so a commit where every fitting already matched must not pay for it at all.
-      let index = null, created = 0, computedBw = 0;
+      let index = null, created = 0, computedBw = 0, specDefaulted = 0;
       async function detailIndex() {
         if (index === null) index = await buildFittingIndex();
         return index;
@@ -196,6 +202,9 @@ function registerFittingsCommit(app, deps) {
         // cannot be priced is the failure; a provisional catalog row is not.
         let detailId = txt(f.detail_id), detailTable = txt(f.detail_table), detailLabel = txt(f.detail_label);
         let weight = num(f.weight);
+        // A zero weight is a catalog row that was never weighed, not a fitting that weighs
+        // nothing. Treat it as blank so the computations below get their turn.
+        if (weight === 0) weight = null;
         const schedule = txt(f.schedule_or_class) || txt(f.schedule);
 
         if (!detailId && tooManyRows) {
@@ -274,6 +283,36 @@ function registerFittingsCommit(app, deps) {
             density: dens,
           });
           if (got) { weight = got.lb; computedBw++; }
+        }
+
+        // ── CARBON STEEL BUTT WELD: THE SPEC LIVES UNDER "WROUGHT - CARBON STEEL" ───────────
+        // The catalog files butt-weld fitting specs under the Wrought make (WPB | ASTM A234 has
+        // makeId = Wrought - Carbon Steel), while the DETAIL rows are filed under plain Carbon
+        // Steel. So a take-off butt-weld fitting stays "Carbon Steel" to match its detail row
+        // (done above), and its specification never resolves - every elbow, tee and reducer on
+        // MCP-10009 and MCP-10010 reached the project with no spec, which is what stops a
+        // supplier quoting. Same fix as scripts/fix_project_fitting_specs.js, now at commit.
+        //
+        // Here, AFTER the detail match, so the switch only changes what the project row carries.
+        // Only when there is no resolved spec. A spec the take-off NAMED is looked up under the
+        // Wrought make as written (WPC stays WPC - it is a different grade); WPB is the default
+        // only when nothing was named. A named spec Wrought does not carry is left alone.
+        if (/butt\s*weld/i.test(txt(f.end_type)) && !txt(f.specification_id)) {
+          const cat = catalog || {};
+          const cur = (cat.makes || []).find((m) => m.id === txt(f.fitting_make_id));
+          const makeName = (cur && cur.name) || txt(f.fitting_make);
+          if (/^(wrought\s*-\s*)?carbon steel$/i.test(makeName)) {
+            const wrought = (cat.makes || []).find((m) => /^wrought\s*-\s*carbon steel$/i.test(m.name));
+            const norm = (s) => txt(s).toLowerCase().replace(/\s+/g, ' ');
+            const named = norm(f.specification);
+            const spec = wrought && (cat.specs || []).find((s) => s.makeId === wrought.id &&
+              (named ? norm(s.name) === named : /^wpb\s*\|\s*astm a234$/i.test(txt(s.name))));
+            if (spec) {
+              f.fitting_make_id = wrought.id; f.fitting_make = wrought.name;
+              f.specification_id = spec.id; f.specification = spec.name;
+              if (!named) specDefaulted++;
+            }
+          }
         }
 
         const data = {
@@ -377,11 +416,13 @@ function registerFittingsCommit(app, deps) {
         (provisional.length ? ', created ' + provisional.length + ' catalog row' + (provisional.length === 1 ? '' : 's') : '') +
         (unresolvedId.length ? ', ' + unresolvedId.length + ' without a Fitting_ID' : '') +
         (computedBw ? ', computed ' + computedBw + ' butt-weld weight' + (computedBw === 1 ? '' : 's') : '') +
+        (specDefaulted ? ', set WPB | ASTM A234 on ' + specDefaulted + ' carbon steel butt-weld' : '') +
         (skipped.length ? ', skipped ' + skipped.length : '') + (failed.length ? ', failed ' + failed.length : ''));
       res.json({ ok: true, written: written.length, lines: written, skipped: skipped, failed: failed,
         // Butt-weld weights this commit supplied because the Deluge workflow does not
         // produce them on an API write. Surfaced so the count is visible rather than implied.
         computed_butt_weld_weights: computedBw,
+        spec_defaulted_wpb_a234: specDefaulted,
         // Rows the catalog did not have and now does — provisional, and in the add-flow's
         // review queue. And the ones still carrying no join key, which are the ones that will
         // price at $0 if nobody touches them.
