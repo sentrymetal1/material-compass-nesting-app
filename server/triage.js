@@ -490,6 +490,9 @@ function throwIfQuota(resp) {
 function isQuotaError(e) {
   return !!(e && (e.zohoQuota || (e.response && e.response.data && e.response.data.code === 4000)));
 }
+// Out of quota is not "not found" — saying so sends people hunting for a record that exists.
+const QUOTA_PAGE = '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:48px;color:#23303b;background:#f4f6f9">' +
+  '<b>Daily data limit reached.</b><br>The RFQ is still there — it will show after the limit resets overnight.</body>';
 
 // ---- Route registration ------------------------------------------------------
 function registerTriageRoutes(app, deps) {
@@ -919,6 +922,7 @@ function registerTriageRoutes(app, deps) {
       const row = await opportunityForProject(req.params.projectId);
       res.status(row ? 200 : 404).send(renderOpportunityDetail(row, row ? keptFiles(row.ID) : []));
     } catch (err) {
+      if (isQuotaError(err)) return res.status(503).send(QUOTA_PAGE);
       console.error('[triage] detail-by-project error:', err.response?.data || err.message);
       res.status(500).send('<p style="font-family:system-ui;padding:40px">Failed to load the source RFQ.</p>');
     }
@@ -963,10 +967,12 @@ function registerTriageRoutes(app, deps) {
       let row = null;
       try {
         const r = await axios.get(base + '/report/' + OPP_REPORT + '/' + req.params.id, { headers: zohoHeaders(token) });
+        throwIfQuota(r);
         row = (r.data && r.data.data) || null;
-      } catch (e) { if (!isNoRecords(e)) throw e; }
+      } catch (e) { if (isQuotaError(e) || !isNoRecords(e)) throw e; }
       res.status(row ? 200 : 404).send(renderOpportunityDetail(row, row ? keptFiles(row.ID) : []));
     } catch (err) {
+      if (isQuotaError(err)) return res.status(503).send(QUOTA_PAGE);
       console.error('[triage] opportunity detail error:', err.response?.data || err.message);
       res.status(500).send('<p style="font-family:system-ui;padding:40px">Failed to load RFQ detail.</p>');
     }
