@@ -1630,6 +1630,15 @@
       const sig = fileSig();
       if (autoDone[sig] || scanning) return;
       if (docs.reduce((s, d) => s + d.mb, 0) > MAX_MB) return;
+      // Reopening the page restores the last read (initScope). If it was of these same files, don't
+      // pay for it again on every open — ↻ Re-read is there when the user actually wants a fresh one.
+      const names = docs.map((d) => d.name).sort().join("|");
+      if (sheets.length && readMeta && Array.isArray(readMeta.files) &&
+          readMeta.files.slice().sort().join("|") === names) {
+        autoDone[sig] = 1;
+        setScopeStatus("Using the read from " + escHtml(readMeta.at || "earlier") + " — ↻ Re-read if the documents changed.");
+        return;
+      }
       clearTimeout(autoTimer);
       autoTimer = setTimeout(() => {
         if (scanning || autoDone[fileSig()]) return;
