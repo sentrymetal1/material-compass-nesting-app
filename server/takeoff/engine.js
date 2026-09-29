@@ -298,7 +298,7 @@ const EDIT_TOOL = {
 };
 
 const FIT_IDENTITY = ["fitting_type", "fitting_make", "end_type", "connection_type", "specification", "size", "schedule_or_class"];
-const FIT_PICK = ["detail_id", "detail_table", "detail_label", "weight", "auto_matched",
+const FIT_PICK = ["detail_id", "detail_table", "detail_label", "std_label", "size_other", "weight", "auto_matched",
                   "fitting_type_id", "fitting_make_id", "end_type_id", "connection_type_id", "specification_id"];
 
 // The package as the model sees it for an edit: every entry carries its index.

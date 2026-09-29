@@ -8,6 +8,7 @@
 <!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
 <script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
 <script src="mc-dialog.js"></script>
+<script src="fittingSizes.js"></script>
 <!--
   LIVE approval page (build 3b). Renders a real take-off result {rows, import_csv, synopsis}.
   Data source, in order: window.TAKEOFF_RESULT  →  sessionStorage 'takeoff_result'
@@ -793,7 +794,7 @@
           // resolved here, whatever rule produced it.
           Object.keys(res.ids||{}).forEach(function(k){ if(!f[k]){ f[k]=res.ids[k]; n++; } });
           if(res.detail && !f.detail_id){
-            f.detail_id=res.detail.id; f.detail_table=res.detail.tbl; f.detail_label=res.detail.label;
+            f.detail_id=res.detail.id; f.detail_table=res.detail.tbl; f.detail_label=res.detail.label; f.std_label="";
             f.size=res.detail.size||f.size; f.schedule_or_class=res.detail.sched||f.schedule_or_class;
             if(f.weight==null) f.weight=(res.detail.weight==null?null:res.detail.weight);
             f.auto_matched=true; n++;
@@ -873,7 +874,7 @@
       f.__specFix={from:f.fitting_make,to:m.name,spec:spec};
       f.fitting_make=m.name;
       // The make changed, so anything matched under the old one is no longer trustworthy.
-      f.detail_id=null; f.detail_table=null; f.detail_label=null; f.weight=null; f.auto_matched=false;
+      f.detail_id=null; f.detail_table=null; f.detail_label=null; f.weight=null; f.auto_matched=false; f.std_label="";
       n++;
     });
     if(n) saveResult(R);
@@ -915,6 +916,15 @@
       f.auto_matched=true;
       n++;
     });
+    // No catalog row, but exactly ONE standard size fits what the take-off read: select it, so
+    // "1/8" · 3000#" becomes "1/8" | 3000 PSI" — the spelling that weighs — with nothing retyped.
+    // Several (a weld neck read as just "Class 150" has five bores) stays a question for a person.
+    arr(R.fittings).forEach(function(f){
+      if(f.detail_id||f.std_label||f.size_other) return;
+      const m=fitStdMatches(f,fitStdOptions(f,fitDetailOptions(f)||[]));
+      if(m.length!==1) return;
+      fitSetStd(f,m[0]); n++;
+    });
     if(n) saveResult(R);
     return n;
   }
@@ -954,6 +964,43 @@
       const sized=(o.rdims && fitSizeKey(o.rdims)===want) || fitSizeKey(o.size)===want;
       return sized && (!sch || fitSameSched(o.sched,sch)); });
   }
+
+  // ── STANDARD SIZES: THE SAME LIST THE PROJECT FORM OFFERS ─────────────────────────────────
+  // fittingSizes.js is generated from the Deluge getFittingSizes(), so these labels are spelled
+  // exactly as the project form's own dropdown spells them — and getFittingWeight() looks weights
+  // up by that literal string. Free text is how "3000#" got into the catalog and weighed zero.
+  // Style follows the same rule the commit uses to pick a table (fittingAdd.js tableFor).
+  function fitStdAll(x){
+    if(!window.MCFittingSizes||!x.fitting_type) return [];
+    const style=/butt\s*weld/i.test(x.end_type||'')?'Butt Weld':'Forged';
+    return MCFittingSizes.getFittingSizes(x.fitting_type,style,x.connection_type,x.end_type,x.fitting_make);
+  }
+  function fitSplitStd(label){
+    const k=label.indexOf(' | ');
+    return k<0?{size:label,sched:''}:{size:label.slice(0,k),sched:label.slice(k+3)};
+  }
+  // Standard sizes with no catalog row yet. One that a catalog row already carries is left out:
+  // it is offered once, as the catalog row, with its weight.
+  function fitStdOptions(x,opts){
+    return fitStdAll(x).filter(function(l){
+      const s=fitSplitStd(l), want=fitSizeKey(s.size), sk=fitSchedKey(s.sched);
+      return !(opts||[]).some(function(o){
+        const sized=(o.rdims && fitSizeKey(o.rdims)===want) || fitSizeKey(o.size)===want;
+        return sized && fitSchedKey(o.sched)===sk; }); });
+  }
+  // The standard labels that fit what the take-off read. "3000#" finds "3000 PSI"; "Class 150" on
+  // a weld neck finds all five bores, which is a real question and is left for a person.
+  function fitStdMatches(x,list){
+    const want=fitSizeKey(x.size), sch=String(x.schedule_or_class||'').trim();
+    if(!want) return [];
+    return list.filter(function(l){ const s=fitSplitStd(l);
+      return fitSizeKey(s.size)===want && (!sch || fitSameSched(s.sched,sch)); });
+  }
+  function fitSetStd(f,label){
+    const s=fitSplitStd(label);
+    f.std_label=label; f.detail_label=label; f.size=s.size; f.schedule_or_class=s.sched;
+    f.detail_id=""; f.detail_table=""; f.weight=null; f.size_other=false;
+  }
   function fitRowNote(x){
     if(!FITIDX||!FITCAT) return null;
     const opts=fitDetailOptions(x)||[];
@@ -987,6 +1034,20 @@
 
     if(x.detail_id) return null;                       // matched; nothing to say
 
+    if(x.std_label){
+      return {tone:'warn', html:'Standard size, not in the catalog yet — a catalog row will be created '+
+        'when you Approve &amp; Submit, flagged for Material Compass.'};
+    }
+    const std=fitStdAll(x);
+    if(std.length && !x.size_other){
+      return {tone:'bad', html:'Pick a size · class from the list — or <b>Other…</b> to type one. '+
+        'Left unpicked the line still reaches the project, but with no weight.'};
+    }
+    if(std.length && x.size_other && !fitStdMatches(x,std).length){
+      return {tone:'warn', html:'Typed size — <b>not a standard size for this fitting</b>, so it will '+
+        'likely reach the project with no weight. A catalog row is created from it on approve.'};
+    }
+
     // Will the commit CREATE a row? It does when nothing in the catalog carries this size -
     // whether that is because there are no candidate rows at all, or because there are and
     // none of them is this size. Both end the same way, so both read the same way.
@@ -1007,6 +1068,8 @@
     // Both are needed before a meaningful list can be offered — see fitDetailOptions.
     if(!FITIDX||!FITCAT) return plain+(FITIDX_ERR?'<div class="src" style="color:#9a6400">'+esc(FITIDX_ERR)+'</div>':'');
     const opts=fitDetailOptions(x)||[];
+    const std=fitStdOptions(x,opts);
+    if(std.length || (fitStdAll(x).length && opts.length)) return detailPicker(x,i,opts,std,plain);
     // No candidate rows at all. The estimator types the size and class; the commit creates
     // the catalog row from them. The explanation lives on the note row below, not in here -
     // this column is 176px and the prose was wrapping to seven lines.
@@ -1046,6 +1109,45 @@
     return h;
   }
 
+  // ONE control for a fitting the standards list covers: catalog rows (with weights), then the
+  // standard sizes that have no row yet (created on approve, spelled so they weigh), then Other…
+  // for a genuinely non-standard part — which is the only way back to free text.
+  function detailPicker(x,i,opts,std,plain){
+    const cur=String(x.detail_id||'');
+    const other=!cur && !x.std_label && !!x.size_other;
+    const chosen=!!(cur||x.std_label||other);
+    let h='<select class="fin'+(chosen?'':' bad')+'" style="width:176px" onchange="fitPickDetail('+i+',this.value)">';
+    h+='<option value=""'+(chosen?'':' selected')+'>— pick size · class —</option>';
+    if(opts.length){
+      h+='<optgroup label="In the catalog">';
+      opts.slice(0,400).forEach(function(o){
+        const base=o.label||((o.size||'')+' '+(o.sched||''));
+        const shown=(o.rdims && base.indexOf(' x ')<0) ? o.rdims+'  ·  '+base : base;
+        h+='<option value="'+escAttr(o.id)+'"'+(String(o.id)===cur?' selected':'')+'>'+
+          esc(shown)+(o.weight!=null?'  ·  '+o.weight+' lb':'')+'</option>'; });
+      h+='</optgroup>';
+    }
+    if(std.length){
+      h+='<optgroup label="Standard size — created on approve">';
+      std.slice(0,800).forEach(function(l){
+        h+='<option value="'+escAttr('std:'+l)+'"'+(!cur&&x.std_label===l?' selected':'')+'>'+esc(l)+'</option>'; });
+      h+='</optgroup>';
+    }
+    h+='<option value="__other"'+(other?' selected':'')+'>Other… (type size and class)</option>';
+    h+='</select>';
+    if(other) h+='<div style="height:3px"></div>'+plain;
+    if(cur){
+      h+='<div class="src">'+(x.weight!=null
+        ? '<b>'+Number(x.weight).toFixed(3)+' lb</b> each'
+        : '<span style="color:#9a6400">catalog row has no weight</span>')+
+        (x.auto_matched?' · matched automatically':'')+'</div>';
+    } else if(!chosen){
+      const said=[x.size,x.schedule_or_class].filter(Boolean).join(' · ');
+      h+='<div class="src">'+(said ? 'take-off read: <b>'+esc(said)+'</b>' : 'no size read from the drawing')+'</div>';
+    }
+    return h;
+  }
+
   // Picking a detail row is the whole point: it sets the size, the class AND the
   // weight together, and records which row they came from so the weight can be
   // defended later.
@@ -1055,6 +1157,21 @@
     if(!f.__ai) f.__ai={fitting_type:f.fitting_type,fitting_make:f.fitting_make,
       end_type:f.end_type,connection_type:f.connection_type,specification:f.specification,
       size:f.size,schedule_or_class:f.schedule_or_class};
+    const pick=String(detailId||'');
+    // Any explicit choice replaces the previous one: a std pick, Other… or a catalog row.
+    f.std_label=""; f.size_other=false;
+    if(pick.indexOf('std:')===0){
+      const label=pick.slice(4);
+      const was=[String(f.__ai.size||"").trim(),String(f.__ai.schedule_or_class||"").trim()].filter(Boolean).join(" | ");
+      if(was && was!==label) captureCorrection({context:"fitting size",ai_value:was,human_value:label,source:"fitting"});
+      fitSetStd(f,label);
+      if(!(Number(f.confidence)>0.5)) f.confidence=0.5;
+      saveResult(R); render(); return;
+    }
+    if(pick==='__other'){
+      f.detail_id=""; f.detail_table=""; f.weight=null; f.detail_label=""; f.size_other=true;
+      saveResult(R); render(); return;
+    }
     if(!it){ f.detail_id=""; f.detail_table=""; f.weight=null; f.detail_label=""; }
     else {
       // How this shop writes a size and class, versus how the take-off wrote it. This is the
@@ -1143,6 +1260,10 @@
       const still=(fitDetailOptions(f)||[]).some(function(o){ return String(o.id)===String(f.detail_id); });
       if(!still){ f.detail_id=""; f.detail_table=""; f.detail_label=""; f.weight=null; }
     }
+    // Same for a standard-size pick: a new make or end type can take it off the list.
+    if(field!=="specification" && f.std_label && fitStdAll(f).indexOf(f.std_label)<0){
+      f.std_label=""; f.detail_label="";
+    }
     if(!(Number(f.confidence)>0.5)) f.confidence=0.5;
     saveResult(R);
     render();   // a parent change reshapes its children's lists, so this one does re-render
@@ -1158,6 +1279,9 @@
       f.quantity_total=q*Math.max(1,Number(f.units)||1);   // keep the job total in step with the per-unit qty
     } else {
       f[field]=String(val==null?"":val).trim();
+      // A typed size or class is what the commit must write, so a label left from an earlier
+      // standard pick cannot ride along as the row's description.
+      if(field==="size"||field==="schedule_or_class"){ f.std_label=""; if(!f.detail_id) f.detail_label=""; }
     }
     if(!(Number(f.confidence)>0.5)) f.confidence=0.5;      // a human touched it
     saveResult(R);
