@@ -140,6 +140,9 @@ function main() {
   if (head < 0) { console.error("No </head> in the editor source."); process.exit(1); }
   out = out.slice(0, head) + SHIM + out.slice(head);
 
+  // 2b. The tenant token script, FIRST in <head>, so every call the editor makes carries it.
+  out = out.replace(/<head>/i, '<head>\n  <script src="/takeoff/mc-token.js"></script>');
+
   // 3. A banner so a copy found in the wild is never mistaken for the source.
   out = out.replace(/<html/i, "<!-- GENERATED FILE — do not edit. Source: bom-editor/index.html, " +
     "built by tools/make-takeoff-bom-editor.js. Edit the editor and re-run the build. -->\n<html");

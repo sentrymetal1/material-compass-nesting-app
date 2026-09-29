@@ -32,6 +32,7 @@ const ADMIN_ROUTES = [
   /^\/connect\/outlook\/status$/,
   /^\/triage\/opportunity\/by-project\//,
   /^\/api\/supplier\/(?!me\/)[^/]+\/fitting-rfqs$/,
+  /^\/api\/admin\//,
 ];
 function adminKeyOk(req) {
   const want = process.env.MC_ADMIN_KEY || '';
@@ -51,6 +52,13 @@ app.use('/api/takeoff', express.json({ limit: '60mb' })); // AI take-off: base64
 app.use('/api/triage/manual', express.json({ limit: '40mb' })); // manual intake carries base64 photos/PDFs; same reason, same placement
 app.use('/api/files', express.json({ limit: '60mb' })); // drawings saved to the project store are base64 PDFs; same reason, same placement
 app.use(express.json({ limit: '10mb' }));
+
+// ── TENANT TOKEN (step 1, WARN-ONLY) ──────────────────────────────────────────────────────────
+// After the body parsers, so a claimed manufacturer_id in a POST body can be compared with the
+// token. In warn mode it records and serves; see tenantToken.js and /api/admin/token-report.
+const tenantToken = require('./tenantToken');
+app.use(tenantToken.middleware);
+app.get('/api/admin/token-report', (req, res) => res.json(Object.assign({ ok: true }, tenantToken.report())));
 app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 
 // AI TAKE-OFF WIDGET — served from this app so the URL the user sees is Material Compass's own,

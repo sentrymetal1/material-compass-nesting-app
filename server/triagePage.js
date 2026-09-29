@@ -20,6 +20,7 @@ const HOWTO_VIDEO = '/howto/triage-an-rfq.html';
 function renderTriagePage() {
   return `<!doctype html>
 <html lang="en"><head>
+<script src="/takeoff/mc-token.js"></script>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quote Triage — Material Compass</title>
 <style>
@@ -743,7 +744,7 @@ function renderOpportunityDetail(row, kept){
   }
   function meta(label,val){ var has=val!=null&&String(val).trim()!==''; return '<div class="m"><div class="ml">'+esc(label)+'</div><div class="mv'+(has?'':' blank')+'">'+(has?esc(val):'—')+'</div></div>'; }
   var fromVal=(row.From_Name||'')+(row.From_Email?' <'+row.From_Email+'>':'');
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+  return '<!doctype html><html lang="en"><head><script src="/takeoff/mc-token.js"></script><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
     +'<title>RFQ — '+esc(row.Project||'')+'</title><style>'
     +'body{margin:0;font-family:system-ui,"Segoe UI",Arial,sans-serif;background:#f4f6f9;color:#23303b}'
     +'.wrap{max-width:820px;margin:0 auto;padding:22px 18px 60px}'
