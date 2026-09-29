@@ -931,11 +931,28 @@
   // that decides everything else about the row: if nothing does, the commit CREATES a catalog
   // row from the size and class on screen - so those two have to be editable, and the note
   // has to say so. One definition, used by both, or they drift apart again.
+  // The CLASS counts too, exactly as server/fittingResolve.js narrow() counts it: a 3" flange
+  // exists at Class 2500, but a 3" Class 150 read is still a miss there, and the commit CREATES
+  // the Class 150 row. Size-only here told the estimator "pick one, or no weight" about a row
+  // the commit was going to create anyway — and offered a Class 2500 row to pick.
+  function fitSchedKey(s){
+    return String(s==null?'':s).replace(/\([^)]*\)/g,' ').replace(/\b(sch|schedule|class|cl)\b\.?/gi,' ')
+      .replace(/[^a-z0-9]+/gi,' ').trim().toLowerCase();
+  }
+  function fitSameSched(a,b){
+    const A=fitSchedKey(a), B=fitSchedKey(b);
+    if(!A||!B) return false;
+    if(A===B) return true;
+    const ta=A.split(' '), tb=B.split(' ');
+    return ta.every(function(w){ return tb.indexOf(w)>-1; }) || tb.every(function(w){ return ta.indexOf(w)>-1; });
+  }
   function fitSizeInCatalog(x,opts){
     const want=fitSizeKey(x.size);
     if(!want) return false;
+    const sch=String(x.schedule_or_class||'').trim();
     return (opts||[]).some(function(o){
-      return (o.rdims && fitSizeKey(o.rdims)===want) || fitSizeKey(o.size)===want; });
+      const sized=(o.rdims && fitSizeKey(o.rdims)===want) || fitSizeKey(o.size)===want;
+      return sized && (!sch || fitSameSched(o.sched,sch)); });
   }
   function fitRowNote(x){
     if(!FITIDX||!FITCAT) return null;
