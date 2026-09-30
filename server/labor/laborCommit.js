@@ -83,6 +83,29 @@ function foldToShopTypes(hours, types) {
   return { hours: out, moved };
 }
 
+// ── THE PROJECT'S LABOUR TOTALS ROW ─────────────────────────────────────────────────────────
+// The project header (LABOR AMT / LABOR HRS) and the Labor Totals bar read ONE
+// Project_Quote_Labor_Totals record per project. Entering labour in the form builds it; an API
+// insert never does — Gamma Lube got its labour rows and a blank header (2026-09-30), while
+// Melody Fair, keyed by hand, has the record. So the commit rebuilds it from EVERY labour row on
+// the project (hand-entered included), and the header always equals the Labor tab.
+// Field names read from Melody Fair's record: Cut_ (not Cutting_), then CNC/Assy/Fab/Weld/Labor/
+// Inspection/Misc, each _Total_Hrs and _Total_Amt, plus Total_Hrs / Total_Amt.
+const TOTAL_STEM = (b) => (b === 'Cutting_Hrs' ? 'Cut' : STEM(b));
+function projectTotals(laborRows) {
+  const t = { Total_Hrs: 0, Total_Amt: 0 };
+  for (const b of BUCKETS) { t[TOTAL_STEM(b) + '_Total_Hrs'] = 0; t[TOTAL_STEM(b) + '_Total_Amt'] = 0; }
+  for (const r of laborRows || []) {
+    for (const b of BUCKETS) {
+      const h = Number(r[b]) || 0, a = Number(r[STEM(b) + '_Amt']) || 0;
+      t[TOTAL_STEM(b) + '_Total_Hrs'] += h; t[TOTAL_STEM(b) + '_Total_Amt'] += a;
+      t.Total_Hrs += h; t.Total_Amt += a;
+    }
+  }
+  for (const k of Object.keys(t)) t[k] = r2(t[k]);
+  return t;
+}
+
 // Sum a labour card component's items into buckets.
 function bucketHours(items) {
   const out = Object.fromEntries(BUCKETS.map((b) => [b, 0]));
@@ -104,6 +127,28 @@ function registerLaborCommit(app, deps) {
     }
     const rec = Array.isArray(body.data) ? (body.data[0] || {}) : (body.data || {});
     return String(rec.ID || '');
+  }
+
+  // One totals row per project: update it if it exists, create it if not. Returns the sums written.
+  async function upsertTotals(base, token, projectId, mfg) {
+    const [rows, existing] = await Promise.all([
+      fetchAllZohoPages('/report/All_Project_Labor_Details?criteria=' + crit('(Project_LU==' + projectId + ')')),
+      fetchAllZohoPages('/report/Project_Quote_Labor_Totals_Report?criteria=' + crit('(Project_ID_Number==' + projectId + ')')),
+    ]);
+    const data = Object.assign(projectTotals(rows), {
+      Project_ID_Number: String(projectId), MCP_Customer_Project_Form: String(projectId), Customer_Entry_Form: String(mfg) });
+    const check = (r) => {
+      const body = r.data || {};
+      if (body.code !== 3000) throw new Error('Zoho refused the labor totals (code ' + body.code + '): ' + (body.message || JSON.stringify(body).slice(0, 200)));
+      return body;
+    };
+    if (existing && existing[0]) {
+      check(await axios.patch(base + '/report/Project_Quote_Labor_Totals_Report/' + existing[0].ID, { data }, { headers: zohoHeaders(token) }));
+      return { ok: true, id: String(existing[0].ID), created: false, Total_Hrs: data.Total_Hrs, Total_Amt: data.Total_Amt };
+    }
+    const body = check(await axios.post(base + '/form/Project_Quote_Labor_Totals', { data }, { headers: zohoHeaders(token) }));
+    const rec = Array.isArray(body.data) ? (body.data[0] || {}) : (body.data || {});
+    return { ok: true, id: String(rec.ID || ''), created: true, Total_Hrs: data.Total_Hrs, Total_Amt: data.Total_Amt };
   }
 
   // body: { project_id, manufacturer_id, components: [{ name, items:[{bucket,hours}] }], prior_ids: [] }
@@ -167,7 +212,12 @@ function registerLaborCommit(app, deps) {
           if (r.data && r.data.code === 3000) removed.push(id); else keep.push(id);
         } catch (e) { keep.push(id); }
       }
-      res.json({ ok: true, written, skipped, failed, replaced: removed.length, not_removed: keep,
+      // Rebuild the project's labour totals row from every labour row now on the project.
+      let totals = null;
+      try { totals = await upsertTotals(base, token, projectId, mfg); }
+      catch (e) { totals = { ok: false, error: e.message }; console.error('[labor] totals row failed:', e.message); }
+
+      res.json({ ok: true, written, skipped, failed, replaced: removed.length, not_removed: keep, totals,
         rates_estimated: estimated, folded, shop_types_known: shopTypes.length > 0,
         total_hours: r2(written.reduce((a, w) => a + w.hours, 0)) });
     } catch (err) {
@@ -177,4 +227,4 @@ function registerLaborCommit(app, deps) {
   });
 }
 
-module.exports = { registerLaborCommit, buildRecord, pickRates, bucketHours, foldToShopTypes };
+module.exports = { registerLaborCommit, buildRecord, pickRates, bucketHours, foldToShopTypes, projectTotals };

@@ -137,6 +137,19 @@ test('labor commit: hours for a type the shop does not do move to one it does', 
   assert.deepStrictEqual(foldToShopTypes(hrs, []).moved, [], 'types unknown → nothing moves');
 });
 
+test('labor commit: the project totals row sums every labor row, Cut_ naming', () => {
+  const { projectTotals } = require('./laborCommit');
+  const t = projectTotals([
+    { Cutting_Hrs: '0.67', Cutting_Amt: '60.30', Weld_Hrs: '91.18', Weld_Amt: '8206.20', Fab_Hrs: '26.03', Fab_Amt: '2342.70', Labor_Hrs: '2.16', Labor_Amt: '194.40' },
+    { Weld_Hrs: '10', Weld_Amt: '900', Misc_Hrs: '1', Misc_Amt: '90' },   // a hand-entered row counts too
+  ]);
+  assert.strictEqual(t.Cut_Total_Hrs, 0.67, 'Cutting rolls up as Cut_');
+  assert.strictEqual(t.Weld_Total_Hrs, 101.18);
+  assert.strictEqual(t.Total_Hrs, 131.04);
+  assert.strictEqual(t.Total_Amt, 11793.6);
+  assert.strictEqual(t.Assy_Total_Hrs, 0, 'every bucket present, zero when empty');
+});
+
 test('weld preview: unsaved settings win, and are cleaned like a save', () => {
   const { weldSettings } = require('./routes');
   const id = '4111484000000000002';
