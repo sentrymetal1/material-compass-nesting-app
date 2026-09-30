@@ -77,6 +77,30 @@ test('pipe reference joints: only sizes the scaler can read are kept or offered'
   assert.ok(four.schedules.includes('SCH 40') && four.schedules.includes('STD'));
 });
 
+test('take-off labour: job hours = per unit × units, ballpark from the shop\'s own jobs', () => {
+  const { laborForTakeoff } = require('./takeoffLabor');
+  const profile = shop.clean({ reference_jobs: [{ type: 'skid_frame', name: 'K', tons: 10, hours: 1000 }] }, '4111484000000000004');
+  const takeoff = {
+    rows: [
+      { form_type: 'Channel', material_type: 'Carbon Steel', size: 'C6 x 13', length_ft: 10, quantity: 4, units: 3, component: 'Skid' },
+      { form_type: 'Channel', material_type: 'Carbon Steel', size: 'C6 x 13', length_ft: 10, quantity: 9, units: 3, component: 'Skid', deleted: true },
+      { form_type: 'Tube - Square', material_type: 'Carbon Steel', size: '4 x 1/4', length_ft: 10, quantity: 1, units: 3, component: 'Skid' },
+    ],
+    fittings: [],
+  };
+  const one = laborForTakeoff(takeoff, profile, 'skid_frame');
+  const skid = one.components.find((c) => c.name === 'Skid');
+  assert.strictEqual(skid.units, 3);
+  const assy = skid.items.find((i) => i.bucket === 'Assy_Hrs');
+  assert.ok(Math.abs(assy.hours - assy.per_unit * 3) < 0.02, 'job hours are 3 units of the per-unit hours');
+  assert.ok(Math.abs(one.tons - 4 * 10 * 13 * 3 / 2000) < 0.01, 'deleted rows carry no weight; tube has none: ' + one.tons);
+  assert.strictEqual(one.unweighed_rows, 1, 'the tube is counted as unweighed, not as zero');
+  assert.ok(Math.abs(one.ballpark.hours - 100 * one.tons) < 0.1, 'ballpark = 100 hr/ton × tons');
+  assert.ok(skid.missing.some((m) => /Tube/.test(m.reason)));
+  assert.strictEqual(laborForTakeoff(takeoff, profile, 'plate_tank').ballpark.hours, null, 'no jobs of that type → no ballpark');
+  assert.strictEqual(laborForTakeoff(takeoff, null, 'skid_frame').ballpark.hours, null, 'no shop → no ballpark');
+});
+
 test('weld preview: unsaved settings win, and are cleaned like a save', () => {
   const { weldSettings } = require('./routes');
   const id = '4111484000000000002';

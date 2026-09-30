@@ -118,6 +118,19 @@
   .commit{margin-top:10px;font-size:13px;background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:12px 14px;display:none;} .commit ul{margin:8px 0 0;padding-left:18px;}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid #cdd3da;border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px;} @keyframes s{to{transform:rotate(360deg);}}
   .foot{text-align:center;color:#9aa6b2;font-size:11px;margin:6px 0 24px;}
+  /* Shop labor — job → component → item, all editable, all linked */
+  .lab-top{display:flex;flex-wrap:wrap;gap:12px 22px;align-items:flex-end;margin-bottom:12px;}
+  .lab-top label{font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;display:block;}
+  .lab-top select{font:inherit;font-size:13px;padding:5px 8px;border:1px solid #cdd3da;border-radius:6px;margin-top:3px;}
+  .lab-in{font:inherit;font-size:12.5px;width:78px;text-align:right;padding:3px 6px;border:1px solid #dfe5ec;border-radius:5px;background:#f7f9fb;}
+  .lab-in:focus{border-color:var(--blue);background:#fff;outline:none;}
+  .lab-in.big{font-size:18px;font-weight:700;width:110px;padding:4px 8px;}
+  .lab-in.txt{width:100%;text-align:left;}
+  .lab-ball{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:#fafbfc;font-size:12.5px;}
+  .lab-held td{background:#f3f8fd;}
+  tr.lab-item td{font-size:12px;color:#334;padding:4px 8px 4px 26px;}
+  tr.lab-item td.n{padding-left:8px;}
+  .lab-stale{background:var(--ylwbg);border:1px solid #fcd9a8;color:var(--ylw);border-radius:8px;padding:8px 12px;font-size:12.5px;margin-bottom:10px;}
   @media print {
     body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .wrap,.appbar{max-width:100%;}
@@ -142,7 +155,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.55 · 2026-09-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.56 · 2026-09-30";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -195,7 +208,8 @@
     // drawing records after this take-off is re-opened on another day or another machine.
     // fittings MUST travel too. They were left out, so they lived only in this browser — reopen
     // the take-off anywhere else (or after storage is cleared) and every fitting was gone.
-    const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[] };
+    // labor too, for the same reason: the estimator's hours and Holds must survive a reopen.
+    const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null };
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:params.project_id, package:pkg})});
@@ -547,6 +561,168 @@
   // steel (Unit_Fittings_*), so they are deliberately NOT in the BOM or its CSV. Before this they
   // were simply lost: the schema had nowhere to put an elbow, so it either vanished or was forced
   // into a structural form type and arrived in the BOM as steel to fabricate.
+  // ---- Shop labor ---------------------------------------------------------------------------
+  // Hours for this take-off at three levels that stay linked: the JOB total is the sum of its
+  // COMPONENTS, a component is the sum of its ITEMS. Change an item and the totals follow;
+  // change a component and its items scale with it; change the job and every component that is
+  // not on Hold scales. Hours here are JOB hours (per unit × units) — what gets quoted and what
+  // goes on the project. Kept on the take-off (R.labor), so it saves and reloads with it.
+  //
+  // The standards only price what the take-off can count, so the bottom-up figure runs low;
+  // the shop's own reference jobs (hr/ton by job type) sit beside it as the ballpark.
+  const LAB_BUCKET = {Cutting_Hrs:"Cutting",CNC_Hrs:"CNC",Assy_Hrs:"Fit & assemble",Fab_Hrs:"Fabrication",
+    Weld_Hrs:"Welding",Labor_Hrs:"Handling / labor",Inspection_Hrs:"Inspection",Misc_Hrs:"Misc."};
+  let LAB_LOADING=false, LAB_ERR="";
+  function labFmt(n,d){ const x=Number(n)||0; return x.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}); }
+  function labComp(c){ return arr(c.items).reduce(function(a,i){ return a+(Number(i.hours)||0); },0); }
+  function labJob(L){ return arr(L.components).reduce(function(a,c){ return a+labComp(c); },0); }
+  function labLive(R){
+    const live=function(r){ return r && !r.deleted && Number(r.quantity)>0; };
+    return { rows:arr(R.rows).filter(live), fittings:arr(R.fittings).filter(live) };
+  }
+  // What the labor was worked out from. When the BOM changes afterwards, say so — never
+  // silently keep hours for steel that is no longer on the take-off.
+  function labSig(R){
+    const t=labLive(R);
+    return JSON.stringify(t.rows.map(function(r){ return [r.component,r.form_type,r.size,r.quantity,r.units,r.length_ft,r.width_ft,r.disposition]; })
+      .concat(t.fittings.map(function(f){ return [f.component,f.fitting_type,f.size,f.end_type,f.quantity,f.units]; })));
+  }
+  async function labFetch(R, jobType){
+    const t=labLive(R);
+    const r=await fetch(RAILWAY_URL+"/api/labor/estimate",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({manufacturer_id:params.manufacturer_id||"", job_type:jobType||"", rows:t.rows, fittings:t.fittings})});
+    const j=await r.json().catch(function(){ return null; });
+    if(!r.ok||!j||!j.ok) throw new Error((j&&j.error)||("server said "+r.status));
+    return j.labor;
+  }
+  function labSnapshot(x){ return { tons:x.tons, unweighed_rows:x.unweighed_rows, bottom_up:x.bottom_up, ballpark:x.ballpark,
+    reference_rates:x.reference_rates, job_types:x.job_types, buckets:x.buckets }; }
+  // Default job type: the type the shop has the most reference tonnage in, else Misc.
+  function labDefaultType(rates){
+    const k=Object.keys(rates||{}).sort(function(a,b){ return (rates[b].tons||0)-(rates[a].tons||0); });
+    return k[0]||"misc";
+  }
+  async function laborCalc(replace){
+    const R=loadResult();
+    if(replace && R.labor && R.labor.edited &&
+       !(await mcConfirm("Recalculate from the standards? Every hour you changed or added here is replaced.",{title:"Shop labor",okText:"Recalculate",cancelText:"Keep mine"}))) return;
+    LAB_LOADING=true; LAB_ERR=""; render();
+    try{
+      let x=await labFetch(R, R.labor&&R.labor.job_type);
+      const jt=(R.labor&&R.labor.job_type)||labDefaultType(x.reference_rates);
+      if(!(R.labor&&R.labor.job_type) && jt) x=await labFetch(R, jt);
+      const R2=loadResult();
+      R2.labor={ job_type:jt, sig:labSig(R2), fetched:new Date().toISOString(), edited:false, server:labSnapshot(x),
+        components:arr(x.components).map(function(c){
+          return { name:c.name, units:c.units, tons:c.tons, held:false, missing:arr(c.missing),
+            items:arr(c.items).map(function(i){ return Object.assign({},i,{auto:i.hours}); }) };
+        }) };
+      saveResult(R2);
+    }catch(e){ LAB_ERR=e.message; }
+    LAB_LOADING=false; render();
+  }
+  async function laborJobType(v){
+    const R=loadResult(); if(!R.labor) return;
+    R.labor.job_type=v; saveResult(R); render();
+    try{ const x=await labFetch(R, v); const R2=loadResult(); R2.labor.server=labSnapshot(x); saveResult(R2); }
+    catch(e){ LAB_ERR=e.message; }
+    render();
+  }
+  function labEdit(fn){ const R=loadResult(); if(!R.labor) return; fn(R.labor); R.labor.edited=true; saveResult(R); render(); }
+  function labNum(v){ const n=Number(String(v).replace(/,/g,"")); return Number.isFinite(n)&&n>=0?n:null; }
+  function laborItem(ci,ii,v){ const n=labNum(v); if(n==null){ render(); return; }
+    labEdit(function(L){ L.components[ci].items[ii].hours=n; }); }
+  function laborItemText(ci,ii,k,v){ labEdit(function(L){ L.components[ci].items[ii][k]=String(v||"").slice(0,120); }); }
+  // A component total scales its items. One with no items yet gets a single entered line.
+  function laborComp(ci,v){ const n=labNum(v); if(n==null){ render(); return; }
+    labEdit(function(L){
+      const c=L.components[ci], cur=labComp(c);
+      if(cur>0) c.items.forEach(function(i){ i.hours=Math.round((Number(i.hours)||0)*n/cur*100)/100; });
+      else c.items.push({what:"entered for "+c.name, bucket:"Fab_Hrs", hours:n, entered:true});
+    }); }
+  // The job total scales every component NOT on Hold. Held ones stay exactly as they are.
+  async function laborJob(v){
+    const n=labNum(v), R=loadResult(), L=R.labor; if(n==null||!L){ render(); return; }
+    const held=L.components.filter(function(c){ return c.held; }).reduce(function(a,c){ return a+labComp(c); },0);
+    const free=L.components.filter(function(c){ return !c.held; }).reduce(function(a,c){ return a+labComp(c); },0);
+    if(n<held){ await mcAlert("The components on Hold already come to "+labFmt(held,1)+" hrs, more than "+labFmt(n,1)+". Release a Hold or enter a larger total.",{title:"Shop labor"}); render(); return; }
+    if(free<=0){ await mcAlert("Every component is on Hold or has no hours yet, so there is nothing to spread the total over. Enter hours on a component first.",{title:"Shop labor"}); render(); return; }
+    const k=(n-held)/free;
+    labEdit(function(L){ L.components.forEach(function(c){ if(!c.held) c.items.forEach(function(i){ i.hours=Math.round((Number(i.hours)||0)*k*100)/100; }); }); });
+  }
+  function laborHold(ci,on){ labEdit(function(L){ L.components[ci].held=!!on; }); }
+  function laborAddItem(ci){ labEdit(function(L){ L.components[ci].items.push({what:"", bucket:"Fab_Hrs", hours:0, entered:true}); }); }
+  function laborDelItem(ci,ii){ labEdit(function(L){ L.components[ci].items.splice(ii,1); }); }
+  function laborAddComp(){ labEdit(function(L){ L.components.push({name:"Other work", units:1, tons:0, held:false, missing:[], items:[{what:"", bucket:"Fab_Hrs", hours:0, entered:true}]}); }); }
+  function laborCompName(ci,v){ labEdit(function(L){ L.components[ci].name=String(v||"").trim().slice(0,120)||L.components[ci].name; }); }
+
+  function laborCardHtml(R){
+    const L=R.labor;
+    const setupUrl=RAILWAY_URL+"/takeoff/labor-setup.html?manufacturer_id="+encodeURIComponent(params.manufacturer_id||"")+
+      (window.MC_TOKEN?"&t="+encodeURIComponent(window.MC_TOKEN):"");
+    const setupLink='<a href="'+escAttr(setupUrl)+'" target="_blank" style="color:var(--blue);font-weight:600;text-decoration:none">Shop labor setup ↗</a>';
+    const head='<div class="card" id="laborCard"><h2>⏱ Shop labor <span class="lt">— job, component and item hours, linked</span></h2><div class="body">';
+    if(!L){
+      // First sight of a take-off with no labor yet: work it out once. The flag goes up before
+      // the timer so a render in between cannot queue a second request.
+      if(!LAB_LOADING && !LAB_ERR && labLive(R).rows.length){ LAB_LOADING=true; setTimeout(function(){ laborCalc(false); },0); }
+      return head+(LAB_ERR
+        ? '<div style="color:var(--red);font-size:13px">Could not work out labor: '+esc(LAB_ERR)+' <button class="applybtn" onclick="laborCalc(false)">Try again</button></div>'
+        : labLive(R).rows.length ? '<div style="color:var(--mut);font-size:13px"><span class="spin"></span> Working out shop hours…</div>'
+        : '<div style="color:var(--mut);font-size:13px">No quantified rows to estimate labor from.</div>')+'</div></div>';
+    }
+    const S=L.server||{}, bp=S.ballpark||{}, types=S.job_types||{};
+    const job=labJob(L), stale=L.sig!==labSig(R);
+    const bucketOpts=function(sel){ return Object.keys(LAB_BUCKET).map(function(b){ return '<option value="'+b+'"'+(b===sel?' selected':'')+'>'+LAB_BUCKET[b]+'</option>'; }).join(""); };
+    const ball = bp.hours!=null
+      ? 'Your '+esc(types[bp.type]||bp.type)+' jobs: <b>'+labFmt(bp.hr_per_ton,1)+' hr/ton</b> × '+labFmt(S.tons,2)+' t = <b>'+labFmt(bp.hours,0)+' hrs</b>'+
+        ' <span class="src">('+bp.jobs+' reference job'+(bp.jobs===1?'':'s')+')</span> <button class="applybtn" onclick="laborJob('+bp.hours+')">Use as job total</button>'
+      : 'No ballpark: '+esc(bp.reason||'')+'. '+setupLink+' — add a finished job of this type and it shows here.';
+    const rows=L.components.map(function(c,ci){
+      const tot=labComp(c), miss=arr(c.missing);
+      let h='<tr class="grp-comp'+(c.held?' lab-held':'')+'"><td colspan="2">'+
+        '<input class="lab-in txt" style="font-weight:700;background:transparent;border-color:transparent;width:auto;min-width:160px" value="'+escAttr(c.name)+'" onchange="laborCompName('+ci+',this.value)">'+
+        (c.units>1?' <span class="grp-units">× '+c.units+' units</span>':'')+
+        (c.tons?' <span class="grp-meta">'+labFmt(c.tons,2)+' t</span>':'')+'</td>'+
+        '<td style="text-align:right"><input class="lab-in" value="'+labFmt(tot,1)+'" onchange="laborComp('+ci+',this.value)" title="Change this and the items below scale with it"></td>'+
+        '<td style="white-space:nowrap;font-size:12px"><label title="Hold keeps this component fixed when the job total changes"><input type="checkbox"'+(c.held?' checked':'')+' onchange="laborHold('+ci+',this.checked)"> Hold</label></td></tr>';
+      h+=arr(c.items).map(function(it,ii){
+        const what = it.entered
+          ? '<input class="lab-in txt" placeholder="what the work is" value="'+escAttr(it.what)+'" onchange="laborItemText('+ci+','+ii+',\'what\',this.value)">'
+          : esc(it.what)+' <span class="src" title="'+escAttr(it.source_ref||"")+'">'+esc(it.standard||"")+'</span>'+
+            (it.auto!=null && Math.abs((Number(it.hours)||0)-it.auto)>0.005?' <span class="src">(standard '+labFmt(it.auto,2)+')</span>':'');
+        const bucket = it.entered
+          ? '<select style="font-size:12px;padding:2px 4px;border:1px solid #dfe5ec;border-radius:5px" onchange="laborItemText('+ci+','+ii+',\'bucket\',this.value)">'+bucketOpts(it.bucket)+'</select>'
+          : esc(LAB_BUCKET[it.bucket]||it.bucket);
+        return '<tr class="lab-item"><td>'+what+'</td><td class="n">'+bucket+'</td>'+
+          '<td style="text-align:right"><input class="lab-in" value="'+labFmt(it.hours,2)+'" onchange="laborItem('+ci+','+ii+',this.value)"></td>'+
+          '<td><button class="applybtn" style="background:#9aa6b2;padding:1px 7px" title="Remove this line" onclick="laborDelItem('+ci+','+ii+')">✕</button></td></tr>';
+      }).join("");
+      h+='<tr class="lab-item"><td colspan="4"><span class="pillbtn" style="margin-left:0" onclick="laborAddItem('+ci+')">+ add work</span>'+
+        (miss.length?' <details style="display:inline-block;margin-left:10px;font-size:12px"><summary style="font-weight:600;color:var(--ylw)">'+miss.length+' not estimated — add hours for these</summary><ul>'+
+          miss.map(function(m){ return '<li>'+esc(m.what)+' — <span class="src">'+esc(m.reason)+'</span></li>'; }).join("")+'</ul></details>':'')+
+        '</td></tr>';
+      return h;
+    }).join("");
+    return head+
+      (stale?'<div class="lab-stale">The BOM has changed since these hours were worked out. <button class="applybtn" onclick="laborCalc(true)">Recalculate</button></div>':'')+
+      (LAB_ERR?'<div style="color:var(--red);font-size:12.5px;margin-bottom:8px">'+esc(LAB_ERR)+'</div>':'')+
+      '<div class="lab-top">'+
+        '<div><label>Job total, hrs</label><input class="lab-in big" value="'+labFmt(job,1)+'" onchange="laborJob(this.value)" title="Change this and every component not on Hold scales with it"></div>'+
+        '<div><label>Job type</label><select onchange="laborJobType(this.value)">'+
+          Object.keys(types).map(function(k){ return '<option value="'+k+'"'+(k===L.job_type?' selected':'')+'>'+esc(types[k])+'</option>'; }).join("")+'</select></div>'+
+        '<div class="lab-ball" style="flex:1;min-width:260px">'+ball+'</div>'+
+      '</div>'+
+      '<div class="src" style="margin:-4px 0 10px;font-size:12px">From the standards: <b>'+labFmt(S.bottom_up,1)+' hrs</b> — this only prices what the take-off could count, so it runs low; '+
+        'each component lists what it could not estimate. '+(S.unweighed_rows?S.unweighed_rows+' row'+(S.unweighed_rows===1?' has':'s have')+' no weight, so the tonnage is short. ':'')+
+        'Your own numbers matter most: '+setupLink+'</div>'+
+      '<table><thead><tr><th>Work</th><th>Bucket</th><th style="text-align:right">Hours</th><th></th></tr></thead><tbody>'+
+        (rows||'<tr><td colspan="4" style="color:var(--mut)">Nothing on this take-off carries shop hours.</td></tr>')+'</tbody></table>'+
+      '<div style="margin-top:10px;font-size:12px"><span class="pillbtn" style="margin-left:0" onclick="laborAddComp()">+ add a component</span>'+
+        ' <span class="pillbtn" onclick="laborCalc(true)">↻ recalculate from standards</span></div>'+
+      '</div></div>';
+  }
+
   function fittingsCardHtml(list){
     const f = arr(list);
     if(!f.length) return "";
@@ -1790,6 +1966,9 @@
       // pipe fittings — their own stream, deliberately outside the BOM
       fittingsCardHtml(R.fittings)+
 
+      // shop labor — hours for this take-off, at job / component / item level
+      laborCardHtml(R)+
+
       // tell-the-AI — conversational thread (3c)
       '<div class="card" id="chatCard"><h2>💬 Tell the AI <span class="lt">— ask questions or request changes; it remembers the conversation</span></h2>'+
         '<div class="body"><div id="chatThread" class="chatthread">'+chatThreadHtml()+'</div></div></div>'+
@@ -2606,6 +2785,11 @@
           bad.slice(0,6).map(function(b){ return '• '+esc(b.what||'(unnamed)')+(b.why?' — '+esc(b.why):''); }).join('<br>')+
           (bad.length>6?'<br>…':'')+'</div>';
         return li+'</li>';
+      })()+
+      (function(){
+        const L=loadResult().labor;
+        if(!L||!arr(L.components).length) return '<li><b>Labor</b> → <span class="src">no hours on this take-off</span></li>';
+        return '<li><b>Labor</b> → '+labFmt(labJob(L),1)+' hrs on screen, <b>not written to the project yet</b> <span class="src">(next build step)</span></li>';
       })()+
       '<li><b>Buyout</b> → outsource / RFQ subform <span class="src">(WIRE)</span></li>'+
       '<li><b>Scope of Work</b> → project record <span class="src">(WIRE: Save_Scope_Of_Work)</span></li>'+

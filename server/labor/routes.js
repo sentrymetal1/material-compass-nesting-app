@@ -4,6 +4,7 @@
 //  GET  /api/labor/library                       shared, same for every shop
 //  GET  /api/labor/shop?manufacturer_id=…        one shop's setup + its catalog
 //  POST /api/labor/shop   { manufacturer_id, … } save it
+//  POST /api/labor/estimate { manufacturer_id, job_type, rows, fittings }  take-off → job hours
 //  POST /api/labor/weld-time { weld, manufacturer_id, settings? }  hours/ft for one weld;
 //       `settings` previews unsaved numbers from the setup page, cleaned as a save would be
 //
@@ -16,6 +17,7 @@ const { library, nonHoursRows, BUCKETS } = require('./standards');
 const shop = require('./shop');
 const { catalog } = require('./components');
 const { weldHoursPerFt, deposition, operatingFactor } = require('./weldTime');
+const { laborForTakeoff } = require('./takeoffLabor');
 
 function shopId(req) {
   if (req.tenant && req.tenant.kind === 'm') return req.tenant.id;
@@ -56,6 +58,16 @@ function registerLaborRoutes(app) {
   app.post('/api/labor/shop', (req, res) => {
     try { res.json({ ok: true, shop: view(shop.save(shopId(req), req.body || {})) }); }
     catch (e) { res.status(400).json({ ok: false, error: e.message }); }
+  });
+
+  // The take-off review's labour step: { manufacturer_id, job_type, rows, fittings } → job hours.
+  app.post('/api/labor/estimate', (req, res) => {
+    try {
+      const b = req.body || {};
+      const id = shopId(req);
+      const profile = id ? shop.load(id) : null;
+      res.json({ ok: true, labor: laborForTakeoff({ rows: b.rows, fittings: b.fittings }, profile, b.job_type) });
+    } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
 
   app.post('/api/labor/weld-time', (req, res) => {
