@@ -369,6 +369,15 @@ function registerFittingsCommit(app, deps) {
         data.Total_Amount_Of_Est_Material = 0;
         data.Total_Est_Line_Amount_Quote_Material = 0;
 
+        // FALSE, NOT BLANK — the same trap one field over. Delete_Quote is a decision box with a
+        // form default, and an API insert does not get form defaults, so every take-off row landed
+        // with it NULL. `rollupFittingsToPurchase` filters `Delete_Quote == false`, and in Deluge a
+        // null does not satisfy that comparison — it is excluded, exactly the way != excludes rows
+        // that were never set ([[feedback_deluge_not_equals_excludes_nulls]]). A row can therefore
+        // be complete, weighed and correctly linked and still never reach purchasing, with nothing
+        // reporting that it was skipped.
+        data.Delete_Quote = false;
+
         // The Butt Weld / Forged router. On a UI entry another workflow sets this; on an API
         // insert nothing has, and the project subform shows or hides the two Fittings_*
         // cascade lookups by it — so a row without it joins correctly and still does not show.
@@ -462,13 +471,20 @@ function registerFittingsCommit(app, deps) {
       const rec = Array.isArray(body.data) ? (body.data[0] || {}) : (body.data || {});
       return String(rec.ID || rec.id || '');
     };
+    // Fields worth setting but not worth losing a fitting over: a link name inferred from a
+    // sibling form's convention, and a decision-box default whose accepted value shape on a REST
+    // write is not something I have confirmed against this form. If Zoho names one of them in a
+    // refusal, drop that one and send the row again. Everything else still throws — a row that
+    // failed on Quantity or Fitting_ID SHOULD fail loudly.
+    const OPTIONAL = ['Project_LU', 'Delete_Quote'];
     try {
       return await send(data);
     } catch (e) {
       const msg = String(e.zohoCode ? e.message : (e.response?.data?.message || e.message || ''));
-      if (/Project_LU/i.test(msg) && data.Project_LU) {
-        const retry = Object.assign({}, data); delete retry.Project_LU;
-        console.log('[fittings] Project_LU rejected — writing without it');
+      const blamed = OPTIONAL.filter((f) => new RegExp(f, 'i').test(msg) && data[f] !== undefined);
+      if (blamed.length) {
+        const retry = Object.assign({}, data); blamed.forEach((f) => { delete retry[f]; });
+        console.log('[fittings] ' + blamed.join(', ') + ' rejected — writing without it');
         return await send(retry);
       }
       throw e;
