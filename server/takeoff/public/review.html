@@ -215,6 +215,21 @@
   const SCOPE_CATS = [["fabricate","Fabricate","fab"],["buyout","Buyout","buy"],["by_others","By others","oth"],["send_out","Send-out","snd"]];
   const arr = (a)=>Array.isArray(a)?a:[];
   const confClass=(c)=> c>=0.8?"hi":c>=0.5?"md":"lo";
+  // ── WHY IS THIS ROW AMBER? ───────────────────────────────────────────────────────────────
+  // The model already explains itself per row in `note` (both ROW_ITEM and FITTING_ITEM carry
+  // it) - "schedule not stated, assumed to match line", that sort of thing. Until now it was
+  // only rendered in the Gaps list, which is a different question: gaps are what the DOCUMENTS
+  // do not say, conflicts are where two documents disagree, and this is how sure the model is
+  // about one row. Three different things that were all collapsed into a coloured dot.
+  function confWhy(r,c){
+    const note=String((r&&r.note)||"").trim();
+    const band=c>=0.8?"high confidence":c>=0.5?"moderate confidence":"low confidence";
+    const head=(c||c===0)?(Math.round(c*100)+"% - "+band):"no confidence score";
+    // The source sheet matters as much as the reason: it says WHERE to go and check.
+    const from=String((r&&r.source_sheet)||"").trim();
+    return escAttr(head+(note?" - "+note:"")+(from?"  (read from "+from+")":""));
+  }
+
   const confBadge=(c)=> '<span class="conf c-'+confClass(c)+'">'+Math.round((c||0)*100)+'% confident</span>';
   const splitFt=(n)=>{const r=Number(n)||0;const ft=Math.max(0,Math.floor(r));return ft+"'"+Math.round((r-ft)*12)+'"';};
   // decimal feet → feet-inches with fractions (nearest 1/16): 0.8→9-5/8", 24→24'-0", 6.33→6'-3-15/16"
@@ -572,7 +587,7 @@
           return h+'</select>'; };
         const typeId=FITCAT?fitIdOf(FITCAT.types,x.fitting_type):"";
         const makeId=FITCAT?fitIdOf(FITCAT.makes,x.fitting_make):"";
-        return '<tr><td style="'+TD+'"><span class="dot d-'+confClass(c)+'"></span>'+c.toFixed(2)+'</td>'+
+        return '<tr><td style="'+TD+'" title="'+confWhy(x,c)+'"><span class="dot d-'+confClass(c)+'"></span>'+c.toFixed(2)+'</td>'+
           // The columns run in the order the choices actually depend on each other:
           // type -> make -> end -> connection -> spec -> description. The description
           // is narrowed by all five, so it belongs LAST. It used to sit second, which
@@ -1668,7 +1683,7 @@
       return '<tr class="'+(cls==="hi"?"":cls)+'">'+
         // No score is shown as "—", not 0.00: a missing number is not a zero, and painting every
         // row red for it buried the rows that really are low.
-        '<td><span class="dot d-'+cls+'"></span>'+(hasC?c.toFixed(2):'<span class="src" title="No confidence score on this row">—</span>')+xcTag(r)+'</td>'+
+        '<td title="'+confWhy(r,hasC?c:null)+'"><span class="dot d-'+cls+'"></span>'+(hasC?c.toFixed(2):'<span class="src">—</span>')+xcTag(r)+'</td>'+
         '<td>'+esc(r.form_type)+'</td>'+
         '<td>'+esc(r.size)+(r.galvanized?' <span class="galv">galv</span>':'')+'</td>'+
         '<td>'+esc(r.specification)+'</td><td>'+qtyCell+'</td>'+
@@ -1792,7 +1807,7 @@
         '</div>'+
         '<div class="bar"><div class="left" id="barLeft"></div>'+
           '<div style="display:flex;gap:8px;align-items:center">'+
-            (ACCOUNT?'<span class="balchip" title="Your prepaid take-off balance — Phase 0 is visual only, no charges. Each take-off draws down '+(ACCOUNT.price?'$'+Number(ACCOUNT.price.premium).toFixed(2):'the price')+'.">💳 Balance $'+Number(ACCOUNT.balance).toFixed(2)+(ACCOUNT.price?' <span class="balsub">· $'+Number(ACCOUNT.price.premium).toFixed(2)+'/take-off</span>':'')+'</span>':'')+
+            (ACCOUNT?'<span class="balchip" title="Your take-off allowance. Each take-off draws it down: Quick $'+Number((ACCOUNT.price||{}).haiku||1.5).toFixed(2)+', Standard $'+Number((ACCOUNT.price||{}).sonnet||3).toFixed(2)+', Deep $'+Number((ACCOUNT.price||{}).opus||6).toFixed(2)+'. Edits and questions to the AI are free.">💳 Balance $'+Number(ACCOUNT.balance).toFixed(2)+'</span>':'')+
             '<button class="btn ghost" onclick="downloadBom()">↓ BOM CSV</button>'+
             '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button>'+
           '</div></div>'+

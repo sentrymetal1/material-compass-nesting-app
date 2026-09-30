@@ -413,7 +413,7 @@
         <label class="drop" id="drop">
           <strong>Click to choose PDFs</strong>
           <span class="hint">or drag them here</span>
-          <input type="file" id="file" accept="application/pdf" multiple />
+          <input type="file" id="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/gif" multiple />
         </label>
         <div class="files" id="fileList"></div>
         <button type="button" class="scanbtn" id="scanPdf" style="display:none">🔍 Preview the documents &amp; drawings</button>
@@ -437,7 +437,7 @@
         <button class="go" id="go" disabled>Run take-off →</button>
         <!-- A disabled button with no reason is a dead end. renderFiles() keeps this line saying
              exactly what is missing. -->
-        <div class="colhint" id="runHint">Load at least one PDF under <b>Documents</b> to enable this.</div>
+        <div class="colhint" id="runHint">Load at least one PDF or image under <b>Documents</b> to enable this.</div>
       </div>
     </div>
     <div id="preflight"></div>
@@ -622,21 +622,30 @@
         if (hint) hint.textContent = "";
         return;
       }
+      // What the SHOP pays, and what it has left. This used to show our AI cost per depth, which is
+      // not the customer's price \u2014 at launch it would have shown every shop our margin.
       const mine = ++depthPriceReq;
-      fetch(RAILWAY_URL + "/api/takeoff/pricing?pages=" + encodeURIComponent(pages))
+      if (!params.manufacturer_id) return;
+      fetch(RAILWAY_URL + "/api/takeoff/account/" + encodeURIComponent(params.manufacturer_id))
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (mine !== depthPriceReq || !d || !d.ok) return;   // a newer file list won
-          const by = {};
-          (d.tiers || []).forEach(function (t) { by[t.key] = t; });
+          const price = d.price || {};
           Array.prototype.forEach.call(sel.options, function (o) {
-            const t = by[o.value];
-            o.textContent = (DEPTH_BASE[o.value] || o.textContent) + (t ? "  ~$" + t.est_cost_usd.toFixed(2) : "");
+            o.textContent = (DEPTH_BASE[o.value] || o.textContent) +
+              (price[o.value] != null ? "  \u2014 $" + Number(price[o.value]).toFixed(2) : "");
           });
-          if (hint) hint.innerHTML = "Estimated cost of the run for <b>" + pages + "</b> page" +
-            (pages === 1 ? "" : "s") + ". PDFs reach the model as page images, so pages are what " +
-            "it costs \u2014 a long bill of material costs as much as a long drawing set. The figure " +
-            "shown after the run is the real one.";
+          const showBalance = function () {
+            const p = Number(price[sel.value]);
+            const short = d.balance < p;
+            if (hint) hint.innerHTML = "Your take-off balance: <b>$" + Number(d.balance).toFixed(2) + "</b>. " +
+              (short
+                ? '<span style="color:var(--red,#b42318)">Not enough for this depth ($' + p.toFixed(2) + ').</span> ' +
+                  '<a href="' + (d.buy_url || "https://www.materialcompass.us") + '" target="_blank" rel="noopener">Add more at www.materialcompass.us</a>'
+                : "Charged only when a take-off finishes; edits and questions afterwards are free.");
+          };
+          showBalance();
+          sel.onchange = showBalance;
         })
         .catch(function () {});
     }
@@ -788,14 +797,34 @@
     // ADD (not replace) — accumulate across multiple picks/drops, skipping duplicates
     // (same name + size). Clearing fileEl.value lets the SAME file be re-selected later.
     async function addFiles(fileListLike) {
-      const incoming = [...fileListLike].filter((f) => f.type === "application/pdf");
+      // PDFs and images both. The model reads an image directly, so a photographed or
+      // scanned drawing needs no conversion. Anything else is still skipped - but SAID,
+      // rather than dropped in silence the way every non-PDF used to be.
+      const OK = /^(application\/pdf|image\/(png|jpe?g|webp|gif))$/i;
+      const all = [...fileListLike];
+      const incoming = all.filter((f) => OK.test(f.type));
+      const rejected = all.filter((f) => !OK.test(f.type));
       fileEl.value = "";
-      if (!incoming.length) { statusEl.textContent = "Please choose PDF files."; return; }
+      if (!incoming.length) {
+        statusEl.textContent = rejected.length
+          ? "Cannot read " + rejected.map((f) => f.name).join(", ") + " — PDFs and images (PNG, JPG, WEBP) only."
+          : "Please choose a PDF or an image.";
+        return;
+      }
+      if (rejected.length) {
+        statusEl.textContent = "Skipped " + rejected.length + " file" + (rejected.length === 1 ? "" : "s") +
+          " this page cannot read: " + rejected.map((f) => f.name).join(", ");
+      }
       let dupes = 0, added = 0;
       for (const f of incoming) {
         const key = f.name + "|" + f.size;
         if (docs.some((d) => d.key === key)) { dupes++; continue; }
-        const doc = { key, name: f.name, b64: await readAsB64(f), mb: f.size / 1024 / 1024 };
+        // media_type travels with the file so the engine can choose a document block or an
+        // image block. An image is one sheet, so it counts as one page for the estimate -
+        // the PDF page audit below only ever answers for PDFs.
+        const isImg = /^image\//i.test(f.type);
+        const doc = { key, name: f.name, b64: await readAsB64(f), mb: f.size / 1024 / 1024,
+          media_type: f.type || "application/pdf", is_image: isImg, pages: isImg ? 1 : 0 };
         docs.push(doc);
         added++;
         // Keep it on the project, not just in this tab. It is what lets the take-off be
@@ -821,7 +850,7 @@
     function invalidateScan() {
       if (!audit && !detected.length) return;
       audit = null; detected = []; docList = [];
-      docs.forEach((d) => { d.pages = 0; });
+      docs.forEach((d) => { if (!d.is_image) d.pages = 0; });   // an image is one sheet, always
       renderAlloc();
       setScopeStatus("Files changed — read the drawings from the PDF again to re-check the count.");
     }
@@ -865,8 +894,8 @@
       // Say WHY it's disabled, on the button and beside it.
       const hint = document.getElementById("runHint");
       if (!docs.length) {
-        go.title = "Load at least one PDF first";
-        if (hint) hint.innerHTML = "Load at least one PDF under <b>Documents</b> to enable this.";
+        go.title = "Load at least one PDF or image first";
+        if (hint) hint.innerHTML = "Load at least one PDF or image under <b>Documents</b> to enable this.";
       } else if (noType) {
         go.title = "Choose a Type of project first";
         if (hint) hint.innerHTML = "Choose a <b>Type of project</b> below before running. The project " +
@@ -1662,7 +1691,7 @@
           // Follow the chosen reading depth. The cheap tier misreads continuation pages — it groups
           // two sheets into one drawing — and this read is what every later count is measured
           // against, so it's the wrong place to save a few cents.
-          body: JSON.stringify({ pdfs: docs.map((d) => d.b64), names: docs.map((d) => d.name),
+          body: JSON.stringify({ pdfs: docs.map((d) => d.is_image ? { media_type: d.media_type, data: d.b64 } : d.b64), names: docs.map((d) => d.name),
                                  // so it proposes YOUR components rather than variants of them
                                  components: project.components.map((c) => c.name),
                                  model: (document.getElementById("model") || {}).value || "sonnet" }),
@@ -1675,7 +1704,7 @@
         // The server parses the real page count out of each PDF — show it on the files.
         audit = d.audit || null;
         if (audit && Array.isArray(audit.docs)) {
-          audit.docs.forEach((a, i) => { if (docs[i]) docs[i].pages = a.pages || 0; });
+          audit.docs.forEach((a, i) => { if (docs[i] && !docs[i].is_image) docs[i].pages = a.pages || 0; });
           renderFiles();
         }
         readMeta = { at: new Date().toISOString().slice(0, 16).replace("T", " "),
@@ -2758,7 +2787,7 @@
         const r = await fetch(RAILWAY_URL + "/api/takeoff/ask", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            pdfs: docs.map((d) => d.b64), names: docs.map((d) => d.name),
+            pdfs: docs.map((d) => d.is_image ? { media_type: d.media_type, data: d.b64 } : d.b64), names: docs.map((d) => d.name),
             // Only the real turns — the pending placeholder isn't part of the conversation.
             messages: askThread.filter((m) => !m.pending && !m.note).map((m) => ({ role: m.role, text: m.text })),
             context: askContext(),
@@ -2952,7 +2981,7 @@
           body: JSON.stringify({
             project_id: params.project_id,
             manufacturer_id: params.manufacturer_id,
-            pdfs: docs.map((d) => d.b64),
+            pdfs: docs.map((d) => d.is_image ? { media_type: d.media_type, data: d.b64 } : d.b64),
             model: document.getElementById("model").value,
             scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
             // Everything the estimator decided about coverage travels with the run: which sheets to
@@ -2970,14 +2999,18 @@
         const data = await r.json();
         clearInterval(timer); hideBusy(); statusEl.textContent = "";
 
-        // Out of credits → 402. Show a Buy-credits button instead of a generic error.
-        if (r.status === 402 || data.error === "out_of_credits") {
+        // Not enough allowance → 402, refused BEFORE the run, so nothing was spent or charged.
+        if (r.status === 402 || data.error === "out_of_credits" || data.error === "insufficient_balance") {
           resultBox.innerHTML =
-            '<div class="result warn"><b>You’re out of AI take-offs.</b><br>' +
-            'Buy more credits to keep going.' +
-            (data.buy_url
-              ? '<br><a class="dl" href="' + data.buy_url + '" target="_top">Buy take-off credits →</a>'
-              : '') + '</div>';
+            '<div class="result warn"><b>Not enough take-off balance.</b><br>' +
+            escHtml(data.message || "Add more to keep going.") + ' Nothing was run or charged.' +
+            '<br><a class="dl" href="' + (data.buy_url || "https://www.materialcompass.us") +
+            '" target="_blank" rel="noopener">Add more at www.materialcompass.us →</a></div>';
+          go.disabled = false;
+          return;
+        }
+        if (data.error === "balance_unavailable") {
+          resultBox.innerHTML = '<div class="result err"><b>Take-off not started.</b><br>' + escHtml(data.message) + '</div>';
           go.disabled = false;
           return;
         }

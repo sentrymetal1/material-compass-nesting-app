@@ -59,6 +59,7 @@ app.use(express.json({ limit: '10mb' }));
 const tenantToken = require('./tenantToken');
 app.use(tenantToken.middleware);
 app.get('/api/admin/token-report', (req, res) => res.json(Object.assign({ ok: true }, tenantToken.report())));
+
 app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 
 // AI TAKE-OFF WIDGET — served from this app so the URL the user sees is Material Compass's own,
@@ -142,9 +143,12 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 // ── AI take-off PREPAID METER (Phase 0: visual only, no real charges) ────────
 // VISUAL price the customer's banked balance draws down per take-off. This is NOT
 // your Anthropic cost — Anthropic only ever bills the real token usage. Changeable.
-const TAKEOFF_PRICE = { premium: 3, basic: 1.5 };
-const F_TAKEOFF_BALANCE = 'Takeoff_Balance';   // Decimal(2) on Customer_Entry_Form (add + seed e.g. 100)
-function takeoffPrice(tier) { return tier === 'basic' ? TAKEOFF_PRICE.basic : TAKEOFF_PRICE.premium; }
+// PRICED BY MODEL. A flat $3 undercharged Deep (Opus runs ~1.7x Standard's AI cost: the oil-console
+// job was $1.81 on Standard, about $3.00 on Deep) and overcharged Quick. Mark, 2026-09-28.
+const TAKEOFF_PRICE_BY_MODEL = { haiku: 1.5, sonnet: 3, opus: 6 };
+const F_TAKEOFF_BALANCE = 'Takeoff_Balance';   // Decimal(2) on Customer_Entry_Form; field default 100 = the free allowance
+const TAKEOFF_BUY_URL = 'https://www.materialcompass.us';
+function takeoffPrice(model) { return TAKEOFF_PRICE_BY_MODEL[model] || TAKEOFF_PRICE_BY_MODEL.sonnet; }
 
 async function getManufacturerRec(mfgId) {
   const token = await getAccessToken();
@@ -173,7 +177,7 @@ async function deductTakeoffBalance(mfgId, price) {
 app.get('/api/takeoff/account/:manufacturer_id', async (req, res) => {
   try {
     const { balance, found } = await getTakeoffBalance(req.params.manufacturer_id);
-    res.json({ ok: true, balance: Number(balance.toFixed(2)), price: TAKEOFF_PRICE, found: found });
+    res.json({ ok: true, balance: Number(balance.toFixed(2)), price: TAKEOFF_PRICE_BY_MODEL, found: found, buy_url: TAKEOFF_BUY_URL });
   } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 
@@ -717,7 +721,26 @@ app.post('/api/takeoff/project-scope/delete', async (req, res) => {
 app.post('/api/takeoff', async (req, res) => {
   let shopLearning = '', universalKnowledge = '', projectContext = '';
   const mfgId = req.body && req.body.manufacturer_id;
-  const tier = (req.body && req.body.tier) || ((req.body && req.body.include_synopsis === false) ? 'basic' : 'premium');
+  const price = takeoffPrice((req.body && req.body.model) || 'sonnet');
+
+  // THE ALLOWANCE IS CHECKED BEFORE THE RUN, not only charged after it. Without this a shop at
+  // $0.00 kept running take-offs for free — the balance just stayed floored at zero. A shop with no
+  // record, or an unreadable balance, is refused too: an unknown caller never gets free AI.
+  try {
+    const { balance, found } = await getTakeoffBalance(mfgId);
+    if (!found || balance < price) {
+      return res.status(402).json({ ok: false, error: 'insufficient_balance', balance: Number(balance.toFixed(2)), price: price,
+        buy_url: TAKEOFF_BUY_URL,
+        message: !found
+          ? 'This account has no take-off allowance set up yet. Contact Material Compass.'
+          : 'Your take-off balance is $' + balance.toFixed(2) + ' and this take-off costs $' + price.toFixed(2) +
+            '. Add more at www.materialcompass.us.' });
+    }
+  } catch (e) {
+    console.error('[takeoff] balance check failed — run refused:', e.message || e);
+    return res.status(503).json({ ok: false, error: 'balance_unavailable',
+      message: 'Could not check your take-off balance just now, so nothing was run or charged. Try again in a minute.' });
+  }
   try { if (mfgId) shopLearning = await fetchShopLearning(mfgId); } catch (e) {}
   try { universalKnowledge = await getUniversalKnowledge(); } catch (e) {}
   // Scope: a user-CONFIRMED Component→Drawing tree in the body wins over the Zoho-read fallback.
@@ -738,7 +761,6 @@ app.post('/api/takeoff', async (req, res) => {
   const origJson = res.json.bind(res);
   res.json = function (payload) {
     if (payload && payload.ok && Array.isArray(payload.rows) && payload.rows.length && mfgId) {
-      const price = takeoffPrice(tier);
       deductTakeoffBalance(mfgId, price)
         .then(acct => { payload.price = price; payload.balance = acct.balance; origJson(payload); })
         .catch(e => { console.error('meter err', e); origJson(payload); });

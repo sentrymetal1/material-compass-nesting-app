@@ -493,6 +493,26 @@ function unwrap(v, fallback) {
   return v == null ? fallback : v;
 }
 
+// One attached file, as a content block.
+//
+// A plain STRING is a base64 PDF - the original shape, and still what the uploader sends for a
+// PDF. An OBJECT carries its own media type, which is how a photographed or scanned drawing gets
+// in: the model reads an image directly, so there is no conversion step to lose detail in.
+//
+// The REVISE path has always accepted images this way. Only the RUN was PDF-only, and the
+// uploader silently DROPPED everything else - `accept="application/pdf"` plus a filter on
+// f.type - so selecting a JPG of a drawing did nothing at all, with no message to say why.
+function docBlock(d) {
+  if (typeof d === "string") {
+    return { type: "document", source: { type: "base64", media_type: "application/pdf", data: d } };
+  }
+  const mt = String((d && d.media_type) || "");
+  if (mt.indexOf("image/") === 0) {
+    return { type: "image", source: { type: "base64", media_type: mt, data: d.data } };
+  }
+  return { type: "document", source: { type: "base64", media_type: mt || "application/pdf", data: (d && d.data) || d } };
+}
+
 async function runTakeoff(opts) {
   opts = opts || {};
   const docs = opts.docs;
@@ -515,7 +535,7 @@ async function runTakeoff(opts) {
     messages: [{
       role: "user",
       content: [].concat(
-        docs.map(function (d) { return { type: "document", source: { type: "base64", media_type: "application/pdf", data: d } }; }),
+        docs.map(docBlock),
         [{ type: "text", text: "Perform the full material take-off across ALL the attached documents (drawings + any specs). Cross-reference structural, architectural, and spec sheets." }]
       ),
     }],
@@ -957,7 +977,7 @@ async function readSheetIndex(opts) {
     messages: [{
       role: "user",
       content: [].concat(
-        docs.map(function (d) { return { type: "document", source: { type: "base64", media_type: "application/pdf", data: d } }; }),
+        docs.map(docBlock),
         [{ type: "text", text: ask }]
       ),
     }],
