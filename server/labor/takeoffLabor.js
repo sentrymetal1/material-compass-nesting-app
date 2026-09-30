@@ -51,6 +51,7 @@ function laborForTakeoff(takeoff, profile, jobType) {
       items: c.lines.map((l) => ({
         what: l.what, bucket: l.bucket, standard: l.standard, source_ref: l.source_ref,
         per_unit: r2(l.hours), hours: r2(l.hours * units),
+        derived: !!l.derived, note: l.note || null,
       })),
       missing: c.missing,
     };

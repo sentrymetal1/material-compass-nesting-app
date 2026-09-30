@@ -19,7 +19,8 @@ test('fillet weld metal: 1/4" is 0.106 lb/ft of steel', () => {
 test('SMAW deposition follows the 1962 chart (0.1.6 p.14)', () => {
   const d = deposition({ weld_process: 'SMAW', smaw_amps: 202 });
   assert.ok(Math.abs(d.value - 4.30) < 0.05, 'chart reads 4.30 lb/hr at 202 A, got ' + d.value);
-  assert.ok(deposition({ weld_process: 'SMAW' }).missing, 'stick without amperage asks the shop');
+  const dflt = deposition({ weld_process: 'SMAW' });
+  assert.ok(Math.abs(dflt.value - 0.0223 * 141) < 0.01 && /default/.test(dflt.ref), 'stick without amperage uses 150 A and says so');
 });
 
 test('MIG defaults reproduce Sentry: 1/4" fillet at 6 in/min, applied 0.0714 hr/ft', () => {
@@ -38,12 +39,13 @@ test('shop numbers win, position slows it down', () => {
   assert.ok(up.hours_per_ft > weldHoursPerFt({ kind: 'fillet', size: 0.25 }, {}).hours_per_ft);
 });
 
-test('standard components: handrail from the library, treads ask the shop', () => {
+test('standard components: every one has a library value; derived ones say so', () => {
   const c = Object.fromEntries(catalog({}).map((x) => [x.key, x]));
   assert.ok(Math.abs(c.handrail_pipe_2.library - 0.36) < 0.001);
   assert.ok(Math.abs(c.handrail_pipe_2_kick.library - 0.54) < 0.001);
   assert.ok(c.handrail_pipe_3.library > 0.36 && c.handrail_pipe_3.library < 0.54);
-  assert.strictEqual(c.tread.source, 'missing');
+  assert.ok(catalog({}).every((x) => x.source === 'library'), 'nothing is missing');
+  assert.ok(Math.abs(c.tread.library - 2 * 0.6714) < 0.001 && c.tread.derived, 'tread = 2 connection plates, derived');
   assert.strictEqual(catalog({ tread: 0.75 }).find((x) => x.key === 'tread').source, 'yours');
 });
 
@@ -93,10 +95,10 @@ test('take-off labour: job hours = per unit × units, ballpark from the shop\'s 
   assert.strictEqual(skid.units, 3);
   const assy = skid.items.find((i) => i.bucket === 'Assy_Hrs');
   assert.ok(Math.abs(assy.hours - assy.per_unit * 3) < 0.02, 'job hours are 3 units of the per-unit hours');
-  assert.ok(Math.abs(one.tons - 4 * 10 * 13 * 3 / 2000) < 0.01, 'deleted rows carry no weight; tube has none: ' + one.tons);
-  assert.strictEqual(one.unweighed_rows, 1, 'the tube is counted as unweighed, not as zero');
+  const tubeLb = 10 * (2 * 0.25 * 8 - 4 * 0.0625) * 0.2836 * 12;   // 4x4x1/4, 10 ft
+  assert.ok(Math.abs(one.tons - (4 * 10 * 13 + tubeLb) * 3 / 2000) < 0.01, 'deleted rows carry no weight; tube is weighed: ' + one.tons);
+  assert.strictEqual(one.unweighed_rows, 0);
   assert.ok(Math.abs(one.ballpark.hours - 100 * one.tons) < 0.1, 'ballpark = 100 hr/ton × tons');
-  assert.ok(skid.missing.some((m) => /Tube/.test(m.reason)));
   assert.strictEqual(laborForTakeoff(takeoff, profile, 'plate_tank').ballpark.hours, null, 'no jobs of that type → no ballpark');
   assert.strictEqual(laborForTakeoff(takeoff, null, 'skid_frame').ballpark.hours, null, 'no shop → no ballpark');
 });

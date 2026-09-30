@@ -118,8 +118,9 @@ const AREA = {
   // Angle: two legs sharing one corner, so the corner is not counted twice.
   angle: (a, b, t) => (a + b - t) * t,
   // Square and rectangular tube, outside dimensions. Corners are radiused in
-  // reality, so this runs 1% to 2% heavy; acceptable, and always in the safe
-  // direction for a quote.
+  // reality, so this runs heavy: measured 2026-09-30 at +4.5% on HSS4x4x1/4 and
+  // +12% on HSS4x2x3/8 (thick wall, small section). Always in the safe
+  // direction for a quote; subtract (4-π)·3t² for the corners to tighten it.
   tube_rect: (h, w, t) => 2 * t * (h + w) - 4 * t * t,
   tube_round: (od, t) => Math.PI * (od - t) * t,
 };

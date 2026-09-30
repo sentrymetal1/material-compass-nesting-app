@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { resolve, library, loadFromText, nonHoursRows } = require('./standards');
 const { jointHours, pipeDims } = require('./pipeJoint');
-const { estimateTakeoff, memberDepth } = require('./estimate');
+const { estimateTakeoff, memberDepth, rowPounds } = require('./estimate');
 
 test('library loads: 240 hours rows, 15 that are not hours', () => {
   const lib = library();
@@ -86,9 +86,44 @@ test('take-off estimate: hours per component, sources named, gaps listed', () =>
   assert.ok(skid.hours.Assy_Hrs > 0, 'channel frame members');
   assert.ok(skid.hours.Cutting_Hrs > 0, 'plate burning');
   assert.ok(skid.hours.Labor_Hrs > 0, 'handling by weight');
-  assert.strictEqual(skid.hours.Weld_Hrs, 8, '2 elbows x 2 ends x 2 hrs');
+  const joint = skid.lines.find((l) => l.standard === 'PIPE-JOINT');
+  assert.strictEqual(joint.hours, 8, '2 elbows x 2 ends x 2 hrs from the shop anchor');
   assert.ok(skid.lines.every((l) => l.standard && l.source_ref), 'every hour names its source');
-  assert.ok(skid.missing.some((m) => /Tube/.test(m.reason)), 'tube is flagged, not zeroed');
-  assert.ok(skid.missing.some((m) => /fit & weld/.test(m.reason)), 'plate welding is flagged');
+  // Gaps are filled from library rows, and every filled line says it was derived and why.
+  const tube = skid.lines.find((l) => /Tube/.test(l.what) && l.bucket === 'Assy_Hrs');
+  assert.ok(tube && tube.derived && /Angle|Channel/.test(tube.note), 'tube priced from a stand-in welded-frame row, marked derived');
+  assert.ok(skid.lines.some((l) => /^weld Plate/.test(l.what) && l.derived && /perimeter/.test(l.note)), 'plate weld along the perimeter, marked as an assumption');
+  assert.ok(skid.lines.some((l) => /Tube/.test(l.what) && /^handle/.test(l.what)), 'tube is weighed now, so it gets handling');
+  assert.strictEqual(skid.missing.length, 0, 'nothing on this take-off is left unpriced: ' + JSON.stringify(skid.missing));
   assert.ok(!est.components.Grating, 'buyout carries no shop hours');
+});
+
+test('no reference joint: pipe butt and socket welds by the weld-time method', () => {
+  const est = estimateTakeoff({ rows: [], fittings: [
+    { fitting_type: 'Elbow', end_type: 'Butt Weld', size: '4"', schedule_or_class: 'SCH 40', quantity: 1, component: 'P' },
+    { fitting_type: 'Elbow', end_type: 'Butt Weld', size: '8"', schedule_or_class: 'SCH 40', quantity: 1, component: 'P' },
+    { fitting_type: 'Tee', end_type: 'Socket Weld', size: '1"', schedule_or_class: 'SCH 80', quantity: 1, component: 'P' },
+    { fitting_type: 'Elbow', end_type: 'Threaded', size: '1"', schedule_or_class: '3000', quantity: 1, component: 'P' },
+  ] }, {});
+  const p = est.components.P;
+  const [four, eight, sock] = p.lines;
+  assert.strictEqual(four.standard, 'LINCOLN-GROOVE');
+  assert.ok(four.derived && /reference joint/.test(four.note));
+  assert.ok(eight.per_unit > four.per_unit * 2, 'an 8" joint is more than twice a 4" (longer and thicker): ' + four.per_unit + ' / ' + eight.per_unit);
+  assert.strictEqual(sock.standard, 'LINCOLN-FILLET');
+  assert.strictEqual(sock.units, 3, 'a tee has three socket ends');
+  assert.ok(p.missing.some((m) => /Threaded/.test(m.reason)), 'threaded is still listed, not guessed');
+});
+
+test('weights for sections that do not carry weight in their name', () => {
+  const lb = (form_type, size) => rowPounds({ form_type, size, material_type: 'Carbon Steel', length_ft: 1, quantity: 1 });
+  assert.ok(Math.abs(lb('Angle', 'L3 x 3 x 1/4') - 4.9) < 0.1, 'L3x3x1/4 ~4.9 lb/ft: ' + lb('Angle', 'L3 x 3 x 1/4'));
+  // weights.js tube_rect ignores corner radii: 4.5% over the published HSS4x4x1/4 (12.21) and
+  // 12% over HSS4x2x3/8 (11.97). Heavy, never light — the safe side for a quote. Known; see handoff.
+  const sq = lb('Tube - Square', '4 x 1/4'), rt = lb('Tube - Rectangular', 'HSS4x2x3/8');
+  assert.ok(sq >= 12.21 && sq < 12.21 * 1.06, 'HSS4x4x1/4 a little over 12.21 lb/ft: ' + sq);
+  assert.ok(rt >= 11.97 && rt < 11.97 * 1.13, 'HSS4x2x3/8 over 11.97 lb/ft: ' + rt);
+  assert.ok(Math.abs(lb('Bar - Flat', '3 x 1/4') - 2.55) < 0.05, '3x1/4 flat 2.55 lb/ft');
+  assert.ok(Math.abs(lb('Pipe', '4" SCH 40') - 10.79) < 0.1, '4" sch 40 pipe 10.79 lb/ft: ' + lb('Pipe', '4" SCH 40'));
+  assert.strictEqual(lb('Channel', 'C6 x 13'), 13);
 });

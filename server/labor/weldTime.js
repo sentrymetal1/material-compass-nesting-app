@@ -31,6 +31,7 @@ const { density, toNumber } = require('../weights');
 
 const SMAW_LB_PER_AMP = 0.0223;
 const SMAW_ZERO_AMPS = 9;
+const SMAW_DEFAULT_AMPS = 150;
 const POSITION = { flat: 1, horizontal: 0.9, vertical: 0.8, overhead: 0.6 };   // 0.1.6 p.14
 const SENTRY_MIG_IPM = 6;                                                       // handwritten note, 1/4" fillet
 
@@ -68,11 +69,17 @@ function deposition(settings) {
   if (Number(s.deposition_lb_hr) > 0) return { value: Number(s.deposition_lb_hr), source: 'yours', ref: 'shop setup' };
   const proc = String(s.weld_process || 'GMAW (MIG)');
   if (proc === 'SMAW') {
-    const a = Number(s.smaw_amps);
-    if (!(a > SMAW_ZERO_AMPS)) return { missing: 'stick welding needs your usual amperage (or your own lb/hr) in shop setup' };
-    return { value: SMAW_LB_PER_AMP * (a - SMAW_ZERO_AMPS), source: 'library', ref: '1962 Std 0.1.6 p.14 deposit chart at ' + a + ' A' };
+    // No amperage entered: 150 A, mid-range for 5/32" E7018 flat, read off the same chart. Said so.
+    const mine = Number(s.smaw_amps) > SMAW_ZERO_AMPS;
+    const a = mine ? Number(s.smaw_amps) : SMAW_DEFAULT_AMPS;
+    return { value: SMAW_LB_PER_AMP * (a - SMAW_ZERO_AMPS), source: 'library',
+      ref: '1962 Std 0.1.6 p.14 deposit chart at ' + a + ' A' + (mine ? '' : ' (default — enter your usual amperage)') };
   }
   if (proc === 'GMAW (MIG)') return { value: sentryMigDeposition(), source: 'library', ref: 'Sentry handwritten, 1/4" fillet at ' + SENTRY_MIG_IPM + ' in/min' };
+  // Flux-core runs at or above MIG; TIG well below. Scaled from the MIG figure until the shop
+  // enters its own lb/hr: FCAW same, GTAW one third (TIG deposits roughly 1-2 lb/hr by hand).
+  if (proc === 'FCAW') return { value: sentryMigDeposition(), source: 'library', ref: 'MIG rate applied to flux-core (enter your own lb/hr)' };
+  if (proc === 'GTAW') return { value: sentryMigDeposition() / 3, source: 'library', ref: 'one third of the MIG rate for TIG (enter your own lb/hr)' };
   return { missing: 'no deposition rate for ' + proc + ' — enter your lb/hr in shop setup' };
 }
 

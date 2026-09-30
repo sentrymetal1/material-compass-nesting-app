@@ -6,9 +6,9 @@
 //  member, and where hours per POUND vary most by type: the library puts pipe
 //  handrail at 4.5 hr/cwt (90 hr/ton) and a welded truss at 1.15 (23 hr/ton).
 //
-//  Every default is BUILT from a library row plus a weight, and says so. Where
-//  there is nothing to build from (treads, lugs), the default is null and the
-//  estimate asks the shop. The shop's own number, when entered, replaces it.
+//  Every default is BUILT from a library row plus a weight or a count, and says
+//  so. Treads and lugs have no row of their own and are built from the
+//  connection-plate rate, marked derived. The shop's own number replaces any of it.
 // =============================================================================
 const { resolve } = require('./standards');
 const { pipeDims } = require('./pipeJoint');
@@ -31,6 +31,13 @@ function perFtFromCwt(op, lbPerFt, how) {
   return { value: r.row.hours * lbPerFt / 100, ref: r.row.hours + ' hr/cwt (' + r.row.sourceRef + ') × ' + lbPerFt.toFixed(2) + ' lb/ft' + (how ? ' — ' + how : ''), code: r.row.code };
 }
 
+// Sentry 1997 "Connection material plate - includes fitting and welding", per piece, × n.
+function connPlate(n, how) {
+  const r = cwt(/^Connection material plate - includes fitting and welding$/);
+  return r.row ? { value: r.row.hours * n, ref: r.row.hours + ' hr each (' + r.row.sourceRef + ') × ' + n + ' — ' + how, code: r.row.code }
+               : { value: null, ref: r.missing };
+}
+
 // key → { label, unit, group, default() }
 const STANDARD = {
   handrail_pipe_2:      { group: 'Handrail', label: 'Pipe rail, 2-line', unit: 'hr/ft',
@@ -45,8 +52,10 @@ const STANDARD = {
     default: () => { const r = cwt('Angle handrails'); return r.row ? { value: r.row.hours, ref: r.row.sourceRef, code: r.row.code } : { value: null, ref: r.missing }; } },
   stringer:             { group: 'Stairs & ladders', label: 'Stair stringers', unit: 'hr/cwt',
     default: () => { const r = cwt('Stair stringers'); return r.row ? { value: r.row.hours, ref: r.row.sourceRef, code: r.row.code } : { value: null, ref: r.missing }; } },
-  tread:                { group: 'Stairs & ladders', label: 'Stair tread', unit: 'hr/each',
-    default: () => ({ value: null, ref: 'no standard — the 1997 sheet priced treads bought-in with labor included' }) },
+  // Treads are usually bought in; the shop's work is fitting and welding the two end carrier
+  // plates. Derived from Sentry's connection-plate rate — no tread row exists.
+  tread:                { group: 'Stairs & ladders', label: 'Stair tread', unit: 'hr/each', derived: true,
+    default: () => connPlate(2, 'derived: 2 end carrier plates at the connection-plate rate — check this') },
   ladder_cage:          { group: 'Stairs & ladders', label: 'Ladder with cage', unit: 'hr/cwt',
     default: () => { const r = cwt('Ladders and cages'); return r.row ? { value: r.row.hours, ref: r.row.sourceRef, code: r.row.code } : { value: null, ref: r.missing }; } },
   clip_angle:           { group: 'Typical details', label: 'Connection clip angle', unit: 'hr/each',
@@ -54,8 +63,8 @@ const STANDARD = {
   base_plate:           { group: 'Typical details', label: 'Base plate, complete', unit: 'hr/each',
     default: () => { const r = resolve({ category: 'Assembly', operation: /^Base plate - complete/, size: { 'Member Depth (in)': 8 } });
       return r.row ? { value: r.row.hours, ref: r.row.sourceRef + ' (W8 column; varies by depth)', code: r.row.code } : { value: null, ref: r.missing }; } },
-  lifting_lug:          { group: 'Typical details', label: 'Lifting lug', unit: 'hr/each',
-    default: () => ({ value: null, ref: 'no standard' }) },
+  lifting_lug:          { group: 'Typical details', label: 'Lifting lug', unit: 'hr/each', derived: true,
+    default: () => connPlate(1.5, 'derived: connection-plate rate × 1.5 for the heavier full-penetration weld — check this') },
 };
 
 // A stringer is priced by weight; this turns it into hours per foot for a given channel.

@@ -690,6 +690,7 @@
         const what = it.entered
           ? '<input class="lab-in txt" placeholder="what the work is" value="'+escAttr(it.what)+'" onchange="laborItemText('+ci+','+ii+',\'what\',this.value)">'
           : esc(it.what)+' <span class="src" title="'+escAttr(it.source_ref||"")+'">'+esc(it.standard||"")+'</span>'+
+            (it.derived?' <span class="src" style="color:var(--ylw);font-weight:600" title="'+escAttr(it.note||"")+'">≈ derived</span>':'')+
             (it.auto!=null && Math.abs((Number(it.hours)||0)-it.auto)>0.005?' <span class="src">(standard '+labFmt(it.auto,2)+')</span>':'');
         const bucket = it.entered
           ? '<select style="font-size:12px;padding:2px 4px;border:1px solid #dfe5ec;border-radius:5px" onchange="laborItemText('+ci+','+ii+',\'bucket\',this.value)">'+bucketOpts(it.bucket)+'</select>'

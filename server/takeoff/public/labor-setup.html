@@ -56,7 +56,7 @@
   .src.yours{background:var(--grnbg);color:var(--grn);} .src.library{background:#eef3fa;color:#3d6ea8;} .src.missing{background:var(--ylwbg);color:var(--ylw);}
   table{width:100%;border-collapse:collapse;font-size:13px;}
   th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);}
-  td{padding:6px 8px;border-bottom:1px solid #f0f2f4;vertical-align:middle;}
+  td{padding:6px 5px;border-bottom:1px solid #f0f2f4;vertical-align:middle;}
   td input,td select{margin-top:0;}
   tr.grp td{background:#fafbfc;font-weight:700;font-size:12px;color:#445;padding-top:10px;}
   td.ref{font-size:11.5px;color:var(--mut);line-height:1.4;}
@@ -81,7 +81,7 @@
 <script>
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.1 · 2026-09-30";  // bump on every push so you can verify what loaded
+  const VERSION = "v0.2 · 2026-09-30";  // bump on every push so you can verify what loaded
   console.log("Material Compass labor-setup.html " + VERSION);
 
   const MFG = (new URLSearchParams(location.search).get("manufacturer_id") || "").trim();
@@ -161,7 +161,7 @@
     return '<div class="card"><h2>Reference jobs <span class="lt">· the most important section</span></h2><div class="body">' +
       '<p class="note">Finished jobs with their actual shop hours. We work out hours per ton for each type of job and use it to check and scale the estimate. ' +
       'Tons are the fabricated weight; hours are the shop hours actually booked. A job with no tons or no hours cannot be used and will not be saved.</p>' +
-      '<div class="scroll"><table><thead><tr><th style="min-width:170px">Type</th><th style="min-width:160px">Job name</th><th>Job #</th><th>Date</th>' +
+      '<div class="scroll"><table><thead><tr><th style="min-width:140px">Type</th><th style="min-width:130px">Job name</th><th>Job #</th><th>Date</th>' +
       '<th class="r">Tons</th><th class="r">Hours</th><th class="r">Pieces</th><th class="r">Hr/ton</th><th></th></tr></thead><tbody id="jobsBody"></tbody></table></div>' +
       '<button class="lnk" onclick="addJob()">+ Add a reference job</button>' +
       '<div id="rates" class="rates"></div></div></div>';
@@ -176,10 +176,10 @@
         ' oninput="setJob(' + i + ',\'' + k + '\',this)">';
       return '<tr><td><select ' + (wo ? "disabled" : "") + ' onchange="setJob(' + i + ',\'type\',this)">' +
         Object.keys(types).map((k) => '<option value="' + k + '"' + (k === j.type ? " selected" : "") + '>' + esc(types[k]) + '</option>').join("") + '</select></td>' +
-        '<td>' + inp("name", "", 'maxlength="120"') + '</td><td>' + inp("job_number", "", 'maxlength="40" style="width:80px"') + '</td>' +
-        '<td>' + inp("date", "", 'type="date" style="width:140px"') + '</td>' +
-        '<td>' + inp("tons", "num", 'inputmode="decimal" style="width:80px"') + '</td><td>' + inp("hours", "num", 'inputmode="decimal" style="width:90px"') + '</td>' +
-        '<td>' + inp("pieces", "num", 'inputmode="decimal" style="width:70px"') + '</td>' +
+        '<td>' + inp("name", "", 'maxlength="120"') + '</td><td>' + inp("job_number", "", 'maxlength="40" style="width:70px"') + '</td>' +
+        '<td>' + inp("date", "", 'type="date" style="width:128px"') + '</td>' +
+        '<td>' + inp("tons", "num", 'inputmode="decimal" style="width:64px"') + '</td><td>' + inp("hours", "num", 'inputmode="decimal" style="width:76px"') + '</td>' +
+        '<td>' + inp("pieces", "num", 'inputmode="decimal" style="width:56px"') + '</td>' +
         '<td class="r" id="hpt' + i + '">' + hpt + '</td>' +
         '<td>' + (wo ? '<span class="note" title="Added from a finished work order">WO</span>' : '<button class="x" title="Remove" onclick="delJob(' + i + ')">✕</button>') + '</td></tr>';
     }).join("") : '<tr><td colspan="9" class="note" style="padding:12px 8px">No reference jobs yet. Add one or two jobs you know well; they make the biggest difference.</td></tr>';
@@ -286,7 +286,7 @@
   function componentsCard() {
     return '<div class="card"><h2>Standard components <span class="lt">· priced per foot or per piece</span></h2><div class="body">' +
       '<p class="note">Handrail, stairs and typical details vary most from shop to shop. Enter your own hours where you know them. ' +
-      'Items marked <span class="src missing">needs your number</span> have no library value, so the estimate will ask for them on each job until you fill them in.</p>' +
+      'Items marked <b>(please check)</b> have no library row of their own and are built from the nearest one; they are the first to replace with your own.</p>' +
       '<div class="scroll"><table><thead><tr><th>Component</th><th class="r">Library</th><th class="r" style="width:120px">Yours</th><th>Unit</th><th>Where the library number comes from</th></tr></thead>' +
       '<tbody id="compBody"></tbody></table></div></div></div>';
   }
