@@ -4,7 +4,8 @@
 //  GET  /api/labor/library                       shared, same for every shop
 //  GET  /api/labor/shop?manufacturer_id=…        one shop's setup + its catalog
 //  POST /api/labor/shop   { manufacturer_id, … } save it
-//  POST /api/labor/weld-time { weld, manufacturer_id }  hours/ft for one weld
+//  POST /api/labor/weld-time { weld, manufacturer_id, settings? }  hours/ft for one weld;
+//       `settings` previews unsaved numbers from the setup page, cleaned as a save would be
 //
 //  The shop routes are in TENANT_ROUTES, so the tenant token is checked (warn
 //  mode today, enforce later). When a valid manufacturer token is present its
@@ -28,7 +29,18 @@ function view(profile) {
     reference_rates: shop.referenceRates(profile),
     weld: { deposition: deposition(profile.settings), operating_factor: operatingFactor(profile.settings) },
     job_types: shop.JOB_TYPES,
+    weld_processes: shop.WELD_PROCESSES,
+    plate_cut: shop.PLATE_CUT,
+    pipe_choices: shop.pipeChoices(),
   });
+}
+
+// The setup page previews what it has not saved yet. Draft settings go through the same
+// clean() as a save, so the preview can never show a number the save would drop.
+function weldSettings(id, body) {
+  const draft = body && body.settings && typeof body.settings === 'object' ? body.settings : null;
+  if (draft) return shop.clean({ settings: draft }, id).settings;
+  return id ? shop.load(id).settings : {};
 }
 
 function registerLaborRoutes(app) {
@@ -48,11 +60,10 @@ function registerLaborRoutes(app) {
 
   app.post('/api/labor/weld-time', (req, res) => {
     try {
-      const id = shopId(req);
-      const settings = id ? shop.load(id).settings : {};
-      res.json({ ok: true, result: weldHoursPerFt((req.body || {}).weld, settings) });
+      const b = req.body || {};
+      res.json({ ok: true, result: weldHoursPerFt(b.weld, weldSettings(shopId(req), b)) });
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
 }
 
-module.exports = { registerLaborRoutes };
+module.exports = { registerLaborRoutes, weldSettings };

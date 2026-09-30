@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shop Labor Setup</title>
+<!--
+  Shop labour setup. Reads and saves ONE shop's numbers through /api/labor/shop (Railway volume,
+  no Zoho calls). Opened from Material Compass as
+    /takeoff/labor-setup.html?manufacturer_id=<MFG record id>&t=<tenant token>
+  Blank means "use the library value"; the server drops anything that is not a positive number,
+  so this page checks first and says which entries would be lost instead of letting them vanish.
+-->
+<style>
+  :root{
+    --blue:#5F94CE; --ink:#1f2a37; --mut:#667; --line:#e3e6ea;
+    --grn:#2e7d32; --grnbg:#e8f5e9; --ylw:#b45309; --ylwbg:#fff7ed;
+    --red:#b91c1c; --redbg:#fdeeee;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:1000px;margin:0 auto;}
+  .appbar{max-width:1000px;margin:0 auto 14px;display:flex;align-items:center;gap:10px;padding:2px;flex-wrap:wrap;}
+  .appbar .brand{font-weight:800;font-size:16px;color:var(--blue);letter-spacing:.2px;}
+  .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .appbar .state{font-size:12px;color:var(--mut);margin-left:auto;}
+  .appbar .state.dirty{color:var(--ylw);font-weight:600;}
+  .btn{font:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:7px 16px;cursor:pointer;}
+  .btn:hover{opacity:.92;} .btn:disabled{opacity:.5;cursor:default;}
+  .lnk{font:inherit;font-size:12px;font-weight:600;color:var(--blue);background:none;border:0;cursor:pointer;padding:4px 0;}
+  .x{font:inherit;font-size:14px;color:var(--mut);background:none;border:0;cursor:pointer;padding:2px 6px;}
+  .x:hover{color:var(--red);}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:11px;font-size:14px;font-weight:600;display:none;box-shadow:0 2px 10px rgba(0,0,0,.18);background:var(--blue);}
+  .busy.show{display:block;} .busy.err{background:var(--red);} .busy.ok{background:var(--grn);}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;overflow:hidden;}
+  .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:13px 18px;border-bottom:1px solid var(--line);background:#fafbfc;}
+  .card h2 .lt{text-transform:none;letter-spacing:0;font-weight:400;}
+  .card .body{padding:16px 18px;}
+  .hero .body{padding:18px;background:linear-gradient(180deg,#fff,#f7f9fc);}
+  .hero h1{margin:0 0 6px;font-size:20px;}
+  .hero p{margin:0;font-size:13.5px;line-height:1.55;color:#334;max-width:760px;}
+  .note{font-size:12.5px;color:var(--mut);line-height:1.5;margin:0 0 12px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px 18px;}
+  label.f{display:block;font-size:12px;font-weight:600;color:#445;}
+  label.f .h{display:block;font-weight:400;color:var(--mut);margin-top:2px;}
+  input,select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cdd3da;border-radius:6px;background:#fff;color:var(--ink);width:100%;margin-top:4px;}
+  input:focus,select:focus{border-color:var(--blue);outline:none;}
+  input.bad{border-color:var(--red);background:#fff6f6;}
+  input.num{text-align:right;}
+  .preview{margin-top:14px;border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:#fafbfc;font-size:13px;}
+  .preview .big{font-size:18px;font-weight:700;}
+  .preview .src{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle;}
+  .preview ul{margin:8px 0 0;padding-left:18px;color:var(--mut);font-size:12px;line-height:1.55;}
+  .preview .miss{color:var(--ylw);font-weight:600;}
+  .src.yours{background:var(--grnbg);color:var(--grn);} .src.library{background:#eef3fa;color:#3d6ea8;} .src.missing{background:var(--ylwbg);color:var(--ylw);}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);}
+  td{padding:6px 8px;border-bottom:1px solid #f0f2f4;vertical-align:middle;}
+  td input,td select{margin-top:0;}
+  tr.grp td{background:#fafbfc;font-weight:700;font-size:12px;color:#445;padding-top:10px;}
+  td.ref{font-size:11.5px;color:var(--mut);line-height:1.4;}
+  td.lib{white-space:nowrap;text-align:right;}
+  td.r{text-align:right;white-space:nowrap;}
+  .rates{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  .rate{border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:12.5px;background:#fafbfc;}
+  .rate b{font-size:15px;}
+  .foot{display:flex;align-items:center;gap:14px;justify-content:flex-end;margin:4px 0 30px;}
+  .errs{background:var(--redbg);border:1px solid #f3c9c9;color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:14px;display:none;}
+  .errs.show{display:block;} .errs ul{margin:6px 0 0;padding-left:18px;}
+  .scroll{overflow-x:auto;}
+  @media (max-width:640px){ body{padding:12px 16px;} .card .body{padding:14px;} }
+</style>
+</head>
+<body>
+<div id="busy" class="busy"></div>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">Shop Labor Setup</span>
+  <span id="state" class="state"></span></div>
+<div class="wrap" id="wrap"><div class="card"><div class="body">Loading your shop setup…</div></div></div>
+
+<script>
+  const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
+  const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
+  const VERSION = "v0.1 · 2026-09-30";  // bump on every push so you can verify what loaded
+  console.log("Material Compass labor-setup.html " + VERSION);
+
+  const MFG = (new URLSearchParams(location.search).get("manufacturer_id") || "").trim();
+  let SHOP = null;     // last response from the server (settings + catalog + choices)
+  let S = null;        // what is on screen: { settings, rates, pipe_anchors, reference_jobs }
+  let dirty = false;
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const num = (v) => { const s = String(v == null ? "" : v).trim(); if (!s) return null; const n = Number(s); return Number.isFinite(n) ? n : NaN; };
+  const fmt = (n, d) => n == null ? "" : String(Math.round(n * Math.pow(10, d)) / Math.pow(10, d));
+
+  function busy(msg, kind, ms) {
+    const b = $("busy"); b.className = "busy show" + (kind ? " " + kind : ""); b.textContent = msg;
+    if (ms) setTimeout(() => { b.className = "busy"; }, ms);
+  }
+  function markDirty(on) {
+    dirty = on;
+    const st = $("state");
+    st.className = "state" + (on ? " dirty" : "");
+    st.textContent = on ? "Unsaved changes" : (S && SHOP.updated ? "Saved " + new Date(SHOP.updated).toLocaleString() : "Not saved yet");
+  }
+  window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+  async function api(path, body) {
+    const r = await fetch(RAILWAY_URL + path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+    let j = null; try { j = await r.json(); } catch (e) {}
+    if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || ("server said " + r.status));
+    return j;
+  }
+
+  // ---- load ------------------------------------------------------------------
+  async function load() {
+    if (!/^\d{6,25}$/.test(MFG)) {
+      $("wrap").innerHTML = '<div class="card"><div class="body">This page needs to be opened from Material Compass so it knows which shop it is for.</div></div>';
+      return;
+    }
+    try {
+      const j = await api("/api/labor/shop?manufacturer_id=" + encodeURIComponent(MFG));
+      take(j.shop);
+      render();
+      markDirty(false);
+      preview();
+    } catch (e) {
+      $("wrap").innerHTML = '<div class="card"><div class="body">Could not load your shop setup: ' + esc(e.message) + '</div></div>';
+    }
+  }
+
+  // Server shape → the editable copy. start_from_sentry is carried through untouched: it is
+  // not on this page until Mark and his partner decide, and a save must not switch it off.
+  function take(shop) {
+    SHOP = shop;
+    S = {
+      settings: Object.assign({}, shop.settings),
+      rates: Object.assign({}, shop.rates),
+      pipe_anchors: (shop.pipe_anchors || []).map((a) => Object.assign({}, a)),
+      reference_jobs: (shop.reference_jobs || []).map((j) => Object.assign({}, j)),
+    };
+  }
+
+  // ---- render ----------------------------------------------------------------
+  function render() {
+    $("wrap").innerHTML =
+      '<div class="card hero"><div class="body"><h1>Your shop\'s labor numbers</h1>' +
+      '<p><b>What you enter here matters more than anything else in the labor estimate.</b> The built-in library gives a starting point, ' +
+      'but every shop welds, cuts and fits at its own pace. Your reference jobs (real jobs with real hours) carry the accuracy: ' +
+      'one finished job per type moves the estimate further than all the library numbers together. ' +
+      'Anything you leave blank uses the library value shown beside it. These numbers are private to your shop.</p></div></div>' +
+      '<div id="errs" class="errs"></div>' +
+      jobsCard() + weldCard() + shopCard() + componentsCard() + pipeCard() +
+      '<div class="foot"><span id="footState" class="note" style="margin:0"></span><button class="btn" id="saveBtn" onclick="save()">Save setup</button></div>';
+    renderJobs(); renderComponents(); renderPipe(); syncWeldFields();
+  }
+
+  // Reference jobs --------------------------------------------------------------
+  function jobsCard() {
+    return '<div class="card"><h2>Reference jobs <span class="lt">· the most important section</span></h2><div class="body">' +
+      '<p class="note">Finished jobs with their actual shop hours. We work out hours per ton for each type of job and use it to check and scale the estimate. ' +
+      'Tons are the fabricated weight; hours are the shop hours actually booked. A job with no tons or no hours cannot be used and will not be saved.</p>' +
+      '<div class="scroll"><table><thead><tr><th style="min-width:170px">Type</th><th style="min-width:160px">Job name</th><th>Job #</th><th>Date</th>' +
+      '<th class="r">Tons</th><th class="r">Hours</th><th class="r">Pieces</th><th class="r">Hr/ton</th><th></th></tr></thead><tbody id="jobsBody"></tbody></table></div>' +
+      '<button class="lnk" onclick="addJob()">+ Add a reference job</button>' +
+      '<div id="rates" class="rates"></div></div></div>';
+  }
+  function renderJobs() {
+    const types = SHOP.job_types;
+    $("jobsBody").innerHTML = S.reference_jobs.length ? S.reference_jobs.map((j, i) => {
+      const t = num(j.tons), h = num(j.hours);
+      const hpt = t > 0 && h > 0 ? fmt(h / t, 1) : "";
+      const wo = j.source === "workorder";
+      const inp = (k, cls, extra) => '<input class="' + (cls || "") + '" value="' + esc(j[k]) + '" ' + (extra || "") + (wo ? " disabled" : "") +
+        ' oninput="setJob(' + i + ',\'' + k + '\',this)">';
+      return '<tr><td><select ' + (wo ? "disabled" : "") + ' onchange="setJob(' + i + ',\'type\',this)">' +
+        Object.keys(types).map((k) => '<option value="' + k + '"' + (k === j.type ? " selected" : "") + '>' + esc(types[k]) + '</option>').join("") + '</select></td>' +
+        '<td>' + inp("name", "", 'maxlength="120"') + '</td><td>' + inp("job_number", "", 'maxlength="40" style="width:80px"') + '</td>' +
+        '<td>' + inp("date", "", 'type="date" style="width:140px"') + '</td>' +
+        '<td>' + inp("tons", "num", 'inputmode="decimal" style="width:80px"') + '</td><td>' + inp("hours", "num", 'inputmode="decimal" style="width:90px"') + '</td>' +
+        '<td>' + inp("pieces", "num", 'inputmode="decimal" style="width:70px"') + '</td>' +
+        '<td class="r" id="hpt' + i + '">' + hpt + '</td>' +
+        '<td>' + (wo ? '<span class="note" title="Added from a finished work order">WO</span>' : '<button class="x" title="Remove" onclick="delJob(' + i + ')">✕</button>') + '</td></tr>';
+    }).join("") : '<tr><td colspan="9" class="note" style="padding:12px 8px">No reference jobs yet. Add one or two jobs you know well; they make the biggest difference.</td></tr>';
+    S.reference_jobs.forEach((j, i) => flagJob(i));
+    renderRates();
+  }
+  function setJob(i, k, el) {
+    S.reference_jobs[i][k] = el.value;
+    if (k === "tons" || k === "hours") {
+      const t = num(S.reference_jobs[i].tons), h = num(S.reference_jobs[i].hours);
+      $("hpt" + i).textContent = t > 0 && h > 0 ? fmt(h / t, 1) : "";
+      renderRates();
+    }
+    flagJob(i);
+    markDirty(true);
+  }
+  function flagJob(i) {
+    const row = $("jobsBody").rows[i]; if (!row) return;
+    const j = S.reference_jobs[i];
+    ["tons", "hours", "pieces"].forEach((k, n) => {
+      const v = num(j[k]);
+      const bad = (k === "pieces" ? v != null : true) && !(v > 0);
+      row.cells[4 + n].firstChild.classList.toggle("bad", bad && (k === "pieces" || String(j.tons || j.hours || j.name || "").trim() !== ""));
+    });
+  }
+  function addJob() {
+    S.reference_jobs.push({ type: "skid_frame", name: "", job_number: "", date: "", tons: "", hours: "", pieces: "", source: "entered" });
+    renderJobs(); markDirty(true);
+  }
+  function delJob(i) { S.reference_jobs.splice(i, 1); renderJobs(); markDirty(true); }
+  // Same arithmetic as shop.referenceRates: weighted by tonnage, so a tiny job cannot swing a type.
+  function renderRates() {
+    const out = {};
+    S.reference_jobs.forEach((j) => {
+      const t = num(j.tons), h = num(j.hours); if (!(t > 0 && h > 0)) return;
+      const r = out[j.type] = out[j.type] || { h: 0, t: 0, n: 0 }; r.h += h; r.t += t; r.n++;
+    });
+    const keys = Object.keys(out);
+    $("rates").innerHTML = keys.length ? keys.map((k) => '<div class="rate">' + esc(SHOP.job_types[k]) + '<br><b>' + fmt(out[k].h / out[k].t, 1) +
+      '</b> hr/ton <span class="note">· ' + out[k].n + ' job' + (out[k].n > 1 ? "s" : "") + ', ' + fmt(out[k].t, 1) + ' t</span></div>').join("") : "";
+  }
+
+  // Welding ---------------------------------------------------------------------
+  function weldCard() {
+    const s = S.settings, w = SHOP.weld || {};
+    const libOf = w.operating_factor && w.operating_factor.source === "library" ? fmt(w.operating_factor.value * 100, 0) : "47";
+    return '<div class="card"><h2>Welding</h2><div class="body">' +
+      '<p class="note">Weld hours are worked out from the weld itself: the metal in the joint, how fast your welders lay it down, and how much of the day the arc is actually on. ' +
+      'Your own deposition rate and arc time replace the library defaults.</p><div class="grid">' +
+      '<label class="f">Main welding process<select id="w_proc" onchange="setWeld()">' +
+      SHOP.weld_processes.map((p) => '<option' + (p === s.weld_process ? " selected" : "") + '>' + esc(p) + '</option>').join("") + '</select></label>' +
+      '<label class="f" id="ampsBox">Usual amperage (stick)<input id="w_amps" class="num" inputmode="decimal" value="' + esc(s.smaw_amps) + '" placeholder="e.g. 175" oninput="setWeld()">' +
+      '<span class="h">Used to read deposition off the 1962 stick chart</span></label>' +
+      '<label class="f">Deposition, lb/hr with the arc on<input id="w_dep" class="num" inputmode="decimal" value="' + esc(s.deposition_lb_hr) + '" placeholder="library" oninput="setWeld()">' +
+      '<span class="h">Leave blank for the library value</span></label>' +
+      '<label class="f">Arc time, % of the shift<input id="w_of" class="num" inputmode="decimal" value="' + esc(s.operating_factor != null ? fmt(s.operating_factor * 100, 1) : "") + '" placeholder="library ≈ ' + libOf + '" oninput="setWeld()">' +
+      '<span class="h">The share of a welder\'s day the arc is actually lit — the number to replace first</span></label>' +
+      '</div><div id="weldPrev" class="preview">Working out…</div></div></div>';
+  }
+  function syncWeldFields() { $("ampsBox").style.display = $("w_proc").value === "SMAW" ? "" : "none"; }
+  let weldTimer = null;
+  function setWeld() {
+    const s = S.settings;
+    s.weld_process = $("w_proc").value;
+    s.smaw_amps = $("w_amps").value;
+    s.deposition_lb_hr = $("w_dep").value;
+    const pct = num($("w_of").value);
+    s.operating_factor = pct == null ? null : (pct > 0 ? pct / 100 : NaN);
+    $("w_amps").classList.toggle("bad", num(s.smaw_amps) != null && !(num(s.smaw_amps) > 9));
+    $("w_dep").classList.toggle("bad", num(s.deposition_lb_hr) != null && !(num(s.deposition_lb_hr) > 0));
+    $("w_of").classList.toggle("bad", pct != null && !(pct > 0 && pct <= 100));
+    syncWeldFields(); markDirty(true);
+    clearTimeout(weldTimer); weldTimer = setTimeout(preview, 350);
+  }
+  // 1/4" fillet, flat and vertical — the weld every estimator knows a number for.
+  async function preview() {
+    const box = $("weldPrev"); if (!box) return;
+    const settings = payload().settings;
+    try {
+      const [flat, vert] = await Promise.all(["flat", "vertical"].map((position) =>
+        api("/api/labor/weld-time", { manufacturer_id: MFG, settings, weld: { kind: "fillet", size: 0.25, position } })));
+      const f = flat.result, v = vert.result;
+      if (f.missing) { box.innerHTML = '<span class="miss">' + esc(f.missing) + '</span>'; return; }
+      box.innerHTML = '1/4" fillet, flat: <span class="big">' + fmt(f.hours_per_ft, 4) + '</span> hr/ft' +
+        '<span class="src ' + f.source + '">' + (f.source === "yours" ? "your numbers" : "library") + '</span>' +
+        ' &nbsp;·&nbsp; vertical: <b>' + fmt(v.hours_per_ft, 4) + '</b> hr/ft' +
+        '<ul>' + f.basis.map((b) => '<li>' + esc(b) + '</li>').join("") + '</ul>';
+    } catch (e) { box.innerHTML = '<span class="miss">Preview unavailable: ' + esc(e.message) + '</span>'; }
+  }
+
+  // Cutting & fitting -----------------------------------------------------------
+  function shopCard() {
+    const s = S.settings;
+    return '<div class="card"><h2>Cutting & fitting</h2><div class="body"><div class="grid">' +
+      '<label class="f">Plate cutting<select onchange="S.settings.plate_cut_process=this.value;markDirty(true)">' +
+      SHOP.plate_cut.map((p) => '<option' + (p === s.plate_cut_process ? " selected" : "") + '>' + esc(p) + '</option>').join("") + '</select></label>' +
+      '<label class="f">Frame members are usually<select onchange="S.settings.member_method=this.value;markDirty(true)">' +
+      '<option value="welded"' + (s.member_method !== "framed" ? " selected" : "") + '>Square cut and welded all around</option>' +
+      '<option value="framed"' + (s.member_method === "framed" ? " selected" : "") + '>Framed (coped, clipped connections)</option></select></label>' +
+      '</div></div></div>';
+  }
+
+  // Standard components ---------------------------------------------------------
+  function componentsCard() {
+    return '<div class="card"><h2>Standard components <span class="lt">· priced per foot or per piece</span></h2><div class="body">' +
+      '<p class="note">Handrail, stairs and typical details vary most from shop to shop. Enter your own hours where you know them. ' +
+      'Items marked <span class="src missing">needs your number</span> have no library value, so the estimate will ask for them on each job until you fill them in.</p>' +
+      '<div class="scroll"><table><thead><tr><th>Component</th><th class="r">Library</th><th class="r" style="width:120px">Yours</th><th>Unit</th><th>Where the library number comes from</th></tr></thead>' +
+      '<tbody id="compBody"></tbody></table></div></div></div>';
+  }
+  function renderComponents() {
+    let grp = "";
+    $("compBody").innerHTML = SHOP.catalog.map((c) => {
+      const head = c.group !== grp ? '<tr class="grp"><td colspan="5">' + esc(grp = c.group) + '</td></tr>' : "";
+      return head + '<tr><td>' + esc(c.label) + '</td>' +
+        '<td class="lib">' + (c.library == null ? '<span class="src missing">needs your number</span>' : fmt(c.library, 3)) + '</td>' +
+        '<td><input class="num" inputmode="decimal" data-key="' + c.key + '" value="' + esc(S.rates[c.key]) + '" placeholder="' + (c.library == null ? "" : "library") + '" oninput="setRate(this)"></td>' +
+        '<td class="ref">' + esc(c.unit) + '</td><td class="ref">' + esc(c.library_ref) + (c.derived ? ' <b>(please check)</b>' : "") + '</td></tr>';
+    }).join("");
+  }
+  function setRate(el) {
+    const v = num(el.value);
+    if (v == null) delete S.rates[el.dataset.key]; else S.rates[el.dataset.key] = el.value;
+    el.classList.toggle("bad", v != null && !(v > 0));
+    markDirty(true);
+  }
+
+  // Pipe reference joints -------------------------------------------------------
+  function pipeCard() {
+    return '<div class="card"><h2>Pipe butt welds <span class="lt">· only if you do pipe work</span></h2><div class="body">' +
+      '<p class="note">There is no library number for pipe joints. Give the hours for one or two butt-weld joints you know (fit-up and welding, one joint). ' +
+      'Every other size and schedule is scaled from these by joint length and weld volume. Two joints of different sizes, say 4" and 8", scale far better than one.</p>' +
+      '<table style="max-width:520px"><thead><tr><th>Size</th><th>Schedule</th><th class="r">Hours per joint</th><th></th></tr></thead><tbody id="pipeBody"></tbody></table>' +
+      '<button class="lnk" id="addPipe" onclick="addPipe()">+ Add a reference joint</button></div></div>';
+  }
+  function schedulesFor(size) { const c = SHOP.pipe_choices.find((p) => p.size === size); return c ? c.schedules : []; }
+  function renderPipe() {
+    $("pipeBody").innerHTML = S.pipe_anchors.length ? S.pipe_anchors.map((a, i) =>
+      '<tr><td><select onchange="setPipe(' + i + ',\'size\',this)">' + SHOP.pipe_choices.map((p) => '<option' + (p.size === a.size ? " selected" : "") + '>' + esc(p.size) + '</option>').join("") + '</select></td>' +
+      '<td><select onchange="setPipe(' + i + ',\'schedule\',this)">' + schedulesFor(a.size).map((s) => '<option' + (s === a.schedule ? " selected" : "") + '>' + esc(s) + '</option>').join("") + '</select></td>' +
+      '<td><input class="num' + (a.hours !== "" && !(num(a.hours) > 0) ? " bad" : "") + '" inputmode="decimal" value="' + esc(a.hours) + '" oninput="setPipe(' + i + ',\'hours\',this)"></td>' +
+      '<td><button class="x" title="Remove" onclick="delPipe(' + i + ')">✕</button></td></tr>').join("")
+      : '<tr><td colspan="4" class="note" style="padding:12px 8px">No reference joints. Pipe joints on a take-off will be listed as needing hours.</td></tr>';
+    $("addPipe").style.display = S.pipe_anchors.length >= 4 ? "none" : "";
+  }
+  function setPipe(i, k, el) {
+    const a = S.pipe_anchors[i]; a[k] = el.value;
+    if (k === "size") { const sch = schedulesFor(a.size); if (sch.indexOf(a.schedule) < 0) a.schedule = sch.indexOf("SCH 40") > -1 ? "SCH 40" : sch[0]; renderPipe(); }
+    if (k === "hours") el.classList.toggle("bad", !(num(el.value) > 0));
+    markDirty(true);
+  }
+  function addPipe() {
+    const size = S.pipe_anchors.length ? '8"' : '4"';
+    S.pipe_anchors.push({ size, schedule: "SCH 40", hours: "" }); renderPipe(); markDirty(true);
+  }
+  function delPipe(i) { S.pipe_anchors.splice(i, 1); renderPipe(); markDirty(true); }
+
+  // ---- save ------------------------------------------------------------------
+  function payload() {
+    const s = S.settings;
+    const n = (v) => { const x = num(v); return x == null ? null : x; };
+    return {
+      manufacturer_id: MFG,
+      settings: {
+        weld_process: s.weld_process, smaw_amps: n(s.smaw_amps), deposition_lb_hr: n(s.deposition_lb_hr),
+        operating_factor: Number.isFinite(s.operating_factor) ? s.operating_factor : null,
+        plate_cut_process: s.plate_cut_process, member_method: s.member_method,
+        start_from_sentry: SHOP.settings.start_from_sentry === true,
+      },
+      rates: Object.fromEntries(Object.entries(S.rates).map(([k, v]) => [k, n(v)])),
+      pipe_anchors: S.pipe_anchors.map((a) => ({ size: a.size, schedule: a.schedule, hours: n(a.hours) })),
+      reference_jobs: S.reference_jobs.map((j) => Object.assign({}, j, { tons: n(j.tons), hours: n(j.hours), pieces: n(j.pieces) })),
+    };
+  }
+  // The server drops anything that is not a positive number. Name it here instead.
+  function problems() {
+    const out = [], s = S.settings;
+    const bad = (v) => { const x = num(v); return x != null && !(x > 0); };
+    if (s.weld_process === "SMAW" && bad(s.smaw_amps)) out.push("Welding: amperage must be a number above zero.");
+    if (bad(s.deposition_lb_hr)) out.push("Welding: deposition must be a number above zero, or blank for the library.");
+    if (Number.isNaN(s.operating_factor) || s.operating_factor > 1) out.push("Welding: arc time must be a percent between 1 and 100, or blank for the library.");
+    SHOP.catalog.forEach((c) => { if (bad(S.rates[c.key])) out.push("Standard components: " + c.label + " must be a number above zero, or blank."); });
+    S.pipe_anchors.forEach((a) => { if (!(num(a.hours) > 0)) out.push("Pipe joint " + a.size + " " + a.schedule + ": hours are needed, or remove the row."); });
+    S.reference_jobs.forEach((j, i) => {
+      const name = j.name || j.job_number || ("row " + (i + 1));
+      if (!(num(j.tons) > 0) || !(num(j.hours) > 0)) out.push("Reference job \"" + name + "\": needs both tons and hours above zero, or remove the row.");
+      if (bad(j.pieces)) out.push("Reference job \"" + name + "\": pieces must be above zero, or blank.");
+    });
+    return out;
+  }
+  async function save() {
+    const p = problems(), box = $("errs");
+    if (p.length) {
+      box.innerHTML = "Nothing was saved. Fix these first:<ul>" + p.map((x) => "<li>" + esc(x) + "</li>").join("") + "</ul>";
+      box.className = "errs show"; box.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    box.className = "errs";
+    $("saveBtn").disabled = true; busy("Saving…");
+    try {
+      const j = await api("/api/labor/shop", payload());
+      take(j.shop); render(); markDirty(false); preview();
+      busy("Saved", "ok", 1800);
+    } catch (e) { busy("Save failed: " + e.message, "err", 6000); }
+    finally { const b = $("saveBtn"); if (b) b.disabled = false; }
+  }
+
+  load();
+</script>
+</body>
+</html>

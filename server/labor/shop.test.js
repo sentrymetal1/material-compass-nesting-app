@@ -65,3 +65,25 @@ test('shop profile: saves, cleans, never stores a zero, rates by type', () => {
   assert.ok(Math.abs(r.hr_per_ton - (1129 + 290.75) / 14) < 0.1);
   assert.throws(() => shop.load('../../etc'), /record id/);
 });
+
+test('pipe reference joints: only sizes the scaler can read are kept or offered', () => {
+  const p = shop.clean({ pipe_anchors: [
+    { size: '4"', schedule: 'SCH 40', hours: 2 },
+    { size: '4-1/2"', schedule: 'SCH 40', hours: 2 },   // not in the NPS table under that schedule
+    { size: '6"', schedule: 'STD', hours: 3 },
+  ] }, '4111484000000000003');
+  assert.deepStrictEqual(p.pipe_anchors.map((a) => a.size), ['4"', '6"']);
+  const four = shop.pipeChoices().find((c) => c.size === '4"');
+  assert.ok(four.schedules.includes('SCH 40') && four.schedules.includes('STD'));
+});
+
+test('weld preview: unsaved settings win, and are cleaned like a save', () => {
+  const { weldSettings } = require('./routes');
+  const id = '4111484000000000002';
+  shop.save(id, { settings: { deposition_lb_hr: 6, operating_factor: 0.3 } });
+  assert.strictEqual(weldSettings(id, {}).deposition_lb_hr, 6, 'no draft → saved settings');
+  const draft = weldSettings(id, { settings: { deposition_lb_hr: 4, operating_factor: 30 } });
+  assert.strictEqual(draft.deposition_lb_hr, 4);
+  assert.strictEqual(draft.operating_factor, null, 'a percent typed as 30 is dropped, not read as 3000%');
+  assert.deepStrictEqual(weldSettings('', {}), {});
+});

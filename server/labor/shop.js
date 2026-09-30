@@ -16,6 +16,7 @@
 // =============================================================================
 const { readJson, writeJson } = require('../filestore');
 const { STANDARD } = require('./components');
+const { pipeDims } = require('./pipeJoint');
 
 const JOB_TYPES = {
   skid_frame: 'Welded skid / frame',
@@ -62,7 +63,7 @@ function clean(input, mfg) {
   for (const key of Object.keys(STANDARD)) { const v = pos((i.rates || {})[key]); if (v != null) rates[key] = v; }
   const pipe_anchors = (Array.isArray(i.pipe_anchors) ? i.pipe_anchors : []).slice(0, 4)
     .map((a) => ({ size: txt(a.size, 12), schedule: txt(a.schedule, 16), hours: pos(a.hours) }))
-    .filter((a) => a.size && a.schedule && a.hours != null);
+    .filter((a) => a.hours != null && pipeDims(a.size, a.schedule));   // a joint the scaler cannot read is no anchor
   const reference_jobs = (Array.isArray(i.reference_jobs) ? i.reference_jobs : []).slice(0, 200)
     .map((j, n) => ({
       id: txt(j.id, 40) || ('rj' + Date.now().toString(36) + n),
@@ -83,6 +84,16 @@ function save(mfg, input) {
   const profile = clean(input, mfg);
   writeJson(fileFor(mfg), profile);
   return profile;
+}
+
+// Size → schedules a reference joint can use, for the setup page's pickers. Only pairs
+// pipeDims() reads, so a shop cannot enter a joint that would be dropped.
+const PIPE_SIZES = ['1/2"', '3/4"', '1"', '1-1/4"', '1-1/2"', '2"', '2-1/2"', '3"', '4"', '5"', '6"',
+  '8"', '10"', '12"', '14"', '16"', '18"', '20"', '24"'];
+const PIPE_SCHEDULES = ['SCH 10', 'SCH 40', 'STD', 'SCH 80', 'XS', 'SCH 160'];
+function pipeChoices() {
+  return PIPE_SIZES.map((size) => ({ size, schedules: PIPE_SCHEDULES.filter((s) => pipeDims(size, s)) }))
+    .filter((p) => p.schedules.length);
 }
 
 // Hours per ton per job type, weighted by tonnage so one tiny job cannot swing a big type.
@@ -109,4 +120,4 @@ function estimateContext(profile) {
   };
 }
 
-module.exports = { load, save, clean, referenceRates, estimateContext, JOB_TYPES, WELD_PROCESSES, PLATE_CUT };
+module.exports = { load, save, clean, referenceRates, estimateContext, pipeChoices, JOB_TYPES, WELD_PROCESSES, PLATE_CUT };
