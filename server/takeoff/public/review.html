@@ -130,6 +130,10 @@
   .lab-held td{background:#f3f8fd;}
   tr.lab-item td{font-size:12px;color:#334;padding:4px 8px 4px 26px;}
   tr.lab-item td.n{padding-left:8px;}
+  .lab-bk{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px;}
+  .lab-bk span{font-size:12px;border:1px solid var(--line);border-radius:6px;padding:4px 9px;background:#fafbfc;color:#334;}
+  .lab-bk span b{font-size:13px;color:var(--ink);margin-left:4px;}
+  .lab-bk span.zero{opacity:.45;}
   .lab-stale{background:var(--ylwbg);border:1px solid #fcd9a8;color:var(--ylw);border-radius:8px;padding:8px 12px;font-size:12.5px;margin-bottom:10px;}
   @media print {
     body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
@@ -155,7 +159,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.57 · 2026-09-30";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.58 · 2026-09-30";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -716,6 +720,13 @@
           Object.keys(types).map(function(k){ return '<option value="'+k+'"'+(k===L.job_type?' selected':'')+'>'+esc(types[k])+'</option>'; }).join("")+'</select></div>'+
         '<div class="lab-ball" style="flex:1;min-width:260px">'+ball+'</div>'+
       '</div>'+
+      // Hours per bucket across every item on the job — the same 8 buckets the project's labor rows carry.
+      (function(){
+        const tot={}; Object.keys(LAB_BUCKET).forEach(function(b){ tot[b]=0; });
+        L.components.forEach(function(c){ arr(c.items).forEach(function(i){ if(tot[i.bucket]!=null) tot[i.bucket]+=Number(i.hours)||0; }); });
+        return '<div class="lab-bk" id="labBuckets">'+Object.keys(LAB_BUCKET).map(function(b){
+          return '<span class="'+(tot[b]>0.005?'':'zero')+'">'+LAB_BUCKET[b]+'<b>'+labFmt(tot[b],1)+'</b></span>'; }).join("")+'</div>';
+      })()+
       '<div class="src" style="margin:-4px 0 10px;font-size:12px">From the standards: <b>'+labFmt(S.bottom_up,1)+' hrs</b> — this only prices what the take-off could count, so it runs low; '+
         'each component lists what it could not estimate. '+(S.unweighed_rows?S.unweighed_rows+' row'+(S.unweighed_rows===1?' has':'s have')+' no weight, so the tonnage is short. ':'')+
         'Your own numbers matter most: '+setupLink+'</div>'+
