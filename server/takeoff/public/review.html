@@ -130,6 +130,17 @@
   .lab-held td{background:#f3f8fd;}
   tr.lab-item td{font-size:12px;color:#334;padding:4px 8px 4px 26px;}
   tr.lab-item td.n{padding-left:8px;}
+  /* Tabs — one area of the review at a time */
+  .tabs{display:flex;gap:4px;margin:0 0 14px;border-bottom:2px solid #d7e0ec;overflow-x:auto;position:sticky;top:0;z-index:5;background:#eef1f5;padding-top:4px;}
+  .tabs button{font:inherit;font-size:13px;font-weight:600;color:#46566b;background:none;border:0;border-bottom:3px solid transparent;
+    margin-bottom:-2px;padding:9px 14px;cursor:pointer;white-space:nowrap;border-radius:6px 6px 0 0;}
+  .tabs button:hover{color:var(--blue);background:#f3f8fd;}
+  .tabs button.on{color:#fff;background:#5F94CE;border-bottom-color:#5F94CE;}
+  .tbadge{display:inline-block;font-size:11px;font-weight:700;border-radius:9px;padding:0 7px;margin-left:4px;background:#dbe8f7;color:#2c5c96;}
+  .tabs button.on .tbadge{background:rgba(255,255,255,.25);color:#fff;}
+  .tbadge.warn{background:var(--ylwbg);color:var(--ylw);} .tbadge.bad{background:var(--redbg);color:var(--red);}
+  .tabpane{display:none;} .tabpane.on{display:block;}
+  .tabpane[data-tab="ai"] .chatthread{max-height:62vh;}
   .lab-bk{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px;}
   .lab-bk span{font-size:12px;border:1px solid var(--line);border-radius:6px;padding:4px 9px;background:#fafbfc;color:#334;}
   .lab-bk span b{font-size:13px;color:var(--ink);margin-left:4px;}
@@ -138,7 +149,8 @@
   @media print {
     body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .wrap,.appbar{max-width:100%;}
-    #printBtn,#newRun,.bar,.busy,.commit,#reviseCard,.applybtn,.pillbtn,.footerdock,#chatCard{display:none !important;}
+    #printBtn,#newRun,.bar,.busy,.commit,#reviseCard,.applybtn,.pillbtn,.footerdock,#chatCard,.tabs{display:none !important;}
+    .tabpane{display:block !important;}   /* print the whole package, every tab */
     .card{box-shadow:none;break-inside:avoid;}
     input[type=number]{border:none;padding:0;width:auto;background:transparent;font-size:12.5px;}
   }
@@ -159,7 +171,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.58 · 2026-09-30";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.59 · 2026-09-30";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -735,6 +747,45 @@
       '<div style="margin-top:10px;font-size:12px"><span class="pillbtn" style="margin-left:0" onclick="laborAddComp()">+ add a component</span>'+
         ' <span class="pillbtn" onclick="laborCalc(true)">↻ recalculate from standards</span></div>'+
       '</div></div>';
+  }
+
+  // ---- Tabs ---------------------------------------------------------------------------------
+  // The review used to be one long column. Now one area at a time; the header and the dock
+  // (chat + Approve) stay. Switching only shows and hides panes — no re-render — so the BOM
+  // editor iframe, a half-typed edit and every id other code looks up survive a tab change.
+  // The chosen tab is remembered per project for this browser tab.
+  const TABS=[["overview","Overview"],["checks","Checks"],["material","Material"],["fittings","Fittings"],["labor","Labor"],["ai","Ask the AI"]];
+  function tabKey(){ return "mc_review_tab_"+(params.project_id||"sample"); }
+  let TAB=(function(){ try{ return sessionStorage.getItem(tabKey())||"overview"; }catch(e){ return "overview"; } })();
+  function setTab(t){
+    if(!TABS.some(function(x){ return x[0]===t; })) t="overview";
+    TAB=t; try{ sessionStorage.setItem(tabKey(),t); }catch(e){}
+    applyTab();
+  }
+  function applyTab(){
+    document.querySelectorAll(".tabpane").forEach(function(p){ p.classList.toggle("on", p.getAttribute("data-tab")===TAB); });
+    document.querySelectorAll(".tabs button").forEach(function(b){ b.classList.toggle("on", b.getAttribute("data-tab")===TAB); });
+    if(TAB==="ai") scrollChatToBottom();
+  }
+  function tabStripHtml(R, fab, gaps, conflicts){
+    const open=DECISIONS.filter(function(d){ return d.sel==null; }).length+arr(gaps).length+arr(conflicts).length;
+    let probs=0; try{ probs=materialProblems(arr(R.rows)).length; }catch(e){}
+    let fprobs=0; try{ fprobs=fittingProblems(arr(R.fittings)).length; }catch(e){}
+    const L=R.labor, hrs=L&&arr(L.components).length?labJob(L):null;
+    const chat=arr(R.chat).filter(function(m){ return m.role==="user"; }).length;
+    const badge={
+      overview: open?['warn',open]:null,
+      checks: probs?['bad',probs]:null,
+      material: ['',arr(fab).length],
+      fittings: arr(R.fittings).length?[fprobs?'bad':'',arr(R.fittings).length]:null,
+      labor: hrs!=null?['',labFmt(hrs,0)+' h']:null,
+      ai: chat?['',chat]:null,
+    };
+    return '<div class="tabs" role="tablist">'+TABS.map(function(t){
+      const b=badge[t[0]];
+      return '<button role="tab" data-tab="'+t[0]+'" class="'+(t[0]===TAB?'on':'')+'" onclick="setTab(\''+t[0]+'\')">'+t[1]+
+        (b?' <span class="tbadge '+b[0]+'">'+esc(b[1])+'</span>':'')+'</button>';
+    }).join("")+'</div>';
   }
 
   function fittingsCardHtml(list){
@@ -1919,6 +1970,10 @@
           (gaps.length?'<span class="chip">◷ '+gaps.length+' gaps</span>':'')+
         '</div></div></div>'+
 
+      // tabs — one area of the review at a time; the header above and the dock below stay put
+      tabStripHtml(R, fab, gaps, conflicts)+
+
+      '<div class="tabpane" data-tab="overview">'+
       // scope — view or edit (add/edit/remove the write-ups)
       ((streams.length||SCOPE_EDIT)?'<div class="card"><h2>▸ Scope of Work'+
         ' <span class="pillbtn" onclick="toggleScopeEdit()">'+(SCOPE_EDIT?'done':'edit')+'</span></h2><div class="body">'+
@@ -1931,16 +1986,6 @@
                   '</div></div>').join("")
               : '<div style="color:var(--mut);font-size:13px">No scope items.</div>'))+
         '</div></div>':'')+
-
-      // material check — rows that can't resolve against the shop's catalog, fixable here
-      materialCardHtml(rows)+
-
-      // the cross-check: parts lists / drawing material tables vs what the sheets actually show
-      partsListCardHtml(s.parts_list)+
-      crossCardHtml(rows, s.reconciliation)+
-
-      // scope reconciliation — AI-read components/drawings vs. what you entered on the project
-      reconCardHtml()+
 
       // decisions
       (DECISIONS.length?'<div class="card"><h2>⚠ Decisions — your call <span id="decCount" style="color:var(--ylw);font-weight:700;"></span></h2><div class="body" id="decisions"></div></div>':'')+
@@ -1962,7 +2007,23 @@
       (comp.length?'<div class="card"><h2>✓ Compliance &amp; finish</h2><div class="body">'+
         comp.map(c=>'<div class="comp"><span class="ok">'+esc(c.topic)+'</span><span class="src">'+esc(c.note)+'</span></div>').join("")+
         '</div></div>':'')+
+      ((!streams.length&&!SCOPE_EDIT&&!DECISIONS.length&&!gaps.length&&!conflicts.length&&!comp.length)
+        ?'<div class="card"><div class="body" style="color:var(--mut);font-size:13px">No scope, decisions, gaps or compliance notes on this take-off.</div></div>':'')+
+      '</div>'+
 
+      '<div class="tabpane" data-tab="checks">'+
+      // material check — rows that can't resolve against the shop's catalog, fixable here
+      materialCardHtml(rows)+
+
+      // the cross-check: parts lists / drawing material tables vs what the sheets actually show
+      partsListCardHtml(s.parts_list)+
+      crossCardHtml(rows, s.reconciliation)+
+
+      // scope reconciliation — AI-read components/drawings vs. what you entered on the project
+      reconCardHtml()+
+      '</div>'+
+
+      '<div class="tabpane" data-tab="material">'+
       // BOM
       '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, grouped by component → drawing</span></h2><div class="body" style="padding:0;">'+
         '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Dimensions</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
@@ -1976,16 +2037,21 @@
 
       // the real grid, on these rows, before they are committed
       bomEditorCardHtml()+
+      '</div>'+
 
       // pipe fittings — their own stream, deliberately outside the BOM
-      fittingsCardHtml(R.fittings)+
+      '<div class="tabpane" data-tab="fittings">'+
+      (fittingsCardHtml(R.fittings)||'<div class="card"><div class="body" style="color:var(--mut);font-size:13px">No pipe fittings on this take-off.</div></div>')+
+      '</div>'+
 
       // shop labor — hours for this take-off, at job / component / item level
-      laborCardHtml(R)+
+      '<div class="tabpane" data-tab="labor">'+laborCardHtml(R)+'</div>'+
 
       // tell-the-AI — conversational thread (3c)
+      '<div class="tabpane" data-tab="ai">'+
       '<div class="card" id="chatCard"><h2>💬 Tell the AI <span class="lt">— ask questions or request changes; it remembers the conversation</span></h2>'+
         '<div class="body"><div id="chatThread" class="chatthread">'+chatThreadHtml()+'</div></div></div>'+
+      '</div>'+
 
       // sticky footer: chat input dock + action bar (one pinned block)
       '<div class="footerdock">'+
@@ -2010,6 +2076,7 @@
 
     if(_aiKeep){ const _ai=document.getElementById("aiInput"); if(_ai) _ai.value=_aiKeep; }  // restore typed chat text
     renderDecisions();
+    applyTab();
   }
 
 
@@ -2456,6 +2523,7 @@
     const R=loadResult(); R.chat=R.chat||[];
     R.chat.push({role:"user", text: t || "(reconcile against the attached file)", files: atNames});
     R.chat.push({role:"ai", pending:true});
+    TAB="ai"; try{ sessionStorage.setItem(tabKey(),TAB); }catch(e){}   // the reply lands where you can see it
     saveResult(R); render(); scrollChatToBottom();
     // history for the model = prior turns + this user turn (text only; current package sent fresh below)
     const hist=(loadResult().chat||[]).filter(function(m){return !m.pending;})
@@ -2680,7 +2748,7 @@
       const un=reconcile('component').takeoffOnly;
       if(un.length){
         const names=un.slice(0,6).map(function(t){return "• "+t.value;}).join("\n")+(un.length>6?"\n…":"");
-        if(!(await mcConfirm(un.length+" component"+(un.length===1?"":"s")+" the drawings reference aren't on your project:\n\n"+names+"\n\nTheir material will import without a component link. Map or add them first, or continue anyway?",{title:"Approve & Submit",okText:"Continue anyway",cancelText:"Go back"}))) return;
+        if(!(await mcConfirm(un.length+" component"+(un.length===1?"":"s")+" the drawings reference aren't on your project:\n\n"+names+"\n\nTheir material and labor will land without a component link. Map or add them on the Checks tab (Scope Reconciliation), or continue anyway?",{title:"Approve & Submit",okText:"Continue anyway",cancelText:"Go back"}))){ setTab("checks"); return; }
       }
     }
     // Material that can't resolve becomes an error row in staging — say so before committing.
@@ -2690,7 +2758,7 @@
         return "• "+(p.row.component||"—")+" · "+(p.row.form_type||"")+" · "+(p.row.size?('"'+p.row.size+'"'):"(no material)");
       }).join("\n")+(matProbs.length>6?"\n…":"");
       if(!(await mcConfirm(matProbs.length+" row"+(matProbs.length===1?"":"s")+" have a material your catalog doesn't have:\n\n"+
-        list+"\n\nThey'll land in staging as errors. Fix them in the Material check card, or continue anyway?",{title:"Approve & Submit",okText:"Continue anyway",cancelText:"Go back"}))) return;
+        list+"\n\nThey'll land in staging as errors. Fix them on the Checks tab, or continue anyway?",{title:"Approve & Submit",okText:"Continue anyway",cancelText:"Go back"}))){ setTab("checks"); return; }
     }
     // A fitting whose type the catalog does not have cannot be written at all — it would be
     // dropped, not mispriced. Say so plainly, because "continue anyway" means the quote goes
@@ -2702,8 +2770,8 @@
                (p.row.size?' '+p.row.size:"")+" — "+p.why;
       }).join("\n")+(fitProbs.length>6?"\n…":"");
       if(!(await mcConfirm(fitProbs.length+" fitting"+(fitProbs.length===1?"":"s")+" cannot be put on the project:\n\n"+
-        flist+"\n\nSet the type in the Fittings table and they'll link themselves. Continue without them?",
-        {title:"Approve & Submit",okText:"Continue without them",cancelText:"Go back"}))) return;
+        flist+"\n\nSet the type on the Fittings tab and they'll link themselves. Continue without them?",
+        {title:"Approve & Submit",okText:"Continue without them",cancelText:"Go back"}))){ setTab("fittings"); return; }
     }
     const ap=document.getElementById("approve"); ap.disabled=true;
     const c=document.getElementById("commit"); c.style.display="block";
