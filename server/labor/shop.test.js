@@ -123,6 +123,20 @@ test('labor commit: rates from the Default row, amounts and totals written, gaps
   assert.strictEqual(rec.Project_Bi_Directional_Lookup, '4111484000006085004', 'subform link set, or the row never shows on the project');
 });
 
+test('labor commit: hours for a type the shop does not do move to one it does', () => {
+  const { foldToShopTypes } = require('./laborCommit');
+  const hrs = { Cutting_Hrs: 0.67, CNC_Hrs: 1, Assy_Hrs: 26.03, Fab_Hrs: 0, Weld_Hrs: 91.18, Labor_Hrs: 2.16, Inspection_Hrs: 0, Misc_Hrs: 0 };
+  // Viking: everything but Assemble (and here, no CNC either)
+  const f = foldToShopTypes(hrs, ['Cut', 'Fabricate', 'Weld', 'Labor', 'Inspect', 'Other']);
+  assert.strictEqual(f.hours.Assy_Hrs, 0);
+  assert.strictEqual(f.hours.Fab_Hrs, 26.03, 'Assemble → Fabricate');
+  assert.strictEqual(f.hours.Cutting_Hrs, 1.67, 'CNC → Cut');
+  assert.deepStrictEqual(f.moved.map((m) => m.from + '>' + m.to), ['CNC>Cut', 'Assemble>Fabricate']);
+  const total = (h) => Object.values(h).reduce((a, x) => a + x, 0);
+  assert.ok(Math.abs(total(f.hours) - total(hrs)) < 1e-9, 'no hours lost');
+  assert.deepStrictEqual(foldToShopTypes(hrs, []).moved, [], 'types unknown → nothing moves');
+});
+
 test('weld preview: unsaved settings win, and are cleaned like a save', () => {
   const { weldSettings } = require('./routes');
   const id = '4111484000000000002';

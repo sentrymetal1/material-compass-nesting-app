@@ -2894,6 +2894,9 @@
         // A rate the rates report does not show stood in at the average — say which, so it gets fixed.
         if(arr(lab.rates_estimated).length) li+='<div class="src" style="margin-left:14px;color:var(--amber,#b26b00)">'+
           esc(arr(lab.rates_estimated).join(', '))+' rate'+(lab.rates_estimated.length===1?'':'s')+' not visible in the shop\'s rates report — priced at the average of the others. Add those columns to All_Manufacture_Labor_Rates.</div>';
+        // Hours for a labor type this shop does not perform would sit in a hidden column; they moved.
+        if(arr(lab.folded).length) li+='<div class="src" style="margin-left:14px">'+arr(lab.folded).slice(0,6).map(function(m){
+          return '• '+esc(m.component)+': '+labFmt(m.hours,1)+' h '+esc(m.from)+' → '+esc(m.to)+' <span class="src">(your shop doesn\'t list '+esc(m.from)+')</span>'; }).join('<br>')+'</div>';
         const bad=arr(lab.skipped).concat(arr(lab.failed));
         if(bad.length) li+='<div class="src" style="margin-left:14px">'+bad.slice(0,6).map(function(b){ return '• '+esc(b.what)+' — '+esc(b.why); }).join('<br>')+(bad.length>6?'<br>…':'')+'</div>';
         return li+'</li>';

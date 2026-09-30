@@ -61,6 +61,28 @@ function buildRecord(projectId, componentId, hours, rates) {
   return data;
 }
 
+// The shop's Labor_Types chips (Customer_Entry_Form) -> buckets. A bucket whose type the shop does
+// not perform is HIDDEN on the project's labour subform — Viking has no "Assemble", so 26 hrs of
+// Assy_Hrs landed in a column nobody could see while still counting in the totals (2026-09-30).
+// Those hours move to the nearest type the shop does perform, and the move is reported.
+const TYPE_OF = { Cutting_Hrs: 'Cut', CNC_Hrs: 'CNC', Assy_Hrs: 'Assemble', Fab_Hrs: 'Fabricate',
+  Weld_Hrs: 'Weld', Labor_Hrs: 'Labor', Inspection_Hrs: 'Inspect', Misc_Hrs: 'Other' };
+const FOLD_ORDER = ['Fab_Hrs', 'Assy_Hrs', 'Weld_Hrs', 'Cutting_Hrs', 'Labor_Hrs', 'Misc_Hrs', 'CNC_Hrs', 'Inspection_Hrs'];
+// hours: {bucket: n}; types: ['Cut', ...] or empty (unknown → nothing moves). -> { hours, moved: [{from,to,hours}] }
+function foldToShopTypes(hours, types) {
+  const does = new Set((types || []).map(String));
+  if (!does.size) return { hours, moved: [] };
+  const out = Object.assign({}, hours), moved = [];
+  const target = FOLD_ORDER.find((b) => does.has(TYPE_OF[b]));
+  if (!target) return { hours, moved: [] };
+  for (const b of BUCKETS) {
+    if (does.has(TYPE_OF[b]) || !(out[b] > 0)) continue;
+    const to = b === 'CNC_Hrs' && does.has('Cut') ? 'Cutting_Hrs' : target;
+    out[to] += out[b]; moved.push({ from: TYPE_OF[b], to: TYPE_OF[to], hours: r2(out[b]) }); out[b] = 0;
+  }
+  return { hours: out, moved };
+}
+
 // Sum a labour card component's items into buckets.
 function bucketHours(items) {
   const out = Object.fromEntries(BUCKETS.map((b) => [b, 0]));
@@ -94,12 +116,16 @@ function registerLaborCommit(app, deps) {
       if (!/^\d{6,25}$/.test(mfg)) return res.status(400).json({ ok: false, error: 'manufacturer_id required for labor rates' });
       const comps = (Array.isArray(b.components) ? b.components : []).filter((c) => c && c.name);
 
-      const [rateRows, compRows, laborRows] = await Promise.all([
+      const [shopRows, rateRows, compRows, laborRows] = await Promise.all([
+        // Labor_Types only arrive if Customer_Entry_Report shows that column; missing = no fold.
+        fetchAllZohoPages('/report/Customer_Entry_Report?criteria=' + crit('(ID==' + mfg + ')')).catch(() => []),
         fetchAllZohoPages('/report/All_Manufacture_Labor_Rates?criteria=' + crit('(Manufacture==' + mfg + ')')),
         fetchAllZohoPages('/report/All_Project_Components?criteria=' + crit('(MCP_Customer_Project_Form==' + projectId + ')')),
         (b.prior_ids || []).length ? fetchAllZohoPages('/report/All_Project_Labor_Details?criteria=' + crit('(Project_LU==' + projectId + ')')) : Promise.resolve([]),
       ]);
       const { rates, estimated } = pickRates(rateRows);
+      const lt = shopRows && shopRows[0] && shopRows[0].Labor_Types;
+      const shopTypes = Array.isArray(lt) ? lt.map(String) : (lt ? String(lt).split(',').map((s) => s.trim()).filter(Boolean) : []);
       if (!rates) return res.status(400).json({ ok: false, error: 'This shop has no labor rates in its profile (Labor Rates tab). Add them, then approve again — nothing was written.' });
 
       const byName = {};
@@ -107,15 +133,26 @@ function registerLaborCommit(app, deps) {
 
       const token = await getAccessToken();
       const base = creatorApiBase();
-      const written = [], skipped = [], failed = [];
+      const written = [], skipped = [], failed = [], folded = [];
       for (const c of comps) {
-        const hours = bucketHours(c.items);
+        const f = foldToShopTypes(bucketHours(c.items), shopTypes);
+        const hours = f.hours;
+        f.moved.forEach((m) => folded.push(Object.assign({ component: c.name }, m)));
         const total = BUCKETS.reduce((a, k) => a + hours[k], 0);
         if (!(total > 0)) { skipped.push({ what: c.name, why: 'no hours' }); continue; }
         const cid = byName[norm(c.name)];
         if (!cid) { skipped.push({ what: c.name, why: 'not a component on this project — add it (Scope Reconciliation) and approve again' }); continue; }
+        const rec = buildRecord(projectId, cid, hours, rates);
+        // Hand-entered rows carry the shop's types; set them too. Not worth losing hours over:
+        // if Zoho refuses the multi-select, the row goes in without it.
+        if (shopTypes.length) rec.View_Labor_Type = shopTypes;
         try {
-          const id = await insert(base, token, buildRecord(projectId, cid, hours, rates));
+          let id;
+          try { id = await insert(base, token, rec); }
+          catch (e) {
+            if (!rec.View_Labor_Type || !/View_Labor_Type/i.test(e.message)) throw e;
+            delete rec.View_Labor_Type; id = await insert(base, token, rec);
+          }
           written.push({ name: c.name, id, hours: r2(total) });
         } catch (e) { failed.push({ what: c.name, why: e.message }); }
       }
@@ -131,7 +168,8 @@ function registerLaborCommit(app, deps) {
         } catch (e) { keep.push(id); }
       }
       res.json({ ok: true, written, skipped, failed, replaced: removed.length, not_removed: keep,
-        rates_estimated: estimated, total_hours: r2(written.reduce((a, w) => a + w.hours, 0)) });
+        rates_estimated: estimated, folded, shop_types_known: shopTypes.length > 0,
+        total_hours: r2(written.reduce((a, w) => a + w.hours, 0)) });
     } catch (err) {
       console.error('[labor] commit failed:', err.response?.data || err.message);
       res.status(500).json({ ok: false, error: err.response?.data?.message || err.message });
@@ -139,4 +177,4 @@ function registerLaborCommit(app, deps) {
   });
 }
 
-module.exports = { registerLaborCommit, buildRecord, pickRates, bucketHours };
+module.exports = { registerLaborCommit, buildRecord, pickRates, bucketHours, foldToShopTypes };
