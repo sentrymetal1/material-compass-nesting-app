@@ -3758,6 +3758,8 @@ const { loadFittingLearning } = require('./fittingLearn').makeFittingLearning({ 
 require('./fittingsCommit').registerFittingsCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages,
   createDetailRow: fittingDetailRows.createDetailRow, buildFittingIndex, loadFittingCatalog: fittingsCatalogData,
   loadFittingLearning });
+// ---- The take-off's labor hours onto the project (Project_Labor_Details_Form), on approve ----
+require('./labor/laborCommit').registerLaborCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 
 // ── ONE ROW, FOR DELUGE ─────────────────────────────────────────────────────────────────────
 // The project form's BOM subform cannot match a fitting to its catalog row, and the reason is

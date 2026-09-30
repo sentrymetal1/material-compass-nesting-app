@@ -103,6 +103,26 @@ test('take-off labour: job hours = per unit × units, ballpark from the shop\'s 
   assert.strictEqual(laborForTakeoff(takeoff, null, 'skid_frame').ballpark.hours, null, 'no shop → no ballpark');
 });
 
+test('labor commit: rates from the Default row, amounts and totals written, gaps named', () => {
+  const { pickRates, buildRecord, bucketHours } = require('./laborCommit');
+  const rows = [
+    { Type_Of_Rate: 'Overtime', Default: 'false', Cutting_Rate: '135.00', Weld_Rate: '135.00' },
+    { Type_Of_Rate: 'Standard', Default: 'true', Cutting_Rate: '90.00', CNC_Rate: '110.00', Assy_Rate: '120.00', Fab_Rate: '120.00', Weld_Rate: '100.00' },
+  ];
+  const { rates, estimated } = pickRates(rows);
+  assert.strictEqual(rates.Cutting, 90, 'the Default row, not the first');
+  assert.deepStrictEqual(estimated, ['Labor', 'Inspection', 'Misc'], 'rates the report does not show are named');
+  assert.strictEqual(rates.Labor, 108, 'and stand in at the average of the ones it does');
+  assert.strictEqual(pickRates([]).rates, null, 'no rate rows → nothing to write with');
+  const hrs = bucketHours([{ bucket: 'Weld_Hrs', hours: 10 }, { bucket: 'Weld_Hrs', hours: 5 }, { bucket: 'Cutting_Hrs', hours: 2 }]);
+  const rec = buildRecord('4111484000006085004', '4111484000006085010', hrs, rates);
+  assert.strictEqual(rec.Weld_Hrs, 15);
+  assert.strictEqual(rec.Weld_Amt, 1500, 'amount written — the API does not run the form\'s Deluge');
+  assert.strictEqual(rec.Total_Hours, 17);
+  assert.strictEqual(rec.Total_Amount, 1680);
+  assert.strictEqual(rec.Project_Bi_Directional_Lookup, '4111484000006085004', 'subform link set, or the row never shows on the project');
+});
+
 test('weld preview: unsaved settings win, and are cleaned like a save', () => {
   const { weldSettings } = require('./routes');
   const id = '4111484000000000002';

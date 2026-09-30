@@ -155,7 +155,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.56 · 2026-09-30";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.57 · 2026-09-30";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -612,7 +612,9 @@
       const jt=(R.labor&&R.labor.job_type)||labDefaultType(x.reference_rates);
       if(!(R.labor&&R.labor.job_type) && jt) x=await labFetch(R, jt);
       const R2=loadResult();
-      R2.labor={ job_type:jt, sig:labSig(R2), fetched:new Date().toISOString(), edited:false, server:labSnapshot(x),
+      // Keep the ids the last approve wrote: without them a re-approve would add rows, not replace.
+      const written=arr(R2.labor&&R2.labor.written);
+      R2.labor={ job_type:jt, sig:labSig(R2), fetched:new Date().toISOString(), edited:false, server:labSnapshot(x), written:written,
         components:arr(x.components).map(function(c){
           return { name:c.name, units:c.units, tons:c.tons, held:false, missing:arr(c.missing),
             items:arr(c.items).map(function(i){ return Object.assign({},i,{auto:i.hours}); }) };
@@ -2728,6 +2730,22 @@
             fit=await fr.json();
           }
         }catch(e){ console.error("[commit-fittings]",e); }
+        // Labor hours onto the project, one record per component. Best-effort like the fittings.
+        // The ids come back and are kept, so approving again replaces THESE rows and no others.
+        let lab=null;
+        try{
+          const L=R.labor;
+          if(L && arr(L.components).length && params.project_id){
+            c.innerHTML='<span class="spin"></span>Putting the labor hours on the project…';
+            const lr=await fetch(RAILWAY_URL+"/api/takeoff/commit-labor",{method:"POST",headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({project_id:params.project_id, manufacturer_id:params.manufacturer_id,
+                prior_ids:arr(L.written).map(function(w){ return w.id; }),
+                components:L.components.map(function(x){ return {name:x.name, items:arr(x.items).map(function(i){ return {bucket:i.bucket,hours:i.hours}; })}; })})});
+            lab=await lr.json();
+            if(lab&&lab.ok){ const R3=loadResult(); if(R3.labor){ R3.labor.written=arr(lab.written); saveResult(R3); } }
+          }
+        }catch(e){ console.error("[commit-labor]",e); lab={ok:false,error:e.message}; }
+        window._LAB_COMMIT=lab;
         if(Z.REVIEW_PAGE){
           c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks,att,fit);
           const url=Z.REVIEW_PAGE+"?import_id="+encodeURIComponent(recId||"")+"&project_id="+encodeURIComponent(params.project_id)+"&client_id="+encodeURIComponent(params.manufacturer_id||"");
@@ -2788,9 +2806,18 @@
         return li+'</li>';
       })()+
       (function(){
-        const L=loadResult().labor;
+        const L=loadResult().labor, lab=window._LAB_COMMIT;
         if(!L||!arr(L.components).length) return '<li><b>Labor</b> → <span class="src">no hours on this take-off</span></li>';
-        return '<li><b>Labor</b> → '+labFmt(labJob(L),1)+' hrs on screen, <b>not written to the project yet</b> <span class="src">(next build step)</span></li>';
+        if(!lab) return '<li><b>Labor</b> → '+labFmt(labJob(L),1)+' hrs <span class="src">(written on approve for a real project)</span></li>';
+        if(lab.ok===false) return '<li><b>Labor</b> → <span style="color:var(--red)">could not be written: '+esc(lab.error||'')+'</span></li>';
+        let li='<li><b>Labor</b> → '+labFmt(lab.total_hours,1)+' hrs on '+arr(lab.written).length+' component'+(arr(lab.written).length===1?'':'s')+
+          (lab.replaced?' <span class="src">(replaced the '+lab.replaced+' row'+(lab.replaced===1?'':'s')+' the last approve wrote)</span>':'');
+        // A rate the rates report does not show stood in at the average — say which, so it gets fixed.
+        if(arr(lab.rates_estimated).length) li+='<div class="src" style="margin-left:14px;color:var(--amber,#b26b00)">'+
+          esc(arr(lab.rates_estimated).join(', '))+' rate'+(lab.rates_estimated.length===1?'':'s')+' not visible in the shop\'s rates report — priced at the average of the others. Add those columns to All_Manufacture_Labor_Rates.</div>';
+        const bad=arr(lab.skipped).concat(arr(lab.failed));
+        if(bad.length) li+='<div class="src" style="margin-left:14px">'+bad.slice(0,6).map(function(b){ return '• '+esc(b.what)+' — '+esc(b.why); }).join('<br>')+(bad.length>6?'<br>…':'')+'</div>';
+        return li+'</li>';
       })()+
       '<li><b>Buyout</b> → outsource / RFQ subform <span class="src">(WIRE)</span></li>'+
       '<li><b>Scope of Work</b> → project record <span class="src">(WIRE: Save_Scope_Of_Work)</span></li>'+
