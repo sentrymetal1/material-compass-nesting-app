@@ -3731,6 +3731,8 @@ app.patch('/api/standalone/runs/:id/status', async (req, res) => {
 require('./outlook').registerOutlookRoutes(app, { axios, getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Quote Triage poller (Step 4): GET /api/triage/poll ----
 filestore.registerFileRoutes(app);
+// ---- Labour: shared standards library + each shop's own setup (Railway volume, no Zoho calls) ----
+require('./labor/routes').registerLaborRoutes(app);
 // ---- Project purge (the delete cascade, behind a preview + typed confirm) ----
 require('./purge').registerPurgeRoutes(app, { getAccessToken, creatorApiBase, zohoHeaders });
 // ---- Fitting index: every real fitting from the two detail tables, searchable ----

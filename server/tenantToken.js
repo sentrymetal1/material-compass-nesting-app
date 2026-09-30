@@ -97,6 +97,7 @@ const TENANT_ROUTES = [
   /^\/api\/takeoff$/, /^\/api\/takeoff\/(revise|chat|index|ask|commit|commit-fittings|save|saved\/|attach-drawings|learn|project-scope|bom-preview|account\/|project-types|fitting-resolve|fitting-add)/,
   /^\/api\/project\//, /^\/api\/standalone\//, /^\/api\/bom-lookups\/(components|drawings)$/,
   /^\/api\/match-suggestions$/, /^\/api\/fittings\/resolve-row$/, /^\/api\/supplier\/me/,
+  /^\/api\/labor\/(shop|weld-time)$/,
 ];
 
 // What the report shows: per route, how requests would have fared under enforce.

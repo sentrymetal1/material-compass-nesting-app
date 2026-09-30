@@ -1,0 +1,67 @@
+// Run: node --test server/labor/shop.test.js
+const test = require('node:test');
+const assert = require('node:assert');
+const os = require('os');
+const path = require('path');
+const fs = require('fs');
+
+// Keep the test's shop files out of the real store.
+process.env.FILE_STORE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'labor-test-'));
+
+const { weldHoursPerFt, deposition, operatingFactor, sentryMigDeposition, filletLbPerFt } = require('./weldTime');
+const { catalog } = require('./components');
+const shop = require('./shop');
+
+test('fillet weld metal: 1/4" is 0.106 lb/ft of steel', () => {
+  assert.ok(Math.abs(filletLbPerFt(0.25) - 0.1063) < 0.001);
+});
+
+test('SMAW deposition follows the 1962 chart (0.1.6 p.14)', () => {
+  const d = deposition({ weld_process: 'SMAW', smaw_amps: 202 });
+  assert.ok(Math.abs(d.value - 4.30) < 0.05, 'chart reads 4.30 lb/hr at 202 A, got ' + d.value);
+  assert.ok(deposition({ weld_process: 'SMAW' }).missing, 'stick without amperage asks the shop');
+});
+
+test('MIG defaults reproduce Sentry: 1/4" fillet at 6 in/min, applied 0.0714 hr/ft', () => {
+  assert.ok(Math.abs(sentryMigDeposition() - 3.19) < 0.02);
+  const of = operatingFactor({});
+  assert.ok(of.value > 0.4 && of.value < 0.5, 'about 47%: ' + of.value);
+  const w = weldHoursPerFt({ kind: 'fillet', size: 0.25 }, {});
+  assert.ok(Math.abs(w.hours_per_ft - 0.0714) < 0.001, 'closes the loop on the 1997 rate: ' + w.hours_per_ft);
+});
+
+test('shop numbers win, position slows it down', () => {
+  const mine = weldHoursPerFt({ kind: 'fillet', size: 0.25 }, { deposition_lb_hr: 6, operating_factor: 0.3 });
+  assert.strictEqual(mine.source, 'yours');
+  assert.ok(Math.abs(mine.hours_per_ft - 0.1063 / 6 / 0.3) < 0.001);
+  const up = weldHoursPerFt({ kind: 'fillet', size: 0.25, position: 'vertical' }, {});
+  assert.ok(up.hours_per_ft > weldHoursPerFt({ kind: 'fillet', size: 0.25 }, {}).hours_per_ft);
+});
+
+test('standard components: handrail from the library, treads ask the shop', () => {
+  const c = Object.fromEntries(catalog({}).map((x) => [x.key, x]));
+  assert.ok(Math.abs(c.handrail_pipe_2.library - 0.36) < 0.001);
+  assert.ok(Math.abs(c.handrail_pipe_2_kick.library - 0.54) < 0.001);
+  assert.ok(c.handrail_pipe_3.library > 0.36 && c.handrail_pipe_3.library < 0.54);
+  assert.strictEqual(c.tread.source, 'missing');
+  assert.strictEqual(catalog({ tread: 0.75 }).find((x) => x.key === 'tread').source, 'yours');
+});
+
+test('shop profile: saves, cleans, never stores a zero, rates by type', () => {
+  const saved = shop.save('4111484000000000001', {
+    settings: { weld_process: 'SMAW', smaw_amps: 175, operating_factor: 7 },
+    rates: { tread: 0.8, handrail_pipe_2: 0, bogus: 3 },
+    reference_jobs: [
+      { type: 'skid_frame', name: 'Keller 40778', tons: 11, hours: 1129 },
+      { type: 'skid_frame', name: 'Pipe support skids 40785', tons: 3, hours: 290.75 },
+      { type: 'skid_frame', name: 'no hours', tons: 2 },
+    ],
+  });
+  assert.strictEqual(saved.settings.operating_factor, null, 'a factor over 1 is dropped');
+  assert.deepStrictEqual(saved.rates, { tread: 0.8 }, 'zero and unknown keys are dropped');
+  assert.strictEqual(saved.reference_jobs.length, 2);
+  const r = shop.referenceRates(shop.load('4111484000000000001')).skid_frame;
+  assert.strictEqual(r.jobs, 2);
+  assert.ok(Math.abs(r.hr_per_ton - (1129 + 290.75) / 14) < 0.1);
+  assert.throws(() => shop.load('../../etc'), /record id/);
+});
