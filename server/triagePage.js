@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-09-09-1';
+const BUILD_TAG = 'triage-ui-2026-09-30-1';
 
 // The narrated walkthrough of this page. Linked rather than embedded: this page
 // is itself inside an iframe on the Zoho dashboard and a nested iframe with sound
@@ -110,6 +110,9 @@ function renderTriagePage() {
   .btn.project{background:var(--good);border-color:var(--good);color:#fff}
   .btn.project:hover{background:#166a2e}
   .btn.skip:hover{background:#fdecea;border-color:#f1c4bd;color:var(--soon)}
+  .btn.reopen:hover{background:#eef3fa;border-color:#c9d8ec;color:var(--mc-blue)}
+  .btn.remove{border:0;background:transparent;color:#9aa4b0;font-weight:500;font-size:12.5px;padding:8px 6px}
+  .btn.remove:hover{background:#fdecea;color:var(--soon)}
   .btn.link{margin-left:auto;border:0;background:transparent;color:var(--mc-blue);text-decoration:none}
   .btn[disabled]{opacity:.6;cursor:default}
   .state{text-align:center;color:var(--muted);padding:40px;font-size:14px}
@@ -172,7 +175,7 @@ function renderTriagePage() {
   </div>
   <div class="sub">Potential quotes pulled from your inbox. Decide <b>Quote</b> or <b>Skip</b> on each.</div>
   <div class="steps">
-    <div class="step"><b><span class="n">1</span>Decide</b>Quote it or skip it. Quoting keeps it on your list; skipping files it under Declined, never deletes it.</div>
+    <div class="step"><b><span class="n">1</span>Decide</b>Quote it or skip it. Skipping files it under Declined, where you can reopen it. You can still skip one you were quoting. 🗑 Remove takes it off every tab for good.</div>
     <div class="step"><b><span class="n">2</span>Create the project</b>On the Quoting tab. The name, bid date and client are filled in for you — press Submit on the form that opens.</div>
     <div class="step"><b><span class="n">3</span>Run the take-off</b>From the project page. Any drawings attached here open with it already loaded. That is the step that builds the bill of material.</div>
   </div>
@@ -326,6 +329,8 @@ function renderTriagePage() {
     var src = o.source ? '<span>via '+esc(o.source)+'</span>' : '';
     var link = o.web_link ? '<a class="btn link" href="'+esc(o.web_link)+'" target="_blank">📧 Open email →</a>' : '';
     var pct = Math.round((Number(o.confidence)||0)*100);
+    // Remove takes it off every tab for good (filed as Archived, so the inbox scan never brings it back).
+    var removeBtn = '<button class="btn remove" onclick="removeOpp(this)" title="Remove from every tab. It will not come back from the inbox.">🗑 Remove</button>';
     return '<div class="card" data-id="'+esc(o.id)+'" style="--accent:'+accent(o.confidence)+'">'
       + '<div class="row1"><div>'
       + '<p class="proj">'+esc(o.project||'(untitled project)')+'</p>'
@@ -340,12 +345,15 @@ function renderTriagePage() {
       + (status==='New' ? '<div class="actions">'
           + '<button class="btn quote" onclick="decide(this,\\'quote\\')">✓ Quote</button>'
           + '<button class="btn skip" onclick="decide(this,\\'skip\\')">✗ Skip</button>'
-          + link + '</div>'
+          + link + removeBtn + '</div>'
         : status==='Quoting' ? '<div class="actions">'
           + '<button class="btn project" onclick="createProject(this)">＋ Create Project</button>'
-          + link + '</div>'
+          + '<button class="btn skip" onclick="decide(this,\\'skip\\')" title="Not quoting this after all — moves it to Declined, where you can reopen it">✗ Skip</button>'
+          + link + removeBtn + '</div>'
           + '<div class="nextup">'+esc(nextStepText(o))+'</div>'
-        : '<div class="actions">'+link+'</div>')
+        : '<div class="actions">'
+          + '<button class="btn reopen" onclick="decide(this,\\'reopen\\')" title="Put it back on the New tab">↺ Reopen</button>'
+          + link + removeBtn + '</div>')
       + '</div>';
   }
   function render(){
@@ -418,10 +426,19 @@ function renderTriagePage() {
           notify('Quoting. Here it is on the Quoting tab — create the project from this card when you are ready.','good');
         } else {
           setTimeout(render,260);
-          notify('Skipped. It is on the Declined tab, not deleted.','good');
+          notify(decision==='skip' ? 'Skipped. It is on the Declined tab — Reopen it there if you change your mind.'
+               : decision==='reopen' ? 'Reopened. It is back on the New tab.'
+               : 'Removed. It will not come back from the inbox.','good');
         }
       })
       .catch(function(e){ notify('Could not save that decision: '+e,'bad'); });
+  };
+  // Remove is the one decision with no undo on this page, so it asks first.
+  window.removeOpp=function(btn){
+    var c=btn.closest('.card');
+    var name=(c.querySelector('.proj')||{}).textContent||'this opportunity';
+    askConfirm('Remove "'+name+'" from your list?\\n\\nIt leaves every tab and will not come back from the inbox. '
+      + 'A project already created from it is not touched.', function(){ decide(btn,'remove'); });
   };
   // ---- Manual intake -------------------------------------------------------
   // Files are read in the browser and posted as base64. Nothing is stored server

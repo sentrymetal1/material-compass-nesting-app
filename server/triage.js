@@ -677,11 +677,20 @@ function registerTriageRoutes(app, deps) {
     return result;
   }
 
+  // Zoho refuses with HTTP 200 and a code in the body. Unchecked, a refused Quote/Skip/Remove
+  // reported success while the row stayed where it was. Throw instead, so the callers' retry
+  // (without the date) runs and a real refusal reaches the page.
   async function patchOpportunity(id, fields) {
     const token = await getAccessToken();
     const base = creatorApiBase();
-    await axios.patch(base + '/report/' + OPP_REPORT + '/' + id, { data: fields },
+    const r = await axios.patch(base + '/report/' + OPP_REPORT + '/' + id, { data: fields },
       { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    throwIfQuota(r);
+    const body = r.data || {};
+    if (body.code !== undefined && body.code !== 3000) {
+      throw new Error('Zoho refused the change (code ' + body.code + '): ' +
+        ([].concat(body.error || [], body.message || []).filter(Boolean).join('; ') || JSON.stringify(body).slice(0, 200)));
+    }
   }
 
   async function updateConnection(id, fields) {
@@ -1078,14 +1087,20 @@ function registerTriageRoutes(app, deps) {
     }
   });
 
-  // Quote / Skip decision from the triage page.
+  // Decisions from the triage page. Nothing is ever deleted from Zoho: the poller recognises an
+  // email only by finding its row (Email_Message_ID, across every status), so a deleted row would
+  // come straight back on the next scan. "Remove" therefore files the row as Archived — off every
+  // tab, never resurrected — and "reopen" puts a declined one back on New.
+  //   quote → Quoting · skip → Decline · remove → Archived · reopen → New
+  const DECISION_STATUS = { quote: 'Quoting', skip: 'Decline', remove: 'Archived', reopen: 'New' };
+
   app.post('/api/triage/decision', async (req, res) => {
     try {
       const { id, decision } = req.body || {};
-      if (!id || (decision !== 'quote' && decision !== 'skip')) {
-        return res.status(400).json({ ok: false, error: 'id and decision (quote|skip) required' });
+      const status = DECISION_STATUS[decision];
+      if (!id || !status) {
+        return res.status(400).json({ ok: false, error: 'id and decision (quote|skip|remove|reopen) required' });
       }
-      const status = decision === 'quote' ? 'Quoting' : 'Decline';
       try { await patchOpportunity(id, { Status: status, Decision_Date: fmtDate(new Date().toISOString()) }); }
       catch (e) { await patchOpportunity(id, { Status: status }); } // retry without date on format reject
       res.json({ ok: true, id, status });
@@ -1224,13 +1239,13 @@ function registerTriageRoutes(app, deps) {
   app.post('/api/triage/decision/bulk', async (req, res) => {
     try {
       const { ids, decision } = req.body || {};
-      if (!Array.isArray(ids) || !ids.length || (decision !== 'quote' && decision !== 'skip')) {
-        return res.status(400).json({ ok: false, error: 'ids[] and decision (quote|skip) required' });
+      const status = DECISION_STATUS[decision];
+      if (!Array.isArray(ids) || !ids.length || !status) {
+        return res.status(400).json({ ok: false, error: 'ids[] and decision (quote|skip|remove|reopen) required' });
       }
       if (ids.length > 500) {
         return res.status(400).json({ ok: false, error: 'refusing to patch more than 500 rows in one call' });
       }
-      const status = decision === 'quote' ? 'Quoting' : 'Decline';
       const today = fmtDate(new Date().toISOString());
       const done = [], failed = [];
       for (const id of ids) {
