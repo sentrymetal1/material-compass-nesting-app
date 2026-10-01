@@ -135,11 +135,12 @@ function registerLaborCommit(app, deps) {
       fetchAllZohoPages('/report/All_Project_Labor_Details?criteria=' + crit('(Project_LU==' + projectId + ')')),
       fetchAllZohoPages('/report/Project_Quote_Labor_Totals_Report?criteria=' + crit('(Project_ID_Number==' + projectId + ')')),
     ]);
-    // Project_Bi_Directional_Lookup is what puts an externally written row into the project form's
-    // subform (the Labor Totals bar) — not visible in the report, accepted on PATCH 2026-09-30.
+    // This form has NO bi-directional field (checked in the form builder 2026-09-30) — its one project
+    // link is MCP_Customer_Project_Form, bidirectional OFF. Zoho silently ignores unknown fields on
+    // PATCH, so "accepted" proved nothing. Until the link is made bidirectional, a row written here
+    // feeds the header but not the project's Labor Total Take-Off subform (the bottom bar).
     const data = Object.assign(projectTotals(rows), {
-      Project_ID_Number: String(projectId), MCP_Customer_Project_Form: String(projectId),
-      Project_Bi_Directional_Lookup: String(projectId), Customer_Entry_Form: String(mfg) });
+      Project_ID_Number: String(projectId), MCP_Customer_Project_Form: String(projectId), Customer_Entry_Form: String(mfg) });
     const check = (r) => {
       const body = r.data || {};
       if (body.code !== 3000) throw new Error('Zoho refused the labor totals (code ' + body.code + '): ' + (body.message || JSON.stringify(body).slice(0, 200)));
