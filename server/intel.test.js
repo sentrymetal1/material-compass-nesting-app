@@ -8,6 +8,17 @@ const daysAgo = (n) => new Date(NOW - n * 86400000);
 const ME = '111', P = '999';
 const q = (o) => Object.assign({ mfg: ME, material: 'M1', form: 'F', type: 'T', spec: 'S', price: 1, date: daysAgo(10), supplier: 'Sup A', project: 'MCP-1', project_id: 'X', lead: '' }, o);
 
+test('quote history: after the first load, requests never wait for a refresh', async () => {
+  const { staleWhileRefresh } = require('./intel');
+  let n = 0, release;
+  const get = staleWhileRefresh(() => { n++; return n === 1 ? Promise.resolve('v1') : new Promise((r) => { release = () => r('v2'); }); }, 0);
+  assert.strictEqual(await get(), 'v1', 'first call waits for the load');
+  assert.strictEqual(await get(), 'v1', 'stale: returns the old copy at once, refresh started');
+  assert.strictEqual(n, 2);
+  release(); await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual(await get(), 'v2', 'the refreshed copy is served next');
+});
+
 test('Zoho dates parse; junk is null, never "now"', () => {
   assert.strictEqual(parseDate('Sep 07,2026 14:42:52').getMonth(), 8);
   assert.strictEqual(parseDate('Sep 06,2026').getDate(), 6);

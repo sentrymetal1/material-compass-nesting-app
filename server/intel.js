@@ -213,9 +213,33 @@ function buildIntel({ projectId, myMfg, bom, fittings, quotes, fittingQuotes, no
   };
 }
 
+// Quote history takes ~11 Zoho reads (2,098 rows) and 10–20 s. Served stale-while-refreshing: once
+// loaded, a request NEVER waits for it — an old copy is returned and a fresh one fetched behind it.
+// Only the very first request after a deploy waits. A refresh happens only when someone asks, so an
+// idle server spends nothing.
+function staleWhileRefresh(fetchFn, maxAgeMs) {
+  let value = null, at = 0, inflight = null;
+  const refresh = () => {
+    if (!inflight) inflight = fetchFn().then((v) => { value = v; at = Date.now(); return v; })
+      .finally(() => { inflight = null; });
+    return inflight;
+  };
+  return async () => {
+    if (value === null) return refresh();
+    if (Date.now() - at > maxAgeMs) refresh().catch((e) => console.error('[intel] background refresh failed:', e.message));
+    return value;
+  };
+}
+
 function registerIntel(app, deps) {
   const { fetchAllZohoPages, cachedLookup, projectHeader } = deps;
   const enc = (s) => encodeURIComponent(s);
+  const structuralQuotes = staleWhileRefresh(async () =>
+    (await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + enc('(Price_Per_Lb > 0)'))).map(normQuote), 30 * 60 * 1000);
+  const fittingQuoteRows = staleWhileRefresh(async () =>
+    (await fetchAllZohoPages('/report/RFQs_Sent_Fittings_Report')).map(normFittingQuote), 30 * 60 * 1000);
+  // Deliberately NOT warmed at start-up: that would spend ~13 Zoho reads per instance on every deploy
+  // against the 1,000/day allowance. The first panel opened after a deploy waits; nobody after it does.
 
   app.get('/api/intel/project/:id', async (req, res) => {
     try {
@@ -229,11 +253,9 @@ function registerIntel(app, deps) {
           fetchAllZohoPages('/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=' + enc('(MCP_Customer_Project_Form==' + pid + ')'))),
         cachedLookup('intel:fit:' + pid, 2 * 60 * 1000, () =>
           fetchAllZohoPages('/report/Project_BOM_Fittings_Quote_Form_Report?criteria=' + enc('(MCP_Customer_Project_Form==' + pid + ')'))),
-        // Every shop's priced structural quotes, trimmed, shared by every project for 30 min.
-        cachedLookup('intel:rfq-structural', 30 * 60 * 1000, async () =>
-          (await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + enc('(Price_Per_Lb > 0)'))).map(normQuote)),
-        cachedLookup('intel:rfq-fittings', 30 * 60 * 1000, async () =>
-          (await fetchAllZohoPages('/report/RFQs_Sent_Fittings_Report')).map(normFittingQuote)),
+        // Every shop's priced structural quotes, trimmed, shared by every project.
+        structuralQuotes(),
+        fittingQuoteRows(),
       ]);
       const out = buildIntel({ projectId: pid, myMfg, bom, fittings, quotes, fittingQuotes });
       res.json(Object.assign({ ok: true, project }, out));
@@ -245,4 +267,4 @@ function registerIntel(app, deps) {
   });
 }
 
-module.exports = { registerIntel, buildIntel, normQuote, normFittingQuote, stats, industry, parseDate, MIN_SHOPS, ALERT_PCT };
+module.exports = { registerIntel, buildIntel, staleWhileRefresh, normQuote, normFittingQuote, stats, industry, parseDate, MIN_SHOPS, ALERT_PCT };
