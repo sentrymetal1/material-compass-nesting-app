@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Material Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
+<!--
+  Material Intelligence V3. Opens on the WHOLE project: every BOM material and fitting with what
+  this shop has paid before, the estimate it implies, trends and alerts. Tap a row for its quotes.
+  SERVED FROM server/intel-widget/ at /intel/ (this file is the source of truth; the GitHub Pages
+  MaterialIntelV3.html is the old copy). The pop-out shows this address, so it must be ours.
+  Data: ONE call to the Material Compass server (/api/intel/project/:id) — no per-material Zoho
+  queries, no 3-second polling. Works inside the Zoho panel (project_id from the widget params)
+  and standalone (?project_id= in the URL), which is what "Expand" opens.
+  Industry figures are averages from 3+ other shops only — never a company, supplier or project.
+-->
+<style>
+:root{
+  --ink:#1a1a1a; --mut:#6b7280; --faint:#9ca3af; --line:#eceef1; --bg:#fff; --soft:#f7f8fa;
+  --up:#dc2626; --upbg:#fef2f2; --down:#059669; --downbg:#ecfdf5; --flat:#2563eb; --flatbg:#eff6ff;
+  --warn:#b45309; --warnbg:#fffbeb; --blue:#5F94CE;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:12px}
+.mono{font-family:'JetBrains Mono',monospace}
+.hdr{background:var(--ink);color:#fff;padding:11px 12px 10px;position:sticky;top:0;z-index:5}
+.hdr .eb{font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;opacity:.6;display:flex;justify-content:space-between;align-items:center}
+.hdr .eb button{font:inherit;font-size:9px;letter-spacing:.08em;color:#fff;background:rgba(255,255,255,.14);border:0;border-radius:4px;padding:3px 7px;cursor:pointer;margin-left:4px}
+.hdr .eb button:hover{background:rgba(255,255,255,.28)}
+.hdr .ttl{font-size:13px;font-weight:700;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tabs{display:flex;border-bottom:1px solid var(--line);position:sticky;top:52px;background:#fff;z-index:4}
+.tab{flex:1;padding:8px 4px;text-align:center;font-size:11px;font-weight:600;color:#888;cursor:pointer;border-bottom:2px solid transparent}
+.tab.on{color:var(--ink);border-bottom-color:var(--ink)}
+.body{padding:10px 10px 30px}
+.subtabs{display:flex;gap:4px;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:3px;margin-bottom:10px}
+.subtabs button{flex:1;font:inherit;font-size:11px;font-weight:600;color:var(--mut);background:none;border:0;border-radius:6px;padding:6px 4px;cursor:pointer}
+.subtabs button span{font-size:10px;font-weight:700;color:var(--faint);margin-left:3px}
+.subtabs button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.subtabs button.on span{color:var(--blue)}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.kpi{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+.kpi .l{font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint)}
+.kpi .v{font-size:15px;font-weight:700;margin-top:2px}
+.kpi .s{font-size:10px;color:var(--mut);margin-top:1px}
+.alert{border-radius:7px;padding:6px 9px;font-size:11px;font-weight:600;margin-bottom:5px;display:flex;gap:6px;align-items:flex-start}
+.alert.up{background:var(--upbg);color:var(--up)} .alert.down{background:var(--downbg);color:var(--down)}
+.sec{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin:12px 0 5px;display:flex;justify-content:space-between}
+.row{border:1px solid var(--line);border-radius:8px;padding:7px 9px;margin-bottom:5px;cursor:pointer;transition:.12s}
+.row:hover{border-color:#cbd5e1;background:#fafbfc}
+.row .t{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.row .nm{font-size:11.5px;font-weight:600;line-height:1.3}
+.row .nm .k{display:block;font-weight:500;color:var(--mut);font-size:10.5px}
+.row .pr{text-align:right;white-space:nowrap}
+.row .pr .p{font-size:12.5px;font-weight:700}
+.row .meta{font-size:10.5px;color:var(--mut);margin-top:3px;display:flex;flex-wrap:wrap;gap:3px 8px}
+.tag{display:inline-block;font-size:9.5px;font-weight:700;border-radius:4px;padding:1px 5px;letter-spacing:.02em}
+.tag.sim{background:#f3f4f6;color:#6b7280} .tag.none{background:var(--warnbg);color:var(--warn)} .tag.mkt{background:var(--flatbg);color:var(--flat)}
+.arr{font-size:10.5px;font-weight:700;margin-left:3px}
+.arr.up{color:var(--up)} .arr.down{color:var(--down)} .arr.flat{color:var(--flat)}
+.note{font-size:10.5px;color:var(--mut);line-height:1.45;background:var(--soft);border-radius:7px;padding:7px 9px;margin:6px 0}
+.back{font:inherit;font-size:11px;font-weight:600;color:var(--blue);background:none;border:0;cursor:pointer;padding:2px 0 8px}
+.dt{font-size:13px;font-weight:700;line-height:1.3;margin-bottom:2px}
+.ds{font-size:10.5px;color:var(--mut);margin-bottom:8px}
+.grid4{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.box{border:1px solid var(--line);border-radius:7px;padding:6px 8px;background:var(--soft)}
+.box .l{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
+.box .v{font-size:13px;font-weight:700;margin-top:1px}
+.box.hl{background:#eff6ff;border-color:#bfdbfe}
+table{width:100%;border-collapse:collapse}
+th{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:700;text-align:left;padding:4px 3px;border-bottom:1px solid var(--line)}
+td{font-size:11px;padding:5px 3px;border-bottom:1px solid #f4f5f7;vertical-align:top}
+td.r,th.r{text-align:right}
+tr.this td{background:#f0f9ff}
+.spark{width:100%;height:46px;display:block;margin:4px 0 2px}
+.state{color:var(--faint);text-align:center;padding:36px 12px;font-size:12px;line-height:1.5}
+.err{color:var(--up);background:var(--upbg);border-radius:7px;padding:9px;font-size:11px;margin:10px}
+.foot{position:fixed;bottom:4px;right:6px;font-size:9px;color:#c4c9d0}
+/* The layout follows the window: compact in the ~300px panel, roomier as the pop-out grows. */
+@media (min-width:560px){
+  .kpis{grid-template-columns:repeat(4,1fr)}
+  .body{padding:14px 16px 40px}
+  .hdr{padding:13px 16px}
+  .tabs{top:56px}
+}
+@media (min-width:900px){ .body{max-width:1100px;margin:0 auto} }
+</style>
+</head>
+<body>
+<div class="hdr"><div class="eb"><span>Material Intelligence</span><span><button id="refreshBtn" title="Reload from the project">↻</button><button id="expandBtn" title="Open in its own window you can move beside the quote and resize — it remembers where you put it">Pop out ⧉</button></span></div>
+  <div class="ttl" id="ttl">Loading project…</div></div>
+<div class="tabs"><div class="tab on" data-v="project">This project</div><div class="tab" data-v="industry">Industry</div></div>
+<div class="body" id="body"><div class="state">Loading material intelligence…</div></div>
+<div class="foot" id="foot"></div>
+
+<script>
+var BUILD = 'mi-v3.3 · 2026-10-01';
+// Served by the Material Compass server itself (/intel/), so the API is same-origin — and stays so
+// under a custom domain. Only an old GitHub Pages copy needs the absolute host.
+var API = /github\.io$/.test(location.hostname) ? 'https://material-compass-nesting-app-production.up.railway.app' : '';
+var PID = '', DATA = null, VIEW = 'project', DETAIL = null, lastTrigger = '';
+var qs = new URLSearchParams(location.search);
+document.getElementById('foot').textContent = BUILD;
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function money(n){ return n == null ? '—' : '$' + Number(n).toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:0}); }
+function perLb(n){ return n == null ? '—' : '$' + Number(n).toFixed(n < 10 ? 3 : 2); }
+function lb(n){ return n == null ? '—' : Number(n).toLocaleString(undefined, {maximumFractionDigits:0}) + ' lb'; }
+function dt(s){ if (!s) return '—'; var d = new Date(s + 'T12:00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'2-digit'}); }
+function arrow(trend, pct){
+  if (trend === 'up') return '<span class="arr up">▲' + (pct != null ? Math.abs(pct) + '%' : '') + '</span>';
+  if (trend === 'down') return '<span class="arr down">▼' + (pct != null ? Math.abs(pct) + '%' : '') + '</span>';
+  if (trend === 'flat') return '<span class="arr flat">→</span>';
+  return '';
+}
+
+// ---- data -----------------------------------------------------------------------------------
+function load(){
+  if (!PID){ document.getElementById('body').innerHTML = '<div class="state">Open this from a project — it needs the project id.</div>'; return; }
+  document.getElementById('body').innerHTML = '<div class="state">Loading material intelligence…</div>';
+  fetch(API + '/api/intel/project/' + encodeURIComponent(PID))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || !d.ok){ document.getElementById('body').innerHTML = '<div class="err">' + esc((d && d.error) || 'Could not load.') + '</div>'; return; }
+      DATA = d;
+      var p = d.project || {};
+      document.getElementById('ttl').textContent = (p.number ? p.number + ' · ' : '') + (p.name || 'Project');
+      document.getElementById('ttl').title = [p.number, p.name, p.client].filter(Boolean).join(' · ');
+      render();
+    })
+    .catch(function(e){ document.getElementById('body').innerHTML = '<div class="err">Could not reach Material Compass: ' + esc(e.message || e) + '</div>'; });
+}
+
+// ---- views ----------------------------------------------------------------------------------
+function render(){
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.toggle('on', t.getAttribute('data-v') === VIEW); });
+  var b = document.getElementById('body');
+  if (!DATA) return;
+  if (DETAIL) { b.innerHTML = detailHtml(DETAIL); return; }
+  b.innerHTML = VIEW === 'industry' ? industryHtml() : projectHtml();
+  window.scrollTo(0, 0);
+}
+
+function kpis(){
+  var s = DATA.summary || {};
+  var tr = s.trend_change_pct;
+  return '<div class="kpis">'
+    + '<div class="kpi"><div class="l">BOM weight</div><div class="v mono">' + lb(s.bom_weight) + '</div><div class="s">' + s.materials + ' materials</div></div>'
+    + '<div class="kpi"><div class="l">Est. material</div><div class="v mono">' + money(s.est_material_cost) + '</div><div class="s">' + (s.est_avg_per_lb ? perLb(s.est_avg_per_lb) + '/lb avg' : 'no pricing yet') + '</div></div>'
+    + '<div class="kpi"><div class="l">Priced</div><div class="v">' + s.priced + ' / ' + s.materials + '</div><div class="s">' + (s.unpriced ? s.unpriced + ' with no history' : 'from your quotes') + '</div></div>'
+    + '<div class="kpi"><div class="l">Your 30-day trend</div><div class="v">' + (tr == null ? '—' : (tr > 0 ? '▲ ' : tr < 0 ? '▼ ' : '→ ') + Math.abs(tr) + '%') + '</div><div class="s">weighted by this job</div></div>'
+    + '</div>';
+}
+
+function alertsHtml(scope){
+  var a = (DATA.alerts || []).filter(function(x){ return !scope || x.scope === scope; });
+  return a.map(function(x){ return '<div class="alert ' + x.direction + '">' + (x.direction === 'up' ? '▲' : '▼') + ' <span>' + esc(x.text) + '</span></div>'; }).join('');
+}
+
+function structRow(s, i){
+  var m = s.mine, tag = '';
+  if (s.match === 'similar') tag = ' <span class="tag sim" title="No quote for this exact size — priced from the same form, type and spec">similar</span>';
+  if (s.match === 'none') tag = s.industry && s.industry.available ? ' <span class="tag mkt">market</span>' : ' <span class="tag none">no history</span>';
+  var price = m ? (m.avg_30d || m.avg) : (s.industry && s.industry.available ? (s.industry.avg_30d || s.industry.avg) : null);
+  return '<div class="row" onclick="openDetail(' + i + ')">'
+    + '<div class="t"><div class="nm">' + esc(s.label) + tag + '</div>'
+    + '<div class="pr"><div class="p mono">' + perLb(price) + (m ? arrow(m.trend, m.change_pct) : '') + '</div></div></div>'
+    + '<div class="meta"><span>' + lb(s.weight) + '</span>'
+    + (s.est_cost ? '<span>≈ ' + money(s.est_cost) + '</span>' : '')
+    + (m ? '<span>last ' + perLb(m.last) + ' · ' + dt(m.last_date) + '</span><span>' + m.quotes + ' quote' + (m.quotes === 1 ? '' : 's') + '</span>' : '')
+    + '</div></div>';
+}
+
+function fitRow(f){
+  return '<div class="row" style="cursor:default"><div class="t"><div class="nm">' + esc(f.label) + '<span class="k">' + esc(f.sub) + '</span></div>'
+    + '<div class="pr"><div class="p">×' + f.qty + '</div>' + (f.price ? '<div class="mono" style="font-size:11px">' + perLb(f.price.avg) + ' ea</div>' : '') + '</div></div>'
+    + '<div class="meta">' + (f.quoted ? '<span>quoted ' + f.quoted + '× · last ' + dt(f.last_quoted) + '</span>' + (f.suppliers.length ? '<span>' + esc(f.suppliers.join(', ')) + '</span>' : '')
+      : '<span>not quoted before</span>') + '</div></div>';
+}
+
+// Second row of tabs under "This project": Structural | Fittings, remembered for the session.
+var SUB = (function(){ try { return sessionStorage.getItem('mi_sub') || 'structural'; } catch (e) { return 'structural'; } })();
+window.setSub = function(s){ SUB = s; try { sessionStorage.setItem('mi_sub', s); } catch (e) {} render(); };
+
+function fitKpis(){
+  var ft = DATA.fittings || [];
+  var quoted = ft.filter(function(f){ return f.quoted; }).length;
+  var w = ft.reduce(function(s, f){ return s + (f.weight || 0); }, 0);
+  var last = ft.map(function(f){ return f.last_quoted; }).filter(Boolean).sort().pop();
+  return '<div class="kpis">'
+    + '<div class="kpi"><div class="l">Fitting types</div><div class="v">' + ft.length + '</div><div class="s">' + (DATA.summary.fitting_qty || 0) + ' pieces</div></div>'
+    + '<div class="kpi"><div class="l">Weight</div><div class="v mono">' + lb(w) + '</div><div class="s">all fittings</div></div>'
+    + '<div class="kpi"><div class="l">Quoted before</div><div class="v">' + quoted + ' / ' + ft.length + '</div><div class="s">' + (ft.length - quoted) + ' never quoted</div></div>'
+    + '<div class="kpi"><div class="l">Last quoted</div><div class="v">' + dt(last) + '</div><div class="s">any fitting on this job</div></div>'
+    + '</div>';
+}
+
+function projectHtml(){
+  var st = DATA.structural || [], ft = DATA.fittings || [];
+  var html = '<div class="subtabs">'
+    + '<button class="' + (SUB === 'structural' ? 'on' : '') + '" onclick="setSub(\'structural\')">Structural <span>' + st.length + '</span></button>'
+    + '<button class="' + (SUB === 'fittings' ? 'on' : '') + '" onclick="setSub(\'fittings\')">Fittings <span>' + ft.length + '</span></button></div>';
+  if (SUB === 'fittings') {
+    html += fitKpis();
+    if (DATA.notes && DATA.notes.fittings_price && ft.length) html += '<div class="note">' + esc(DATA.notes.fittings_price) + '</div>';
+    html += '<div class="sec"><span>Fittings</span><span>most pieces first</span></div>';
+    html += ft.length ? ft.map(fitRow).join('') : '<div class="note">No fittings on this project.</div>';
+    return html;
+  }
+  html += alertsHtml() + kpis();
+  html += '<div class="sec"><span>Structural & plate</span><span>by $ impact</span></div>';
+  html += st.length ? st.map(structRow).join('') : '<div class="note">No BOM material on this project yet.</div>';
+  html += '<div class="note">Prices are $/lb from your shop\'s supplier quotes. "similar" means no quote for that exact size — priced from the same form, type and spec. Tap a material for its quote history.</div>';
+  return html;
+}
+
+function industryHtml(){
+  var st = DATA.structural || [];
+  var withData = st.filter(function(s){ return s.industry && s.industry.available; });
+  var html = '<div class="note">' + esc((DATA.notes && DATA.notes.industry) || '') + '</div>' + alertsHtml('industry');
+  if (!withData.length) return html + '<div class="state">Not enough shops have quoted this project\'s materials yet.<br>Market figures appear once 3 or more other shops have.</div>';
+  html += '<table><thead><tr><th>Material</th><th class="r">Market avg</th><th class="r">Last 30 d</th><th class="r">Yours</th></tr></thead><tbody>';
+  withData.forEach(function(s){
+    var i = s.industry, m = s.mine;
+    html += '<tr><td>' + esc(s.label) + '</td><td class="r mono">' + perLb(i.avg) + '</td><td class="r mono">' + perLb(i.avg_30d) + arrow(i.trend, i.change_pct)
+      + '</td><td class="r mono">' + (m ? perLb(m.avg_30d || m.avg) : '—') + '</td></tr>';
+  });
+  return html + '</tbody></table>';
+}
+
+function spark(series){
+  if (!series || series.length < 2) return '';
+  var w = 300, h = 46, pad = 4, ps = series.map(function(x){ return x.p; });
+  var lo = Math.min.apply(null, ps), hi = Math.max.apply(null, ps); if (hi === lo){ hi += .01; lo -= .01; }
+  var pts = series.map(function(x, i){ return [pad + i * (w - 2 * pad) / (series.length - 1), h - pad - (x.p - lo) / (hi - lo) * (h - 2 * pad)]; });
+  var d = pts.map(function(p, i){ return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join(' ');
+  var last = pts[pts.length - 1];
+  return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path d="' + d + '" fill="none" stroke="#1a1a1a" stroke-width="1.6" vector-effect="non-scaling-stroke"/>'
+    + '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="2.6" fill="#5F94CE"/></svg>'
+    + '<div class="ds" style="display:flex;justify-content:space-between"><span>' + dt(series[0].d) + ' · ' + perLb(series[0].p) + '</span><span>' + dt(series[series.length - 1].d) + ' · ' + perLb(series[series.length - 1].p) + '</span></div>';
+}
+
+function detailHtml(s){
+  var m = s.mine, i = s.industry;
+  var html = '<button class="back" onclick="closeDetail()">← All materials</button>'
+    + '<div class="dt">' + esc(s.label) + '</div><div class="ds">' + lb(s.weight) + ' on this job' + (s.est_cost ? ' · ≈ ' + money(s.est_cost) + ' at ' + esc(s.est_basis) : '') + '</div>';
+  if (s.match === 'similar') html += '<div class="note">No quote for this exact size on file — figures below are from the same form, type and spec.</div>';
+  if (!m) {
+    html += '<div class="note">Your shop has no quote history for this material.' + (i && i.available ? ' The market figures below can stand in.' : ' Send it out for quotes to build a reference.') + '</div>';
+  } else {
+    html += '<div class="sec"><span>Your quotes</span><span>' + m.quotes + ' on file</span></div><div class="grid4">'
+      + '<div class="box hl"><div class="l">Last paid</div><div class="v mono">' + perLb(m.last) + '</div></div>'
+      + '<div class="box"><div class="l">Average</div><div class="v mono">' + perLb(m.avg) + '</div></div>'
+      + '<div class="box"><div class="l">Low</div><div class="v mono">' + perLb(m.min) + '</div></div>'
+      + '<div class="box"><div class="l">High</div><div class="v mono">' + perLb(m.max) + '</div></div>'
+      + '<div class="box"><div class="l">Last 30 days</div><div class="v mono">' + (m.avg_30d == null ? '—' : perLb(m.avg_30d)) + '</div></div>'
+      + '<div class="box"><div class="l">30-day change</div><div class="v">' + (m.change_pct == null ? '—' : arrow(m.trend, m.change_pct)) + '</div></div></div>';
+    html += spark(m.series);
+    if (m.previous && m.previous.length) {
+      html += '<div class="sec"><span>Previous quotes</span><span>newest first</span></div><table><thead><tr><th>Date</th><th class="r">$/lb</th><th>Supplier</th><th>Project</th></tr></thead><tbody>';
+      m.previous.forEach(function(p){ html += '<tr class="' + (p.this_project ? 'this' : '') + '"><td>' + dt(p.date) + '</td><td class="r mono">' + perLb(p.price) + '</td><td>' + esc(p.supplier) + '</td><td>' + esc(p.project) + (p.this_project ? ' <span class="tag mkt">this job</span>' : '') + '</td></tr>'; });
+      html += '</tbody></table>';
+    }
+    if (m.suppliers && m.suppliers.length) {
+      html += '<div class="sec"><span>Suppliers</span><span>lowest avg first</span></div><table><thead><tr><th>Supplier</th><th class="r">Avg</th><th class="r">Last</th><th class="r">#</th></tr></thead><tbody>';
+      m.suppliers.forEach(function(x){ html += '<tr><td>' + esc(x.supplier) + '</td><td class="r mono">' + perLb(x.avg) + '</td><td class="r mono">' + perLb(x.last) + '</td><td class="r">' + x.quotes + '</td></tr>'; });
+      html += '</tbody></table>';
+    }
+    if (m.lead_times && m.lead_times.length) html += '<div class="sec"><span>Lead times quoted</span></div><div class="ds">' + m.lead_times.map(function(l){ return esc(l.lead_time) + ' ×' + l.count; }).join(' · ') + '</div>';
+  }
+  html += '<div class="sec"><span>Market</span><span>anonymous</span></div>';
+  html += i && i.available
+    ? '<div class="grid4"><div class="box"><div class="l">Market avg</div><div class="v mono">' + perLb(i.avg) + '</div></div><div class="box"><div class="l">Last 30 days</div><div class="v mono">' + perLb(i.avg_30d) + ' ' + arrow(i.trend, i.change_pct) + '</div></div></div><div class="ds" style="margin-top:4px">' + i.quotes + ' quotes from ' + esc(i.shops) + ' other shops</div>'
+    : '<div class="note">Not enough other shops have quoted this yet (needs 3+). Only averages are ever shown — never a company, supplier or project.</div>';
+  return html;
+}
+
+window.openDetail = function(i){ DETAIL = DATA.structural[i]; SUB = 'structural'; render(); window.scrollTo(0, 0); };
+window.closeDetail = function(){ DETAIL = null; render(); };
+document.querySelectorAll('.tab').forEach(function(t){ t.onclick = function(){ VIEW = t.getAttribute('data-v'); DETAIL = null; render(); }; });
+document.getElementById('refreshBtn').onclick = load;
+// ---- Pop out: its own window, beside the quote ------------------------------------------------
+// A widget cannot draw outside its panel, so a floating panel over the Zoho page is not possible.
+// A real window is: the estimator drags it next to the quote or onto a second screen and sizes it.
+// Size and position are remembered (same origin in the panel and the window, so the panel reads
+// what the window saved). One named window — pressing Pop out again re-uses it.
+var POP_KEY = 'mi_popout_geom';
+function popGeom(){
+  var g = null; try { g = JSON.parse(localStorage.getItem(POP_KEY) || 'null'); } catch (e) {}
+  var w = (g && g.w) || 460, h = (g && g.h) || Math.min(900, (screen.availHeight || 900) - 60);
+  var left = (g && g.x != null) ? g.x : Math.max(0, (screen.availWidth || 1400) - w - 20), top = (g && g.y != null) ? g.y : 40;
+  return 'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=' + top + ',resizable=yes,scrollbars=yes';
+}
+var popWin = null;
+document.getElementById('expandBtn').onclick = function(){
+  var win = window.open(location.origin + location.pathname + '?project_id=' + encodeURIComponent(PID) + '&popout=1', 'mi_popout', popGeom());
+  if (win) { popWin = win; try { win.focus(); } catch (e) {} }
+  else { window.open(location.origin + location.pathname + '?project_id=' + encodeURIComponent(PID) + '&popout=1', '_blank'); }   // pop-up blocked: a tab still works
+};
+if (qs.get('popout') === '1' || qs.get('wide') === '1') {
+  document.getElementById('expandBtn').style.display = 'none';
+  // Remember where the estimator left it: on resize, and every few seconds for moves (there is no move event).
+  var saveGeom = function(){ try { localStorage.setItem(POP_KEY, JSON.stringify({ w: window.outerWidth, h: window.outerHeight, x: window.screenX, y: window.screenY })); } catch (e) {} };
+  window.addEventListener('resize', saveGeom); window.addEventListener('beforeunload', saveGeom); setInterval(saveGeom, 4000);
+}
+
+// ---- "View Intel" on a Purchase Material row still works: it opens that material ------------
+// The old widget polled every 3 s. This checks every 20 s, and only while the panel is visible.
+function pollTrigger(){
+  if (document.hidden || !window.ZOHO || !ZOHO.CREATOR || !ZOHO.CREATOR.API || !PID) return;
+  ZOHO.CREATOR.API.getAllRecords({ appName:'type-formsheet-2-18-21', reportName:'All_Mcp_customer_Projects', criteria:'(ID == ' + PID + ')', page:1, pageSize:1 })
+    .then(function(r){
+      var v = r && r.code === 3000 && r.data && r.data[0] ? (r.data[0].Intel_Trigger || '') : '';
+      if (!v || v === lastTrigger) return;
+      var first = !lastTrigger; lastTrigger = v;
+      if (first || !DATA) return;                // the trigger left from last time is not a new click
+      var t; try { t = JSON.parse(v); } catch (e) { return; }
+      var i = (DATA.structural || []).findIndex(function(s){ return t.material && s.key === String(t.material); });
+      if (i > -1) { VIEW = 'project'; openDetail(i); }
+      // The pop-out runs outside Zoho and cannot see the tick itself — hand it on.
+      if (t.material && popWin && !popWin.closed) { try { popWin.postMessage({ type: 'mi_open', key: String(t.material) }, location.origin); } catch (e) {} }
+    }).catch(function(){});
+}
+// In the pop-out: open the material the panel says was ticked.
+window.addEventListener('message', function(ev){
+  if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'mi_open' || !DATA) return;
+  var i = (DATA.structural || []).findIndex(function(s){ return s.key === ev.data.key; });
+  if (i > -1) { VIEW = 'project'; openDetail(i); try { window.focus(); } catch (e) {} }
+});
+
+// ---- start: project id from the widget params (Zoho) or the URL (standalone / Expand) --------
+function start(id){ PID = String(id || '').trim(); load(); }
+if (qs.get('project_id')) { start(qs.get('project_id')); }
+else if (window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.init) {
+  ZOHO.CREATOR.init().then(function(){
+    var p = {}; try { p = ZOHO.CREATOR.UTIL.getQueryParams() || {}; } catch (e) {}
+    start(p.project_id);
+    try { ZOHO.CREATOR.UI.resize({ width: '100%', height: '100%' }); } catch (e) {}
+    pollTrigger(); setInterval(pollTrigger, 20000);
+  }).catch(function(){ start(''); });
+} else { start(''); }
+</script>
+</body>
+</html>

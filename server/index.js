@@ -80,6 +80,10 @@ app.use('/takeoff', express.static(path.join(__dirname, 'takeoff', 'public')));
 // cut no matter how often it was republished, and one browser blocked the domain
 // outright. Here the URL is ours, needs no account, and updates on push.
 app.use('/howto', express.static(path.join(__dirname, 'howto')));
+// Material Intelligence widget, served from here rather than GitHub Pages: the pop-out window shows
+// its address, and it must read Material Compass, not the sentrymetal1 account (Mark, 2026-10-01).
+// Same origin as /api/intel too, and no Pages cache. The Zoho widget URL points at /intel/.
+app.use('/intel', express.static(path.join(__dirname, 'intel-widget'), { maxAge: '5m' }));
 
 const ZOHO = {
   clientId: process.env.ZOHO_CLIENT_ID,
