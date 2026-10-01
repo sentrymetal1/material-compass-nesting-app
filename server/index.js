@@ -3787,6 +3787,9 @@ const { loadFittingLearning } = require('./fittingLearn').makeFittingLearning({ 
 require('./fittingsCommit').registerFittingsCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages,
   createDetailRow: fittingDetailRows.createDetailRow, buildFittingIndex, loadFittingCatalog: fittingsCatalogData,
   loadFittingLearning });
+// ---- Material Intelligence: the project's material + fittings against quote history ----
+require('./intel').registerIntel(app, { fetchAllZohoPages, cachedLookup,
+  projectHeader: async (pid) => projectHeader(pid, await getAccessToken(), creatorApiBase()) });
 // ---- The take-off's labor hours onto the project (Project_Labor_Details_Form), on approve ----
 require('./labor/laborCommit').registerLaborCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 
