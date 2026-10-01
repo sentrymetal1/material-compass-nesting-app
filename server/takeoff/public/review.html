@@ -27,6 +27,10 @@
   .appbar{max-width:1100px;margin:0 auto 14px;display:flex;align-items:center;gap:10px;padding:2px;}
   .appbar .brand{font-weight:800;font-size:16px;color:var(--blue);letter-spacing:.2px;}
   .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .appbar .projhead{font-size:13px;color:var(--ink);border-left:1px solid var(--line);padding-left:10px;min-width:0;max-width:52%;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .appbar .projhead b{color:#1f3a5f;} .appbar .projhead .sub{color:var(--mut);}
+  .appbar .projhead.wrong{color:var(--red);font-weight:600;white-space:normal;}
   .applybtn{font-size:11px;color:#fff;background:var(--blue);border:0;border-radius:5px;padding:2px 9px;cursor:pointer;margin-left:4px;}
   /* Fittings grid inputs — quiet until touched, so 58 rows don't read as a wall of boxes */
   .fin{font:inherit;font-size:12px;padding:2px 5px;margin:0 3px 2px 0;border:1px solid transparent;
@@ -158,7 +162,7 @@
 </head>
 <body>
 <div id="busy" class="busy"></div>
-<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span id="saveInd" style="font-size:11px;color:var(--mut);margin-left:12px"></span>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span class="projhead" id="projHead"></span><span id="saveInd" style="font-size:11px;color:var(--mut);margin-left:12px"></span>
   <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:auto;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
   <a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a>
   <a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
@@ -171,7 +175,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.59 · 2026-09-30";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.60 · 2026-10-01";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -296,12 +300,25 @@
   const _norm  = (s)=>String(s==null?"":s).toLowerCase().trim().replace(/\s+/g," ");
   const RECROW = (bd,bg)=>'padding:5px 9px;border-left:3px solid '+bd+';background:'+bg+';border-radius:4px;margin:4px 0;font-size:12.5px';
 
+  // Which job this is, in the app bar: MCP number, name, client, due. The hero card shows the name
+  // the AI read off the drawings; this is the project it will be COMMITTED to. A project belonging
+  // to another shop says so in red (a reused window can sit on the wrong one).
+  function showProjectHeader(p){
+    const el=document.getElementById("projHead"); if(!el||!p) return;
+    const wrong=p.manufacture&&params.manufacturer_id&&String(p.manufacture)!==String(params.manufacturer_id);
+    el.className="projhead"+(wrong?" wrong":"");
+    el.title=[p.number,p.name,p.client,p.due?"due "+p.due:""].filter(Boolean).join(" · ");
+    el.innerHTML=wrong
+      ? "⚠ This project belongs to a different shop than the one this page was opened for. Reopen the take-off from the project page."
+      : (p.number?"<b>"+esc(p.number)+"</b> · ":"")+esc(p.name||"(unnamed project)")+
+        (p.client?' <span class="sub">· '+esc(p.client)+'</span>':'')+(p.due?' <span class="sub">· due '+esc(p.due)+'</span>':'');
+  }
   async function fetchProjectScope(){
     if(!params.project_id || loadResult().__demo){ SCOPE_FETCH_DONE=true; return; }
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/"+encodeURIComponent(params.project_id));
       const d=await r.json();
-      if(d&&d.ok){ PROJECT_SCOPE={components:arr(d.components),drawings:arr(d.drawings)}; }
+      if(d&&d.ok){ PROJECT_SCOPE={components:arr(d.components),drawings:arr(d.drawings)}; showProjectHeader(d.project); }
     }catch(e){ /* non-fatal — panel shows a soft notice */ }
     SCOPE_FETCH_DONE=true; render();
   }

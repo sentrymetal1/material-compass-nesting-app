@@ -198,6 +198,32 @@ app.get('/api/takeoff/project-scope/dependents', async (req, res) => {
 // SCOPE RECONCILIATION — the project's ENTERED components + drawings (with IDs), for the
 // take-off's reconciliation panel to compare against what the AI read. Same reads as
 // fetchProjectContext, but returns arrays with IDs instead of a prompt string.
+// Number, name, client, due date and shop of one project, for page headers. One All_Projects read,
+// cached 10 minutes per instance (the header is cosmetic; a stale name for minutes is harmless).
+// Never throws: a header that fails to load must not take the scope with it.
+const _projHeaderCache = new Map();
+async function projectHeader(pid, token, base) {
+  const hit = _projHeaderCache.get(String(pid));
+  if (hit && Date.now() - hit.t < 10 * 60 * 1000) return hit.v;
+  try {
+    const r = await axios.get(base + '/report/All_Projects?criteria=(ID==' + pid + ')&limit=1', { headers: zohoHeaders(token) });
+    const p = r.data && r.data.data && r.data.data[0];
+    if (!p) return null;
+    const m = p.MANUFACTURE;
+    const v = {
+      id: String(pid),
+      number: String(p.Project_Quote_Number || '').trim(),
+      name: String(p.Project_Description || '').trim(),
+      client: String((p.MFG_Client_Form && (p.MFG_Client_Form.Client_Company_Name || p.MFG_Client_Form.zc_display_value)) ||
+                     p['MFG_Client_Form.Client_Company_Name'] || '').trim(),
+      due: String(p.Quote_Due_Date || '').replace(/\s+\d{1,2}:\d{2}.*$/, '').replace(/,(\S)/, ', $1').trim(),
+      manufacture: String((m && (m.ID || m.zc_display_value)) || m || ''),
+    };
+    _projHeaderCache.set(String(pid), { t: Date.now(), v });
+    return v;
+  } catch (e) { return null; }
+}
+
 app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
   try {
     const pid = req.params.project_id;
@@ -255,7 +281,10 @@ app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
 
     // Keep the flat components/drawings arrays (review.html's reconciliation reads them);
     // tree + unassigned_drawings are the new nested view the intake UI pre-fills from.
-    res.json({ ok: true, components: components, drawings: drawings, tree: tree, unassigned_drawings: unassigned });
+    // `project` names the job in the page header — the take-off never said which project it was
+    // working on, and a reused window can sit on the WRONG one (feedback_nesting_stale_project_id).
+    res.json({ ok: true, project: await projectHeader(pid, token, base),
+      components: components, drawings: drawings, tree: tree, unassigned_drawings: unassigned });
   } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
 });
 

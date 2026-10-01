@@ -18,6 +18,11 @@
     .appbar { max-width:var(--w); margin:0 auto 14px; display:flex; align-items:center; gap:10px; }
     .appbar .brand { font-weight:800; font-size:16px; color:var(--blue); letter-spacing:.2px; }
     .appbar .page { font-size:13px; color:#667; border-left:1px solid #e3e6ea; padding-left:10px; }
+    .appbar .projhead { font-size:13px; color:#1f2a37; border-left:1px solid #e3e6ea; padding-left:10px; min-width:0;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .appbar .projhead b { color:#1f3a5f; }
+    .appbar .projhead .sub { color:#667; }
+    .appbar .projhead.wrong { color:#b91c1c; font-weight:600; white-space:normal; }
     .card { max-width:var(--w); margin:0 auto; background:#fff; border:1px solid #e3e6ea;
             border-radius:10px; padding:26px 28px; }
     h1 { font-size:19px; margin:0 0 4px; }
@@ -383,7 +388,7 @@
   </style>
 </head>
 <body>
-  <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off</span></div>
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off</span><span class="projhead" id="projHead"></span></div>
   <div class="card">
     <h1>AI Material Take-off</h1>
     <p class="sub">Upload everything the job comes with (PDF — select several at once): drawings,
@@ -533,7 +538,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.57 (2026-09-20)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.58 (2026-10-01)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -2012,6 +2017,22 @@
     }
     function setScopeStatus(html) { document.getElementById("scopeStatus").innerHTML = html || ""; }
 
+    // Which job this is, in the header: MCP number, name, client, due date. A reused window can sit
+    // on the wrong project, so a project that belongs to another shop says so in red.
+    function showProjectHeader(p) {
+      const el = document.getElementById("projHead");
+      if (!el || !p) return;
+      const e = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const wrong = p.manufacture && params.manufacturer_id && String(p.manufacture) !== String(params.manufacturer_id);
+      el.className = "projhead" + (wrong ? " wrong" : "");
+      el.title = [p.number, p.name, p.client, p.due ? "due " + p.due : ""].filter(Boolean).join(" · ");
+      el.innerHTML = wrong
+        ? "⚠ This project belongs to a different shop than the one this page was opened for. Reopen the take-off from the project page."
+        : (p.number ? "<b>" + e(p.number) + "</b> · " : "") + e(p.name || "(unnamed project)") +
+          (p.client ? ' <span class="sub">· ' + e(p.client) + "</span>" : "") +
+          (p.due ? ' <span class="sub">· due ' + e(p.due) + "</span>" : "");
+    }
+
     // Read the project's Components + Drawings (nested by the drawing's parent component). This is
     // the only source of truth for the pickers — nothing here is typed free-hand.
     async function loadProject() {
@@ -2019,6 +2040,7 @@
       const r = await fetch(RAILWAY_URL + "/api/takeoff/project-scope/" + encodeURIComponent(params.project_id));
       const d = await r.json();
       if (!d || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
+      showProjectHeader(d.project);
       project = {
         components: (Array.isArray(d.tree) ? d.tree : []).map((n) => ({
           id: String(n.component_id), name: String((n && n.component) || "").trim(),
