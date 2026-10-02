@@ -360,6 +360,19 @@
             font-weight:700; letter-spacing:.02em; text-transform:uppercase; background:#eef1f5; color:#5b6675;
             border:1px solid #dde3ea; vertical-align:middle; }
     .dtag.bom { background:#eef7ee; color:#2f6b39; border-color:#cfe6d3; }
+    /* How a file will be READ, shown the moment it lands. A button: the estimator can flip it. */
+    .rtag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:9px; font-size:10px; font-weight:700;
+            letter-spacing:.02em; text-transform:uppercase; vertical-align:middle; cursor:pointer; font-family:inherit;
+            border:1px solid #dde3ea; background:#f4f6f9; color:#5b6675; }
+    .rtag.doc { background:#eef4fd; color:#2c5aa0; border-color:#cddcf3; }
+    .rtag.dwg { background:#f6f2ea; color:#7a5a1c; border-color:#eadfc8; }
+    .rtag.wait { cursor:default; font-style:italic; font-weight:600; text-transform:none; }
+    .rtag:hover:not(.wait) { filter:brightness(.96); }
+    /* Older sheets an addendum replaced — set aside, one click to put back. */
+    .files .aside { margin:6px 0 4px; padding:8px 10px; border-radius:6px; background:#fff8e6; border:1px solid #f1dfb0;
+                    color:#6b4e0e; font-size:12px; line-height:1.45; }
+    .files .aside a { color:#2c5aa0; }
+    .files .asidelist { margin-top:4px; font-size:11.5px; }
 
     /* Ask-the-AI at intake: same conversation the review page has, one step earlier — about the
        documents themselves, before a run is spent. */
@@ -538,14 +551,18 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.58 (2026-10-01)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.59 (2026-10-02)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
     const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
     const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-    // ~32 MB upstream request cap; warn the user before they waste a click.
+    // ~32 MB is what ONE read can carry. It is no longer a limit on the package: documents go as
+    // text, and the server splits the drawings into as many reads as they need and joins the
+    // results. MAX_MB is only used to say how many parts that will be.
     const MAX_MB = 32;
+    // What one upload to the server can carry (its limit is 200 MB of base64).
+    const SEND_CAP_MB = 140;
 
     // ---- ZOHO WRITE (step 3a) — CONFIRM every link name in the form builder ----
     // When the Zoho SDK is present the widget writes the BOM CSV straight into a
@@ -694,7 +711,7 @@
         if (!loaded && !others.length) { box.style.display = "none"; return; }
         box.innerHTML = "📎 " + bits.join(" ");
       }
-      if (loaded) { renderFiles(); maybeAutoPreview(); }
+      if (loaded) { renderFiles(); inspectAll(); }
     }
 
     // If the Zoho SDK is present, prefer its query params (more reliable in-iframe).
@@ -735,6 +752,10 @@
     fileEl.addEventListener("change", () => addFiles(fileEl.files));
     // Remove a single file (event delegation — robust regardless of script scope).
     document.getElementById("fileList").addEventListener("click", (e) => {
+      const flip = e.target.closest("[data-flip]");
+      if (flip) { flipReadAs(Number(flip.getAttribute("data-flip"))); return; }
+      const pb = e.target.closest("[data-putback]");
+      if (pb) { e.preventDefault(); const v = pb.getAttribute("data-putback"); putBack(v === "all", Number(v)); return; }
       const btn = e.target.closest(".fx"); if (!btn) return;
       const i = Number(btn.getAttribute("data-i"));
       if (i >= 0 && i < docs.length) { docs.splice(i, 1); invalidateScan(); renderFiles(); }
@@ -846,7 +867,7 @@
                 ". They're part of this take-off now, and I can see them from the next answer on." });
       }
       renderFiles();
-      maybeAutoPreview();          // read the drawings without waiting to be asked
+      inspectAll();                // drawing or document? then read the drawings without waiting to be asked
       statusEl.textContent = dupes ? (dupes + " file" + (dupes > 1 ? "s" : "") + " already added — skipped.") : "";
     }
 
@@ -862,27 +883,155 @@
 
     function escHtml(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
+    // ---- DRAWING OR DOCUMENT? ----------------------------------------------
+    // The same check the quote intake makes, on every file as it lands: a spec or a parts list only
+    // has to be READ, so it goes as text — a few hundred KB instead of 18 MB — and only drawings
+    // travel as PDFs. Server-side, no AI, no size limit. The estimator can flip any file.
+    let inspecting = 0;
+    async function inspectDoc(d, wantText) {
+      if (d.is_image) { d.read_as = "drawing"; return; }
+      inspecting++;
+      try {
+        // A file already in the project's store is read there — no need to upload it again.
+        const body = d.fileId && params.project_id
+          ? { name: d.name, project_id: params.project_id, file_id: d.fileId, want_text: !!wantText }
+          : { name: d.name, data: d.b64, want_text: !!wantText };
+        let j = await (await fetch(RAILWAY_URL + "/api/takeoff/inspect", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+        if (j && j.ok === false && body.file_id) {      // not in the store after all — send the bytes
+          j = await (await fetch(RAILWAY_URL + "/api/takeoff/inspect", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: d.name, data: d.b64, want_text: !!wantText }) })).json();
+        }
+        if (j && j.text && (wantText || j.kind === "text")) {
+          d.read_as = "text"; d.text = j.text; d.why = wantText ? "you marked it a document" : (j.why || "");
+        } else {
+          d.read_as = "drawing"; d.text = null;
+          d.why = wantText ? "no text in it to read (a scan?) — kept as a drawing" : (j && j.why) || "";
+        }
+        if (j && j.pages && !d.pages) d.pages = j.pages;
+      } catch (e) {
+        d.read_as = d.read_as || "drawing";
+        d.why = "could not check it — read as a drawing";
+      } finally { inspecting--; }
+    }
+    async function inspectAll() {
+      const todo = docs.filter((d) => !d.read_as);
+      if (todo.length) {
+        renderFiles();
+        // Three at a time: quick on a 40-file package without flooding the server.
+        let next = 0;
+        const worker = async () => { while (next < todo.length) { const d = todo[next++]; await inspectDoc(d); renderFiles(); } };
+        await Promise.all([worker(), worker(), worker()]);
+      }
+      setAsideSuperseded();
+      renderFiles();
+      maybeAutoPreview();
+    }
+    async function flipReadAs(i) {
+      const d = docs[i]; if (!d || d.is_image || inspecting) return;
+      if (d.read_as === "text") { d.read_as = "drawing"; d.why = "you marked it a drawing"; }
+      else if (d.text) { d.read_as = "text"; d.why = "you marked it a document"; }
+      else { await inspectDoc(d, true); }
+      invalidateScan(); renderFiles();
+    }
+    // What each file costs to send: a document only its text.
+    const sendMbOf = (d) => (d.read_as === "text" && d.text) ? d.text.length / 1048576 : d.mb;
+    // Every place that sends the files uses this, so the preview, the questions and the run all
+    // read a file the same way.
+    function payloadDocs() {
+      return docs.map((d) => d.is_image ? { media_type: d.media_type, data: d.b64, name: d.name }
+        : (d.read_as === "text" && d.text) ? { kind: "text", name: d.name, text: d.text, pages: d.pages || 0 }
+        : { data: d.b64, media_type: "application/pdf", name: d.name, read_as: d.read_as === "drawing" ? "drawing" : "" });
+    }
+
+    // ---- SHEETS AN ADDENDUM REPLACED ---------------------------------------
+    // "S204 Partial Roof Framing Plan" and "HS PH1.3 S204 Partial Roof Framing (Add 6 Plan)" are the
+    // same sheet, and the addendum copy supersedes the original. Reading both counts that steel twice.
+    // So the older copy is set aside — not deleted, one click puts it back — and the page says so.
+    let setAside = [];        // [{doc, by}] — files taken out of this run because a newer issue replaced them
+    let keepBoth = {};        // file keys the estimator put back: never set those aside again
+    function sheetIdOf(name) {
+      const m = String(name || "").replace(/\.[a-z0-9]+$/i, "").match(/\b([A-Z]{1,2}-?\d{3}[A-Z]?(?:\.\d{1,2})?)\b/i);
+      return m ? m[1].toUpperCase().replace(/-/g, "") : "";
+    }
+    function issueOf(name) {
+      const s = String(name || "");
+      const m = s.match(/\badd(?:endum|end)?\.?\s*(?:no\.?\s*)?#?\s*(\d+)/i) || s.match(/\b(?:bulletin|asi|rev(?:ision)?)\.?\s*#?\s*(\d+)/i);
+      return m ? Number(m[1]) || 1 : 0;
+    }
+    function setAsideSuperseded() {
+      const byId = {};
+      docs.forEach((d) => { if (d.is_image || d.read_as === "text") return;
+        const id = sheetIdOf(d.name); if (id) (byId[id] = byId[id] || []).push(d); });
+      const out = [];
+      Object.keys(byId).forEach((id) => {
+        const g = byId[id]; if (g.length < 2) return;
+        const top = Math.max(...g.map((d) => issueOf(d.name)));
+        if (!top) return;                                         // no addendum among them: leave alone
+        const newest = g.find((d) => issueOf(d.name) === top);
+        g.forEach((d) => { if (d !== newest && issueOf(d.name) < top && !keepBoth[d.key]) out.push({ doc: d, by: newest.name, sheet: id }); });
+      });
+      if (!out.length) return;
+      out.forEach((x) => { const i = docs.indexOf(x.doc); if (i > -1) docs.splice(i, 1); });
+      setAside = setAside.concat(out);
+      invalidateScan();
+    }
+    function putBack(all, i) {
+      const back = all ? setAside.splice(0) : setAside.splice(i, 1);
+      back.forEach((x) => { keepBoth[x.doc.key] = 1; docs.push(x.doc); });
+      invalidateScan(); renderFiles(); maybeAutoPreview();
+    }
+
     function renderFiles() {
       const totalMb = docs.reduce((s, d) => s + d.mb, 0);
-      const over = totalMb > MAX_MB;
+      const sendMb = docs.reduce((s, d) => s + sendMbOf(d), 0);
+      const drawMb = docs.filter((d) => !(d.read_as === "text" && d.text)).reduce((s, d) => s + d.mb, 0);
+      const over = sendMb > SEND_CAP_MB;
+      // A rough count of reads — the server plans the real split (pages count too).
+      const parts = Math.max(1, Math.ceil(drawMb / 25));
       const rows = docs.map((d, i) => {
         // Once read, say what each file IS on the file itself — a 34-page parts list looked
         // identical to a 34-page drawing set here, which is how it went unnoticed.
         const m = docList.find((x) => Number(x.doc) === i + 1);
         const kind = m && (m.kind === "bom" ? "parts list" : m.kind === "spec" ? "spec"
                         : m.kind === "drawings" ? "drawings" : "");
+        // How it will be READ — set the moment the file lands, before any preview.
+        const how = d.is_image ? "" : !d.read_as
+          ? '<span class="rtag wait">checking…</span>'
+          : '<button type="button" class="rtag ' + (d.read_as === "text" ? "doc" : "dwg") + '" data-flip="' + i + '" title="' +
+              escHtml((d.why ? d.why + ". " : "") + "Click to read it as a " + (d.read_as === "text" ? "drawing" : "document") + " instead.") + '">' +
+              (d.read_as === "text" ? "document · read as text" : "drawing") + "</button>";
         return '<div class="frow"><span class="fname">• ' + escHtml(d.name) +
           '  <span class="fmb">(' + d.mb.toFixed(1) + ' MB' +
+            (d.read_as === "text" && d.text ? " → " + (d.text.length / 1048576 < 0.1 ? "<0.1" : (d.text.length / 1048576).toFixed(1)) + " MB as text" : "") +
             (d.pages ? ' · ' + d.pages + ' page' + (d.pages === 1 ? '' : 's') : '') + ')</span>' +
+          how +
+          // A long spec is cut to the sections steel needs — say which, so nothing is silently missing.
+          (m && m.trimmed && m.trimmed.kept && m.trimmed.kept.length
+            ? ' <span class="fmb" title="' + escHtml("Left out: " + (m.trimmed.dropped || []).join(", ")) + '">· read sections ' +
+                escHtml(m.trimmed.kept.join(", ")) + " only</span>" : "") +
           (kind ? '<span class="dtag' + (m.kind === "bom" ? " bom" : "") + '">' + kind + "</span>" : "") + "</span>" +
           '<button type="button" class="fx" data-i="' + i + '" title="Remove this file" aria-label="Remove">✕</button></div>';
       }).join("");
-      const totalPages = docs.reduce((s, d) => s + (d.pages || 0), 0);
+      const aside = setAside.length
+        ? '<div class="aside"><b>' + setAside.length + " older sheet" + (setAside.length === 1 ? "" : "s") +
+            " set aside</b> — a newer issue of " + (setAside.length === 1 ? "it is" : "each is") +
+            " loaded, and reading both would count that steel twice. " +
+            '<a href="#" data-putback="all">Put them all back</a>' +
+            '<div class="asidelist">' + setAside.map((x, k) => "• " + escHtml(x.doc.name) +
+              ' <span class="fmb">→ replaced by ' + escHtml(x.by) + '</span> <a href="#" data-putback="' + k + '">put back</a>').join("<br>") +
+            "</div></div>"
+        : "";
+      const totalPages = docs.reduce((s, d) => s + (d.read_as === "text" && d.text ? Math.ceil(d.text.length / 8000) : (d.pages || 0)), 0);
       refreshDepthPrices(totalPages);
       document.getElementById("fileList").innerHTML = docs.length
-        ? rows + '<div class="' + (over ? "big" : "") + '"><b>Total: ' + totalMb.toFixed(1) + " MB" +
-            (totalPages ? " · " + totalPages + " page" + (totalPages === 1 ? "" : "s") : "") +
-            (over ? "  — over " + MAX_MB + " MB, trim before running" : "") + "</b></div>"
+        ? rows + aside + '<div class="' + (over ? "big" : "") + '"><b>Total: ' + totalMb.toFixed(1) + " MB" +
+            (sendMb < totalMb - 0.5 ? " — " + sendMb.toFixed(1) + " MB to read, documents as text" : "") +
+            "</b>" + (inspecting ? ' <span class="fmb">· checking which files are documents…</span>' : "") +
+            (over ? "<b>  — too much for one upload; remove a file</b>"
+              : drawMb > MAX_MB - 6 ? ' <span class="fmb">· the drawings will be read in about ' + parts + " parts and put back together</span>" : "") +
+            "</div>"
         : '<div class="fmb" style="padding:6px 2px">No files yet — choose or drop PDFs above.</div>';
       const dz = document.getElementById("drop");
       if (dz) {
@@ -907,9 +1056,10 @@
           "form requires it on every component, and a component saved without one fails later with " +
           "&ldquo;Invalid entries found&rdquo; naming no row.";
       } else if (over) {
-        go.title = "The documents total more than " + MAX_MB + " MB";
-        if (hint) hint.innerHTML = "<b>" + totalMb.toFixed(1) + " MB loaded — over the ~" + MAX_MB +
-          " MB limit.</b> Remove a file (✕) or split the set and run it in two passes.";
+        go.title = "The drawings total more than " + SEND_CAP_MB + " MB";
+        if (hint) hint.innerHTML = "<b>" + sendMb.toFixed(1) + " MB to read — over the " + SEND_CAP_MB +
+          " MB one upload can carry.</b> Remove a file (✕), or run part of the set now and add the rest " +
+          "from the review page with <b>➕ Add drawings</b>.";
       } else {
         go.title = "";
         if (hint) hint.innerHTML = "You'll get a summary to check before anything is read — nothing is " +
@@ -1663,7 +1813,10 @@
       if (!docs.length) return;
       const sig = fileSig();
       if (autoDone[sig] || scanning) return;
-      if (docs.reduce((s, d) => s + d.mb, 0) > MAX_MB) return;
+      // Wait until every file is known to be a drawing or a document — that decides what is sent.
+      // Over the size cap is no longer a reason to skip: the server reads a big set in parts.
+      if (inspecting || docs.some((d) => !d.is_image && !d.read_as)) return;
+      if (docs.reduce((s, d) => s + sendMbOf(d), 0) > SEND_CAP_MB) return;
       // Reopening the page restores the last read (initScope). If it was of these same files, don't
       // pay for it again on every open — ↻ Re-read is there when the user actually wants a fresh one.
       const names = docs.map((d) => d.name).sort().join("|");
@@ -1696,7 +1849,7 @@
           // Follow the chosen reading depth. The cheap tier misreads continuation pages — it groups
           // two sheets into one drawing — and this read is what every later count is measured
           // against, so it's the wrong place to save a few cents.
-          body: JSON.stringify({ pdfs: docs.map((d) => d.is_image ? { media_type: d.media_type, data: d.b64 } : d.b64), names: docs.map((d) => d.name),
+          body: JSON.stringify({ pdfs: payloadDocs(), names: docs.map((d) => d.name),
                                  // so it proposes YOUR components rather than variants of them
                                  components: project.components.map((c) => c.name),
                                  model: (document.getElementById("model") || {}).value || "sonnet" }),
@@ -2809,7 +2962,7 @@
         const r = await fetch(RAILWAY_URL + "/api/takeoff/ask", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            pdfs: docs.map((d) => d.is_image ? { media_type: d.media_type, data: d.b64 } : d.b64), names: docs.map((d) => d.name),
+            pdfs: payloadDocs(), names: docs.map((d) => d.name),
             // Only the real turns — the pending placeholder isn't part of the conversation.
             messages: askThread.filter((m) => !m.pending && !m.note).map((m) => ({ role: m.role, text: m.text })),
             context: askContext(),
@@ -3003,7 +3156,7 @@
           body: JSON.stringify({
             project_id: params.project_id,
             manufacturer_id: params.manufacturer_id,
-            pdfs: docs.map((d) => d.is_image ? { media_type: d.media_type, data: d.b64 } : d.b64),
+            pdfs: payloadDocs(), names: docs.map((d) => d.name),
             model: document.getElementById("model").value,
             scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
             // Everything the estimator decided about coverage travels with the run: which sheets to

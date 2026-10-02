@@ -30,6 +30,7 @@ const MODELS = {
 };
 
 const LOW_CONF = 0.6;
+const docprep = require("./docprep");
 
 let KNOWLEDGE;
 try {
@@ -518,7 +519,10 @@ async function runTakeoff(opts) {
   const docs = opts.docs;
   const modelKey = opts.modelKey || "sonnet";
   const includeSynopsis = opts.includeSynopsis !== undefined ? opts.includeSynopsis : true;
-  if (!Array.isArray(docs) || !docs.length) throw new Error("runTakeoff: docs[] (base64 PDFs) required");
+  // `blocks` = content already prepared by docprep (drawings as PDFs, documents as text, one batch
+  // of a larger package). Without it, docs[] are sent as they are — the original path.
+  const blocks = Array.isArray(opts.blocks) && opts.blocks.length ? opts.blocks : null;
+  if (!blocks && (!Array.isArray(docs) || !docs.length)) throw new Error("runTakeoff: docs[] (base64 PDFs) required");
   const model = MODELS[modelKey] || MODELS.sonnet;
   const anthropic = opts.client || new Anthropic(); // ANTHROPIC_API_KEY from env
 
@@ -535,8 +539,9 @@ async function runTakeoff(opts) {
     messages: [{
       role: "user",
       content: [].concat(
-        docs.map(docBlock),
-        [{ type: "text", text: "Perform the full material take-off across ALL the attached documents (drawings + any specs). Cross-reference structural, architectural, and spec sheets." }]
+        blocks || docs.map(docBlock),
+        [{ type: "text", text: "Perform the full material take-off across ALL the attached documents (drawings + any specs). Cross-reference structural, architectural, and spec sheets." +
+          (opts.batchNote ? "\n\n" + opts.batchNote : "") }]
       ),
     }],
   }).finalMessage();
@@ -922,24 +927,25 @@ function groupPagesIntoSheets(entries) {
 
 async function readSheetIndex(opts) {
   opts = opts || {};
-  const docs = opts.docs;
   const modelKey = opts.modelKey || "sonnet"; // accuracy of sheet detection matters; output is tiny so tier ≠ cost driver
-  if (!Array.isArray(docs) || !docs.length) throw new Error("readSheetIndex: docs[] (base64 PDFs) required");
+  if (!Array.isArray(opts.docs) || !opts.docs.length) throw new Error("readSheetIndex: docs[] (base64 PDFs) required");
   const model = MODELS[modelKey] || MODELS.sonnet;
   const anthropic = opts.client || new Anthropic();
+  const names = Array.isArray(opts.names) ? opts.names : [];
+
+  // Documents are read as text and never looked at page by page; drawings go in as many requests
+  // as the package needs. See docprep.js — this is what lets a 60 MB package be previewed at all.
+  const docs = opts.prepared || await docprep.prepareDocs(opts.docs, names);
+  docprep.fitText(docs);
+  const textDocs = docs.filter(function (it) { return it.kind === "text"; });
 
   // Count the pages BEFORE asking the model anything — this is the number everything is checked against.
-  const docPages = [];
-  for (let i = 0; i < docs.length; i++) docPages.push(await pdfPageCount(docs[i]));
-  const names = Array.isArray(opts.names) ? opts.names : [];
+  const docPages = docs.map(function (it) { return it.pages > 0 ? it.pages : (it.kind === "text" ? 1 : null); });
   const knownPages = docPages.every(function (n) { return n != null; });
   const totalPages = knownPages ? docPages.reduce(function (a, b) { return a + b; }, 0) : null;
+  const plan = await docprep.planBatches(docs);
+  if (!plan.batches.length) plan.batches.push({ parts: [], b64: 0, pages: 0 });   // text only: one call to classify
 
-  // Tell the model exactly how many pages it must account for, per document.
-  const manifest = docPages.map(function (n, i) {
-    return "Document " + (i + 1) + (names[i] ? ' ("' + names[i] + '")' : "") +
-      ": " + (n == null ? "page count unknown" : n + " page" + (n === 1 ? "" : "s"));
-  }).join("\n");
   // The project's existing components. Without these the model invents a near-duplicate ("Platform
   // Parts" beside an existing "Platform Assembly") and the estimator ends up with two components
   // for one assembly. Reusing what's there is almost always right.
@@ -952,75 +958,132 @@ async function readSheetIndex(opts) {
       "existing name (no 'Platform Parts' next to an existing 'Platform Assembly')."
     : "";
 
-  const ask = "Index the attached drawing package PAGE BY PAGE.\n" + manifest + knownBlock +
-    (totalPages != null
-      ? "\n\nReturn EXACTLY " + totalPages + " entries — one per page, in order, including any page with no drawing number."
-      : "\n\nReturn exactly one entry per page, in order, including any page with no drawing number.") +
-    "\nDo not take off materials.";
+  // One request per batch. Each request numbers its own attachments 1..k; every page is mapped
+  // straight back to its FILE and its page WITHIN that file, so a PDF split across two requests
+  // still comes out as one document with continuous page numbers.
+  const seen = {}, entries = [], docMeta = {};
+  let dupPages = 0, costUsd = 0;
+  const usage = { input_tokens: 0, output_tokens: 0 };
+  for (let b = 0; b < plan.batches.length; b++) {
+    const parts = plan.batches[b].parts;
+    const withText = b === 0 ? textDocs : [];      // documents are classified once, in the first request
+    const pagesHere = parts.reduce(function (s, p) { return s + p.pages; }, 0);
+    const manifest = parts.map(function (p, j) {
+      return "Document " + (j + 1) + " (" + docprep.partLabel(p) + "): " + p.pages + " page" + (p.pages === 1 ? "" : "s");
+    }).concat(withText.map(function (it, k) {
+      return "Document " + (parts.length + k + 1) + ' ("' + it.name + '"): a TEXT document' +
+        (it.pages ? " of " + it.pages + " pages" : "") + ", given below as an excerpt. Return NO page entries " +
+        "for it — give it ONE `documents` entry only.";
+    })).join("\n");
+    const ask = "Index the attached drawing package PAGE BY PAGE.\n" + manifest + knownBlock +
+      (parts.length
+        ? "\n\nReturn EXACTLY " + pagesHere + " page entries — one per page of the PDF documents, in order, including any page with no drawing number."
+        : "\n\nThere are no drawings in this request — return an empty `pages` list and one `documents` entry per document.") +
+      (plan.batches.length > 1 ? "\n(This is part " + (b + 1) + " of " + plan.batches.length +
+        " of a larger package. Number documents exactly as listed above.)" : "") +
+      "\nDo not take off materials.";
 
-  // ── THE CEILING HAS TO SCALE WITH THE PACKAGE ──────────────────────────────────────────
-  // This asks for one row per page, so a fixed 8000 was only ever right for the package size
-  // it was written against. On 2026-09-26 a 153-page set (a 149-page BOM plus three drawings)
-  // ran past it: the tool input was cut off mid-JSON, the parser turned that into [], and all
-  // 153 pages came back reported as "never came back from the read" with no error anywhere.
-  // A truncated index is not a partial index — it is nothing at all.
-  const pagesToIndex = totalPages || 60;
-  const maxTokens = Math.min(48000, Math.max(8000, pagesToIndex * 130 + 1500));
-  // Above ~16k a non-streamed call risks an HTTP timeout before the response completes, so
-  // large packages stream and take the final message.
-  const params = {
-    model: model.id,
-    max_tokens: maxTokens,
-    system: SHEET_SYSTEM,
-    tools: [SHEET_INDEX_TOOL],
-    tool_choice: { type: "tool", name: "submit_sheet_index" },
-    messages: [{
-      role: "user",
-      content: [].concat(
-        docs.map(docBlock),
-        [{ type: "text", text: ask }]
-      ),
-    }],
-  };
-  const resp = maxTokens > 16000
-    ? await anthropic.messages.stream(params).finalMessage()
-    : await anthropic.messages.create(params);
+    // ── THE CEILING HAS TO SCALE WITH THE PACKAGE ──────────────────────────────────────────
+    // This asks for one row per page, so a fixed 8000 was only ever right for the package size
+    // it was written against. On 2026-09-26 a 153-page set (a 149-page BOM plus three drawings)
+    // ran past it: the tool input was cut off mid-JSON, the parser turned that into [], and all
+    // 153 pages came back reported as "never came back from the read" with no error anywhere.
+    // A truncated index is not a partial index — it is nothing at all.
+    const maxTokens = Math.min(48000, Math.max(8000, pagesHere * 130 + withText.length * 300 + 1500));
+    const params = {
+      model: model.id,
+      max_tokens: maxTokens,
+      system: SHEET_SYSTEM,
+      tools: [SHEET_INDEX_TOOL],
+      tool_choice: { type: "tool", name: "submit_sheet_index" },
+      messages: [{
+        role: "user",
+        content: [].concat(
+          parts.map(docprep.partBlock),
+          withText.map(function (it, k) {
+            return { type: "text", text: "Document " + (parts.length + k + 1) + ' — "' + it.name +
+              '" (excerpt of a text document):\n' + it.text.slice(0, 6000) };
+          }),
+          [{ type: "text", text: ask }]
+        ),
+      }],
+    };
+    // Above ~16k a non-streamed call risks an HTTP timeout before the response completes, so
+    // large packages stream and take the final message.
+    const resp = maxTokens > 16000
+      ? await anthropic.messages.stream(params).finalMessage()
+      : await anthropic.messages.create(params);
+    costUsd += costOf(resp.usage, model);
+    usage.input_tokens += (resp.usage && resp.usage.input_tokens) || 0;
+    usage.output_tokens += (resp.usage && resp.usage.output_tokens) || 0;
 
-  // Say it out loud rather than returning an empty index. Silence here cost an afternoon.
-  if (resp.stop_reason === "max_tokens") {
-    throw new Error("The page index was cut off at " + maxTokens + " output tokens while indexing " +
-      pagesToIndex + " pages, so none of it could be read. Split the package into fewer pages per " +
-      "read, or raise the ceiling in readSheetIndex.");
-  }
+    // Say it out loud rather than returning an empty index. Silence here cost an afternoon.
+    if (resp.stop_reason === "max_tokens") {
+      throw new Error("The page index was cut off at " + maxTokens + " output tokens while indexing " +
+        pagesHere + " pages, so none of it could be read. Split the package into fewer pages per " +
+        "read, or raise the ceiling in readSheetIndex.");
+    }
+    const toolUse = resp.content.find(function (x) { return x.type === "tool_use"; });
+    // The model answered, but not with the tool. Another silent-empty path.
+    if (!toolUse) {
+      throw new Error("The read came back without a page index (stop_reason: " +
+        (resp.stop_reason || "unknown") + "). Nothing was indexed.");
+    }
+    let raw = unwrap(toolUse.input.pages, []);
+    if (!Array.isArray(raw)) raw = [];
 
-  const toolUse = resp.content.find(function (b) { return b.type === "tool_use"; });
-  let raw = unwrap(toolUse ? toolUse.input.pages : [], []);
-  if (!Array.isArray(raw)) raw = [];
-  // The model answered, but not with the tool. Another silent-empty path.
-  if (!toolUse) {
-    throw new Error("The read came back without a page index (stop_reason: " +
-      (resp.stop_reason || "unknown") + "). Nothing was indexed.");
-  }
-
-  // Normalize, and keep only ONE entry per (doc,page) — the page is the primary key, so a
-  // page the model reported twice can no longer become a second drawing.
-  const seen = {}, entries = [];
-  let dupPages = 0;
-  raw.forEach(function (p) {
-    const doc = Math.min(Math.max(1, parseInt(p && p.doc, 10) || 1), docs.length);
-    const page = parseInt(p && p.page, 10);
-    if (!page || page < 1) return;
-    if (docPages[doc - 1] != null && page > docPages[doc - 1]) return;   // page that doesn't exist
-    const k = doc + ":" + page;
-    if (seen[k]) { dupPages++; return; }
-    seen[k] = 1;
-    entries.push({
-      doc: doc, page: page,
-      number: String((p && p.number) == null ? "" : p.number).trim(),
-      title: String((p && p.title) == null ? "" : p.title).trim(),
-      confidence: (p && typeof p.confidence === "number") ? p.confidence : null,
-      suggested_component: String((p && p.suggested_component) == null ? "" : p.suggested_component).trim(),
+    // Normalize, and keep only ONE entry per (doc,page) — the page is the primary key, so a
+    // page the model reported twice can no longer become a second drawing.
+    raw.forEach(function (p) {
+      const local = parseInt(p && p.doc, 10) || 1;
+      if (local < 1 || local > parts.length) return;                    // a text document, or nonsense
+      const part = parts[local - 1];
+      const page = parseInt(p && p.page, 10);
+      if (!page || page < 1 || page > part.pages) return;               // page that doesn't exist
+      const doc = part.item.index + 1, gpage = part.pageOffset + page;
+      const k = doc + ":" + gpage;
+      if (seen[k]) { dupPages++; return; }
+      seen[k] = 1;
+      entries.push({
+        doc: doc, page: gpage,
+        number: String((p && p.number) == null ? "" : p.number).trim(),
+        title: String((p && p.title) == null ? "" : p.title).trim(),
+        confidence: (p && typeof p.confidence === "number") ? p.confidence : null,
+        suggested_component: String((p && p.suggested_component) == null ? "" : p.suggested_component).trim(),
+      });
     });
+
+    const modelDocs = unwrap(toolUse.input.documents, []);
+    (Array.isArray(modelDocs) ? modelDocs : []).forEach(function (d) {
+      const local = parseInt(d && d.doc, 10);
+      if (!local || local < 1 || local > parts.length + withText.length) return;
+      const i = local <= parts.length ? parts[local - 1].item.index + 1 : withText[local - parts.length - 1].index + 1;
+      if (docMeta[i] && docMeta[i].kind) return;      // a split file: the first part's answer stands
+      const k = String((d && d.kind) || "").toLowerCase().trim();
+      docMeta[i] = {
+        kind: DOC_KINDS.indexOf(k) > -1 ? k : "",
+        label: String((d && d.label) == null ? "" : d.label).trim(),
+        summary: String((d && d.summary) == null ? "" : d.summary).trim(),
+        suggested_component: String((d && d.suggested_component) == null ? "" : d.suggested_component).trim(),
+      };
+    });
+  }
+
+  // A text document has no title blocks to read: every page of it belongs to the document. Filled
+  // in here so it is accounted for exactly like a BOM the model read page by page.
+  textDocs.forEach(function (it) {
+    const doc = it.index + 1;
+    for (let p = 1; p <= docPages[doc - 1]; p++) {
+      const k = doc + ":" + p;
+      if (seen[k]) continue;
+      seen[k] = 1;
+      entries.push({ doc: doc, page: p, number: "", title: "", confidence: null, suggested_component: "" });
+    }
+    if (!docMeta[doc] || !docMeta[doc].kind) {
+      docMeta[doc] = Object.assign({ label: "", summary: "", suggested_component: "" }, docMeta[doc] || {},
+        { kind: /\b(bom|bill of material|parts? list|material list|cut list)\b/i.test(it.name) ? "bom"
+              : /spec|division|section/i.test(it.name) ? "spec" : "other" });
+    }
   });
 
   const grouped = groupPagesIntoSheets(entries);
@@ -1032,19 +1095,6 @@ async function readSheetIndex(opts) {
   // estimator's list — 62 of 68 pages counted as "no drawing number" and never seen again. Every page
   // that isn't on a drawing is now gathered into ONE entry per file, tagged kind:"document", so each
   // uploaded file is represented, can be put on a component, and travels into the take-off by name.
-  const modelDocs = unwrap(toolUse ? toolUse.input.documents : [], []);
-  const docMeta = {};
-  (Array.isArray(modelDocs) ? modelDocs : []).forEach(function (d) {
-    const i = parseInt(d && d.doc, 10);
-    if (!i || i < 1 || i > docs.length) return;
-    const k = String((d && d.kind) || "").toLowerCase().trim();
-    docMeta[i] = {
-      kind: DOC_KINDS.indexOf(k) > -1 ? k : "",
-      label: String((d && d.label) == null ? "" : d.label).trim(),
-      summary: String((d && d.summary) == null ? "" : d.summary).trim(),
-      suggested_component: String((d && d.suggested_component) == null ? "" : d.suggested_component).trim(),
-    };
-  });
 
   const usedNums = {};
   grouped.sheets.forEach(function (s) { usedNums[normNum(s.number)] = 1; });
@@ -1064,7 +1114,9 @@ async function readSheetIndex(opts) {
     const kind = meta.kind || (namedPages ? "drawings" : "other");
     const rec = { doc: i, name: names[i - 1] || null, pages: docPages[i - 1],
                   pages_on_drawings: namedPages, pages_loose: loose.length,
-                  kind: kind, label: meta.label, summary: meta.summary, entry_number: null };
+                  kind: kind, label: meta.label, summary: meta.summary, entry_number: null,
+                  // How the file was READ: as text (a document) or looked at as drawings.
+                  read_as: docs[i - 1].kind, read_why: docs[i - 1].why || "", trimmed: docs[i - 1].trimmed || null };
     if (loose.length) {
       // Named from the FILE first: that's the name the estimator uploaded and recognises. The
       // number the model read from inside it is the fallback, and a clash with a real drawing
@@ -1125,8 +1177,9 @@ async function readSheetIndex(opts) {
     documents: documents,
     pages: entries,
     audit: audit,
-    cost_usd: Number(costOf(resp.usage, model).toFixed(4)),
-    usage: resp.usage,
+    batches: plan.batches.length,
+    cost_usd: Number(costUsd.toFixed(4)),
+    usage: usage,
     modelKey: MODELS[modelKey] ? modelKey : "sonnet",
     modelId: model.id,
   };
@@ -1164,16 +1217,26 @@ async function askDocuments(opts) {
   const model = MODELS[opts.modelKey] || MODELS.sonnet;
   const anthropic = opts.client || new Anthropic();
 
-  // The documents are the stable prefix of every turn — cache-marked so question 2 onward is cheap.
-  const head = docs.map(function (d, i) {
-    const b = { type: "document", source: { type: "base64", media_type: "application/pdf", data: d } };
-    if (i === docs.length - 1) b.cache_control = { type: "ephemeral" };
-    return b;
+  // Documents go as text, drawings as PDFs. A question is ONE request, so when the drawings are
+  // more than one request can hold, the first batch goes and the model is told which files it
+  // can't see — an honest "not in front of me" beats a request that fails outright.
+  const items = docs.length ? await docprep.prepareDocs(docs, names) : [];
+  docprep.fitText(items);
+  const plan = items.length ? await docprep.planBatches(items) : { batches: [] };
+  const sent = plan.batches.length ? plan.batches[0].parts : [];
+  const unseen = items.filter(function (it) {
+    return it.kind !== "text" && !sent.some(function (p) { return p.item === it; });
   });
+
+  // The documents are the stable prefix of every turn — cache-marked so question 2 onward is cheap.
+  const head = [].concat(sent.map(docprep.partBlock), items.filter(function (it) { return it.kind === "text"; }).map(docprep.textBlock));
+  if (head.length) head[head.length - 1].cache_control = { type: "ephemeral" };
   head.push({ type: "text", text:
-    (docs.length ? "THE ATTACHED DOCUMENTS, in order:\n" + docs.map(function (d, i) {
-      return (i + 1) + ". " + (names[i] || ("Document " + (i + 1)));
+    (items.length ? "THE ATTACHED DOCUMENTS, in order:\n" + items.map(function (it, i) {
+      return (i + 1) + ". " + it.name + (it.kind === "text" ? " (read as text)" : "");
     }).join("\n") + "\n\n" : "") +
+    (unseen.length ? "NOT ATTACHED to this question (too large to send together): " +
+      unseen.map(function (it) { return it.name; }).join(", ") + ". If the answer needs them, say so.\n\n" : "") +
     (opts.context ? String(opts.context) + "\n\n" : "") +
     "(The estimator's question follows.)" });
 

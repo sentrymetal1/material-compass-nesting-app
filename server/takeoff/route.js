@@ -20,7 +20,99 @@ const { buildImportCsv, buildVerifyList } = require("./csv-feed");
 const { checkEntitlement, consumeTakeoff } = require("./entitlement");
 const { snapRows, snapFittings } = require("./snap");
 const { extractPartsList, applyPartsList } = require("./partsList");
-const { extractText } = require("../pdfkind");
+const { extractText, inspect } = require("../pdfkind");
+const docprep = require("./docprep");
+
+// ---- RUNNING A PACKAGE TOO BIG FOR ONE REQUEST ---------------------------------
+// Each batch gets its own drawings plus every text document (they're small once read as text, and
+// each batch needs the spec and the parts list to read its drawings properly). The parts list is
+// the one thing that could be counted twice — every batch would raise its list-only items — so
+// only the FIRST batch may raise rows that come from the list alone.
+function batchNote(plan, b) {
+  const n = plan.batches.length;
+  const here = plan.batches[b].parts.map(docprep.partLabel);
+  const elsewhere = [];
+  plan.batches.forEach(function (x, k) { if (k !== b) x.parts.forEach(function (p) { elsewhere.push(docprep.partLabel(p)); }); });
+  return "THIS PACKAGE IS TOO LARGE FOR ONE READ, so it is being taken off in " + n + " parts. This is part " + (b + 1) + " of " + n + ".\n" +
+    "Drawings attached to THIS part: " + here.join(", ") + ".\n" +
+    "Drawings taken off in the OTHER parts (not attached here — do not take off anything from them): " + elsewhere.join(", ") + ".\n" +
+    "Take off ONLY the members shown on the drawings attached to this part. Text documents (specs, parts lists) are attached to every part for reference." +
+    (b === 0
+      ? " If a parts list has items that appear on NO drawing in the whole package (this part or the others listed above), raise them here as list_only."
+      : " Do NOT raise rows that come only from a parts list (list_only) — part 1 handles those. Use the list here to check and correct the members you find on these drawings.") +
+    " Your synopsis should cover THIS part only; the parts are combined afterwards.";
+}
+
+function uniq(arr) {
+  const seen = {};
+  return arr.filter(function (v) {
+    const k = typeof v === "string" ? "s:" + v.trim().toLowerCase() : "o:" + JSON.stringify(v);
+    if (seen[k]) return false; seen[k] = 1; return true;
+  });
+}
+
+// Lists are joined, counts and weights added, confidence averaged, text kept from the first part
+// that had any. Exported for the tests.
+function mergeSynopsis(list) {
+  list = list.filter(function (s) { return s && typeof s === "object"; });
+  if (!list.length) return null;
+  const out = JSON.parse(JSON.stringify(list[0]));
+  const seen = { confidence: 1 };
+  list.slice(1).forEach(function (s) {
+    Object.keys(s).forEach(function (k) {
+      const a = out[k], b = s[k];
+      if (Array.isArray(b)) { out[k] = uniq((Array.isArray(a) ? a : []).concat(b)); return; }
+      if (b && typeof b === "object") {
+        if (!a || typeof a !== "object" || Array.isArray(a)) { out[k] = JSON.parse(JSON.stringify(b)); return; }
+        Object.keys(b).forEach(function (k2) {
+          const x = a[k2], y = b[k2];
+          if (Array.isArray(y)) a[k2] = uniq((Array.isArray(x) ? x : []).concat(y));
+          else if (typeof y === "number" && typeof x === "number") {
+            if (k === "confidence") { seen[k2] = (seen[k2] || 1) + 1; a[k2] = x + (y - x) / seen[k2]; }
+            else a[k2] = x + y;
+          }
+          else if (typeof y === "boolean") a[k2] = !!x || y;
+          else if (y != null && (x == null || x === "")) a[k2] = y;
+        });
+        return;
+      }
+      if (typeof b === "number" && typeof a === "number" && k === "confidence") {
+        seen.__top = (seen.__top || 1) + 1; out[k] = a + (b - a) / seen.__top; return;
+      }
+      if (a == null || a === "") out[k] = b;
+    });
+  });
+  return out;
+}
+
+async function runBatches(prepared, plan, engineOpts) {
+  const texts = prepared.filter(function (it) { return it.kind === "text"; }).map(docprep.textBlock);
+  const batches = plan.batches.length ? plan.batches : [{ parts: [] }];
+  const outs = [];
+  for (let b = 0; b < batches.length; b++) {
+    const blocks = batches[b].parts.map(docprep.partBlock).concat(texts);
+    const opts = Object.assign({}, engineOpts, { blocks: blocks, batchNote: batches.length > 1 ? batchNote(plan, b) : "" });
+    console.log("[takeoff] part " + (b + 1) + "/" + batches.length + ": " + batches[b].parts.length + " drawing file(s), " +
+      (batches[b].pages || 0) + " pages, " + texts.length + " text document(s)");
+    outs.push(await runTakeoff(opts));
+  }
+  if (outs.length === 1) return outs[0];
+  const sum = function (f) { return outs.reduce(function (s, o) { return s + (Number(f(o)) || 0); }, 0); };
+  return {
+    rows: [].concat.apply([], outs.map(function (o) { return o.rows || []; })),
+    fittings: [].concat.apply([], outs.map(function (o) { return o.fittings || []; })),
+    notes: outs.map(function (o, i) { return o.notes ? "Part " + (i + 1) + " of " + outs.length + ": " + o.notes : ""; })
+      .filter(Boolean).join("\n\n"),
+    truncated: outs.some(function (o) { return o.truncated; }),
+    synopsis: mergeSynopsis(outs.map(function (o) { return o.synopsis; })),
+    cost_usd: Number(sum(function (o) { return o.cost_usd; }).toFixed(4)),
+    usage: { input_tokens: sum(function (o) { return o.usage && o.usage.input_tokens; }),
+             output_tokens: sum(function (o) { return o.usage && o.usage.output_tokens; }) },
+    modelKey: outs[0].modelKey,
+    modelId: outs[0].modelId,
+    parts: outs.length,
+  };
+}
 
 // Errors from the upstream model API are shown to the user verbatim, and they name the vendor and
 // its model ids ("anthropic", "claude-sonnet-…"). The product is Material Compass AI, so rewrite
@@ -92,8 +184,13 @@ async function takeoffHandler(req, res, deps) {
     stopHeartbeatRef = stopHeartbeat;
     res.on("close", stopHeartbeat);
 
-    // 1. Proven engine.
-    const out = await runTakeoff({ docs: docs, modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog, fittingsCatalog: deps.fittingsCatalog });
+    // 1. Proven engine — once for a package that fits one request, once per batch for one that
+    // doesn't. Documents are read as text either way (docprep.js).
+    const prepared = await docprep.prepareDocs(docs, Array.isArray(body.names) ? body.names : []);
+    docprep.fitText(prepared);
+    const plan = await docprep.planBatches(prepared);
+    const engineOpts = { modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog, fittingsCatalog: deps.fittingsCatalog };
+    const out = await runBatches(prepared, plan, engineOpts);
     const rows = out.rows;
     // Pipe fittings come back in their own stream: bought complete, quoted separately, and kept OUT
     // of the BOM CSV on purpose — they belong to the project's fittings quote, not the BOM.
@@ -111,8 +208,11 @@ async function takeoffHandler(req, res, deps) {
       const bomDoc = bomDocs.length === 1 ? bomDocs[0] : null;
       // The estimator marked the list reference-only: it is read for context and raises no rows.
       const refOnly = bomDocs.length > 0 && bomDocs.every(function (d) { return d.reference_only; });
-      for (let i = 0; i < docs.length && !partsList && !refOnly; i++) {
-        const t = await extractText(docs[i]).catch(function () { return null; });
+      for (let i = 0; i < prepared.length && !partsList && !refOnly; i++) {
+        const it = prepared[i];
+        if (it.kind === "image") continue;
+        const t = it.kind === "text" ? { text: it.fullText || it.text }
+          : await extractText(it.b64).catch(function () { return null; });
         const list = t && t.text ? extractPartsList(t.text, deps.catalogGroups) : null;
         if (!list) continue;
         const scope = Array.isArray(body.scope_tree) ? body.scope_tree : [];
@@ -271,6 +371,8 @@ async function takeoffHandler(req, res, deps) {
       credits_left: balance ? balance.credits_left : null,
       free_left: balance ? balance.free_left : null,
       parts_list: partsList,
+      // How each file was read (text or drawing, what was trimmed) and how many requests it took.
+      reading: docprep.summary(prepared, plan),
     });
   } catch (err) {
     console.error("takeoff error", err);
@@ -389,6 +491,43 @@ async function indexHandler(req, res) {
   }
 }
 
+// POST /api/takeoff/inspect — is this file a DRAWING (looked at) or a DOCUMENT (read as text)?
+// Body: { name, data (base64 PDF), want_text? }. Called once per file as it lands on the intake
+// screen, with no model call and no size limit, so every file is tagged the moment it's added —
+// the same check the quote intake makes. A document comes back with its text, so the page sends
+// a few hundred KB of spec instead of 18 MB of PDF from then on.
+async function inspectHandler(req, res) {
+  try {
+    const body = Object.assign({}, req.body || {});
+    // A file already in the project's store (everything that came with the RFQ) is read from
+    // there, so the browser doesn't upload 18 MB just to be told it's a spec.
+    if (!body.data && body.project_id && body.file_id) {
+      try {
+        const f = require("../filestore").readFile("project", body.project_id, body.file_id);
+        if (f && f.buf) body.data = f.buf.toString("base64");
+      } catch (e) { /* fall through to the 400 */ }
+    }
+    if (!body.data) return res.status(400).json({ ok: false, error: "data (or project_id + file_id) required" });
+    const r = await inspect(body.name, body.data);
+    const out = { ok: true, name: body.name || "file", kind: r.kind, why: r.why, pages: r.pages,
+                  chars: r.chars || 0, sheet_inches: r.sheetInches || 0, large_format: !!r.largeFormat };
+    if (r.kind === "text" || body.want_text) {
+      try {
+        const t = await extractText(body.data);
+        if (t.text && t.text.length >= 40) { out.text = t.text; out.pages = t.pages || out.pages; }
+        else if (r.kind === "text") { out.kind = "drawing"; out.why = "no text in it (a scan?) — read as a drawing"; }
+      } catch (e) {
+        if (r.kind === "text") { out.kind = "drawing"; out.why = "the text would not come out — read as a drawing"; }
+      }
+    }
+    return res.json(out);
+  } catch (err) {
+    // Never block a file on a failed check — a drawing is the path that always works.
+    return res.json({ ok: true, name: (req.body && req.body.name) || "file", kind: "drawing", pages: 0,
+                      why: "could not check it — read as a drawing" });
+  }
+}
+
 // POST /api/takeoff/ask — questions about the UPLOADED DOCUMENTS at intake, before the run.
 // Body: { pdfs[] | pdf_base64, names?, messages:[{role,text}], context?, model? } → { ok, reply, cost_usd }.
 // Answers only: it never edits the scope or the project. Not metered — like index/chat/revise.
@@ -450,4 +589,4 @@ function pricingHandler(req, res) {
   }
 }
 
-module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler };
+module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, mergeSynopsis, runBatches };

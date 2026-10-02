@@ -5,7 +5,7 @@ const axios = require('axios');
 const path = require('path');
 const zlib = require('zlib');
 const FormData = require('form-data');
-const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler } = require('./takeoff/route');
+const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler } = require('./takeoff/route');
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
 const filestore = require('./filestore');        // the project's own copy of the drawings
 
@@ -48,7 +48,9 @@ app.use((req, res, next) => {
   console.warn('[admin-gate] refused ' + req.method + ' ' + p + ' from ' + (req.get('x-forwarded-for') || req.ip));
   return res.status(403).json({ ok: false, error: 'Not available.' });
 });
-app.use('/api/takeoff', express.json({ limit: '60mb' })); // AI take-off: base64 PDFs are large; must precede the 10mb global json
+// AI take-off: base64 PDFs are large; must precede the 10mb global json. 200mb because a whole bid
+// package now comes in one request and is split into model-sized batches on the server (docprep.js).
+app.use('/api/takeoff', express.json({ limit: '200mb' }));
 app.use('/api/triage/manual', express.json({ limit: '40mb' })); // manual intake carries base64 photos/PDFs; same reason, same placement
 app.use('/api/files', express.json({ limit: '60mb' })); // drawings saved to the project store are base64 PDFs; same reason, same placement
 app.use(express.json({ limit: '10mb' }));
@@ -1427,6 +1429,7 @@ app.post('/api/takeoff/bom-preview', async (req, res) => {
 });
 
 app.post('/api/takeoff/index', (req, res) => indexHandler(req, res)); // intake: read sheet numbers + page ranges
+app.post('/api/takeoff/inspect', (req, res) => inspectHandler(req, res)); // intake: drawing or document? (no AI, no size limit)
 app.post('/api/takeoff/ask', (req, res) => askHandler(req, res));     // intake: ask about the uploaded documents
 // What a run would cost per reading depth, before anything is spent. Rates come from the
 // engine's own table so the quote and the bill cannot drift apart.
