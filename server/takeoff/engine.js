@@ -288,16 +288,22 @@ const EDIT_TOOL = {
     properties: {
       row_changes:     { type: "array", items: CHANGE_ITEM(ROW_ITEM), description: "Changes to BOM rows, addressed by `i`." },
       fitting_changes: { type: "array", items: CHANGE_ITEM(FITTING_ITEM), description: "Changes to pipe fittings, addressed by `i`." },
-      synopsis:        { type: "object", description: "ONLY the synopsis sections you changed, each given IN FULL (e.g. the whole `conflicts` array with the resolved one removed; the whole `scope_of_work` object with all four streams). Omit a section to leave it unchanged.",
-                         properties: { scope_of_work: SYNOPSIS_SCHEMA.properties.scope_of_work, decisions: SYNOPSIS_SCHEMA.properties.decisions,
-                                       gaps: SYNOPSIS_SCHEMA.properties.gaps, conflicts: SYNOPSIS_SCHEMA.properties.conflicts,
-                                       compliance: SYNOPSIS_SCHEMA.properties.compliance, project: SYNOPSIS_SCHEMA.properties.project } },
+      // Conflicts, gaps, decisions and compliance notes are edited ITEM BY ITEM, by `i`, exactly like
+      // rows. They used to be returned as a whole replacement array, and resolving ONE conflict came
+      // back as an empty list often enough that the estimator lost the rest (2026-10-03, Dunkirk).
+      conflict_changes:   { type: "array", items: CHANGE_ITEM(SYNOPSIS_SCHEMA.properties.conflicts.items),  description: "Changes to synopsis.conflicts by `i`. Resolving or dismissing a conflict = `delete` THAT one's `i`. Never touch the others." },
+      gap_changes:        { type: "array", items: CHANGE_ITEM(SYNOPSIS_SCHEMA.properties.gaps.items),       description: "Changes to synopsis.gaps by `i`. Closing a gap = `delete` its `i`." },
+      decision_changes:   { type: "array", items: CHANGE_ITEM(SYNOPSIS_SCHEMA.properties.decisions.items),  description: "Changes to synopsis.decisions by `i`." },
+      compliance_changes: { type: "array", items: CHANGE_ITEM(SYNOPSIS_SCHEMA.properties.compliance.items), description: "Changes to synopsis.compliance by `i`." },
+      synopsis:        { type: "object", description: "ONLY the scope_of_work or project section, if you changed it, given IN FULL (the whole `scope_of_work` object with all four streams). Omit to leave it unchanged. Conflicts, gaps, decisions and compliance are NOT edited here — use their *_changes lists.",
+                         properties: { scope_of_work: SYNOPSIS_SCHEMA.properties.scope_of_work, project: SYNOPSIS_SCHEMA.properties.project } },
       notes:           { type: "string", description: "ONE short past-tense sentence saying exactly what changed. Shown to the estimator." },
     },
     required: ["notes"],
   },
 };
 
+const NOTE_LISTS = ["conflicts", "gaps", "decisions", "compliance"];
 const FIT_IDENTITY = ["fitting_type", "fitting_make", "end_type", "connection_type", "specification", "size", "schedule_or_class"];
 const FIT_PICK = ["detail_id", "detail_table", "detail_label", "std_label", "size_other", "weight", "auto_matched",
                   "fitting_type_id", "fitting_make_id", "end_type_id", "connection_type_id", "specification_id"];
@@ -305,7 +311,12 @@ const FIT_PICK = ["detail_id", "detail_table", "detail_label", "std_label", "siz
 // The package as the model sees it for an edit: every entry carries its index.
 function indexedPackage(current) {
   const tag = function (a) { return (Array.isArray(a) ? a : []).map(function (x, i) { return Object.assign({ i: i }, x); }); };
-  return { rows: tag(current.rows), fittings: tag(current.fittings), synopsis: current.synopsis || null };
+  let syn = current.synopsis || null;
+  if (syn) {
+    syn = Object.assign({}, syn);
+    NOTE_LISTS.forEach(function (k) { if (Array.isArray(syn[k])) syn[k] = tag(syn[k]); });
+  }
+  return { rows: tag(current.rows), fittings: tag(current.fittings), synopsis: syn };
 }
 
 // Apply the model's changes to the current package. Indexes refer to the package as SHOWN, so all
@@ -341,8 +352,19 @@ function applyChanges(current, input) {
   const rows = one(current.rows, input.row_changes, "row");
   const fittings = one(current.fittings, input.fitting_changes, "fitting");
   const syn = Object.assign({}, current.synopsis || {});
+  // Item-by-item, like rows: a conflict the model doesn't name is never touched.
+  NOTE_LISTS.forEach(function (k) {
+    const c = input[k.replace(/s$/, "") + "_changes"];
+    if (c !== undefined && Array.isArray(syn[k] || [])) syn[k] = one(syn[k], c, k.replace(/s$/, ""));
+  });
   const ch = unwrap(input.synopsis, null);
-  if (ch && typeof ch === "object") Object.keys(ch).forEach(function (k) { if (ch[k] !== undefined) syn[k] = ch[k]; });
+  // A whole-list replacement of a note list is refused even if sent — that is the path that lost
+  // every other conflict when one was resolved.
+  if (ch && typeof ch === "object") Object.keys(ch).forEach(function (k) {
+    if (ch[k] === undefined) return;
+    if (NOTE_LISTS.indexOf(k) > -1) { skipped.push("whole-list replace of " + k + " (ignored)"); return; }
+    syn[k] = ch[k];
+  });
   // Totals are counted, not asked for — the model is no longer shown the whole BOM to add up.
   const qty = function (r) { return Number(r.quantity) || 0; };
   syn.totals = Object.assign({}, syn.totals || {}, {
@@ -595,9 +617,10 @@ const REVISE_SYSTEM =
   "never list an entry to 'keep' it. (2) row_changes / fitting_changes: `update` with the entry's `i` and ONLY " +
   "the fields that change in `set`; `delete` with its `i`; `add` with the complete new entry in `set`. The `i` " +
   "is always the index in the package you were shown. (3) To resolve a conflict or decision: change the " +
-  "affected rows AND return the synopsis section that changes — e.g. the whole `conflicts` array without the " +
-  "resolved item, or the whole `scope_of_work` object. (3b) REMOVE/DISMISS gaps or conflicts: return that " +
-  "section IN FULL with those items dropped ([] if none remain); never echo a removed item. (3c) SCOPE OF WORK: " +
+  "affected rows AND `delete` THAT conflict (conflict_changes) or decision (decision_changes) by its `i`. " +
+  "Conflicts, gaps, decisions and compliance notes each carry an `i` too and are edited ONE BY ONE exactly like " +
+  "rows — only the ones you name change; every other one stays. Never resend a whole list. " +
+  "(3b) REMOVE/DISMISS gaps or conflicts: `delete` each one by its `i`. (3c) SCOPE OF WORK: " +
   "return the FULL scope_of_work object with all four streams, the change applied — never only describe it in notes. " +
   "(4) Obey every catalog rule from the knowledge base (exact sub-typed form types, size formats, valid specs). " +
   "Totals are recounted for you; do not send them. " +
@@ -708,9 +731,10 @@ const CHAT_SYSTEM =
   "attached doc, change spec/finish/markup), call submit_changes with ONLY what changes. Every row and fitting carries its " +
   "index `i`: `update` with that `i` and only the changed fields in `set`; `delete` with its `i`; `add` with the complete new " +
   "entry. Anything not listed stays exactly as it is — never list an entry to keep it. Obey every catalog rule (exact " +
-  "sub-typed form types, size formats, valid specs). A synopsis section you change is returned IN FULL: removing gaps or " +
-  "conflicts → that whole array with them dropped ([] if none remain), never echoing a removed item; a scope edit → the FULL " +
-  "scope_of_work object with all four streams — never only described in `notes`. If the user pasted a screenshot/image, match " +
+  "sub-typed form types, size formats, valid specs). Conflicts, gaps, decisions and compliance notes carry an `i` and are " +
+  "edited ONE BY ONE like rows (conflict_changes / gap_changes / decision_changes / compliance_changes): resolving ONE " +
+  "conflict = fix the rows + `delete` that conflict's `i` — every other conflict stays untouched; never resend a whole list. " +
+  "A scope edit → the FULL scope_of_work object with all four streams — never only described in `notes`. If the user pasted a screenshot/image, match " +
   "the quoted text to the exact item and change THAT one. Totals are recounted for you. In `notes`, write ONE short " +
   "past-tense sentence stating exactly what you changed (shown to the estimator as confirmation).\n" +
   "Use the prior conversation for context (the user may say 'now also…' or refer to earlier turns). Keep text replies brief.";
