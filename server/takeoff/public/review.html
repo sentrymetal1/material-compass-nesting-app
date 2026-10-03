@@ -2025,6 +2025,7 @@
           conflicts.map((c,i)=>'<li><b>'+esc(c.topic)+'</b>'+
           ' <button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="dismissConflict('+i+')" title="Remove this conflict (no change to BOM)">✕</button>'+
           (c.drawing_says?' — drawing: '+esc(c.drawing_says):'')+(c.spec_says?' · spec: '+esc(c.spec_says):'')+
+          conflictWhereHtml(c)+
           (c.recommendation?'<br><span class="src">→ '+esc(c.recommendation)+'</span> <button class="applybtn" onclick="applyConflict('+i+')">Apply &amp; resolve</button>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
         '</div></div>':'')+
 
@@ -2163,11 +2164,33 @@
                      ["decision","Basis of quote","the calls made on this take-off"]];
   function noteKey(src,topic){ return src+":"+String(topic==null?"":topic).toLowerCase().replace(/\s+/g," ").trim().slice(0,160); }
   function _sent(s){ s=String(s==null?"":s).trim(); return s && !/[.!?]$/.test(s) ? s+"." : s; }
+  // Where a conflict lives on the PLANS and how much of the member it touches — the detail sheet alone
+  // doesn't tell the estimator which runs, or how many feet, the answer moves.
+  function conflictLocs(c){
+    return arr(c.plan_locations).filter(function(l){ return l && (l.sheet||l.location); }).map(function(l){
+      return String(l.sheet||"").trim()+(l.location?" "+String(l.location).trim():"")+
+        (Number(l.length_ft)>0?" (~"+Math.round(Number(l.length_ft))+" LF)":"");
+    });
+  }
+  function conflictWhereHtml(c){
+    const locs=conflictLocs(c), len=Number(c.est_length_ft)>0?Math.round(Number(c.est_length_ft)):0;
+    if(!c.member&&!locs.length&&!len) return "";
+    return '<div class="src" style="margin:3px 0 0">'+
+      (c.member?'<b>'+esc(c.member)+'</b>'+(locs.length||len?' · ':''):'')+
+      (locs.length?'📍 on plans: '+esc(locs.join("; ")):'<i>not located on the plans attached</i>')+
+      (len?' · <b>est. '+len.toLocaleString()+' LF</b>'+(c.length_basis?' <span title="'+esc(c.length_basis)+'">ⓘ</span>':''):'')+
+      '</div>';
+  }
   function conflictNote(c){
     const parts=[];
     if(c.drawing_says) parts.push("the drawings show "+String(c.drawing_says).trim());
     if(c.spec_says) parts.push("the specification calls for "+String(c.spec_says).trim());
+    const locs=conflictLocs(c), len=Number(c.est_length_ft)>0?Math.round(Number(c.est_length_ft)):0;
+    const mem=c.member?String(c.member).trim():"";
+    const where=[mem+(locs.length?(mem?" at ":"")+locs.join("; "):""), len?"approx. "+len.toLocaleString()+" LF total":""]
+      .filter(Boolean).join(", ");
     return _sent((c.topic||"Conflict")+(parts.length?": "+parts.join("; "):""))+
+      (where?" Affects "+_sent(where):"")+
       " This quote is based on "+_sent(c.recommendation||"the specification");
   }
   function gapNote(g){

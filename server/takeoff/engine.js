@@ -231,6 +231,17 @@ const SYNOPSIS_SCHEMA = {
           drawing_says:   { type: "string" },
           spec_says:      { type: "string" },
           recommendation: { type: "string" },
+          // Where the conflict actually lives on the job. A detail on S401 means nothing to the
+          // estimator until it's tied to the plan runs where that section is cut.
+          member:         { type: "string", description: "The member(s) the conflict affects, as a fabricator names them, e.g. 'L4x4x3/8 continuous ledger angle', 'bent plate 3/8 pour stop', 'shelf angle'." },
+          plan_locations: { type: "array", description: "Where this detail/section is used on the PLAN sheets: each place the section or detail callout is cut on a plan. Empty if the plans attached here don't show it.",
+                            items: { type: "object", properties: {
+                              sheet:    { type: "string", description: "Plan sheet number, verbatim, e.g. 'S201'." },
+                              location: { type: "string", description: "Grid lines and/or area as printed, e.g. 'Grid C–D along line 3', 'Area F north edge', 'Roof edge, grids 1–7'." },
+                              length_ft:{ type: "number", description: "Estimated run length at THIS location in feet, if it can be read or scaled from dimensions; omit if not." },
+                            }, required: ["sheet", "location"] } },
+          est_length_ft:  { type: "number", description: "Estimated TOTAL length in feet of the affected member across all plan locations — for continuous members (edge/ledger/shelf angles, bent-plate pour stops, embeds) sum the runs from the plan dimensions. Omit if it can't be estimated." },
+          length_basis:   { type: "string", description: "How the length was estimated, e.g. 'sum of grid dimensions along roof edge on S203–S208', 'scaled, ±10%'. Required when est_length_ft is given." },
         },
         required: ["topic"],
       },
@@ -454,7 +465,14 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
       "classify scope into fabricate/buyout/by_others/send_out; surface genuine judgment calls as " +
       "`decisions` (each a clear question + 2 answer options + your recommendation) — these are scope/" +
       "finish ambiguities a human must confirm, not data entry; list `gaps`, drawing-vs-spec " +
-      "`conflicts`, `compliance` items, `totals`, and per-section `confidence`. Be specific and cite sheets."
+      "`conflicts`, `compliance` items, `totals`, and per-section `confidence`. Be specific and cite sheets. " +
+      "For EVERY conflict, trace the detail or section it concerns back to the PLAN sheets: list each place " +
+      "that section/detail callout is cut (`plan_locations`: plan sheet + grid lines/area as printed), name the " +
+      "affected `member`, and estimate its length — especially CONTINUOUS members (edge, ledger and shelf angles, " +
+      "bent-plate pour stops, continuous embeds): sum the runs from the plan's grid dimensions into " +
+      "`est_length_ft`, give a per-location `length_ft` where readable, and say how in `length_basis`. Never " +
+      "invent a location or a length — if the plans attached here don't show where the section is cut, leave " +
+      "`plan_locations` empty and say so in `length_basis`."
     : " Put any brief ambiguities in the top-level `notes` field.";
 
   // knowledge.md teaches the SHAPE of a size ("L{a} x {b} x {t}"), which let the model compose sizes
