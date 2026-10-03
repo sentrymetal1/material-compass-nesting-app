@@ -1970,15 +1970,56 @@ function cacheBust(prefix) {
   for (const k of lookupResponseCache.keys()) { if (k === prefix || k.startsWith(prefix)) lookupResponseCache.delete(k); }
 }
 
+// ---- REFERENCE LISTS SURVIVE A RESTART -------------------------------------------------
+// The catalog (8,858 sizes), the fittings index (11,020 items) and the other reference lists cost
+// ~100-150 Zoho calls to load, at 200 records a call, and they lived only in memory — so every
+// deploy restarted the server, emptied them, and re-bought them from the 1,000-a-day Zoho
+// allowance. Eight deploys on 2026-10-03 spent the whole day's allowance (code 4000) before any
+// real use. Anything cached for an hour or more is now also kept on the Railway volume and
+// reloaded from there after a restart, until it would have expired anyway. If Zoho refuses a
+// refresh, the last copy on disk is used rather than failing.
+const DISK_CACHE_MIN_TTL = 60 * 60 * 1000;
+function diskCacheName(key) { return 'cache-' + String(key).replace(/[^a-z0-9._-]+/gi, '_').slice(0, 50) + '.json'; }
+function plainJson(v, depth) {
+  if (v instanceof Map || v instanceof Set) return false;
+  if ((depth || 0) > 3 || !v || typeof v !== 'object') return true;
+  const vals = Array.isArray(v) ? v.slice(0, 3) : Object.values(v).slice(0, 50);
+  return vals.every(function (x) { return plainJson(x, (depth || 0) + 1); });
+}
+function emptyValue(v) { return v == null || (Array.isArray(v) && !v.length) || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length); }
+
 async function cachedLookup(cacheKey, ttlMs, fetchFn) {
   const now = Date.now();
   const hit = lookupResponseCache.get(cacheKey);
   if (hit && hit.expiresAt > now) return hit.value;
+  const onDisk = ttlMs >= DISK_CACHE_MIN_TTL;
+  let disk = null;
+  if (onDisk) {
+    try { disk = filestore.readJson(diskCacheName(cacheKey), null); } catch (e) { disk = null; }
+    if (disk && disk.key === cacheKey && disk.expiresAt > now && !emptyValue(disk.value)) {
+      lookupResponseCache.set(cacheKey, { value: disk.value, expiresAt: disk.expiresAt });
+      return disk.value;
+    }
+  }
   if (lookupInflight.has(cacheKey)) return lookupInflight.get(cacheKey);
   const p = (async () => {
     try {
-      const value = await fetchFn();
+      let value;
+      try { value = await fetchFn(); }
+      catch (e) {
+        // Out of Zoho calls (or Zoho down): an expired copy beats no catalog at all.
+        if (disk && disk.key === cacheKey && !emptyValue(disk.value)) {
+          console.log('[cache] ' + cacheKey + ': refresh failed (' + (e.message || e) + ') — using the copy saved ' + new Date(disk.savedAt || 0).toISOString());
+          lookupResponseCache.set(cacheKey, { value: disk.value, expiresAt: Date.now() + 10 * 60 * 1000 });
+          return disk.value;
+        }
+        throw e;
+      }
       lookupResponseCache.set(cacheKey, { value, expiresAt: Date.now() + ttlMs });
+      if (onDisk && !emptyValue(value) && plainJson(value)) {
+        try { filestore.writeJson(diskCacheName(cacheKey), { key: cacheKey, savedAt: Date.now(), expiresAt: Date.now() + ttlMs, value: value }); }
+        catch (e) { console.error('[cache] could not save ' + cacheKey + ' to disk:', e.message); }
+      }
       return value;
     } finally {
       lookupInflight.delete(cacheKey);
