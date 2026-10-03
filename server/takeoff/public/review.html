@@ -68,6 +68,11 @@
   .tag.fab{color:var(--blue);} .tag.buy{color:var(--ylw);} .tag.oth{color:var(--mut);} .tag.snd{color:var(--grn);}
   .stream .items{font-size:13px;color:#2b3340;}
   .dec{padding:12px 0;border-bottom:1px dashed #eef1f4;} .dec:last-child{border-bottom:0;}
+  .dscope{padding:9px 0;border-bottom:1px dashed #eef1f4;font-size:13px;line-height:1.5;} .dscope:last-child{border-bottom:0;}
+  .dsh{margin-bottom:2px;} .dsin{color:#22673a;} .dsout{color:#7a4b12;}
+  .adgrp{margin:6px 0 14px;} .adrow{padding:7px 0;border-bottom:1px dashed #eef1f4;font-size:13px;line-height:1.5;}
+  .adch{margin:4px 0 0 18px;padding:0;} .adch li{margin:2px 0;}
+  .aovr{margin:0 0 10px;padding:8px 10px;border-radius:6px;background:#eef4fd;border:1px solid #cddcf3;font-size:13px;}
   .qngrp{margin:4px 0 12px;} .qnh{font-weight:700;font-size:13px;margin:0 0 6px;}
   .qn{display:flex;align-items:flex-start;gap:8px;margin:0 0 6px;} .qn input{margin-top:7px;flex:none;}
   .qn textarea{flex:1;min-width:0;padding:6px 9px;border:1px solid #cdd3da;border-radius:7px;font-family:inherit;font-size:12.5px;line-height:1.45;resize:vertical;}
@@ -236,7 +241,8 @@
     // labor too, for the same reason: the estimator's hours and Holds must survive a reopen.
     // quote_notes likewise: the clarifications keep every dismissed conflict and gap, which the
     // synopsis no longer holds, so they can't be rebuilt from it on another machine.
-    const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[] };
+    const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
+                superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null };
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:params.project_id, package:pkg})});
@@ -778,7 +784,7 @@
   // (chat + Approve) stay. Switching only shows and hides panes — no re-render — so the BOM
   // editor iframe, a half-typed edit and every id other code looks up survive a tab change.
   // The chosen tab is remembered per project for this browser tab.
-  const TABS=[["overview","Overview"],["checks","Checks"],["material","Material"],["fittings","Fittings"],["labor","Labor"],["ai","Ask the AI"]];
+  const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["labor","Labor"],["ai","Ask the AI"]];
   function tabKey(){ return "mc_review_tab_"+(params.project_id||"sample"); }
   let TAB=(function(){ try{ return sessionStorage.getItem(tabKey())||"overview"; }catch(e){ return "overview"; } })();
   function setTab(t){
@@ -800,6 +806,8 @@
     const badge={
       overview: open?['warn',open]:null,
       checks: probs?['bad',probs]:null,
+      drawings: drawingScopeList(R).length?['',drawingScopeList(R).length]:null,
+      addenda: arr(R.superseded).length?[(R.addenda?'':'warn'),arr(R.superseded).length]:null,
       material: ['',arr(fab).length],
       fittings: arr(R.fittings).length?[fprobs?'bad':'',arr(R.fittings).length]:null,
       labor: hrs!=null?['',labFmt(hrs,0)+' h']:null,
@@ -810,6 +818,125 @@
       return '<button role="tab" data-tab="'+t[0]+'" class="'+(t[0]===TAB?'on':'')+'" onclick="setTab(\''+t[0]+'\')">'+t[1]+
         (b?' <span class="tbadge '+b[0]+'">'+esc(b[1])+'</span>':'')+'</button>';
     }).join("")+'</div>';
+  }
+
+  // ---- BY DRAWING — what each sheet puts in, and leaves out of, the fabricator's scope ----------
+  // The AI's per-sheet read (synopsis.drawing_scope), plus what the BOM actually took off each sheet,
+  // counted here rather than asked for. A sheet with BOM rows but no AI entry still gets listed.
+  const _sk=function(s){ return String(s==null?"":s).toUpperCase().replace(/[^A-Z0-9]/g,""); };
+  function sameSheet(a,b){ a=_sk(a); b=_sk(b); return !!a && !!b && (a===b || a.endsWith(b) || b.endsWith(a)); }
+  function drawingScopeList(R){
+    const ds=arr((R.synopsis||{}).drawing_scope).filter(function(d){ return d && d.sheet; }).map(function(d){ return Object.assign({},d); });
+    arr(R.rows).forEach(function(r){
+      if(!r.source_sheet || r.deleted) return;
+      if(!ds.some(function(d){ return sameSheet(d.sheet,r.source_sheet); })) ds.push({sheet:r.source_sheet,title:"",included:[],excluded:[],fromRows:true});
+    });
+    return ds;
+  }
+  function drawingScopeHtml(R){
+    const ds=drawingScopeList(R);
+    if(!ds.length) return '<div class="card"><div class="body" style="color:var(--mut);font-size:13px">'+
+      'No per-drawing scope on this take-off — take-offs run from today on include it.</div></div>';
+    return '<div class="card"><h2>📐 Scope by drawing <span class="lt">— what each sheet puts in your scope, and what it leaves to others</span></h2><div class="body">'+
+      ds.map(function(d){
+        const rows=arr(R.rows).filter(function(r){ return !r.deleted && (Number(r.quantity)||0)>0 && sameSheet(r.source_sheet,d.sheet); });
+        const lf=rows.reduce(function(s,r){ return s+(Number(r.quantity_total||r.quantity)||0)*(Number(r.length_ft)||0); },0);
+        const inc=arr(d.included), exc=arr(d.excluded);
+        return '<div class="dscope"><div class="dsh"><b>'+esc(d.sheet)+'</b>'+(d.title?' — '+esc(d.title):'')+
+            ' <span class="src">· '+rows.length+' BOM row'+(rows.length===1?'':'s')+(lf>0?' · ~'+Math.round(lf).toLocaleString()+' LF':'')+'</span></div>'+
+          (inc.length?'<div class="dsin">✓ <b>Included:</b> '+inc.map(esc).join(' · ')+'</div>':'')+
+          (exc.length?'<div class="dsout">✕ <b>Not included:</b> '+exc.map(function(x){ return esc(x.item||"")+(x.by?' <span class="src">('+esc(x.by)+')</span>':''); }).join(' · ')+'</div>':'')+
+          (d.notes?'<div class="src">'+esc(d.notes)+'</div>':'')+
+          (!inc.length&&!exc.length&&d.fromRows?'<div class="src">BOM rows cite this sheet; the AI gave no scope summary for it.</div>':'')+
+        '</div>';
+      }).join("")+'</div></div>';
+  }
+
+  // ---- ADDENDA — what each reissue changed, and what it does to the quote --------------------
+  // The take-off screen set aside every sheet a newer addendum replaced, and that list rode along
+  // with the run (R.superseded). Comparing is a separate, paid read, so it waits for the button.
+  let ADDENDA_BUSY=false;
+  function addendaHtml(R){
+    const sup=arr(R.superseded), notes=arr(R.addendum_notices), A=R.addenda||null;
+    if(!sup.length && !notes.length) return '<div class="card"><div class="body" style="font-size:13px">'+
+      '<div style="color:var(--mut);margin-bottom:8px">No addenda recorded with this take-off. When a sheet and its addendum '+
+      'reissue are both uploaded, the take-off screen sets the original aside and they can be compared here.</div>'+
+      (params.project_id?'<button class="applybtn" onclick="findAddenda()">🔎 Look for addenda in this project\'s files</button>':'')+
+      '</div></div>';
+    const issues={};
+    sup.forEach(function(p){ (issues[p.issue||"Addendum"]=issues[p.issue||"Addendum"]||[]).push(p); });
+    const est=(sup.length*0.03+0.05).toFixed(2);
+    const resFor=function(sheet){ return A?arr(A.sheets).find(function(x){ return sameSheet(x.sheet,sheet); }):null; };
+    const badge=function(i){ return i==="major"?'<span class="tbadge bad">major</span>':i==="minor"?'<span class="tbadge warn">minor</span>':i==="none"?'<span class="tbadge">no steel change</span>':''; };
+    return '<div class="card"><h2>📑 Addenda <span class="lt">— what each reissue changed, and what it does to the quote</span></h2><div class="body">'+
+      '<div style="margin:0 0 10px"><button class="applybtn" '+(ADDENDA_BUSY?'disabled ':'')+'onclick="runAddenda()">'+
+        (ADDENDA_BUSY?'<span class="spin"></span> Comparing…':(A?'↻ Compare again':'🔍 Compare originals with their reissues'))+'</button>'+
+        ' <span class="src">reads '+sup.length+' sheet pair'+(sup.length===1?'':'s')+(notes.length?' + '+notes.length+' notice'+(notes.length===1?'':'s'):'')+
+        ' · about $'+est+(A&&A.at?' · last compared '+esc(String(A.at).slice(0,16).replace("T"," ")):'')+'</span></div>'+
+      (A&&A.overall?'<div class="aovr"><b>Net effect on the quote:</b> '+esc(A.overall)+'</div>':'')+
+      Object.keys(issues).map(function(iss){
+        return '<div class="adgrp"><div class="qnh">'+esc(iss)+' <span class="src">· '+issues[iss].length+' sheet'+(issues[iss].length===1?'':'s')+' reissued</span></div>'+
+          issues[iss].map(function(p){
+            const r=resFor(p.sheet);
+            return '<div class="adrow"><div><b>'+esc(p.sheet)+'</b> '+(r?badge(r.impact):'')+
+                ' <span class="src">'+esc((p.old||{}).name||"")+' → '+esc((p.new||{}).name||"")+'</span></div>'+
+              (r&&r.summary?'<div>'+esc(r.summary)+'</div>':'')+
+              (r&&arr(r.changes).length?'<ul class="adch">'+arr(r.changes).map(function(c){
+                return '<li><b>'+esc(c.change||"")+'</b> '+esc(c.what||"")+(c.location?' <span class="src">@ '+esc(c.location)+'</span>':'')+
+                  (c.quantity&&c.quantity!=="n/a"?' · '+esc(c.quantity):'')+(c.quote_effect?' → <i>'+esc(c.quote_effect)+'</i>':'')+'</li>';
+              }).join("")+'</ul>':'')+
+            '</div>';
+          }).join("")+'</div>';
+      }).join("")+
+      (A&&arr(A.notices).length?'<div class="adgrp"><div class="qnh">Addendum notices</div>'+arr(A.notices).map(function(n){
+        return '<div class="adrow"><b>'+esc(n.name||"")+'</b>'+(arr(n.items).length?'<ul class="adch">'+arr(n.items).map(function(t){ return '<li>'+esc(t)+'</li>'; }).join("")+'</ul>':' <span class="src">nothing for steel</span>')+'</div>';
+      }).join("")+'</div>':'')+
+      (A&&arr(A.missing).length?'<div class="src">Not in the project\'s file store, so not compared: '+esc(A.missing.join(", "))+'</div>':'')+
+    '</div></div>';
+  }
+  // A take-off run before addenda were recorded (or one whose files were added later): pair each
+  // stored sheet with its addendum reissue by sheet number, the same rule the take-off screen uses.
+  function _sheetId(name){ const m=String(name||"").replace(/\.[a-z0-9]+$/i,"").match(/\b([A-Z]{1,2}-?\d{3}[A-Z]?(?:\.\d{1,2})?)\b/i); return m?m[1].toUpperCase().replace(/-/g,""):""; }
+  function _issueNo(name){ const s=String(name||""); const m=s.match(/\badd(?:endum|end)?\.?\s*(?:no\.?\s*)?#?\s*(\d+)/i)||s.match(/\b(?:bulletin|asi|rev(?:ision)?)\.?\s*#?\s*(\d+)/i); return m?Number(m[1])||1:0; }
+  function _issueLabel(name){ const s=String(name||""); let m=s.match(/\badd(?:endum|end)?\.?\s*(?:no\.?\s*)?#?\s*(\d+)/i); if(m) return "Addendum "+m[1];
+    m=s.match(/\b(bulletin|asi|rev(?:ision)?)\.?\s*#?\s*(\d+)/i); return m?(m[1].toLowerCase()==="asi"?"ASI":m[1].charAt(0).toUpperCase()+m[1].slice(1).toLowerCase())+" "+m[2]:"Addendum"; }
+  async function findAddenda(){
+    try{
+      const l=await (await fetch(RAILWAY_URL+"/api/files/project/"+encodeURIComponent(params.project_id))).json();
+      const files=arr(l&&l.files).filter(function(f){ return /\.pdf$/i.test(f.name||"")||/pdf/i.test(f.media_type||""); });
+      const byId={};
+      files.forEach(function(f){ const id=_sheetId(f.name); if(id) (byId[id]=byId[id]||[]).push(f); });
+      const pairs=[];
+      Object.keys(byId).forEach(function(id){
+        const g=byId[id]; if(g.length<2) return;
+        const top=Math.max.apply(null,g.map(function(f){ return _issueNo(f.name); })); if(!top) return;
+        const nw=g.find(function(f){ return _issueNo(f.name)===top; });
+        g.forEach(function(f){ if(f!==nw && _issueNo(f.name)<top) pairs.push({sheet:id,issue:_issueLabel(nw.name),
+          old:{name:f.name,file_id:f.id},new:{name:nw.name,file_id:nw.id}}); });
+      });
+      const notices=files.filter(function(f){ return /addend|bulletin/i.test(f.name) && !_sheetId(f.name); }).map(function(f){ return {name:f.name,file_id:f.id}; });
+      if(!pairs.length && !notices.length){ mcAlert("No addendum reissues found among this project's "+files.length+" stored files.",{title:"Addenda"}); return; }
+      const R=loadResult(); R.superseded=pairs; R.addendum_notices=notices; syncQuoteNotes(R); saveResult(R); render();
+    }catch(e){ mcAlert("Couldn't read the project's files: "+e.message,{title:"Addenda"}); }
+  }
+  function compactBom(R){
+    return arr(R.rows).filter(function(r){ return !r.deleted; }).slice(0,300).map(function(r){
+      return [r.source_sheet||"",r.member_mark||"",r.form_type||"",r.size||"",(r.quantity_total||r.quantity||0)+" pcs",(r.length_ft||"")+" ft"].join(" | ");
+    }).join("\n");
+  }
+  async function runAddenda(){
+    if(ADDENDA_BUSY) return;
+    const R=loadResult();
+    ADDENDA_BUSY=true; render();
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/addenda",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id, pairs:arr(R.superseded), notices:arr(R.addendum_notices), bom:compactBom(R)})});
+      const d=await r.json();
+      if(!d.ok) throw new Error(d.error||("HTTP "+r.status));
+      const R2=loadResult(); R2.addenda={sheets:d.sheets,notices:d.notices,overall:d.overall,missing:d.missing,cost_usd:d.cost_usd,at:d.at};
+      syncQuoteNotes(R2); saveResult(R2);
+    }catch(e){ mcAlert("Couldn't compare the addenda: "+e.message,{title:"Addenda"}); }
+    ADDENDA_BUSY=false; render();
   }
 
   function fittingsCardHtml(list){
@@ -2074,6 +2201,12 @@
       (fittingsCardHtml(R.fittings)||'<div class="card"><div class="body" style="color:var(--mut);font-size:13px">No pipe fittings on this take-off.</div></div>')+
       '</div>'+
 
+      // what each sheet puts in / leaves out of the fabricator's scope
+      '<div class="tabpane" data-tab="drawings">'+drawingScopeHtml(R)+'</div>'+
+
+      // what each addendum changed, original vs reissue
+      '<div class="tabpane" data-tab="addenda">'+addendaHtml(R)+'</div>'+
+
       // shop labor — hours for this take-off, at job / component / item level
       '<div class="tabpane" data-tab="labor">'+laborCardHtml(R)+'</div>'+
 
@@ -2159,9 +2292,11 @@
   // assumed. Each becomes a line of quote language the estimator can edit or leave out, and Approve
   // writes the list onto the project. A conflict or gap ✕'d off the review is NOT dropped from here
   // — dismissing it from the BOM review doesn't make it something the customer needn't hear.
-  const NOTE_GROUPS=[["conflict","Clarifications","where the documents disagree"],
+  const NOTE_GROUPS=[["addendum","Addenda","the issue of the documents this quote is based on"],
+                     ["conflict","Clarifications","where the documents disagree"],
                      ["gap","Exclusions / items to verify","not fully shown on the documents"],
-                     ["decision","Basis of quote","the calls made on this take-off"]];
+                     ["decision","Basis of quote","the calls made on this take-off"],
+                     ["scope","Scope by drawing","included / not included, sheet by sheet"]];
   function noteKey(src,topic){ return src+":"+String(topic==null?"":topic).toLowerCase().replace(/\s+/g," ").trim().slice(0,160); }
   function _sent(s){ s=String(s==null?"":s).trim(); return s && !/[.!?]$/.test(s) ? s+"." : s; }
   // Where a conflict lives on the PLANS and how much of the member it touches — the detail sheet alone
@@ -2212,6 +2347,25 @@
     arr(s.gaps).forEach(function(g){ up("gap",g.item,gapNote(g)); });
     arr(s.decisions).forEach(function(d){
       up("decision",d.item,decisionNote(d.item,d.selected!=null?d.selected:(d.ai_recommendation||null)));
+    });
+    // Each addendum the package carries: acknowledged, with its reissued sheets — and, once compared,
+    // one line per sheet whose steel actually changed.
+    const iss={};
+    arr(R.superseded).forEach(function(p){ (iss[p.issue||"Addendum"]=iss[p.issue||"Addendum"]||[]).push(p.sheet); });
+    Object.keys(iss).forEach(function(k){
+      up("addendum",k,_sent(k+" is included in this quote (reissued sheets: "+iss[k].join(", ")+")"));
+    });
+    arr((R.addenda||{}).sheets).filter(function(x){ return x && x.impact && x.impact!=="none" && x.summary; }).forEach(function(x){
+      up("addendum",(x.issue||"Addendum")+" "+x.sheet,_sent((x.issue||"Addendum")+", "+x.sheet+": "+String(x.summary).trim()));
+    });
+    // Inclusions / exclusions by sheet.
+    arr(s.drawing_scope).forEach(function(d){
+      if(!d || !d.sheet) return;
+      const inc=arr(d.included).filter(Boolean), exc=arr(d.excluded).filter(function(x){ return x && x.item; });
+      if(!inc.length && !exc.length) return;
+      up("scope",d.sheet,_sent(d.sheet+(d.title?" ("+String(d.title).trim()+")":"")+": "+
+        (inc.length?"includes "+inc.join(", "):"no fabricator steel")+
+        (exc.length?"; not included: "+exc.map(function(x){ return x.item+(x.by?" ("+x.by+")":""); }).join(", "):"")));
     });
     R.quote_notes=list;
     return changed;
@@ -2315,6 +2469,7 @@
       gaps:       mergeList(cs.gaps, as.gaps),
       conflicts:  mergeList(cs.conflicts, as.conflicts),
       compliance: mergeList(cs.compliance, as.compliance),
+      drawing_scope: mergeList(cs.drawing_scope, as.drawing_scope),
       totals:     Object.assign({}, cs.totals),
       confidence: cs.confidence || as.confidence,
     };
@@ -2757,6 +2912,7 @@
       totals:        _has(rs.totals)?rs.totals:os.totals,
       confidence:    _has(rs.confidence)?rs.confidence:os.confidence,
       parts_list:    os.parts_list,   // set by the server's parts-list read; the AI never owns it
+      drawing_scope: _has(rs.drawing_scope)?rs.drawing_scope:os.drawing_scope,
     };
     return Object.assign({},cur,{rows:carryRowConfidence(cur.rows,data.rows),fittings:mergeFittings(cur.fittings,data.fittings),
       synopsis:syn,import_csv:data.import_csv,verify_csv:data.verify_csv});

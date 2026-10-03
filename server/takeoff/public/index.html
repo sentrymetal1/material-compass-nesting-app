@@ -552,7 +552,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.62 (2026-10-03)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.63 (2026-10-03)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -962,6 +962,14 @@
       const s = String(name || "");
       const m = s.match(/\badd(?:endum|end)?\.?\s*(?:no\.?\s*)?#?\s*(\d+)/i) || s.match(/\b(?:bulletin|asi|rev(?:ision)?)\.?\s*#?\s*(\d+)/i);
       return m ? Number(m[1]) || 1 : 0;
+    }
+    // "HS PH1.3 S204 ... (Add 6 Plan).pdf" → "Addendum 6"
+    function issueLabelOf(name) {
+      const s = String(name || "");
+      let m = s.match(/\badd(?:endum|end)?\.?\s*(?:no\.?\s*)?#?\s*(\d+)/i);
+      if (m) return "Addendum " + m[1];
+      m = s.match(/\b(bulletin|asi|rev(?:ision)?)\.?\s*#?\s*(\d+)/i);
+      return m ? (m[1].toLowerCase() === "asi" ? "ASI" : m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()) + " " + m[2] : "Addendum";
     }
     function setAsideSuperseded() {
       const byId = {};
@@ -3165,6 +3173,16 @@
             project_id: params.project_id,
             manufacturer_id: params.manufacturer_id,
             pdfs: payloadDocs(), names: docs.map((d) => d.name),
+            // Which sheets an addendum replaced, by stored file id, so the review page's Addenda tab
+            // can put each original beside its reissue. Plus any addendum notice read as text.
+            superseded: setAside.map((x) => {
+              const nd = docs.find((d) => d.name === x.by);
+              return { sheet: x.sheet, issue: issueLabelOf(x.by),
+                       old: { name: x.doc.name, file_id: x.doc.fileId || null },
+                       new: { name: x.by, file_id: (nd && nd.fileId) || null } };
+            }),
+            addendum_notices: docs.filter((d) => /addend|bulletin/i.test(d.name) && d.read_as === "text")
+              .map((d) => ({ name: d.name, file_id: d.fileId || null })),
             model: document.getElementById("model").value,
             scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
             // Everything the estimator decided about coverage travels with the run: which sheets to

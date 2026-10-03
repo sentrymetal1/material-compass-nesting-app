@@ -246,6 +246,26 @@ const SYNOPSIS_SCHEMA = {
         required: ["topic"],
       },
     },
+    // What the fabricator's scope takes off each sheet, and what it leaves for others. Steel quotes
+    // carry inclusions/exclusions by sheet; the estimator should never have to reconstruct it.
+    drawing_scope: {
+      type: "array", description: "ONE entry per drawing sheet attached: what on that sheet is in the fabricator's scope and what is not.",
+      items: {
+        type: "object",
+        properties: {
+          sheet:    { type: "string", description: "Drawing number, verbatim." },
+          title:    { type: "string", description: "Sheet title." },
+          included: { type: "array", items: { type: "string" }, description: "Fabricator-scope items taken off this sheet, short and specific (e.g. 'W12 roof beams, grids A–F', 'L4x4 ledger angles', 'base plates & anchor rods')." },
+          excluded: { type: "array", description: "Items shown on this sheet that are NOT in the fabricator's scope.",
+                      items: { type: "object", properties: {
+                        item: { type: "string", description: "e.g. 'metal roof deck', 'cast-in-place concrete', 'rebar', 'open-web joists'." },
+                        by:   { type: "string", description: "'by others', 'other trade', 'buyout' (we supply but buy it in), or 'not shown — verify'." },
+                      }, required: ["item"] } },
+          notes:    { type: "string", description: "One line, only if something about this sheet's scope needs saying (e.g. 'demolition only — no new steel')." },
+        },
+        required: ["sheet"],
+      },
+    },
     compliance: {
       type: "array", description: "Domestic-content (BABA/AIS), finish schedule, code/spec callouts the estimator should know.",
       items: {
@@ -472,7 +492,10 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
       "bent-plate pour stops, continuous embeds): sum the runs from the plan's grid dimensions into " +
       "`est_length_ft`, give a per-location `length_ft` where readable, and say how in `length_basis`. Never " +
       "invent a location or a length — if the plans attached here don't show where the section is cut, leave " +
-      "`plan_locations` empty and say so in `length_basis`."
+      "`plan_locations` empty and say so in `length_basis`. " +
+      "Fill `drawing_scope` with ONE entry for EVERY drawing sheet attached (including sheets with no fabricator " +
+      "steel — say so): what on that sheet is in the fabricator's scope (`included`) and what is shown but NOT " +
+      "(`excluded`, each with who: by others / other trade / buyout / not shown — verify)."
     : " Put any brief ambiguities in the top-level `notes` field.";
 
   // knowledge.md teaches the SHAPE of a size ("L{a} x {b} x {t}"), which let the model compose sizes
@@ -1256,6 +1279,110 @@ async function readSheetIndex(opts) {
 }
 
 // -----------------------------------------------------------------------------
+//  compareAddenda — WHAT EACH ADDENDUM CHANGED, and what that does to the quote.
+//  The take-off reads only the newest issue of each sheet (the intake sets the older one
+//  aside so its steel isn't counted twice). This puts each original next to its reissue and
+//  reports the differences that matter to a steel fabricator. opts.pairs = [{ sheet, issue,
+//  old:{name,b64}, new:{name,b64} }], opts.notices = [{ name, text }] (addendum letters read as
+//  text), opts.bom = compact rows for context. Pairs are sent in as many requests as needed.
+// -----------------------------------------------------------------------------
+const ADDENDA_TOOL = {
+  name: "submit_addenda",
+  description: "Report what each addendum changed on the structural/misc-metals scope and how it affects the fabricator's quote.",
+  input_schema: {
+    type: "object",
+    properties: {
+      sheets: {
+        type: "array", description: "ONE entry per sheet pair compared.",
+        items: { type: "object", properties: {
+          sheet:   { type: "string", description: "Sheet number as given in the pair list." },
+          issue:   { type: "string", description: "The addendum, as given (e.g. 'Addendum 6')." },
+          impact:  { type: "string", enum: ["none", "minor", "major"], description: "Effect on the fabricator's steel scope: none = no steel change (e.g. a note or concrete change only)." },
+          summary: { type: "string", description: "One sentence: what changed on this sheet for the fabricator." },
+          changes: { type: "array", items: { type: "object", properties: {
+            change:   { type: "string", enum: ["added", "removed", "revised"] },
+            what:     { type: "string", description: "The member/detail/note that changed, specific (size, mark, detail number)." },
+            location: { type: "string", description: "Grid/area/detail where, as printed." },
+            quantity: { type: "string", description: "How much, if it can be read: pieces, LF, or 'n/a'." },
+            quote_effect: { type: "string", description: "Effect on the quote: 'adds ~X lb', 'deletes N beams', 'changes finish to galvanized', 'no cost effect'…" },
+          }, required: ["change", "what"] } },
+        }, required: ["sheet", "impact", "summary"] },
+      },
+      notices: {
+        type: "array", description: "ONE entry per addendum letter/narrative given as text: the items in it that touch the fabricator's scope.",
+        items: { type: "object", properties: {
+          name:  { type: "string" },
+          items: { type: "array", items: { type: "string" }, description: "Steel/misc-metals-relevant items only, each one line." },
+        }, required: ["name"] },
+      },
+      overall: { type: "string", description: "Two or three sentences: the net effect of the addenda on the fabricator's quote." },
+    },
+    required: ["sheets"],
+  },
+};
+const ADDENDA_SYSTEM =
+  "You are a structural steel / miscellaneous metals estimator comparing ORIGINAL drawing sheets with their " +
+  "ADDENDUM reissues. For each pair, find what changed that matters to the FABRICATOR: members added, removed or " +
+  "resized; connection, base plate or anchor changes; new or deleted details; finish (galvanized/primed) changes; " +
+  "lengths, elevations or grid changes that move tonnage. Ignore changes that don't touch steel scope except to say " +
+  "impact 'none'. Use revision clouds and delta tags when present, but compare the whole sheet — not every change is " +
+  "clouded. Be specific (sizes, marks, grids). Never invent a change; if the sheets look identical, say so. " +
+  "Return via submit_addenda.";
+
+async function compareAddenda(opts) {
+  opts = opts || {};
+  const pairs = Array.isArray(opts.pairs) ? opts.pairs : [];
+  const notices = Array.isArray(opts.notices) ? opts.notices : [];
+  if (!pairs.length && !notices.length) throw new Error("compareAddenda: pairs[] or notices[] required");
+  const model = MODELS[opts.modelKey] || MODELS.sonnet;
+  const anthropic = opts.client || new Anthropic();
+  // Each pair is two PDFs; keep a request under ~24 MB of base64.
+  const groups = [];
+  let cur = null;
+  pairs.forEach(function (p) {
+    const len = String(p.old.b64 || "").length + String(p.new.b64 || "").length;
+    if (!cur || (cur.pairs.length && cur.len + len > 24 * 1024 * 1024)) { cur = { pairs: [], len: 0 }; groups.push(cur); }
+    cur.pairs.push(p); cur.len += len;
+  });
+  if (!groups.length) groups.push({ pairs: [], len: 0 });
+
+  const out = { sheets: [], notices: [], overall: [], cost_usd: 0 };
+  for (let g = 0; g < groups.length; g++) {
+    const content = [];
+    const lines = [];
+    groups[g].pairs.forEach(function (p, k) {
+      content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: p.old.b64 } });
+      content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: p.new.b64 } });
+      lines.push("Pair " + (k + 1) + " — sheet " + p.sheet + " (" + (p.issue || "addendum") + "): document " + (2 * k + 1) +
+        ' is the ORIGINAL ("' + p.old.name + '"), document ' + (2 * k + 2) + ' is the REISSUE ("' + p.new.name + '").');
+    });
+    const withNotices = g === 0 ? notices : [];
+    withNotices.forEach(function (n) {
+      content.push({ type: "text", text: 'ADDENDUM NOTICE (text) — "' + n.name + '":\n' + String(n.text || "").slice(0, 60000) });
+    });
+    content.push({ type: "text", text:
+      (lines.length ? "SHEET PAIRS:\n" + lines.join("\n") + "\n\n" : "") +
+      (withNotices.length ? "Also report the steel-relevant items in each addendum notice above.\n\n" : "") +
+      (opts.bom ? "THE CURRENT TAKE-OFF (read from the reissued sheets), for context on what each change affects:\n" + opts.bom + "\n\n" : "") +
+      "Compare each pair and report via submit_addenda." });
+    const resp = await anthropic.messages.create({
+      model: model.id, max_tokens: 8000, system: ADDENDA_SYSTEM,
+      tools: [ADDENDA_TOOL], tool_choice: { type: "tool", name: "submit_addenda" },
+      messages: [{ role: "user", content: content }],
+    });
+    out.cost_usd += costOf(resp.usage, model);
+    const tu = resp.content.find(function (b) { return b.type === "tool_use"; });
+    const r = tu ? tu.input : {};
+    const sh = unwrap(r.sheets, []); if (Array.isArray(sh)) out.sheets = out.sheets.concat(sh);
+    const nt = unwrap(r.notices, []);
+    if (withNotices.length && Array.isArray(nt)) out.notices = out.notices.concat(nt);   // only the request that carried them
+    if (r.overall) out.overall.push(String(r.overall));
+  }
+  return { sheets: out.sheets, notices: out.notices, overall: out.overall.join(" "),
+           cost_usd: Number(out.cost_usd.toFixed(4)), modelId: model.id, requests: groups.length };
+}
+
+// -----------------------------------------------------------------------------
 //  askDocuments — QUESTIONS AT INTAKE. The review page has a conversation about the
 //  finished package; this is the same thing one step earlier, about the DOCUMENTS
 //  themselves, before a take-off is spent: "what's in file 2?", "does the BOM cover
@@ -1331,4 +1458,4 @@ async function askDocuments(opts) {
            usage: resp.usage, modelId: model.id };
 }
 
-module.exports = { applyChanges, indexedPackage, EDIT_TOOL, runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, pdfPageCount, groupPagesIntoSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
+module.exports = { compareAddenda, applyChanges, indexedPackage, EDIT_TOOL, runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, pdfPageCount, groupPagesIntoSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };

@@ -5,7 +5,7 @@ const axios = require('axios');
 const path = require('path');
 const zlib = require('zlib');
 const FormData = require('form-data');
-const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler } = require('./takeoff/route');
+const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler } = require('./takeoff/route');
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
 const filestore = require('./filestore');        // the project's own copy of the drawings
 
@@ -1430,6 +1430,7 @@ app.post('/api/takeoff/bom-preview', async (req, res) => {
 
 app.post('/api/takeoff/index', (req, res) => indexHandler(req, res)); // intake: read sheet numbers + page ranges
 app.post('/api/takeoff/inspect', (req, res) => inspectHandler(req, res)); // intake: drawing or document? (no AI, no size limit)
+app.post('/api/takeoff/addenda', (req, res) => addendaHandler(req, res)); // review: what each addendum changed
 app.post('/api/takeoff/ask', (req, res) => askHandler(req, res));     // intake: ask about the uploaded documents
 // What a run would cost per reading depth, before anything is spent. Rates come from the
 // engine's own table so the quote and the bill cannot drift apart.

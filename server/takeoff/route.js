@@ -349,6 +349,10 @@ async function takeoffHandler(req, res, deps) {
       truncated: !!out.truncated,
       // A part of a split run failed; the finished parts are here and these drawings are not.
       incomplete: out.incomplete || null,
+      // Sheets an addendum replaced (set aside at intake) and addendum notices — the review page's
+      // Addenda tab compares them on request.
+      superseded: Array.isArray(body.superseded) ? body.superseded : [],
+      addendum_notices: Array.isArray(body.addendum_notices) ? body.addendum_notices : [],
       cost_usd: out.cost_usd,
       import_csv: import_csv,
       verify_csv: verify_csv,
@@ -516,6 +520,49 @@ async function indexHandler(req, res) {
   }
 }
 
+// POST /api/takeoff/addenda — compare each sheet an addendum replaced with its original, and read
+// any addendum notice. Body: { project_id, pairs:[{sheet, issue, old:{name,file_id}, new:{name,file_id}}],
+// notices:[{name,file_id}], bom?: string, model? }. Files come from the project's store — the
+// originals were set aside at intake, so the browser no longer holds them. Not metered (like ask).
+async function addendaHandler(req, res) {
+  try {
+    const body = req.body || {};
+    const pid = String(body.project_id || "");
+    if (!/^\d+$/.test(pid)) return res.status(400).json({ ok: false, error: "project_id required" });
+    const fstore = require("../filestore");
+    const read = function (f) {
+      if (!f || !f.file_id) return null;
+      const r = fstore.readFile("project", pid, f.file_id);
+      return r && r.buf ? r.buf.toString("base64") : null;
+    };
+    const pairs = [], missing = [];
+    (Array.isArray(body.pairs) ? body.pairs : []).forEach(function (p) {
+      const o = read(p && p.old), n = read(p && p.new);
+      if (o && n) pairs.push({ sheet: p.sheet, issue: p.issue, old: { name: p.old.name, b64: o }, new: { name: p.new.name, b64: n } });
+      else missing.push(p && p.sheet);
+    });
+    const notices = [];
+    for (const f of (Array.isArray(body.notices) ? body.notices : [])) {
+      const b = read(f);
+      if (!b) { missing.push(f && f.name); continue; }
+      const t = await extractText(b).catch(function () { return null; });
+      if (t && t.text) notices.push({ name: f.name, text: t.text });
+    }
+    if (!pairs.length && !notices.length) {
+      return res.json({ ok: false, error: "None of the addendum files are in the project's file store" +
+        (missing.length ? " (" + missing.filter(Boolean).join(", ") + ")" : "") + " — reopen the take-off screen once so they're saved, then try again." });
+    }
+    const out = await require("./engine").compareAddenda({ pairs: pairs, notices: notices,
+      bom: body.bom ? String(body.bom).slice(0, 20000) : "", modelKey: body.model || "sonnet" });
+    console.log("[ai-cost] addenda $" + out.cost_usd + " (" + pairs.length + " pairs, " + notices.length + " notices, " + out.requests + " request(s))");
+    return res.json({ ok: true, sheets: out.sheets, notices: out.notices, overall: out.overall,
+                      cost_usd: out.cost_usd, missing: missing.filter(Boolean), at: new Date().toISOString() });
+  } catch (err) {
+    console.error("takeoff addenda error", err);
+    return res.status(500).json({ ok: false, error: outward(err) });
+  }
+}
+
 // POST /api/takeoff/inspect — is this file a DRAWING (looked at) or a DOCUMENT (read as text)?
 // Body: { name, data (base64 PDF), want_text? }. Called once per file as it lands on the intake
 // screen, with no model call and no size limit, so every file is tagged the moment it's added —
@@ -615,4 +662,4 @@ function pricingHandler(req, res) {
   }
 }
 
-module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, mergeSynopsis, runBatches };
+module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, mergeSynopsis, runBatches };
