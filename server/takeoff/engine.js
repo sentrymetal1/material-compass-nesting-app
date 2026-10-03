@@ -964,8 +964,10 @@ async function readSheetIndex(opts) {
   const seen = {}, entries = [], docMeta = {};
   let dupPages = 0, costUsd = 0;
   const usage = { input_tokens: 0, output_tokens: 0 };
-  for (let b = 0; b < plan.batches.length; b++) {
-    const parts = plan.batches[b].parts;
+  // A batch whose pages don't all come back is asked again ONCE, with just the files it missed.
+  const queue = plan.batches.slice();
+  for (let b = 0; b < queue.length; b++) {
+    const parts = queue[b].parts;
     const withText = b === 0 ? textDocs : [];      // documents are classified once, in the first request
     const pagesHere = parts.reduce(function (s, p) { return s + p.pages; }, 0);
     const manifest = parts.map(function (p, j) {
@@ -977,10 +979,11 @@ async function readSheetIndex(opts) {
     })).join("\n");
     const ask = "Index the attached drawing package PAGE BY PAGE.\n" + manifest + knownBlock +
       (parts.length
-        ? "\n\nReturn EXACTLY " + pagesHere + " page entries — one per page of the PDF documents, in order, including any page with no drawing number."
+        ? "\n\nReturn EXACTLY " + pagesHere + " page entries — one per page of the PDF documents, in order, including any page with no drawing number." +
+          "\nEach PDF is a SEPARATE attached document: set `doc` to its number in the list above and `page` to the page " +
+          "WITHIN that document — a one-page PDF is always page 1. Never number pages across documents."
         : "\n\nThere are no drawings in this request — return an empty `pages` list and one `documents` entry per document.") +
-      (plan.batches.length > 1 ? "\n(This is part " + (b + 1) + " of " + plan.batches.length +
-        " of a larger package. Number documents exactly as listed above.)" : "") +
+      (queue.length > 1 ? "\n(This is part " + (b + 1) + " of a larger package read in parts. Number documents exactly as listed above.)" : "") +
       "\nDo not take off materials.";
 
     // ── THE CEILING HAS TO SCALE WITH THE PACKAGE ──────────────────────────────────────────
@@ -1032,14 +1035,27 @@ async function readSheetIndex(opts) {
     let raw = unwrap(toolUse.input.pages, []);
     if (!Array.isArray(raw)) raw = [];
 
+    // Every page of this request in attachment order, so a page can be found by its running
+    // number. On Dunkirk (2026-10-03) the model numbered sixteen one-page PDFs as "doc 1, pages
+    // 1-16" — fifteen real drawings were thrown away as pages that don't exist. A page that
+    // doesn't fit its document is read as a running page number across the request instead.
+    const flat = [];
+    parts.forEach(function (part, j) { for (let q = 1; q <= part.pages; q++) flat.push({ j: j, page: q }); });
+    const runningOk = raw.length === flat.length;
+
     // Normalize, and keep only ONE entry per (doc,page) — the page is the primary key, so a
     // page the model reported twice can no longer become a second drawing.
-    raw.forEach(function (p) {
-      const local = parseInt(p && p.doc, 10) || 1;
-      if (local < 1 || local > parts.length) return;                    // a text document, or nonsense
+    raw.forEach(function (p, n) {
+      let local = parseInt(p && p.doc, 10) || 1;
+      let page = parseInt(p && p.page, 10);
+      if (local > parts.length) return;                                 // a text document
+      if (local < 1 || !page || page < 1 || page > parts[local - 1].pages) {
+        const at = (local === 1 && page >= 1 && page <= flat.length) ? flat[page - 1]
+                 : runningOk ? flat[n] : null;
+        if (!at) return;                                                // page that doesn't exist
+        local = at.j + 1; page = at.page;
+      }
       const part = parts[local - 1];
-      const page = parseInt(p && p.page, 10);
-      if (!page || page < 1 || page > part.pages) return;               // page that doesn't exist
       const doc = part.item.index + 1, gpage = part.pageOffset + page;
       const k = doc + ":" + gpage;
       if (seen[k]) { dupPages++; return; }
@@ -1067,6 +1083,18 @@ async function readSheetIndex(opts) {
         suggested_component: String((d && d.suggested_component) == null ? "" : d.suggested_component).trim(),
       };
     });
+
+    // Anything this request didn't return gets one more try on its own, before it is reported missing.
+    if (!queue[b].retry) {
+      const missed = parts.filter(function (part) {
+        for (let q = 1; q <= part.pages; q++) if (!seen[(part.item.index + 1) + ":" + (part.pageOffset + q)]) return true;
+        return false;
+      });
+      if (missed.length) {
+        console.log("[takeoff index] " + missed.length + " file(s) came back incomplete — reading them again");
+        queue.push({ parts: missed, retry: true, pages: missed.reduce(function (s, p) { return s + p.pages; }, 0) });
+      }
+    }
   }
 
   // A text document has no title blocks to read: every page of it belongs to the document. Filled
@@ -1177,7 +1205,7 @@ async function readSheetIndex(opts) {
     documents: documents,
     pages: entries,
     audit: audit,
-    batches: plan.batches.length,
+    batches: queue.length,
     cost_usd: Number(costUsd.toFixed(4)),
     usage: usage,
     modelKey: MODELS[modelKey] ? modelKey : "sonnet",
