@@ -904,8 +904,16 @@
     try{
       const l=await (await fetch(RAILWAY_URL+"/api/files/project/"+encodeURIComponent(params.project_id))).json();
       const files=arr(l&&l.files).filter(function(f){ return /\.pdf$/i.test(f.name||"")||/pdf/i.test(f.media_type||""); });
+      // Same rule as the take-off screen: same number, or one leading letter apart ("GS005" vs
+      // "G S005") with matching titles.
+      const words=function(n){ const S={add:1,addendum:1,plan:1,area:1,rev:1,revision:1,bulletin:1,asi:1,pdf:1,and:1,the:1}, w={};
+        String(n||"").replace(/\.[a-z0-9]+$/i,"").toLowerCase().replace(/[^a-z0-9]+/g," ").split(" ").forEach(function(t){ if(t.length>2&&!/\d/.test(t)&&!S[t]) w[t]=1; }); return Object.keys(w); };
+      const sim=function(a,b){ const A=words(a),B=words(b); if(!A.length||!B.length) return 0; const i=A.filter(function(t){ return B.indexOf(t)>-1; }).length; return i/(A.length+B.length-i); };
+      const same=function(ia,na,ib,nb){ if(ia===ib) return true; if(!(ia.endsWith(ib)||ib.endsWith(ia))||Math.abs(ia.length-ib.length)>1) return false; return sim(na,nb)>=0.6; };
       const byId={};
-      files.forEach(function(f){ const id=_sheetId(f.name); if(id) (byId[id]=byId[id]||[]).push(f); });
+      files.forEach(function(f){ const id=_sheetId(f.name); if(!id) return;
+        const g=Object.keys(byId).find(function(k){ return same(k,byId[k][0].name,id,f.name); })||id;
+        (byId[g]=byId[g]||[]).push(f); });
       const pairs=[];
       Object.keys(byId).forEach(function(id){
         const g=byId[id]; if(g.length<2) return;

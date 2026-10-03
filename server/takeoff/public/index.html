@@ -552,7 +552,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.63 (2026-10-03)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.64 (2026-10-03)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -971,10 +971,37 @@
       m = s.match(/\b(bulletin|asi|rev(?:ision)?)\.?\s*#?\s*(\d+)/i);
       return m ? (m[1].toLowerCase() === "asi" ? "ASI" : m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()) + " " + m[2] : "Addendum";
     }
+    // The words of a sheet's title, without its number, issue tags or project prefix — what decides
+    // that "GS005 Typical Steel Details" and "G S005 Typical Steel Details (Add 4 Plan)" are one sheet.
+    function titleWords(name) {
+      const STOP = { add: 1, addendum: 1, plan: 1, area: 1, rev: 1, revision: 1, bulletin: 1, asi: 1, pdf: 1, and: 1, the: 1 };
+      const w = {};
+      String(name || "").replace(/\.[a-z0-9]+$/i, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ").forEach((t) => {
+        if (t.length > 2 && !/\d/.test(t) && !STOP[t]) w[t] = 1;
+      });
+      return Object.keys(w);
+    }
+    function titleSim(a, b) {
+      const A = titleWords(a), B = titleWords(b);
+      if (!A.length || !B.length) return 0;
+      const inter = A.filter((t) => B.indexOf(t) > -1).length;
+      return inter / (A.length + B.length - inter);
+    }
+    // Same sheet: identical number, or numbers that differ only by a leading letter ("GS005" / "S005",
+    // which is how "G S005" reads) AND the titles agree. The title check keeps a real GS005 and S005
+    // — two different sheets — apart.
+    function sameSheetFile(idA, nameA, idB, nameB) {
+      if (idA === idB) return true;
+      if (!(idA.endsWith(idB) || idB.endsWith(idA))) return false;
+      if (Math.abs(idA.length - idB.length) > 1) return false;
+      return titleSim(nameA, nameB) >= 0.6;
+    }
     function setAsideSuperseded() {
       const byId = {};
       docs.forEach((d) => { if (d.is_image || d.read_as === "text") return;
-        const id = sheetIdOf(d.name); if (id) (byId[id] = byId[id] || []).push(d); });
+        const id = sheetIdOf(d.name); if (!id) return;
+        const g = Object.keys(byId).find((k) => sameSheetFile(k, byId[k][0].name, id, d.name)) || id;
+        (byId[g] = byId[g] || []).push(d); });
       const out = [];
       Object.keys(byId).forEach((id) => {
         const g = byId[id]; if (g.length < 2) return;
