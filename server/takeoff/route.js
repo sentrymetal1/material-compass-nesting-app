@@ -89,20 +89,40 @@ async function runBatches(prepared, plan, engineOpts) {
   const texts = prepared.filter(function (it) { return it.kind === "text"; }).map(docprep.textBlock);
   const batches = plan.batches.length ? plan.batches : [{ parts: [] }];
   const outs = [];
+  let failed = null;
   for (let b = 0; b < batches.length; b++) {
     const blocks = batches[b].parts.map(docprep.partBlock).concat(texts);
     const opts = Object.assign({}, engineOpts, { blocks: blocks, batchNote: batches.length > 1 ? batchNote(plan, b) : "" });
     console.log("[takeoff] part " + (b + 1) + "/" + batches.length + ": " + batches[b].parts.length + " drawing file(s), " +
       (batches[b].pages || 0) + " pages, " + texts.length + " text document(s)");
-    outs.push(await runTakeoff(opts));
+    try {
+      const o = await runTakeoff(opts);
+      console.log("[ai-cost] takeoff part " + (b + 1) + "/" + batches.length + " $" + o.cost_usd +
+        " (in " + ((o.usage && o.usage.input_tokens) || 0) + ", cache-write " + ((o.usage && o.usage.cache_creation_input_tokens) || 0) +
+        ", cache-read " + ((o.usage && o.usage.cache_read_input_tokens) || 0) + ", out " + ((o.usage && o.usage.output_tokens) || 0) + ")");
+      outs.push(o);
+    } catch (e) {
+      // A part that fails after earlier parts finished must not throw them away — they're paid
+      // for. On 2026-10-03 part 2 hit an empty credit balance and the finished part 1 was lost,
+      // so the estimator paid for it twice. Keep what came back and say what's missing.
+      if (!outs.length) throw e;
+      failed = { part: b + 1, error: e, missing: [] };
+      for (let k = b; k < batches.length; k++) batches[k].parts.forEach(function (p) { failed.missing.push(docprep.partLabel(p)); });
+      console.error("[takeoff] part " + (b + 1) + " failed — keeping the " + outs.length + " finished part(s):", e.message || e);
+      break;
+    }
   }
-  if (outs.length === 1) return outs[0];
+  if (outs.length === 1 && !failed) return outs[0];
   const sum = function (f) { return outs.reduce(function (s, o) { return s + (Number(f(o)) || 0); }, 0); };
   return {
     rows: [].concat.apply([], outs.map(function (o) { return o.rows || []; })),
     fittings: [].concat.apply([], outs.map(function (o) { return o.fittings || []; })),
-    notes: outs.map(function (o, i) { return o.notes ? "Part " + (i + 1) + " of " + outs.length + ": " + o.notes : ""; })
+    notes: (failed
+      ? "⚠ INCOMPLETE: part " + failed.part + " of " + batches.length + " failed (" + outward(failed.error) + "), so these drawings were NOT taken off: " +
+        failed.missing.join(", ") + ". Add them from this page with ➕ Add drawings.\n\n" : "") +
+      outs.map(function (o, i) { return o.notes ? "Part " + (i + 1) + " of " + batches.length + ": " + o.notes : ""; })
       .filter(Boolean).join("\n\n"),
+    incomplete: failed ? { part: failed.part, of: batches.length, missing: failed.missing } : null,
     truncated: outs.some(function (o) { return o.truncated; }),
     synopsis: mergeSynopsis(outs.map(function (o) { return o.synopsis; })),
     cost_usd: Number(sum(function (o) { return o.cost_usd; }).toFixed(4)),
@@ -327,6 +347,8 @@ async function takeoffHandler(req, res, deps) {
       // say so: a missing synopsis quietly routes the estimator away from the review page, and
       // without this that reads as a deliberate choice rather than a cut-off response.
       truncated: !!out.truncated,
+      // A part of a split run failed; the finished parts are here and these drawings are not.
+      incomplete: out.incomplete || null,
       cost_usd: out.cost_usd,
       import_csv: import_csv,
       verify_csv: verify_csv,
@@ -404,6 +426,7 @@ async function reviseHandler(req, res, deps) {
       attachments: (Array.isArray(body.attachments) && body.attachments.length) ? body.attachments : undefined,
     });
     const rows = out.rows;
+    console.log("[ai-cost] revise $" + out.cost_usd);
     const gap_count = rows.filter(function (r) { return (Number(r.quantity) || 0) <= 0; }).length;
     const count = rows.length - gap_count;
     const low_confidence = rows.filter(function (r) { return Number(r.confidence) <= LOW_CONF; }).length;
@@ -450,6 +473,7 @@ async function chatHandler(req, res, deps) {
       attachments: (Array.isArray(body.attachments) && body.attachments.length) ? body.attachments : undefined,
     });
 
+    console.log("[ai-cost] chat $" + out.cost_usd);
     if (out.edited) {
       const rows = out.rows;
       return res.json({
@@ -483,6 +507,7 @@ async function indexHandler(req, res) {
       knownComponents: Array.isArray(body.components) ? body.components : [],
       modelKey: body.model || "sonnet",
     });
+    console.log("[ai-cost] preview read $" + out.cost_usd + " (" + (out.batches || 1) + " request(s))");
     return res.json({ ok: true, sheets: out.sheets, documents: out.documents, pages: out.pages,
                       audit: out.audit, cost_usd: out.cost_usd, model: out.modelId });
   } catch (err) {
@@ -544,6 +569,7 @@ async function askHandler(req, res) {
       context: body.context ? String(body.context) : "",
       modelKey: body.model || "sonnet",
     });
+    console.log("[ai-cost] ask $" + out.cost_usd);
     return res.json({ ok: true, reply: out.reply, cost_usd: out.cost_usd, model: out.modelId });
   } catch (err) {
     console.error("takeoff ask error", err);

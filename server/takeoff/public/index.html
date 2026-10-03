@@ -552,7 +552,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.61 (2026-10-03)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.62 (2026-10-03)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -877,7 +877,9 @@
     function invalidateScan() {
       if (!audit && !detected.length) return;
       audit = null; detected = []; docList = [];
-      docs.forEach((d) => { if (!d.is_image) d.pages = 0; });   // an image is one sheet, always
+      // An image is one sheet, always; a document read as text keeps the page count its check found
+      // (zeroing it is what showed Division 05 as "1 page" and priced the run low).
+      docs.forEach((d) => { if (!d.is_image && !(d.read_as === "text" && d.text)) d.pages = 0; });
       renderAlloc();
       setScopeStatus("Files changed — read the drawings from the PDF again to re-check the count.");
     }

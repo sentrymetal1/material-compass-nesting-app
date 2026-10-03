@@ -1488,6 +1488,32 @@ app.post('/api/takeoff/commit', async (req, res) => {
 // this run from the review page at Approve time, long after the tab that did the upload is
 // gone. `files` stays supported for a caller that still holds them, and a file sent that way
 // is referenced by key so a 40-sheet PDF is not re-posted 40 times.
+// POST /api/takeoff/commit-clarifications — the take-off's conflicts, gaps and decisions, written as
+// quote clarifications onto the project so whoever builds the quote has them. Body: { project_id, text }.
+// Lands in the project's Multi Line field Quote_Clarifications (replaced on each approve — the
+// review page always sends the whole list).
+app.post('/api/takeoff/commit-clarifications', async (req, res) => {
+  try {
+    const { project_id, text } = req.body || {};
+    if (!/^\d+$/.test(String(project_id || ''))) return res.status(400).json({ ok: false, error: 'project_id required' });
+    const token = await getAccessToken();
+    const zr = await axios.patch(creatorApiBase() + '/report/All_Projects/' + project_id,
+      { data: { Quote_Clarifications: String(text || '').slice(0, 60000) } },
+      { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' }, validateStatus: () => true });
+    const d = zr.data || {};
+    if (d.code === 3000) return res.json({ ok: true });
+    const detail = JSON.stringify(d.error || d.message || d).slice(0, 400);
+    console.error('[commit-clarifications] rejected:', detail);
+    // The field has to exist on the project form first; say exactly what to add.
+    const noField = /Quote_Clarifications|invalid column|no such|not exist|unknown field/i.test(detail);
+    return res.json({ ok: false, error: noField
+      ? 'the project form has no Quote_Clarifications field yet (add a Multi Line field with that link name)'
+      : 'the data service rejected it: ' + detail });
+  } catch (err) {
+    res.json({ ok: false, error: (err.response && JSON.stringify(err.response.data).slice(0, 300)) || err.message });
+  }
+});
+
 app.post('/api/takeoff/attach-drawings', async (req, res) => {
   try {
     const project_id = req.body && req.body.project_id;

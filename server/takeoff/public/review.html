@@ -68,6 +68,11 @@
   .tag.fab{color:var(--blue);} .tag.buy{color:var(--ylw);} .tag.oth{color:var(--mut);} .tag.snd{color:var(--grn);}
   .stream .items{font-size:13px;color:#2b3340;}
   .dec{padding:12px 0;border-bottom:1px dashed #eef1f4;} .dec:last-child{border-bottom:0;}
+  .qngrp{margin:4px 0 12px;} .qnh{font-weight:700;font-size:13px;margin:0 0 6px;}
+  .qn{display:flex;align-items:flex-start;gap:8px;margin:0 0 6px;} .qn input{margin-top:7px;flex:none;}
+  .qn textarea{flex:1;min-width:0;padding:6px 9px;border:1px solid #cdd3da;border-radius:7px;font-family:inherit;font-size:12.5px;line-height:1.45;resize:vertical;}
+  .qn.off textarea,.qn.off .qnpend{opacity:.45;} .qnpend{flex:1;font-size:12.5px;color:var(--mut);padding-top:5px;}
+  .qn a.src{flex:none;padding-top:6px;}
   .dec .q{font-size:14px;font-weight:600;margin-bottom:2px;} .dec .why{font-size:12px;color:var(--mut);margin-bottom:8px;}
   .opts{display:flex;gap:8px;flex-wrap:wrap;}
   .opt{font-size:13px;border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer;background:#fff;user-select:none;transition:.12s;}
@@ -229,7 +234,9 @@
     // fittings MUST travel too. They were left out, so they lived only in this browser — reopen
     // the take-off anywhere else (or after storage is cleared) and every fitting was gone.
     // labor too, for the same reason: the estimator's hours and Holds must survive a reopen.
-    const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null };
+    // quote_notes likewise: the clarifications keep every dismissed conflict and gap, which the
+    // synopsis no longer holds, so they can't be rebuilt from it on another machine.
+    const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[] };
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:params.project_id, package:pkg})});
@@ -1882,6 +1889,7 @@
     const fab = rows.filter(function(r){ return (Number(r.quantity)||0)>0 && live(r); });
     const gaps = arr(s.gaps), conflicts=arr(s.conflicts), comp=arr(s.compliance);
     CONFLICTS = conflicts;
+    if(syncQuoteNotes(R)) saveResult(R);
     const overall = conf.overall!=null?conf.overall:0.7;
 
     const _clean = function(a){ return arr(a).filter(function(x){ return String(x==null?"":x).trim(); }); };
@@ -2020,6 +2028,10 @@
           (c.recommendation?'<br><span class="src">→ '+esc(c.recommendation)+'</span> <button class="applybtn" onclick="applyConflict('+i+')">Apply &amp; resolve</button>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
         '</div></div>':'')+
 
+      // quote clarifications — every conflict, gap and decision, written as quote language
+      (arr(R.quote_notes).length?'<div class="card"><h2>📝 Quote clarifications'+
+        ' <span class="pillbtn" onclick="copyQuoteNotes()">copy all</span></h2><div class="body" id="quoteNotes"></div></div>':'')+
+
       // compliance
       (comp.length?'<div class="card"><h2>✓ Compliance &amp; finish</h2><div class="body">'+
         comp.map(c=>'<div class="comp"><span class="ok">'+esc(c.topic)+'</span><span class="src">'+esc(c.note)+'</span></div>').join("")+
@@ -2093,6 +2105,7 @@
 
     if(_aiKeep){ const _ai=document.getElementById("aiInput"); if(_ai) _ai.value=_aiKeep; }  // restore typed chat text
     renderDecisions();
+    renderQuoteNotes();
     applyTab();
   }
 
@@ -2134,7 +2147,90 @@
     d.sel=v; renderDecisions();
     const idx=parseInt(String(id).replace("dec",""),10);
     const R=loadResult();
-    if(R && R.synopsis && Array.isArray(R.synopsis.decisions) && R.synopsis.decisions[idx]){ R.synopsis.decisions[idx].selected=v; saveResult(R); }
+    if(R && R.synopsis && Array.isArray(R.synopsis.decisions) && R.synopsis.decisions[idx]){
+      R.synopsis.decisions[idx].selected=v; syncQuoteNotes(R); saveResult(R); renderQuoteNotes();
+    }
+  }
+
+  // ---- QUOTE CLARIFICATIONS --------------------------------------------------
+  // Every conflict, every gap and every decision the take-off raised is something the customer has
+  // to be told in the quote: which document the price follows, what isn't included, what was
+  // assumed. Each becomes a line of quote language the estimator can edit or leave out, and Approve
+  // writes the list onto the project. A conflict or gap ✕'d off the review is NOT dropped from here
+  // — dismissing it from the BOM review doesn't make it something the customer needn't hear.
+  const NOTE_GROUPS=[["conflict","Clarifications","where the documents disagree"],
+                     ["gap","Exclusions / items to verify","not fully shown on the documents"],
+                     ["decision","Basis of quote","the calls made on this take-off"]];
+  function noteKey(src,topic){ return src+":"+String(topic==null?"":topic).toLowerCase().replace(/\s+/g," ").trim().slice(0,160); }
+  function _sent(s){ s=String(s==null?"":s).trim(); return s && !/[.!?]$/.test(s) ? s+"." : s; }
+  function conflictNote(c){
+    const parts=[];
+    if(c.drawing_says) parts.push("the drawings show "+String(c.drawing_says).trim());
+    if(c.spec_says) parts.push("the specification calls for "+String(c.spec_says).trim());
+    return _sent((c.topic||"Conflict")+(parts.length?": "+parts.join("; "):""))+
+      " This quote is based on "+_sent(c.recommendation||"the specification");
+  }
+  function gapNote(g){
+    return _sent((g.item||"Item")+(g.where?" ("+g.where+")":"")+": not fully detailed on the documents provided")+
+      " Not included unless confirmed"+(g.suggested_action?" ("+String(g.suggested_action).trim().replace(/[.]$/,"")+")":"")+".";
+  }
+  function decisionNote(item,sel){ return sel==null?"":_sent(String(item||"Decision").trim().replace(/\?+$/,"")+": quoted as "+sel); }
+  function syncQuoteNotes(R){
+    const s=R.synopsis||{};
+    let changed=!Array.isArray(R.quote_notes);
+    const list=changed?[]:R.quote_notes;
+    const up=function(src,topic,base){
+      const k=noteKey(src,topic);
+      const n=list.find(function(x){ return x.key===k; });
+      if(!n){ list.push({key:k,source:src,topic:String(topic||""),base:base,text:null,include:true}); changed=true; }
+      else if(n.base!==base){ n.base=base; changed=true; }
+    };
+    arr(s.conflicts).forEach(function(c){ up("conflict",c.topic,conflictNote(c)); });
+    arr(s.gaps).forEach(function(g){ up("gap",g.item,gapNote(g)); });
+    arr(s.decisions).forEach(function(d){
+      up("decision",d.item,decisionNote(d.item,d.selected!=null?d.selected:(d.ai_recommendation||null)));
+    });
+    R.quote_notes=list;
+    return changed;
+  }
+  const noteText=function(n){ return String(n.text!=null?n.text:(n.base||"")).trim(); };
+  function renderQuoteNotes(){
+    const box=document.getElementById("quoteNotes"); if(!box) return;
+    const notes=arr(loadResult().quote_notes);
+    box.innerHTML='<div class="src" style="margin-bottom:8px">Written onto the project when you approve, for the '+
+      'clarifications and exclusions on your quote. Edit the wording, or untick a line to leave it out.</div>'+
+      NOTE_GROUPS.map(function(g){
+        const items=notes.map(function(n,i){ return {n:n,i:i}; }).filter(function(x){ return x.n.source===g[0]; });
+        if(!items.length) return "";
+        return '<div class="qngrp"><div class="qnh">'+g[1]+' <span class="src">· '+g[2]+'</span></div>'+
+          items.map(function(x){
+            const n=x.n, t=noteText(n), pending=!t;
+            return '<div class="qn'+(n.include&&!pending?'':' off')+'">'+
+              '<input type="checkbox" '+(n.include?'checked ':'')+(pending?'disabled ':'')+'onchange="setNoteInclude('+x.i+',this.checked)" title="Include on the quote">'+
+              (pending
+                ? '<div class="qnpend">'+esc(n.topic)+' — waiting on your decision above.</div>'
+                : '<textarea rows="2" onchange="setNoteText('+x.i+',this.value)">'+esc(t)+'</textarea>')+
+              (n.text!=null?'<a href="#" class="src" onclick="resetNote('+x.i+');return false" title="Back to the generated wording">reset</a>':'')+
+            '</div>';
+          }).join("")+'</div>';
+      }).join("");
+  }
+  function setNoteText(i,v){ const R=loadResult(); const n=arr(R.quote_notes)[i]; if(!n) return;
+    n.text=(String(v).trim()===String(n.base||"").trim())?null:String(v); saveResult(R); renderQuoteNotes(); }
+  function setNoteInclude(i,on){ const R=loadResult(); const n=arr(R.quote_notes)[i]; if(!n) return; n.include=!!on; saveResult(R); renderQuoteNotes(); }
+  function resetNote(i){ const R=loadResult(); const n=arr(R.quote_notes)[i]; if(!n) return; n.text=null; saveResult(R); renderQuoteNotes(); }
+  // The list as it goes on the quote: grouped, numbered, only the lines left ticked.
+  function quoteNotesText(R){
+    const notes=arr((R||loadResult()).quote_notes).filter(function(n){ return n.include && noteText(n); });
+    return NOTE_GROUPS.map(function(g){
+      const lines=notes.filter(function(n){ return n.source===g[0]; }).map(function(n,k){ return (k+1)+". "+noteText(n); });
+      return lines.length?g[1].toUpperCase()+"\n"+lines.join("\n"):"";
+    }).filter(Boolean).join("\n\n");
+  }
+  function copyQuoteNotes(){
+    const t=quoteNotesText();
+    const done=function(){ mcAlert("Copied "+t.split("\n").filter(function(l){ return /^\d+\. /.test(l); }).length+" clarifications.",{title:"Quote clarifications"}); };
+    try{ navigator.clipboard.writeText(t).then(done,function(){ window.prompt("Copy these:",t); }); }catch(e){ window.prompt("Copy these:",t); }
   }
   // ---- Scope of Work editor — one free-text box PER category (no AI) ----------
   function ensureScope(R){ if(!R.synopsis) R.synopsis={}; if(!R.synopsis.scope_of_work) R.synopsis.scope_of_work={}; return R; }
@@ -2842,6 +2938,19 @@
           }
         }catch(e){ console.error("[commit-labor]",e); lab={ok:false,error:e.message}; }
         window._LAB_COMMIT=lab;
+        // Clarifications onto the project, for the quote. Best-effort like the rest.
+        let qn=null;
+        try{
+          const text=quoteNotesText(loadResult());
+          if(text && params.project_id){
+            c.innerHTML='<span class="spin"></span>Putting the quote clarifications on the project…';
+            const qr=await fetch(RAILWAY_URL+"/api/takeoff/commit-clarifications",{method:"POST",headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({project_id:params.project_id, text:text})});
+            qn=await qr.json();
+            qn.count=text.split("\n").filter(function(l){ return /^\d+\. /.test(l); }).length;
+          }
+        }catch(e){ console.error("[commit-clarifications]",e); qn={ok:false,error:e.message}; }
+        window._QN_COMMIT=qn;
         if(Z.REVIEW_PAGE){
           c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks,att,fit);
           const url=Z.REVIEW_PAGE+"?import_id="+encodeURIComponent(recId||"")+"&project_id="+encodeURIComponent(params.project_id)+"&client_id="+encodeURIComponent(params.manufacturer_id||"");
@@ -2920,7 +3029,15 @@
       })()+
       '<li><b>Buyout</b> → outsource / RFQ subform <span class="src">(WIRE)</span></li>'+
       '<li><b>Scope of Work</b> → project record <span class="src">(WIRE: Save_Scope_Of_Work)</span></li>'+
-      '<li><b>Gaps + conflicts</b> → project alerts / verify list <span class="src">(WIRE)</span></li>'+
+      (function(){
+        const n=arr(loadResult().quote_notes).filter(function(x){ return x.include && noteText(x); }).length;
+        const q=window._QN_COMMIT;
+        if(!n) return '<li><b>Quote clarifications</b> → <span class="src">none on this take-off</span></li>';
+        if(!q) return '<li><b>Quote clarifications</b> → '+n+' line'+(n===1?'':'s')+' <span class="src">(written to the project on approve)</span></li>';
+        if(q.ok===false) return '<li><b>Quote clarifications</b> → <span style="color:var(--red)">not written: '+esc(q.error||'')+'</span>'+
+          ' <span class="src">— they\'re saved with the take-off; use "copy all" on the Overview tab meanwhile.</span></li>';
+        return '<li><b>Quote clarifications</b> → '+(q.count||n)+' line'+((q.count||n)===1?'':'s')+' written to the project\'s Quote Clarifications</li>';
+      })()+
       '<li><b>Totals + confidence</b> → Takeoff_Log <span class="src">(WIRE)</span></li>'+
       '</ul><div style="margin-top:8px">Decisions recorded:<br>'+picks+'</div>';
   }
