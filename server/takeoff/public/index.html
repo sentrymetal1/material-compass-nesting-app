@@ -552,7 +552,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.60 (2026-10-03)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.61 (2026-10-03)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -1823,7 +1823,9 @@
       // Reopening the page restores the last read (initScope). If it was of these same files, don't
       // pay for it again on every open — ↻ Re-read is there when the user actually wants a fresh one.
       const names = docs.map((d) => d.name).sort().join("|");
-      if (sheets.length && readMeta && Array.isArray(readMeta.files) &&
+      // Only a COMPLETE read is reused. One with pages missing is read again — reusing it is how the
+      // Dunkirk set kept showing 5 of its 20 drawings after the read itself was fixed.
+      if (sheets.length && readMeta && readMeta.complete === true && Array.isArray(readMeta.files) &&
           readMeta.files.slice().sort().join("|") === names) {
         autoDone[sig] = 1;
         setScopeStatus("Using the read from " + escHtml(readMeta.at || "earlier") + " — ↻ Re-read if the documents changed.");
@@ -1870,7 +1872,8 @@
         }
         readMeta = { at: new Date().toISOString().slice(0, 16).replace("T", " "),
                      model: (document.getElementById("model") || {}).value || "sonnet",
-                     files: docs.map((x) => x.name) };
+                     files: docs.map((x) => x.name),
+                     complete: !!(audit && audit.ok) };
         detected = dedupeSheets(readSheets.map((s) => ({
           doc: Number(s.doc) || 1,
           number: String(s.number || "").trim(),
