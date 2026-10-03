@@ -408,7 +408,8 @@
        bills of material and parts lists, and the Division-05 spec. Every file is listed below, whether
        or not it has title blocks, and Material Compass AI suggests how it all breaks down into
        components — take it, edit it, or ignore it. Ask it questions before you commit. Nothing is taken
-       off until you start the run. Keep the combined size under ~32 MB.</p>
+       off until you start the run. Specs and parts lists are read as text, and a large drawing set is
+       read in parts and put back together, so there's no need to trim the package.</p>
 
     <!-- Documents that arrived with the RFQ this project came from. They are fetched
          and loaded into the run automatically; this strip exists so the estimator can
@@ -551,7 +552,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.59 (2026-10-02)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.60 (2026-10-03)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -989,13 +990,15 @@
       const drawMb = docs.filter((d) => !(d.read_as === "text" && d.text)).reduce((s, d) => s + d.mb, 0);
       const over = sendMb > SEND_CAP_MB;
       // A rough count of reads — the server plans the real split (pages count too).
-      const parts = Math.max(1, Math.ceil(drawMb / 25));
+      // PDFs grow by a third when encoded for sending; the server packs ~25 MB of that per read.
+      const parts = Math.max(1, Math.ceil(drawMb * 4 / 3 / 25));
       const rows = docs.map((d, i) => {
         // Once read, say what each file IS on the file itself — a 34-page parts list looked
         // identical to a 34-page drawing set here, which is how it went unnoticed.
         const m = docList.find((x) => Number(x.doc) === i + 1);
+        // "drawings" is left off: the read tag beside it already says DRAWING.
         const kind = m && (m.kind === "bom" ? "parts list" : m.kind === "spec" ? "spec"
-                        : m.kind === "drawings" ? "drawings" : "");
+                        : m.kind === "drawings" && d.read_as === "text" ? "drawings" : "");
         // How it will be READ — set the moment the file lands, before any preview.
         const how = d.is_image ? "" : !d.read_as
           ? '<span class="rtag wait">checking…</span>'
@@ -1030,7 +1033,7 @@
             (sendMb < totalMb - 0.5 ? " — " + sendMb.toFixed(1) + " MB to read, documents as text" : "") +
             "</b>" + (inspecting ? ' <span class="fmb">· checking which files are documents…</span>' : "") +
             (over ? "<b>  — too much for one upload; remove a file</b>"
-              : drawMb > MAX_MB - 6 ? ' <span class="fmb">· the drawings will be read in about ' + parts + " parts and put back together</span>" : "") +
+              : parts > 1 ? ' <span class="fmb">· the drawings will be read in ' + parts + " parts and put back together</span>" : "") +
             "</div>"
         : '<div class="fmb" style="padding:6px 2px">No files yet — choose or drop PDFs above.</div>';
       const dz = document.getElementById("drop");
