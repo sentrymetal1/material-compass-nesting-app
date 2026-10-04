@@ -233,11 +233,26 @@
   // ---- durable save to Zoho (per project), debounced ----
   let _zohoTimer=null;
   function setSaveInd(txt,color){ const el=document.getElementById("saveInd"); if(el){ el.textContent=txt; el.style.color=color||"var(--mut)"; } }
-  function scheduleZohoSave(){ if(_zohoTimer) clearTimeout(_zohoTimer); _zohoTimer=setTimeout(doZohoSave, 2500); }
+  // Each project save costs a Zoho API call from a 1,000-a-day allowance, and this used to fire
+  // 2.5 s after EVERY change — every decision click, every AI edit — and again on every open even
+  // when nothing had changed. The browser holds the working copy the whole time, so the project
+  // copy only needs to catch up: changes are gathered for 15 s, a save is skipped when the package
+  // is identical to the last one saved, and leaving the tab saves straight away.
+  const ZOHO_SAVE_DELAY=15000;
+  function savedSigKey(){ return params.project_id ? ("mc_takeoff_saved_sig_"+params.project_id) : null; }
+  function pkgSig(s){ let h=0; for(let i=0;i<s.length;i++){ h=(h*31+s.charCodeAt(i))|0; } return s.length+":"+h; }
+  function scheduleZohoSave(){
+    if(_zohoTimer) clearTimeout(_zohoTimer);
+    _zohoTimer=setTimeout(function(){ _zohoTimer=null; doZohoSave(); }, ZOHO_SAVE_DELAY);
+    const el=document.getElementById("saveInd");
+    if(el && !/⚠/.test(el.textContent)) setSaveInd("● unsaved changes — saving shortly","var(--mut)");
+  }
+  function flushZohoSave(){ if(_zohoTimer){ clearTimeout(_zohoTimer); _zohoTimer=null; doZohoSave(); } }
+  document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="hidden") flushZohoSave(); });
+  window.addEventListener("pagehide",flushZohoSave);
   async function doZohoSave(){
     const R=loadResult();
     if(!R || R.__demo || !params.project_id || !Array.isArray(R.rows) || !R.rows.length) return;
-    setSaveInd("saving…","var(--mut)");
     // drawing_files travels with the package so Approve can still put the PDFs on their
     // drawing records after this take-off is re-opened on another day or another machine.
     // fittings MUST travel too. They were left out, so they lived only in this browser — reopen
@@ -247,12 +262,17 @@
     // synopsis no longer holds, so they can't be rebuilt from it on another machine.
     const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
                 superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null };
+    const body=JSON.stringify({project_id:params.project_id, package:pkg});
+    const sig=pkgSig(body);
+    let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
+    if(last===sig){ setSaveInd("💾 saved to project","var(--grn)"); return; }   // nothing new: no call
+    setSaveInd("saving…","var(--mut)");
     try{
-      const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({project_id:params.project_id, package:pkg})});
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},body:body});
       const d=await r.json();
-      setSaveInd(d.ok?"💾 saved to project":"⚠ save failed", d.ok?"var(--grn)":"var(--red)");
-    }catch(e){ setSaveInd("⚠ save failed","var(--red)"); }
+      if(d.ok){ try{ localStorage.setItem(savedSigKey(),sig); }catch(e){} }
+      setSaveInd(d.ok?"💾 saved to project":"⚠ save failed — your changes are safe in this browser and will save with your next change", d.ok?"var(--grn)":"var(--red)");
+    }catch(e){ setSaveInd("⚠ save failed — your changes are safe in this browser and will save with your next change","var(--red)"); }
   }
   function haveLive(){ try{
     if(window.TAKEOFF_RESULT && sameProj(window.TAKEOFF_RESULT)) return true;

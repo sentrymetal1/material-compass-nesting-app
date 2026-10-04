@@ -1594,6 +1594,14 @@ app.post('/api/takeoff/attach-drawings', async (req, res) => {
 
 // AI take-off SAVE — persist the take-off package on a per-project Zoho record so it survives
 // the browser, re-opens from any device, and feeds the learning loop. Upsert by Project_ID.
+// project id -> its AI_Takeoff_Saved record id, so a save is one Zoho call, not three.
+let _takeoffSavedIds = null;
+function takeoffSavedIds() {
+  if (!_takeoffSavedIds) { try { _takeoffSavedIds = filestore.readJson('takeoff-saved-ids.json', {}) || {}; } catch (e) { _takeoffSavedIds = {}; } }
+  return _takeoffSavedIds;
+}
+function saveTakeoffSavedIds(ids) { try { filestore.writeJson('takeoff-saved-ids.json', ids); } catch (e) { /* memory copy still works */ } }
+
 app.post('/api/takeoff/save', async (req, res) => {
   try {
     const { project_id } = req.body || {};
@@ -1618,26 +1626,42 @@ app.post('/api/takeoff/save', async (req, res) => {
       Project_ID: project_id, Package: json, Row_Count: rowCount,
       Cost_USD: Math.round((Number(pkg && pkg.cost_usd) || 0) * 10000) / 10000, Updated_At: new Date().toISOString(), Status: 'draft',
     };
-    // upsert: find an existing record for this project
-    let existing = null;
-    try {
-      const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID=="' + project_id + '")&limit=1', { headers: zohoHeaders(token) });
-      existing = q.data && q.data.data && q.data.data[0];
-    } catch (e) { /* none yet */ }
-    let zr;
-    if (existing && existing.ID) {
-      zr = await axios.patch(base + '/report/AI_Takeoff_Saved_Report/' + existing.ID, { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-    } else {
-      zr = await axios.post(base + '/form/AI_Takeoff_Saved', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    // ONE Zoho call per save once the record is known. It used to be three every time (find the
+    // record, update it, re-set its project link), on every edit, which on a heavy review day ran
+    // to hundreds of calls. The record id is remembered per project (memory + the Railway volume);
+    // the find runs only the first time, or if the remembered record has gone.
+    const H = { ...zohoHeaders(token), 'Content-Type': 'application/json' };
+    const ids = takeoffSavedIds();
+    let recKnown = ids[project_id] || null;
+    let zr = null, created = false;
+    if (recKnown) {
+      zr = await axios.patch(base + '/report/AI_Takeoff_Saved_Report/' + recKnown, { data }, { headers: H, validateStatus: () => true });
+      if (!zr.data || zr.data.code !== 3000) { zr = null; recKnown = null; }      // deleted or stale: look it up
+    }
+    if (!zr) {
+      let existing = null;
+      try {
+        const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID=="' + project_id + '")&limit=1', { headers: zohoHeaders(token) });
+        existing = q.data && q.data.data && q.data.data[0];
+      } catch (e) { /* none yet */ }
+      if (existing && existing.ID) {
+        zr = await axios.patch(base + '/report/AI_Takeoff_Saved_Report/' + existing.ID, { data }, { headers: H });
+        recKnown = existing.ID;
+      } else {
+        zr = await axios.post(base + '/form/AI_Takeoff_Saved', { data }, { headers: H });
+        created = true;
+      }
     }
     if (zr.data && zr.data.code !== 3000) {
       console.error('[takeoff save] project ' + project_id + ' rejected:', JSON.stringify(zr.data).slice(0, 300));
       return res.status(502).json({ ok: false, error: 'The data service rejected the save', detail: zr.data });
     }
-    const recId = (zr.data && zr.data.data && zr.data.data.ID) || (existing && existing.ID) || null;
+    const recId = (zr.data && zr.data.data && zr.data.data.ID) || recKnown || null;
+    if (recId && ids[project_id] !== String(recId)) { ids[project_id] = String(recId); saveTakeoffSavedIds(ids); }
     // best-effort: set the relational lookup so the take-off relates to the project natively.
-    // Done separately so a lookup rejection can never break the (text-keyed) save.
-    if (recId) {
+    // Done separately so a lookup rejection can never break the (text-keyed) save — and only when
+    // the record is new; it never changes after that.
+    if (recId && created) {
       try {
         await axios.patch(base + '/report/AI_Takeoff_Saved_Report/' + recId,
           { data: { Project_ID_Look_Up: project_id } },
@@ -1663,6 +1687,7 @@ app.get('/api/takeoff/saved/:project_id', async (req, res) => {
       const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID=="' + project_id + '")&limit=1', { headers: zohoHeaders(token) });
       rec = q.data && q.data.data && q.data.data[0];
     } catch (e) { /* no records */ }
+    if (rec && rec.ID) { const ids = takeoffSavedIds(); if (ids[project_id] !== String(rec.ID)) { ids[project_id] = String(rec.ID); saveTakeoffSavedIds(ids); } }
     if (!rec || !rec.Package) return res.json({ ok: true, found: false });
     let pkg;
     try {
