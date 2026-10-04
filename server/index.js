@@ -1608,6 +1608,7 @@ app.post('/api/takeoff/save', async (req, res) => {
     // and the saved take-off could no longer be read at all. gzip takes it to a fraction of that.
     const json = 'gz:' + zlib.gzipSync(Buffer.from(raw, 'utf8')).toString('base64');
     if (json.length > 60000) {
+      console.error('[takeoff save] project ' + project_id + ': too large (' + json.length + ' chars compressed)');
       return res.status(413).json({ ok: false, error: 'This take-off is too large to save to the project even compressed (' +
         json.length + ' chars against a ~64 KB field). Nothing was written; the copy in this browser is intact.' });
     }
@@ -1630,6 +1631,7 @@ app.post('/api/takeoff/save', async (req, res) => {
       zr = await axios.post(base + '/form/AI_Takeoff_Saved', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     }
     if (zr.data && zr.data.code !== 3000) {
+      console.error('[takeoff save] project ' + project_id + ' rejected:', JSON.stringify(zr.data).slice(0, 300));
       return res.status(502).json({ ok: false, error: 'The data service rejected the save', detail: zr.data });
     }
     const recId = (zr.data && zr.data.data && zr.data.data.ID) || (existing && existing.ID) || null;

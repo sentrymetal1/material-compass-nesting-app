@@ -219,11 +219,15 @@
     return SAMPLE;
   }
   function saveResult(result){
+    if(result && result.__demo) return;   // the sample is never stored, tagged or treated as this project's take-off
     if(result && params.project_id) result.__project = params.project_id;  // tag so it can't leak across projects
     window.TAKEOFF_RESULT = result;
     if(result && result.__demo) return;   // never persist demo/sample data (was polluting localStorage)
     try { sessionStorage.setItem("takeoff_result", JSON.stringify(result)); } catch(e){}
-    try { const k=lsKey(); if(k) localStorage.setItem(k, JSON.stringify(result)); } catch(e){}
+    // Say so if the browser refuses its copy (usually: it has grown past the browser's storage limit).
+    // The project save still runs, but closing the tab before it succeeds would lose the work.
+    try { const k=lsKey(); if(k) localStorage.setItem(k, JSON.stringify(result)); }
+    catch(e){ console.error("[review] browser copy refused:",e); setSaveInd("⚠ this browser couldn’t keep a copy — wait for 💾 saved before closing","var(--red)"); }
     scheduleZohoSave();   // also persist to the project record in Zoho (debounced)
   }
   // ---- durable save to Zoho (per project), debounced ----
@@ -2024,7 +2028,9 @@
     const fab = rows.filter(function(r){ return (Number(r.quantity)||0)>0 && live(r); });
     const gaps = arr(s.gaps), conflicts=arr(s.conflicts), comp=arr(s.compliance);
     CONFLICTS = conflicts;
-    if(syncQuoteNotes(R)) saveResult(R);
+    // Never for the built-in sample: saving it tagged it as this project, so the page thought it already had
+    // the take-off, never fetched the real one from Zoho, and never saved (2026-10-04).
+    if(syncQuoteNotes(R) && !R.__demo) saveResult(R);
     const overall = conf.overall!=null?conf.overall:0.7;
 
     const _clean = function(a){ return arr(a).filter(function(x){ return String(x==null?"":x).trim(); }); };
