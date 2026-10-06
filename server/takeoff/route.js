@@ -353,6 +353,8 @@ async function takeoffHandler(req, res, deps) {
       // Addenda tab compares them on request.
       superseded: Array.isArray(body.superseded) ? body.superseded : [],
       addendum_notices: Array.isArray(body.addendum_notices) ? body.addendum_notices : [],
+      // Sheets the estimator left out as not this shop's scope — quote exclusions on the review page.
+      out_of_scope: Array.isArray(body.out_of_scope) ? body.out_of_scope : [],
       cost_usd: out.cost_usd,
       import_csv: import_csv,
       verify_csv: verify_csv,

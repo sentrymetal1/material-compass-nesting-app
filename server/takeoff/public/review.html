@@ -268,7 +268,7 @@
     // quote_notes likewise: the clarifications keep every dismissed conflict and gap, which the
     // synopsis no longer holds, so they can't be rebuilt from it on another machine.
     const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
-                superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null };
+                superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[] };
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
@@ -2411,6 +2411,9 @@
     arr((R.addenda||{}).sheets).filter(function(x){ return x && x.impact && x.impact!=="none" && x.summary; }).forEach(function(x){
       up("addendum",(x.issue||"Addendum")+" "+x.sheet,_sent((x.issue||"Addendum")+", "+x.sheet+": "+String(x.summary).trim()));
     });
+    // Sheets the estimator left out as not this shop's scope.
+    arr(R.out_of_scope).forEach(function(x){ if(!x||!x.number) return;
+      up("scope","out:"+x.number,_sent("Drawing "+x.number+(x.title?" ("+String(x.title).trim()+")":"")+": not included in this quote")); });
     // Inclusions / exclusions by sheet.
     arr(s.drawing_scope).forEach(function(d){
       if(!d || !d.sheet) return;

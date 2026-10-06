@@ -552,7 +552,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.64 (2026-10-03)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.65 (2026-10-06)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -942,8 +942,17 @@
     const sendMbOf = (d) => (d.read_as === "text" && d.text) ? d.text.length / 1048576 : d.mb;
     // Every place that sends the files uses this, so the preview, the questions and the run all
     // read a file the same way.
-    function payloadDocs() {
-      return docs.map((d) => d.is_image ? { media_type: d.media_type, data: d.b64, name: d.name }
+    // The run leaves out any file whose every sheet is "not our scope" (the preview still reads all of
+    // them, so the sheet stays listed and can be put back).
+    function runDocList() {
+      if (!outScope.length || !sheets.length) return docs;
+      return docs.filter((d, i) => {
+        const own = sheets.filter((s) => Number(s.doc) === i + 1);
+        return !own.length || own.some((s) => !isOut(s.number));
+      });
+    }
+    function payloadDocs(list) {
+      return (list || docs).map((d) => d.is_image ? { media_type: d.media_type, data: d.b64, name: d.name }
         : (d.read_as === "text" && d.text) ? { kind: "text", name: d.name, text: d.text, pages: d.pages || 0 }
         : { data: d.b64, media_type: "application/pdf", name: d.name, read_as: d.read_as === "drawing" ? "drawing" : "" });
     }
@@ -1133,13 +1142,17 @@
     // raise BOM rows from it. So every sheet ends up on a component either way, and the take-off
     // can always be traced back to the full set.
     let referenceSheets = [];                         // [{number,title,pages,reason}] — placed, not taken off
+    // Sheets the estimator said are NOT this shop's scope ("we only want the handrail"): not placed on
+    // any component, not taken off, and listed as an exclusion on the quote. Always undoable.
+    let outScope = [];                                // [{number,title,doc,file}]
+    const isOut = (num) => outScope.some((x) => _norm(x.number) === _norm(num));
     let separate = {};                                // near-miss numbers the user confirmed are their own drawing
     let aliases = {};                                 // PDF number (normalized) → the drawing number to use instead
     let readMeta = null;                              // when the sheet list was read, and at what depth
     const sheetKey = () => "mc_sheets_" + (params.project_id || "_");
     function saveSheets() {
       try {
-        localStorage.setItem(sheetKey(), JSON.stringify({ sheets: sheets, reference: referenceSheets,
+        localStorage.setItem(sheetKey(), JSON.stringify({ sheets: sheets, reference: referenceSheets, out: outScope,
           separate: separate, aliases: aliases, audit: audit, readMeta: readMeta, docList: docList }));
       } catch (e) {}
     }
@@ -2169,7 +2182,7 @@
       if (e.target.closest("#cancelAlloc")) { e.preventDefault(); allocPlan = null; renderAlloc(); return; }
       if (e.target.closest('[data-k="clearread"]')) {     // drop a stale read rather than work from it
         e.preventDefault();
-        sheets = []; audit = null; readMeta = null; referenceSheets = []; aliases = {}; separate = {};
+        sheets = []; audit = null; readMeta = null; referenceSheets = []; outScope = []; aliases = {}; separate = {};
         saveSheets(); renderAlloc(); renderCoverage();
         setScopeStatus("Old read discarded. Load the PDF to read it again.");
         return;
@@ -2296,6 +2309,7 @@
           // Older saves called these "excluded"; they're reference sheets now — still on the job.
           referenceSheets = Array.isArray(st.reference) ? st.reference
             : (Array.isArray(st.excluded) ? st.excluded : []);
+          outScope = Array.isArray(st.out) ? st.out : [];
           separate = (st.separate && typeof st.separate === "object") ? st.separate : {};
           // Keep the page↔drawing reconciliation across reloads — without it there's no way to see
           // WHY a 27-page set read as 24 drawings.
@@ -2434,6 +2448,7 @@
 
       const items = sheets.map((s) => {
         const n = _norm(s.number);
+        if (isOut(s.number)) return { s: s, state: "out" };   // not our scope: resolved, never placed
         const ref = isReference(s.number);            // placed, but not taken off — still accounted for
         const exact = idx.find((x) => _norm(x.number) === n);
         if (exact) return { s: s, state: "assigned", hit: exact, ref: ref };
@@ -2465,6 +2480,7 @@
         items: items, extras: extras,
         assigned: assigned.length,
         reference: assigned.filter((i) => i.ref).length,   // on a component, read for context only
+        out: items.filter((i) => i.state === "out").length,  // not this shop's scope
         open: items.filter((i) => i.state === "missing" || i.state === "near"),
       };
     }
@@ -2704,7 +2720,7 @@
       if (!sheets.length) { host.innerHTML = ""; updatePanels(); return; }
       const cov = coverage();
       const total = cov.items.length;
-      const done = cov.assigned;
+      const done = cov.assigned + cov.out;   // a sheet left out on purpose is accounted for
       const ok = !cov.open.length;
 
       const openRows = cov.open.map((it, i) => {
@@ -2755,6 +2771,7 @@
                 '<button type="button" class="covbtn" data-k="assign" data-i="' + k + '">Add under this component</button>' +
                 '<button type="button" class="covbtn alt" data-k="assignref" data-i="' + k + '">Add as reference only</button>'
               : '<span class="apg">pick or add a component above first</span>') +
+            '<button type="button" class="covbtn alt" data-k="outscope" data-i="' + k + '" title="Not part of what this shop is quoting: not placed, not taken off, and listed as an exclusion on the quote">Not our scope — leave it out</button>' +
             (sug ? '<button type="button" class="covbtn alt" data-k="newcomp" data-i="' + k + '" data-name="' + escAttr(sug) +
               '">＋ New component “' + escHtml(sug) + '”</button>' : "") +
           "</div></div>";
@@ -2762,6 +2779,14 @@
 
       // Reference sheets are ON the project like any other drawing — this list is just so it's
       // obvious which ones the take-off won't raise rows from, and easy to change your mind.
+      const outList = outScope.length
+        ? '<details class="covex" open><summary>' + outScope.length + " sheet" + (outScope.length === 1 ? "" : "s") +
+            " left out as <b>not our scope</b>, not taken off, listed as quote exclusions</summary>" +
+          outScope.map((x, i) => '<div class="covexrow"><b>' + escHtml(x.number) + "</b> " +
+            '<span class="adesc">' + escHtml(x.title || "") + "</span>" +
+            '<button type="button" class="covbtn alt" data-k="unout" data-i="' + i + '">put back</button></div>').join("") +
+          "</details>"
+        : "";
       const exList = referenceSheets.length
         ? '<details class="covex"><summary>' + referenceSheets.length + " sheet" + (referenceSheets.length === 1 ? "" : "s") +
             " on a component as <b>reference only</b> — read for context, no BOM rows</summary>" +
@@ -2806,6 +2831,7 @@
         if (it.state === "assigned") return { mark: it.ref ? "◇" : "✓", cls: it.ref ? "ref" : "in",
           where: (it.ref ? "reference · " : "") + (it.hit ? it.hit.comp : "") };
         if (it.state === "near") return { mark: "?", cls: "open", where: "number needs confirming" };
+        if (it.state === "out") return { mark: "–", cls: "ref", where: "not our scope · left out" };
         return { mark: "•", cls: "open", where: "not on a component yet" };
       };
       const checklist = cov.items.slice().sort((a, b) => natCmp(a.s.number, b.s.number)).map((it) => {
@@ -2828,11 +2854,11 @@
 
       host.innerHTML = '<div class="cov ' + (ok ? "ok" : "open") + '">' +
         '<div class="covttl">' + (ok ? "✓ " : "◷ ") + "All drawings accounted for: <b>" + done + " of " + total + "</b>" +
-          (cov.reference ? " (" + (cov.assigned - cov.reference) + " taken off, " + cov.reference + " reference only)" : "") +
+          ((cov.reference || cov.out) ? " (" + (cov.assigned - cov.reference) + " taken off" + (cov.reference ? ", " + cov.reference + " reference only" : "") + (cov.out ? ", " + cov.out + " not our scope" : "") + ")" : "") +
           (ok ? "" : " — <b>" + cov.open.length + " still to resolve</b>") + "</div>" +
         (ok ? "" : '<div class="covsub">Every drawing goes on a component — the ones with no material to take ' +
           "off go on as reference only. Nothing is dropped.</div>") + bulk + reopen +
-        openRows + extras + ckList + exList +
+        openRows + extras + ckList + outList + exList +
       "</div>";
       renderSummary();          // the tallies move with the coverage, not just with the scope list
       updatePanels();
@@ -2843,6 +2869,14 @@
       const btn = e.target.closest("[data-k]"); if (!btn) return;   // buttons AND the reopen link
       const k = btn.getAttribute("data-k"), i = Number(btn.getAttribute("data-i"));
       if (k === "unref") { referenceSheets.splice(i, 1); saveSheets(); renderCoverage(); return; }
+      if (k === "unout") { outScope.splice(i, 1); saveSheets(); renderCoverage(); renderFiles(); return; }
+      if (k === "outscope") {
+        const sh = sheets[i]; if (!sh) return;   // data-i is the sheet's index in the full list
+        if (!isOut(sh.number)) outScope.push({ number: sh.number, title: sh.title || "", doc: Number(sh.doc) || null, file: sh.file || "" });
+        saveSheets(); renderCoverage(); renderFiles();
+        setScopeStatus(escHtml(sh.number) + " left out: not taken off, and listed as an exclusion on the quote. Use put back to undo.");
+        return;
+      }
       if (k === "showsug") { e.preventDefault(); suggestDismissed = false; renderCoverage(); return; }
       if (k === "bulkadd") { await bulkAssign(false); return; }
       if (k === "bulkref") { await bulkAssign(true); return; }
@@ -3199,7 +3233,9 @@
           body: JSON.stringify({
             project_id: params.project_id,
             manufacturer_id: params.manufacturer_id,
-            pdfs: payloadDocs(), names: docs.map((d) => d.name),
+            pdfs: payloadDocs(runDocList()), names: runDocList().map((d) => d.name),
+            // Not this shop's scope: never taken off, and listed as quote exclusions on the review page.
+            out_of_scope: outScope.map((x) => ({ number: x.number, title: x.title })),
             // Which sheets an addendum replaced, by stored file id, so the review page's Addenda tab
             // can put each original beside its reissue. Plus any addendum notice read as text.
             superseded: setAside.map((x) => {
@@ -3214,7 +3250,9 @@
             scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
             // Everything the estimator decided about coverage travels with the run: which sheets to
             // skip and why, and any sheet whose number on the drawing differs from the project's.
-            reference_drawings: referenceSheets.map((x) => ({ number: x.number, title: x.title, reason: x.reason })),
+            reference_drawings: referenceSheets.map((x) => ({ number: x.number, title: x.title, reason: x.reason }))
+              .concat(outScope.map((x) => ({ number: x.number, title: x.title,
+                reason: "NOT IN THIS SHOP'S SCOPE: take nothing off this sheet; list it in drawing_scope as excluded (not in our scope)" }))),
             // Every uploaded file that isn't a drawing set — named, classified and tied to a component
             // so a parts list is read AS a parts list instead of as unlabelled pages.
             attached_documents: attachedDocs(),
