@@ -87,12 +87,13 @@ function mergeSynopsis(list) {
 
 async function runBatches(prepared, plan, engineOpts) {
   const texts = prepared.filter(function (it) { return it.kind === "text"; }).map(docprep.textBlock);
-  const batches = plan.batches.length ? plan.batches : [{ parts: [] }];
+  const batches = (plan.batches.length ? plan.batches : [{ parts: [] }]).slice();
+  const live = { batches: batches };   // the part list can grow when a part is split below
   const outs = [];
-  let failed = null;
+  let failed = null, wasted = 0;
   for (let b = 0; b < batches.length; b++) {
     const blocks = batches[b].parts.map(docprep.partBlock).concat(texts);
-    const opts = Object.assign({}, engineOpts, { blocks: blocks, batchNote: batches.length > 1 ? batchNote(plan, b) : "" });
+    const opts = Object.assign({}, engineOpts, { blocks: blocks, batchNote: batches.length > 1 ? batchNote(live, b) : "" });
     console.log("[takeoff] part " + (b + 1) + "/" + batches.length + ": " + batches[b].parts.length + " drawing file(s), " +
       (batches[b].pages || 0) + " pages, " + texts.length + " text document(s)");
     try {
@@ -100,6 +101,17 @@ async function runBatches(prepared, plan, engineOpts) {
       console.log("[ai-cost] takeoff part " + (b + 1) + "/" + batches.length + " $" + o.cost_usd +
         " (in " + ((o.usage && o.usage.input_tokens) || 0) + ", cache-write " + ((o.usage && o.usage.cache_creation_input_tokens) || 0) +
         ", cache-read " + ((o.usage && o.usage.cache_read_input_tokens) || 0) + ", out " + ((o.usage && o.usage.output_tokens) || 0) + ")");
+      // An answer cut off at the length limit is unreadable past the cut — on 2026-10-06 that was the
+      // whole package (0 rows). Halve the part and read both halves rather than hand back nothing.
+      if (o.truncated && batches[b].parts.length > 1) {
+        wasted += Number(o.cost_usd) || 0;
+        const ps = batches[b].parts, mid = Math.ceil(ps.length / 2);
+        const half = function (list) { return { parts: list, pages: list.reduce(function (s, p) { return s + (p.pages || 1); }, 0) }; };
+        batches.splice(b, 1, half(ps.slice(0, mid)), half(ps.slice(mid)));
+        console.log("[takeoff] part " + (b + 1) + " was cut off at the answer limit — splitting its " + ps.length + " files in two and reading again");
+        b--;
+        continue;
+      }
       outs.push(o);
     } catch (e) {
       // A part that fails after earlier parts finished must not throw them away — they're paid
@@ -112,7 +124,7 @@ async function runBatches(prepared, plan, engineOpts) {
       break;
     }
   }
-  if (outs.length === 1 && !failed) return outs[0];
+  if (outs.length === 1 && !failed && !wasted) return outs[0];
   const sum = function (f) { return outs.reduce(function (s, o) { return s + (Number(f(o)) || 0); }, 0); };
   return {
     rows: [].concat.apply([], outs.map(function (o) { return o.rows || []; })),
@@ -125,7 +137,8 @@ async function runBatches(prepared, plan, engineOpts) {
     incomplete: failed ? { part: failed.part, of: batches.length, missing: failed.missing } : null,
     truncated: outs.some(function (o) { return o.truncated; }),
     synopsis: mergeSynopsis(outs.map(function (o) { return o.synopsis; })),
-    cost_usd: Number(sum(function (o) { return o.cost_usd; }).toFixed(4)),
+    // Includes any part that was cut off and re-read in halves: that read was paid for too.
+    cost_usd: Number((sum(function (o) { return o.cost_usd; }) + wasted).toFixed(4)),
     usage: { input_tokens: sum(function (o) { return o.usage && o.usage.input_tokens; }),
              output_tokens: sum(function (o) { return o.usage && o.usage.output_tokens; }) },
     modelKey: outs[0].modelKey,
@@ -208,7 +221,7 @@ async function takeoffHandler(req, res, deps) {
     // doesn't. Documents are read as text either way (docprep.js).
     const prepared = await docprep.prepareDocs(docs, Array.isArray(body.names) ? body.names : []);
     docprep.fitText(prepared);
-    const plan = await docprep.planBatches(prepared);
+    const plan = await docprep.planBatches(prepared, { maxPages: docprep.MAX_TAKEOFF_SHEETS });
     const engineOpts = { modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog, fittingsCatalog: deps.fittingsCatalog };
     const out = await runBatches(prepared, plan, engineOpts);
     const rows = out.rows;

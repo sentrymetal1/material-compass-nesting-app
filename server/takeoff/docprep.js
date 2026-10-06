@@ -31,6 +31,10 @@ const pdfkind = require("../pdfkind");
 const MAX_BATCH_B64 = 26 * 1024 * 1024;
 // The API reads at most 100 PDF pages in one request.
 const MAX_BATCH_PAGES = 90;
+// A TAKE-OFF part is capped far lower than the API allows, because the ANSWER has to fit too: every
+// row, a scope entry per sheet, conflicts and the summary. 54 sheets in one read overran the answer
+// limit on 2026-10-06. The preview read (one short line per page) keeps the higher limit.
+const MAX_TAKEOFF_SHEETS = 20;
 // Context budget, in tokens. A drawing page costs ~2,000; text ~1 token per 4 chars. Kept well
 // under 200k so the catalog, the knowledge base and the answer itself still fit.
 const CONTEXT_BUDGET = 150000;
@@ -273,5 +277,5 @@ function summary(items, plan) {
 module.exports = {
   prepareDocs, prepareOne, fitText, planBatches, splitPdf, partBlock, partLabel, textBlock, summary,
   splitSections, sectionMatters, b64Bytes,
-  MAX_BATCH_B64, MAX_BATCH_PAGES, TEXT_BUDGET_CHARS,
+  MAX_BATCH_B64, MAX_BATCH_PAGES, TEXT_BUDGET_CHARS, MAX_TAKEOFF_SHEETS,
 };

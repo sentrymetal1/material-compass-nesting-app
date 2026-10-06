@@ -15,7 +15,10 @@ const path = require("path");
 // The whole take-off package comes back in ONE tool call, so this ceiling has to cover every
 // BOM row AND the synopsis the review page is built from. Requests this size are streamed; a
 // non-streamed call this large risks an HTTP timeout before the response completes.
-const TAKEOFF_MAX_OUT = 32000;
+// The answer ceiling for a take-off read. 32000 cut off a 54-sheet handrail run mid-answer on
+// 2026-10-06 and nothing could be read back (0 rows, $1.25 spent). All three models accept more when
+// streamed (Sonnet 4.6 / Opus 4.8 up to 128K, Haiku 4.5 64K); you pay only for what is written.
+const TAKEOFF_MAX_OUT = 64000;
 // An edit lists only its changes. 8000 covers a reconcile against an attached list that touches
 // dozens of rows; a one-decision fix uses a few hundred.
 const EDIT_MAX_OUT = 8000;
@@ -602,7 +605,7 @@ async function runTakeoff(opts) {
   // this high risks an HTTP timeout on a non-streamed call.
   const resp = await anthropic.messages.stream({
     model: model.id,
-    max_tokens: TAKEOFF_MAX_OUT,
+    max_tokens: (model.maxOut || TAKEOFF_MAX_OUT),
     system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge, opts.projectContext, opts.liveCatalog, opts.fittingsCatalog),
     tools: [buildTakeoffTool(includeSynopsis)],
     tool_choice: { type: "tool", name: "submit_takeoff" },
