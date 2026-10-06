@@ -871,7 +871,7 @@
     return '<div class="card"><h2>📐 Scope by drawing <span class="lt">— what each sheet puts in your scope, and what it leaves to others</span></h2><div class="body">'+
       ds.map(function(d){
         const rows=arr(R.rows).filter(function(r){ return !r.deleted && (Number(r.quantity)||0)>0 && sameSheet(r.source_sheet,d.sheet); });
-        const lf=rows.reduce(function(s,r){ return s+(Number(r.quantity_total||r.quantity)||0)*(Number(r.length_ft)||0); },0);
+        const lf=rows.reduce(function(s,r){ return s+orderQtyOf(r)*(Number(r.length_ft)||0); },0);
         const inc=arr(d.included), exc=arr(d.excluded);
         return '<div class="dscope"><div class="dsh"><b>'+esc(d.sheet)+'</b>'+(d.title?' — '+esc(d.title):'')+
             ' <span class="src">· '+rows.length+' BOM row'+(rows.length===1?'':'s')+(lf>0?' · ~'+Math.round(lf).toLocaleString()+' LF':'')+'</span></div>'+
@@ -960,7 +960,7 @@
   }
   function compactBom(R){
     return arr(R.rows).filter(function(r){ return !r.deleted; }).slice(0,300).map(function(r){
-      return [r.source_sheet||"",r.member_mark||"",r.form_type||"",r.size||"",(r.quantity_total||r.quantity||0)+" pcs",(r.length_ft||"")+" ft"].join(" | ");
+      return [r.source_sheet||"",r.member_mark||"",r.form_type||"",r.size||"",orderQtyOf(r)+" pcs",(r.length_ft||"")+" ft"].join(" | ");
     }).join("\n");
   }
   async function runAddenda(){
@@ -982,8 +982,7 @@
     const f = arr(list);
     if(!f.length) return "";
     const anyMulti = f.some(function(x){ return (Number(x.units)||1) > 1; });
-    const tot = function(x){ const t=Number(x.quantity_total);
-      return (Number.isFinite(t)&&t>0)?t:(Number(x.quantity)||0)*Math.max(1,Number(x.units)||1); };
+    const tot = function(x){ return orderQtyOf(x); };
     const TD='padding:4px 8px;border-bottom:1px solid #eceff3;font-size:12.5px;vertical-align:top';
     // Carry each fitting's ORIGINAL index through the sort. The table is displayed grouped by
     // component, so a display position is not a position in R.fittings — editing by the wrong
@@ -2043,6 +2042,7 @@
     // — R is a const, so it is in its temporal dead zone until that line runs — and the page sat
     // on "Loading take-off…" forever. A parse check cannot catch it; only running it can.
     if(arr(R.fittings).length){ loadFittingsCatalog(); loadFittingIndex(); }   // only fetched when there are fittings to edit
+    if(!R.__demo && fixQuantities(R)){ recomputeCsv(R); saveResult(R); }   // stored totals back in line with Qty
     const rows = arr(R.rows);
     const s = R.synopsis || {};
     DECISIONS = arr(s.decisions).map((d,i)=>({
@@ -2104,8 +2104,7 @@
     // check against the drawing. `quantity_total` is what gets ordered. Showing only one of them is
     // how a 4-off job ends up ordering a quarter of the steel (or four times the cost per unit).
     const unitsOf=function(r){ return Math.max(1, Math.round(Number(r.units)||1)); };
-    const totalOf=function(r){ const t=Number(r.quantity_total);
-      return (Number.isFinite(t)&&t>0)?t:(Number(r.quantity)||0)*unitsOf(r); };
+    const totalOf=function(r){ return orderQtyOf(r); };
     const anyMulti = rows.some(function(r){ return unitsOf(r)>1; });
     const memberRow=function(idx){
       const r=rows[idx], hasC=Number.isFinite(Number(r.confidence))&&r.confidence!==null&&r.confidence!=="";
@@ -2231,7 +2230,7 @@
       reconCardHtml()+
       '</div>'+
 
-      '<div class="tabpane" data-tab="material">'+
+      '<div class="tabpane" data-tab="material">'+qtyFixedHtml(R)+
       // BOM
       '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, grouped by component → drawing</span></h2><div class="body" style="padding:0;">'+
         '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Dimensions</th><th class="num">Unit wt (lb)</th><th class="num">Total wt (lb)</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
@@ -2572,8 +2571,7 @@
       // The BOM carries the JOB total (per unit × units built) — the project's own rollups divide
       // BOM sums by Component.Quantity to get per-unit cost. Same rule as the server's builder.
       const u=Math.max(1,Math.round(Number(r.units)||1));
-      const tot=Number(r.quantity_total);
-      const qty=(Number.isFinite(tot)&&tot>0)?tot:(Number(r.quantity)||0)*u;
+      const qty=(Number(r.quantity)||0)*u;   // never a stored total: see orderQtyOf
       out.push([tag,_cell(r.component),_cell(r.source_sheet),_cell(r.form_type),_cell(r.material_type),_cell(r.specification),
         _cell(r.size),_cell(qty),_cell(L[0]),_cell(L[1]),_cell(W[0]),_cell(W[1]),r.galvanized?"Yes":"","",_pct(r.confidence)].join(","));
     });
@@ -2629,7 +2627,7 @@
     const b=weightBasis(r); const L=Number(r.length_ft)||0;
     if(!b || !(L>0)) return null;
     const unit=b.per*L*(b.area?Number(r.width_ft):1);
-    const q=Number(r.quantity_total); const qty=(Number.isFinite(q)&&q>0)?q:(Number(r.quantity)||0)*Math.max(1,Math.round(Number(r.units)||1));
+    const qty=orderQtyOf(r);
     return {unit:unit, total:unit*qty, basis:b};
   }
   // The weight at the top: the BOM total (the same number as the foot of the Material tab), plus
@@ -2644,12 +2642,43 @@
     }
     return (t&&t.est_weight_lb)?'<span class="chip" title="The AI rough estimate (the BOM cannot be weighed yet)">⚖ ~'+Number(t.est_weight_lb).toLocaleString()+' lb (estimate)</span>':'';
   }
+  // WHAT GETS ORDERED: the Qty on screen × the component's units. Always worked out, never read from
+  // a stored total. An AI edit changed a row's Qty and left its stored job total behind, so the
+  // screen showed 350 while the BOM import would have ordered 24 (2026-10-06).
+  function orderQtyOf(r){ return (Number(r && r.quantity)||0)*Math.max(1,Math.round(Number(r && r.units)||1)); }
+  // One-time repair of packages saved before that fix: bring every stored total back in line with
+  // its Qty, and keep a list of what moved so the estimator can check those rows.
+  function fixQuantities(R){
+    let changed=false; const fixed=Array.isArray(R.qty_fixed)?R.qty_fixed:[];
+    arr(R.rows).concat(arr(R.fittings)).forEach(function(r){
+      const want=orderQtyOf(r), had=Number(r.quantity_total);
+      if(r.quantity_total!=null && Number.isFinite(had) && had!==want){
+        fixed.push({what:[r.form_type||r.fitting_type||"",r.size||""].join(" ").trim(), sheet:r.source_sheet||"",
+                    length_ft:r.length_ft||null, shown:Number(r.quantity)||0, was_ordered:had, now:want});
+        changed=true;
+      }
+      if(r.quantity_total!=null && had!==want){ r.quantity_total=want; r.qty_per_unit=Number(r.quantity)||0; }
+    });
+    if(changed) R.qty_fixed=fixed;
+    return changed;
+  }
+  function qtyFixedHtml(R){
+    const f=arr(R.qty_fixed); if(!f.length) return "";
+    return '<div class="card" style="border-color:#f1dfb0"><div class="body" style="background:#fff8e6;font-size:13px;line-height:1.5">'+
+      '<b>⚠ '+f.length+' row'+(f.length===1?'':'s')+' had two different quantities.</b> The Qty shown here and the quantity the BOM '+
+      'import would have ordered disagreed, after an AI edit changed one and not the other. They now match the Qty shown. '+
+      '<b>Check these against the drawings:</b><ul style="margin:6px 0 4px 18px;padding:0">'+
+      f.map(function(x){ return '<li>'+esc(x.what)+(x.length_ft?' @ '+esc(fmtFtIn(x.length_ft)):'')+(x.sheet?' <span class="src">('+esc(x.sheet)+')</span>':'')+
+        ': shown <b>'+x.shown+'</b>, was going to order <b>'+x.was_ordered+'</b>, now orders <b>'+x.now+'</b></li>'; }).join("")+
+      '</ul><span class="pillbtn" onclick="clearQtyFixed()">checked, hide this</span></div></div>';
+  }
+  function clearQtyFixed(){ const R=loadResult(); delete R.qty_fixed; saveResult(R); render(); }
   function fmtLb(n){ return n>=100?Math.round(n).toLocaleString():(Math.round(n*10)/10).toLocaleString(); }
   // Fittings carry a per-piece weight once matched to the catalog.
   function fittingsWeight(R){
     let lb=0, n=0;
     arr(R.fittings).forEach(function(f){ const w=Number(f.weight); if(!(w>0)) return;
-      const q=Number(f.quantity_total)>0?Number(f.quantity_total):(Number(f.quantity)||0); lb+=w*q; n++; });
+      lb+=w*orderQtyOf(f); n++; });
     return {lb:lb, n:n};
   }
   let CATALOG_LOADING = false;

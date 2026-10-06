@@ -377,6 +377,13 @@ function applyChanges(current, input) {
         FIT_PICK.forEach(function (k) { delete out[i][k]; });
       }
       out[i] = Object.assign({}, out[i], patch);
+      // A quantity edit moves the job total with it. A stale quantity_total is what made the BOM
+      // import order a different number from the one on screen.
+      if ("quantity" in patch) {
+        const u = Math.max(1, Math.round(Number(out[i].units) || 1));
+        out[i].qty_per_unit = Number(out[i].quantity) || 0;
+        out[i].quantity_total = out[i].qty_per_unit * u;
+      }
     });
     return out.filter(function (_, i) { return !gone[i]; }).concat(adds);
   };

@@ -34,9 +34,10 @@ const isQuantified = function (r) { return (Number(r.quantity) || 0) > 0; };
 // TOTAL: the project's own Deluge divides BOM sums by Component.Quantity to get per-unit cost, so a
 // per-unit BOM would under-order the steel AND under-report every unit cost. Falls back to
 // `quantity` when nothing multiplied it (single-unit components, or an older caller).
+// ALWAYS per-unit qty × units, never a stored total: an AI edit changed `quantity` and left a stale
+// `quantity_total` behind, so the screen said 350 while the BOM import would have ordered 24 (2026-10-06).
 function orderQty(r) {
-  const total = Number(r.quantity_total);
-  return Number.isFinite(total) && total > 0 ? total : (Number(r.quantity) || 0);
+  return (Number(r.quantity) || 0) * Math.max(1, Math.round(Number(r.units) || 1));
 }
 
 function splitFt(n) {
