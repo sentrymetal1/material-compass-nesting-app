@@ -73,6 +73,8 @@
   .adgrp{margin:6px 0 14px;} .adrow{padding:7px 0;border-bottom:1px dashed #eef1f4;font-size:13px;line-height:1.5;}
   .adch{margin:4px 0 0 18px;padding:0;} .adch li{margin:2px 0;}
   .aovr{margin:0 0 10px;padding:8px 10px;border-radius:6px;background:#eef4fd;border:1px solid #cddcf3;font-size:13px;}
+  td.num,th.num{text-align:right;white-space:nowrap;}
+  tr.wt-total td{background:#eef2f7;font-weight:700;font-size:13px;padding:9px 12px;border-top:2px solid #cdd8e6;}
   .qngrp{margin:4px 0 12px;} .qnh{font-weight:700;font-size:13px;margin:0 0 6px;}
   .qn{display:flex;align-items:flex-start;gap:8px;margin:0 0 6px;} .qn input{margin-top:7px;flex:none;}
   .qn textarea{flex:1;min-width:0;padding:6px 9px;border:1px solid #cdd3da;border-radius:7px;font-family:inherit;font-size:12.5px;line-height:1.45;resize:vertical;}
@@ -2065,7 +2067,7 @@
     ].filter(x=>x[2].length);
 
     const editable = BOM_EXPANDED;
-    const NC = editable ? 7 : 6;  // table columns (Sheet now lives in the drawing group header)
+    const NC = editable ? 9 : 8;  // table columns (Sheet now lives in the drawing group header; + unit / total weight)
     const fabIdx=[]; rows.forEach(function(r,idx){ if((Number(r.quantity)||0)>0 && live(r)) fabIdx.push(idx); });
 
     // Group fab rows by Component → Drawing (source_sheet), preserving first-seen order.
@@ -2083,6 +2085,9 @@
     const sumQty=function(ids){ return ids.reduce(function(a,i){ return a+(Number(rows[i].quantity)||0); },0); };
     // Group headers count the JOB total — that's the number an estimator is looking for.
     const sumTot=function(ids){ return ids.reduce(function(a,i){ return a+totalOf(rows[i]); },0); };
+    // Weight of a group: the rows whose weight is known, and how many aren't.
+    const sumWt=function(ids){ let lb=0,miss=0; ids.forEach(function(i){ const w=rowWeight(rows[i]); if(w) lb+=w.total; else miss++; }); return {lb:lb,miss:miss}; };
+    const wtMeta=function(ids){ const w=sumWt(ids); return w.lb>0?' · <b>'+fmtLb(w.lb)+' lb</b>'+(w.miss?' <span title="'+w.miss+' row'+(w.miss===1?'':'s')+' without a weight">+'+w.miss+' ?</span>':''):''; };
 
     // Where the row's evidence came from, on the row itself — two sources agreeing is worth more
     // than one, and a row nobody's list mentions is worth a second look.
@@ -2120,6 +2125,10 @@
         '<td>'+esc(r.size)+(r.galvanized?' <span class="galv">galv</span>':'')+'</td>'+
         '<td>'+esc(r.specification)+'</td><td>'+qtyCell+'</td>'+
         '<td style="white-space:nowrap">'+dimStr(r)+'</td>'+
+        (function(){ const w=rowWeight(r);
+          if(!w) return '<td class="num src" title="No weight: the size is not in your catalog and cannot be worked out from its name">—</td><td class="num src">—</td>';
+          const t=fmtLb(w.basis.per)+(w.basis.area?' lb/sq ft':' lb/ft')+' ('+w.basis.how+')';
+          return '<td class="num" title="'+escAttr(t)+'">'+fmtLb(w.unit)+'</td><td class="num"><b>'+fmtLb(w.total)+'</b></td>'; })()+
         (editable?'<td><button class="applybtn" style="background:var(--red);padding:1px 8px" title="Remove row" onclick="removeRow('+idx+')">✕</button></td>':'')+
         '</tr>';
     };
@@ -2130,20 +2139,23 @@
       let html='<tr class="grp-comp"><td colspan="'+NC+'">▸ '+esc(cN)+
         (cU>1?' <span class="grp-units">× '+cU+' units</span>':'')+
         ' <span class="grp-meta">'+cIds.length+' item'+(cIds.length===1?'':'s')+' · '+
-        (cU>1 ? sumQty(cIds)+' per unit · <b>'+sumTot(cIds)+' total</b>' : sumQty(cIds)+' qty')+
+        (cU>1 ? sumQty(cIds)+' per unit · <b>'+sumTot(cIds)+' total</b>' : sumQty(cIds)+' qty')+wtMeta(cIds)+
         '</span></td></tr>';
       g.dOrder.forEach(function(dN){
         const ids=g.dMap[dN];
         html+='<tr class="grp-draw"><td colspan="'+NC+'">📄 '+esc(dN)+
           ' <span class="grp-meta">'+ids.length+' item'+(ids.length===1?'':'s')+' · '+
           (Math.max.apply(null,[1].concat(ids.map(function(i){ return unitsOf(rows[i]); })))>1
-            ? sumQty(ids)+' per unit · <b>'+sumTot(ids)+' total</b>' : sumQty(ids)+' qty')+
+            ? sumQty(ids)+' per unit · <b>'+sumTot(ids)+' total</b>' : sumQty(ids)+' qty')+wtMeta(ids)+
           '</span></td></tr>'+
           ids.map(memberRow).join("");
       });
       return html;
     }).join("");
 
+    // ONE weight, used at the top and at the foot of the BOM, so the two can never disagree. Fittings are
+    // added at the top only, and shown as their own figure.
+    const WT=sumWt(fabIdx), FW=fittingsWeight(R);
     const isLive = haveLive();
     document.getElementById("wrap").innerHTML =
       (isLive ? '' :
@@ -2156,7 +2168,7 @@
         '<div class="meta">'+
           '<span class="chip">📄 '+(arr(s.project?.sheets_read).length||"?")+' sheets/specs</span>'+
           '<span class="chip">🧱 '+fab.length+' fab rows</span>'+
-          (t.est_weight_lb?'<span class="chip">⚖ ~'+Number(t.est_weight_lb).toLocaleString()+' lb</span>':'')+
+          weightChipHtml(WT, FW, t)+
           (R.cost_usd!=null?'<span class="chip">💲 $'+R.cost_usd+'</span>':'')+
           (gaps.length?'<span class="chip">◷ '+gaps.length+' gaps</span>':'')+
         '</div></div></div>'+
@@ -2222,8 +2234,11 @@
       '<div class="tabpane" data-tab="material">'+
       // BOM
       '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, grouped by component → drawing</span></h2><div class="body" style="padding:0;">'+
-        '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Dimensions</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
-        (bomRows||'<tr><td colspan="'+NC+'" style="padding:14px;color:var(--mut)">No quantified rows.</td></tr>')+'</tbody></table>'+
+        '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Dimensions</th><th class="num">Unit wt (lb)</th><th class="num">Total wt (lb)</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
+        (bomRows||'<tr><td colspan="'+NC+'" style="padding:14px;color:var(--mut)">No quantified rows.</td></tr>')+
+        (fab.length?'<tr class="wt-total"><td colspan="6">Total — '+fab.length+' row'+(fab.length===1?'':'s')+
+          (WT.miss?' <span class="src">('+WT.miss+' without a weight — not in the total)</span>':'')+'</td><td></td><td class="num">'+fmtLb(WT.lb)+' lb</td>'+(editable?'<td></td>':'')+'</tr>':'')+
+        '</tbody></table>'+
         ((fab.length>0)?'<div style="padding:10px 18px;font-size:12px;color:var(--mut)">'+
           (editable
             ? 'Editing all '+fab.length+' rows — change a Qty or remove a row (✕). <span class="pillbtn" onclick="toggleBom()">done</span> &nbsp;·&nbsp; form/spec/size are best changed via “Tell the AI” below.'
@@ -2570,6 +2585,73 @@
   // is the backstop: check every row against that SAME list, and let it be fixed here, before
   // anything is committed. Nearest sizes are offered so a fix is a click, not a hunt.
   let CATALOG = null;                       // { "Form Type|Material Type": [size,...] }; null = not fetched yet
+  // ---- WEIGHTS — unit and total weight for every BOM line --------------------------------------
+  // From the shop's own catalog (Beam_Channel_Tee_Lookup.Weight_Lb_Ft): per FOOT for shapes, per
+  // SQUARE FOOT for plate / sheet / tread plate. A row with a width is an area: weight × L × W.
+  // When a size isn't in the catalog, two fallbacks that can't be wrong for what they cover: a rolled
+  // shape states its weight in its name (W8 x 24 = 24 lb/ft), and a plate's weight is its thickness ×
+  // the metal's density. Anything else shows "—" and is counted, never guessed as 0.
+  let CAT_WEIGHTS = null, CAT_WNORM = null;
+  const _wn=function(s){ return String(s==null?"":s).toLowerCase().replace(/[”″]/g,'"').replace(/\s+/g,""); };
+  function catWeightIndex(){
+    if(CAT_WNORM) return CAT_WNORM;
+    const exact={}, anyMat={};
+    Object.keys(CAT_WEIGHTS||{}).forEach(function(k){
+      const p=k.split("|"), w=CAT_WEIGHTS[k];
+      exact[_wn(p[0])+"|"+_wn(p[1])+"|"+_wn(p.slice(2).join("|"))]=w;
+      const a=_wn(p[0])+"|"+_wn(p.slice(2).join("|")); if(!(a in anyMat)) anyMat[a]=w;
+    });
+    return (CAT_WNORM={exact:exact,anyMat:anyMat});
+  }
+  const DENS={ "carbon steel":0.2836, "stainless":0.289, "aluminum":0.0975, "copper":0.323, "bronze":0.318, "titanium":0.163 };
+  function densityOf(m){ m=String(m||"").toLowerCase(); for(const k in DENS){ if(m.indexOf(k)>-1) return DENS[k]; } return DENS["carbon steel"]; }
+  function thicknessIn(size){
+    const s=String(size||"");
+    const par=s.match(/\(\s*0?(\.\d+)\s*\)/); if(par) return Number("0"+par[1]);          // "10 ga (.1345)"
+    const m=s.match(/^\s*(?:(\d+)[\s-]+)?(\d+)\s*\/\s*(\d+)/); if(m) return (m[1]?Number(m[1]):0)+Number(m[2])/Number(m[3]);
+    const d=s.match(/^\s*(\d*\.?\d+)\s*["”]?/); return d?Number(d[1]):null;
+  }
+  // { per, area, how } — per = lb/ft (shape) or lb/sq ft (area); null when unknown.
+  function weightBasis(r){
+    const area=Number(r.width_ft)>0;
+    if(CAT_WEIGHTS){
+      const ix=catWeightIndex();
+      const w=ix.exact[_wn(r.form_type)+"|"+_wn(r.material_type)+"|"+_wn(r.size)] || ix.anyMat[_wn(r.form_type)+"|"+_wn(r.size)];
+      if(w>0) return {per:w, area:area, how:"catalog"};
+    }
+    const sh=String(r.size||"").match(/^\s*(W|S|HP|M|C|MC|WT|ST|MT)\s*\d+(?:\.\d+)?\s*[xX×]\s*(\d+(?:\.\d+)?)/);
+    if(sh && !area) return {per:Number(sh[2]), area:false, how:"from the shape name"};
+    if(area){ const t=thicknessIn(r.size); if(t>0) return {per:t*144*densityOf(r.material_type), area:true, how:"thickness × density"}; }
+    return null;
+  }
+  // { unit, total, basis } in lb — one piece, and the job total (per-unit qty × component units).
+  function rowWeight(r){
+    const b=weightBasis(r); const L=Number(r.length_ft)||0;
+    if(!b || !(L>0)) return null;
+    const unit=b.per*L*(b.area?Number(r.width_ft):1);
+    const q=Number(r.quantity_total); const qty=(Number.isFinite(q)&&q>0)?q:(Number(r.quantity)||0)*Math.max(1,Math.round(Number(r.units)||1));
+    return {unit:unit, total:unit*qty, basis:b};
+  }
+  // The weight at the top: the BOM total (the same number as the foot of the Material tab), plus
+  // fittings as their own figure when there are any. The AI's rough estimate shows only when no row
+  // can be weighed yet.
+  function weightChipHtml(WT, FW, t){
+    if(WT.lb>0){
+      const miss=WT.miss?' <span title="'+WT.miss+' BOM row'+(WT.miss===1?'':'s')+' without a weight, not counted">(+'+WT.miss+' ?)</span>':'';
+      return FW.lb>0
+        ? '<span class="chip" title="BOM steel + pipe fittings">⚖ '+fmtLb(WT.lb)+' lb steel + '+fmtLb(FW.lb)+' lb fittings = <b>'+fmtLb(WT.lb+FW.lb)+' lb</b>'+miss+'</span>'
+        : '<span class="chip" title="Total of the Bill of Materials">⚖ '+fmtLb(WT.lb)+' lb'+miss+'</span>';
+    }
+    return (t&&t.est_weight_lb)?'<span class="chip" title="The AI rough estimate (the BOM cannot be weighed yet)">⚖ ~'+Number(t.est_weight_lb).toLocaleString()+' lb (estimate)</span>':'';
+  }
+  function fmtLb(n){ return n>=100?Math.round(n).toLocaleString():(Math.round(n*10)/10).toLocaleString(); }
+  // Fittings carry a per-piece weight once matched to the catalog.
+  function fittingsWeight(R){
+    let lb=0, n=0;
+    arr(R.fittings).forEach(function(f){ const w=Number(f.weight); if(!(w>0)) return;
+      const q=Number(f.quantity_total)>0?Number(f.quantity_total):(Number(f.quantity)||0); lb+=w*q; n++; });
+    return {lb:lb, n:n};
+  }
   let CATALOG_LOADING = false;
   // A catalog that FAILED to load looks identical to an empty one, and the material check then
   // blamed every row: "No catalog sizes for Plate · Carbon Steel", seventeen times, when the real
@@ -2581,7 +2663,7 @@
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/catalog-index");
       const d=await r.json();
-      if(d && d.ok && d.groups && Object.keys(d.groups).length){ CATALOG=d.groups; }
+      if(d && d.ok && d.groups && Object.keys(d.groups).length){ CATALOG=d.groups; CAT_WEIGHTS=d.weights||{}; CAT_WNORM=null; }
       else {
         CATALOG={};
         CATALOG_ERR=catalogErrText(d&&d.error);

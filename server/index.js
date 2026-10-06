@@ -836,29 +836,49 @@ app.post('/api/takeoff', async (req, res) => {
 // The grouped catalog itself: { "Form Type|Material Type": [size, ...] }. Built once and used BOTH
 // for the model's prompt block and for the review page's material check, so the validator and the
 // model can never disagree about what a valid size is.
-async function buildCatalogGroups() {
-  return cachedLookup('takeoff:catalog-groups', 12 * 60 * 60 * 1000, async () => {
+// The catalog read ONCE: every size with its form, material and weight. The size list the model is
+// given and the weights the review page shows both come from this, so weights cost no Zoho calls of
+// their own. Weight_Lb_Ft is per FOOT for shapes and per SQUARE FOOT for area-measured forms (plate,
+// sheet, tread plate: 1/2" steel plate = 20.42, 10 ga sheet = 5.624).
+async function catalogRows() {
+  return cachedLookup('takeoff:catalog-rows', 12 * 60 * 60 * 1000, async () => {
     // Same reports the BOM-editor lookups use — proven link names, don't guess new ones.
     const ftRows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
     const mtRows = await fetchAllZohoPages('/report/Material_Types_Report');
     const sizes = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report');
-
     const ft = {}, mt = {};
     ftRows.forEach(function (r) { ft[String(r.ID)] = String(r.Form_Type || '').trim(); });
     mtRows.forEach(function (r) { mt[String(r.ID)] = String(r.Material_Type || '').trim(); });
-
-    const groups = {};
+    const out = [];
     sizes.forEach(function (r) {
-      const desc = String(r.Description || '').trim();
-      if (!desc) return;
+      const d = String(r.Description || '').trim();
       const f = ft[String((r.Form_Types && r.Form_Types.ID) || '')] || '';
-      const m = mt[String((r.Material_Types && r.Material_Types.ID) || '')] || '';
-      if (!f) return;
-      const key = f + '|' + (m || 'any material');
+      if (!d || !f) return;
+      out.push({ d: d, f: f, m: mt[String((r.Material_Types && r.Material_Types.ID) || '')] || '', w: parseFloat(r.Weight_Lb_Ft) || 0 });
+    });
+    return out;
+  });
+}
+
+async function buildCatalogGroups() {
+  return cachedLookup('takeoff:catalog-groups', 12 * 60 * 60 * 1000, async () => {
+    const groups = {};
+    (await catalogRows()).forEach(function (r) {
+      const key = r.f + '|' + (r.m || 'any material');
       if (!groups[key]) groups[key] = [];
-      if (groups[key].indexOf(desc) < 0) groups[key].push(desc);
+      if (groups[key].indexOf(r.d) < 0) groups[key].push(r.d);
     });
     return groups;
+  });
+}
+
+// "Form|Material|size" -> weight (lb/ft, or lb/sq ft for plate/sheet/tread). For the review page's
+// unit and total weights.
+async function buildCatalogWeights() {
+  return cachedLookup('takeoff:catalog-weights', 12 * 60 * 60 * 1000, async () => {
+    const w = {};
+    (await catalogRows()).forEach(function (r) { if (r.w > 0) w[r.f + '|' + (r.m || '') + '|' + r.d] = r.w; });
+    return w;
   });
 }
 
@@ -1076,7 +1096,10 @@ app.get('/api/takeoff/catalog-check-text', async (req, res) => {
 // The review page's material check reads the SAME list the model was given.
 app.get('/api/takeoff/catalog-index', async (req, res) => {
   try {
-    res.json({ ok: true, groups: await buildCatalogGroups() });
+    const groups = await buildCatalogGroups();
+    let weights = {};
+    try { weights = await buildCatalogWeights(); } catch (e) { /* sizes still useful without weights */ }
+    res.json({ ok: true, groups: groups, weights: weights });
   } catch (err) {
     res.status(500).json({ ok: false, error: String((err && err.message) || err) });
   }
