@@ -172,7 +172,7 @@
 </head>
 <body>
 <div id="busy" class="busy"></div>
-<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span class="projhead" id="projHead"></span><span id="saveInd" style="font-size:11px;color:var(--mut);margin-left:12px"></span>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span class="projhead" id="projHead"></span><span id="saveInd" role="button" tabindex="0" title="Saves by itself after every change. Click to save now." onclick="saveNow()" style="font-size:11px;color:var(--mut);margin-left:12px;cursor:pointer"></span>
   <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:auto;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
   <a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a>
   <a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
@@ -247,6 +247,11 @@
     const el=document.getElementById("saveInd");
     if(el && !/⚠/.test(el.textContent)) setSaveInd("● unsaved changes — saving shortly","var(--mut)");
   }
+  function savedAtTxt(){ let t=null; try{ t=localStorage.getItem(savedSigKey()+"_at"); }catch(e){} if(!t) return "";
+    const d=new Date(t), today=new Date().toDateString()===d.toDateString();
+    return " · "+(today?"":(d.getMonth()+1)+"/"+d.getDate()+" ")+d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}); }
+  // Clicking the label saves right away instead of waiting out the 15 s.
+  function saveNow(){ if(_zohoTimer){ clearTimeout(_zohoTimer); _zohoTimer=null; } doZohoSave(); }
   function flushZohoSave(){ if(_zohoTimer){ clearTimeout(_zohoTimer); _zohoTimer=null; doZohoSave(); } }
   document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="hidden") flushZohoSave(); });
   window.addEventListener("pagehide",flushZohoSave);
@@ -265,13 +270,13 @@
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
-    if(last===sig){ setSaveInd("💾 saved to project","var(--grn)"); return; }   // nothing new: no call
+    if(last===sig){ setSaveInd("💾 saved to project"+savedAtTxt(),"var(--grn)"); return; }   // nothing new: no call
     setSaveInd("saving…","var(--mut)");
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},body:body});
       const d=await r.json();
-      if(d.ok){ try{ localStorage.setItem(savedSigKey(),sig); }catch(e){} }
-      setSaveInd(d.ok?"💾 saved to project":"⚠ save failed — your changes are safe in this browser and will save with your next change", d.ok?"var(--grn)":"var(--red)");
+      if(d.ok){ try{ localStorage.setItem(savedSigKey(),sig); localStorage.setItem(savedSigKey()+"_at",new Date().toISOString()); }catch(e){} }
+      setSaveInd(d.ok?"💾 saved to project"+savedAtTxt():"⚠ save failed — your changes are safe in this browser and will save with your next change", d.ok?"var(--grn)":"var(--red)");
     }catch(e){ setSaveInd("⚠ save failed — your changes are safe in this browser and will save with your next change","var(--red)"); }
   }
   function haveLive(){ try{
@@ -2842,6 +2847,9 @@
     const inp=document.getElementById("aiInput");
     const t=(inp?inp.value:"").trim();
     if(!t && !REVISE_ATTACHMENTS.length){ if(inp) inp.focus(); return; }
+    // Empty the box BEFORE the redraw below: render() puts back whatever is typed in it (so a
+    // half-written message survives a refresh of the page), which left every sent message sitting there.
+    if(inp) inp.value="";
     window.__chatting=true;
     const atNames = REVISE_ATTACHMENTS.length?REVISE_ATTACHMENTS.map(function(a){return a.name;}):null;
     const sentAttach = REVISE_ATTACHMENTS.slice();   // snapshot for this turn
