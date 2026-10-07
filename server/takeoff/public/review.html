@@ -268,7 +268,7 @@
     // quote_notes likewise: the clarifications keep every dismissed conflict and gap, which the
     // synopsis no longer holds, so they can't be rebuilt from it on another machine.
     const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
-                superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[] };
+                superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[], check:R.check||null, checked_v1:!!R.checked_v1 };
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
@@ -2043,6 +2043,12 @@
     // on "Loading take-off…" forever. A parse check cannot catch it; only running it can.
     if(arr(R.fittings).length){ loadFittingsCatalog(); loadFittingIndex(); }   // only fetched when there are fittings to edit
     if(!R.__demo && fixQuantities(R)){ recomputeCsv(R); saveResult(R); }   // stored totals back in line with Qty
+    // The drawing-number checks (metric lengths, flat bar in mm, a part raised from two pages): a new
+    // take-off arrives already checked; one saved before the checks existed is repaired once, here.
+    if(!R.__demo && !R.checked_v1){
+      if(R.metric_checked){ R.check={fixed:arr(R.metric_fixed),flagged:arr(R.metric_flagged),dup:arr(R.dup_removed)}; R.checked_v1=true; saveResult(R); }
+      else if(arr(R.rows).length) runRepairOnce();
+    }
     const rows = arr(R.rows);
     const s = R.synopsis || {};
     DECISIONS = arr(s.decisions).map((d,i)=>({
@@ -2137,15 +2143,16 @@
       const cU=Math.max.apply(null,[1].concat(cIds.map(function(i){ return unitsOf(rows[i]); })));
       let html='<tr class="grp-comp"><td colspan="'+NC+'">▸ '+esc(cN)+
         (cU>1?' <span class="grp-units">× '+cU+' units</span>':'')+
-        ' <span class="grp-meta">'+cIds.length+' item'+(cIds.length===1?'':'s')+' · '+
-        (cU>1 ? sumQty(cIds)+' per unit · <b>'+sumTot(cIds)+' total</b>' : sumQty(cIds)+' qty')+wtMeta(cIds)+
+        ' <span class="grp-meta">'+cIds.length+' line'+(cIds.length===1?'':'s')+' · '+
+        (cU>1 ? sumQty(cIds)+' pcs per unit · <b>'+sumTot(cIds)+' pcs total</b>' : sumQty(cIds)+' pcs')+wtMeta(cIds)+
         '</span></td></tr>';
       g.dOrder.forEach(function(dN){
         const ids=g.dMap[dN];
         html+='<tr class="grp-draw"><td colspan="'+NC+'">📄 '+esc(dN)+
-          ' <span class="grp-meta">'+ids.length+' item'+(ids.length===1?'':'s')+' · '+
+          ' <span class="grp-meta">'+ids.length+' line'+(ids.length===1?'':'s')+' · '+
           (Math.max.apply(null,[1].concat(ids.map(function(i){ return unitsOf(rows[i]); })))>1
-            ? sumQty(ids)+' per unit · <b>'+sumTot(ids)+' total</b>' : sumQty(ids)+' qty')+wtMeta(ids)+
+            ? sumQty(ids)+' pcs per unit · <b>'+sumTot(ids)+' pcs total</b>' : sumQty(ids)+' pcs')+wtMeta(ids)+
+          statedWeightMeta(R,dN,sumWt(ids).lb)+
           '</span></td></tr>'+
           ids.map(memberRow).join("");
       });
@@ -2230,7 +2237,7 @@
       reconCardHtml()+
       '</div>'+
 
-      '<div class="tabpane" data-tab="material">'+qtyFixedHtml(R)+
+      '<div class="tabpane" data-tab="material">'+checkNoticeHtml(R)+qtyFixedHtml(R)+
       // BOM
       '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, grouped by component → drawing</span></h2><div class="body" style="padding:0;">'+
         '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Dimensions</th><th class="num">Unit wt (lb)</th><th class="num">Total wt (lb)</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
@@ -2675,6 +2682,49 @@
         ': shown <b>'+x.shown+'</b>, was going to order <b>'+x.was_ordered+'</b>, now orders <b>'+x.now+'</b></li>'; }).join("")+
       '</ul><span class="pillbtn" onclick="clearQtyFixed()">checked, hide this</span></div></div>';
   }
+  // ---- CHECKED AGAINST THE DRAWINGS' OWN NUMBERS ------------------------------------------------
+  // Metric lengths off by 10x, a flat bar written in mm read as a square bar, the same part raised
+  // from two pages of one drawing (2026-10-07: 48,949 lb of handrail that was really ~7,300).
+  let REPAIRING=false;
+  async function runRepairOnce(){
+    if(REPAIRING) return; REPAIRING=true;
+    try{
+      const R=loadResult();
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/repair",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:arr(R.rows)})});
+      const d=await r.json();
+      if(d && d.ok){
+        const R2=loadResult();
+        R2.rows=d.rows; R2.check={fixed:arr(d.metric_fixed),flagged:arr(d.metric_flagged),dup:arr(d.dup_removed),repaired:true};
+        R2.checked_v1=true; recomputeCsv(R2); saveResult(R2); render();
+      }
+    }catch(e){ console.error("[repair]",e); }
+    REPAIRING=false;
+  }
+  function checkNoticeHtml(R){
+    const c=R.check; if(!c||c.hidden) return "";
+    const f=arr(c.fixed), g=arr(c.flagged), d=arr(c.dup);
+    if(!f.length&&!g.length&&!d.length) return "";
+    const li=function(list,fn){ return '<ul style="margin:4px 0 6px 18px;padding:0;max-height:220px;overflow:auto">'+list.map(function(x){ return '<li>'+fn(x)+'</li>'; }).join("")+'</ul>'; };
+    return '<div class="card" style="border-color:#cddcf3"><div class="body" style="background:#f3f7fd;font-size:13px;line-height:1.5">'+
+      '<b>🔎 Checked against the drawings\' own numbers'+(c.repaired?' (applied to this saved take-off)':'')+':</b> '+
+      [f.length?f.length+' length'+(f.length===1?'':'s')+'/size'+(f.length===1?'':'s')+' corrected':'',
+       d.length?d.length+' row'+(d.length===1?'':'s')+' raised twice from two pages removed':'',
+       g.length?'<b>'+g.length+' to check</b>':''].filter(Boolean).join(' · ')+
+      (g.length?'<details open><summary>To check</summary>'+li(g,function(x){ return esc(x.what)+' — '+esc(x.why); })+'</details>':'')+
+      (f.length?'<details><summary>Corrected</summary>'+li(f,function(x){ return esc(x.what)+': '+esc(x.why); })+'</details>':'')+
+      (d.length?'<details><summary>Duplicates removed</summary>'+li(d,function(x){ return esc(x.what)+' (qty '+x.qty+') — kept '+esc(x.kept); })+'</details>':'')+
+      '<span class="pillbtn" onclick="hideCheck()">hide</span></div></div>';
+  }
+  function hideCheck(){ const R=loadResult(); if(R.check){ R.check.hidden=true; saveResult(R); render(); } }
+  // The drawing's printed total weight beside the BOM's, red when they differ by more than 15%.
+  function statedWeightMeta(R,sheet,bomLb){
+    const ds=arr((R.synopsis||{}).drawing_scope).find(function(d){ return d && d.stated_weight && sameSheet(d.sheet,sheet); });
+    if(!ds || !(Number(ds.stated_weight.value)>0)) return "";
+    const kg=/kg/i.test(String(ds.stated_weight.unit||"")), lb=kg?Number(ds.stated_weight.value)*2.20462:Number(ds.stated_weight.value);
+    const pct=lb?Math.round((bomLb-lb)/lb*100):0, bad=Math.abs(pct)>15;
+    return ' · <span style="color:'+(bad?'var(--red)':'var(--grn)')+'" title="Total weight printed on the drawing">drawing says '+
+      ds.stated_weight.value+' '+(kg?'kg':'lb')+(kg?' ('+fmtLb(lb)+' lb)':'')+(bad?' ⚠ '+(pct>0?'+':'')+pct+'%':' ✓')+'</span>';
+  }
   function clearQtyFixed(){ const R=loadResult(); delete R.qty_fixed; saveResult(R); render(); }
   function fmtLb(n){ return n>=100?Math.round(n).toLocaleString():(Math.round(n*10)/10).toLocaleString(); }
   // Fittings carry a per-piece weight once matched to the catalog.
@@ -2967,6 +3017,9 @@
     window.__chatting=true;
     const atNames = REVISE_ATTACHMENTS.length?REVISE_ATTACHMENTS.map(function(a){return a.name;}):null;
     const sentAttach = REVISE_ATTACHMENTS.slice();   // snapshot for this turn
+    // Consumed at Send, like the typed text — a question answered in words used to leave the file
+    // attached, so it rode along with the next question too. Put back only if the send fails.
+    REVISE_ATTACHMENTS = [];
     const R=loadResult(); R.chat=R.chat||[];
     R.chat.push({role:"user", text: t || "(reconcile against the attached file)", files: atNames});
     R.chat.push({role:"ai", pending:true});
@@ -2985,6 +3038,7 @@
       if(!r.ok||data.ok===false){
         const m=String(data.error||("HTTP "+r.status));
         const friendly=(m.indexOf("rate_limit")>-1||m.indexOf("429")>-1)?"Material Compass AI is rate limited — wait ~60s and try again.":m;
+        REVISE_ATTACHMENTS = sentAttach;                        // failed: keep the files for a retry
         R2.chat.push({role:"ai", err:true, text:"⚠ "+friendly}); saveResult(R2); render(); scrollChatToBottom(); window.__chatting=false; return;
       }
       if(data.edited){
@@ -3003,6 +3057,7 @@
       }
       render(); scrollChatToBottom();
     }catch(e){
+      REVISE_ATTACHMENTS = sentAttach;                          // failed: keep the files for a retry
       const R3=loadResult(); R3.chat=(R3.chat||[]).filter(function(m){return !m.pending;});
       R3.chat.push({role:"ai", err:true, text:"⚠ Network error: "+e.message}); saveResult(R3); render(); scrollChatToBottom();
     }

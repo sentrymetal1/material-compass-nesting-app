@@ -5,7 +5,7 @@ const axios = require('axios');
 const path = require('path');
 const zlib = require('zlib');
 const FormData = require('form-data');
-const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler } = require('./takeoff/route');
+const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, repairHandler } = require('./takeoff/route');
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
 const filestore = require('./filestore');        // the project's own copy of the drawings
 
@@ -867,10 +867,11 @@ const takeoffMount = async (req, res) => {
 
   // The shop's real size list. Best-effort: if the lookup read fails the take-off still runs on
   // knowledge.md's format rules — degraded, not blocked.
-  let liveCatalog = '', catalogGroups = null, fittingsCatalog = '';
+  let liveCatalog = '', catalogGroups = null, fittingsCatalog = '', catalogWeights = null;
   try {
     liveCatalog = await buildLiveCatalogContext();
     catalogGroups = await buildCatalogGroups();   // same cached object; used to snap sizes post-run
+    try { catalogWeights = await buildCatalogWeights(); } catch (e) { /* weight check just skips */ }
   } catch (e) { console.error('live catalog unavailable, falling back to knowledge.md formats:', e.message || e); }
   // Fittings are a separate vocabulary and a separate destination on the project. Best-effort like
   // the size catalog: no fittings catalog just means no fittings stream, not a failed take-off.
@@ -884,7 +885,7 @@ const takeoffMount = async (req, res) => {
 
   return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge,
     projectContext: projectContext, liveCatalog: liveCatalog, catalogGroups: catalogGroups,
-    fittingsCatalog: fittingsCatalog, fittingTypes: fittingTypes, fittingEnds: fittingEnds });
+    fittingsCatalog: fittingsCatalog, fittingTypes: fittingTypes, fittingEnds: fittingEnds, catalogWeights: catalogWeights });
 };
 app.post('/api/takeoff', takeoffMount);
 
@@ -1516,6 +1517,7 @@ app.post('/api/takeoff/bom-preview', async (req, res) => {
 app.post('/api/takeoff/index', (req, res) => indexHandler(req, res)); // intake: read sheet numbers + page ranges
 app.post('/api/takeoff/inspect', (req, res) => inspectHandler(req, res)); // intake: drawing or document? (no AI, no size limit)
 app.post('/api/takeoff/addenda', (req, res) => addendaHandler(req, res)); // review: what each addendum changed
+app.post('/api/takeoff/repair', (req, res) => repairHandler(req, res));   // review: metric + duplicate checks on an older take-off
 app.post('/api/takeoff/ask', (req, res) => askHandler(req, res));     // intake: ask about the uploaded documents
 // What a run would cost per reading depth, before anything is spent. Rates come from the
 // engine's own table so the quote and the bill cannot drift apart.

@@ -265,6 +265,9 @@ const SYNOPSIS_SCHEMA = {
                         by:   { type: "string", description: "'by others', 'other trade', 'buyout' (we supply but buy it in), or 'not shown — verify'." },
                       }, required: ["item"] } },
           notes:    { type: "string", description: "One line, only if something about this sheet's scope needs saying (e.g. 'demolition only — no new steel')." },
+          // The drawing's own printed total — the check that catches a misread BOM at a glance.
+          stated_weight: { type: "object", description: "The TOTAL WEIGHT printed on this drawing (title block or parts table), if any, exactly as printed. Omit if the drawing states none.",
+                           properties: { value: { type: "number" }, unit: { type: "string", description: "'kg' or 'lb' as printed; 'kg' on a metric drawing that doesn't say." } }, required: ["value"] },
         },
         required: ["sheet"],
       },
@@ -435,6 +438,11 @@ const TAKEOFF_TOOL = buildTakeoffTool(true);
 
 function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, projectContext, liveCatalog, fittingsCatalog) {
   const base =
+    "METRIC DRAWINGS: lengths are in FEET in your output. Convert millimetres by dividing by 304.8 (1 ft = 304.8 mm; 6414 mm = 21.04 ft, NOT 210.4). " +
+    "Where the drawing also gives a bracketed imperial value like [13-1 5/16], use it. A flat bar given in mm as FB<thickness>x<width> " +
+    "(e.g. FB6.35x101.6) is thickness x width converted to inches (1/4 x 4) — never write the width twice. " +
+    "In each row's note, quote the drawing's own dimension (e.g. '3990mm') so the conversion can be checked. " +
+    "If the drawing states a TOTAL WEIGHT for the assembly, put it in that drawing's drawing_scope stated_weight (value + kg or lb).\n" +
     "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
     "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
     "strictly against the provided catalog — never invent a spec or form type.\n\n" +

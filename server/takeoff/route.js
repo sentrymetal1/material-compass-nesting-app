@@ -22,6 +22,7 @@ const { snapRows, snapFittings } = require("./snap");
 const { extractPartsList, applyPartsList } = require("./partsList");
 const { extractText, inspect } = require("../pdfkind");
 const docprep = require("./docprep");
+const { fixMetric, dedupeSheets } = require("./metricfix");
 
 // ---- RUNNING A PACKAGE TOO BIG FOR ONE REQUEST ---------------------------------
 // Each batch gets its own drawings plus every text document (they're small once read as text, and
@@ -41,6 +42,36 @@ function batchNote(plan, b) {
       ? " If a parts list has items that appear on NO drawing in the whole package (this part or the others listed above), raise them here as list_only."
       : " Do NOT raise rows that come only from a parts list (list_only) — part 1 handles those. Use the list here to check and correct the members you find on these drawings.") +
     " Your synopsis should cover THIS part only; the parts are combined afterwards.";
+}
+
+// BOM weight per drawing vs the drawing's printed total (synopsis.drawing_scope[].stated_weight).
+// Uses the catalog weight (per ft, or per sq ft when the row has a width); rows it can't weigh are
+// counted so a low BOM figure isn't mistaken for a match.
+function drawingWeightCheck(rows, synopsis, weights) {
+  const ds = (synopsis && Array.isArray(synopsis.drawing_scope)) ? synopsis.drawing_scope : [];
+  if (!weights || !ds.length) return [];
+  const nk = function (s) { return String(s == null ? "" : s).toLowerCase().replace(/s+/g, ""); };
+  const idx = {};
+  Object.keys(weights).forEach(function (k) { const p = k.split("|"); idx[nk(p[0]) + "|" + nk(p[1]) + "|" + nk(p.slice(2).join("|"))] = weights[k]; idx[nk(p[0]) + "||" + nk(p.slice(2).join("|"))] = idx[nk(p[0]) + "||" + nk(p.slice(2).join("|"))] || weights[k]; });
+  const sk = function (s) { return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); };
+  const out = [];
+  ds.forEach(function (d) {
+    const sw = d && d.stated_weight; if (!sw || !(Number(sw.value) > 0)) return;
+    const unit = /kg/i.test(String(sw.unit || "")) ? "kg" : "lb";
+    const statedLb = unit === "kg" ? Number(sw.value) * 2.20462 : Number(sw.value);
+    let lb = 0, unweighed = 0;
+    rows.forEach(function (r) {
+      const a = sk(r.source_sheet), b = sk(d.sheet);
+      if (!a || !b || !(a === b || a.endsWith(b) || b.endsWith(a)) || r.deleted) return;
+      const w = idx[nk(r.form_type) + "|" + nk(r.material_type) + "|" + nk(r.size)] || idx[nk(r.form_type) + "||" + nk(r.size)];
+      const L = Number(r.length_ft) || 0, q = (Number(r.quantity) || 0) * Math.max(1, Math.round(Number(r.units) || 1));
+      if (!(w > 0) || !(L > 0)) { unweighed++; return; }
+      lb += w * L * (Number(r.width_ft) > 0 ? Number(r.width_ft) : 1) * q;
+    });
+    out.push({ sheet: d.sheet, stated: sw.value + " " + unit, stated_lb: Math.round(statedLb), bom_lb: Math.round(lb),
+               diff_pct: statedLb ? Math.round((lb - statedLb) / statedLb * 100) : 0, unweighed: unweighed });
+  });
+  return out;
 }
 
 function uniq(arr) {
@@ -310,6 +341,19 @@ async function takeoffHandler(req, res, deps) {
       f.units = u; f.qty_per_unit = per; f.quantity_total = per * u;
     });
 
+    // 1a-iii. Metric drawings: repair what the drawing's own millimetres prove (lengths off by 10x,
+    // a flat bar written "FB6.35x101.6" read as 4 x 4) and flag the rest. See metricfix.js.
+    const metric = fixMetric(rows);
+    const dupRemoved = dedupeSheets(rows);
+    if (metric.fixed.length || metric.flagged.length || dupRemoved.length) console.log("[takeoff check] metric: " + metric.fixed.length + " fixed, " + metric.flagged.length + " flagged; " + dupRemoved.length + " rows raised twice from two pages removed");
+
+    // 1a-iv. Each drawing's BOM weight against the total printed on the drawing. Logged, so a misread
+    // drawing shows up in the server log without anyone having to report it, and returned for the page.
+    const weightCheck = drawingWeightCheck(rows, out.synopsis, deps.catalogWeights);
+    weightCheck.filter(function (w) { return Math.abs(w.diff_pct) > 15; }).forEach(function (w) {
+      console.log("[takeoff check] " + w.sheet + ": BOM " + w.bom_lb + " lb vs drawing " + w.stated + " (" + w.stated_lb + " lb), " + (w.diff_pct > 0 ? "+" : "") + w.diff_pct + "%");
+    });
+
     // 1b. Snap materials to the catalog's exact spelling BEFORE the CSV is built — the import
     // matches on the string, so "1.5 x 1/8" and "1-1/2 x 1/8" are not the same row to it.
     const snap = deps.catalogGroups ? snapRows(rows, deps.catalogGroups) : { snapped: [], unmatched: [] };
@@ -373,6 +417,8 @@ async function takeoffHandler(req, res, deps) {
       import_csv: import_csv,
       verify_csv: verify_csv,
       material_snapped: snap.snapped.length,
+      metric_fixed: metric.fixed, metric_flagged: metric.flagged, dup_removed: dupRemoved, metric_checked: true,
+      weight_check: weightCheck,
       material_unmatched: snap.unmatched.length,
       // What the model left blank, so the review page can show it rather than the user finding out
       // in staging. blank_* counts are AFTER the scope backfill above.
@@ -579,6 +625,17 @@ async function addendaHandler(req, res) {
   }
 }
 
+// POST /api/takeoff/repair — the same metric + duplicate checks, for a take-off saved before they
+// existed. Body: { rows }. No AI, no Zoho. Returns the repaired rows and every change made.
+function repairHandler(req, res) {
+  try {
+    const rows = JSON.parse(JSON.stringify((req.body && req.body.rows) || []));
+    const metric = fixMetric(rows), dup = dedupeSheets(rows);
+    console.log("[takeoff check] repair: " + metric.fixed.length + " fixed, " + metric.flagged.length + " flagged, " + dup.length + " duplicates removed");
+    return res.json({ ok: true, rows: rows, metric_fixed: metric.fixed, metric_flagged: metric.flagged, dup_removed: dup });
+  } catch (err) { return res.status(500).json({ ok: false, error: outward(err) }); }
+}
+
 // POST /api/takeoff/inspect — is this file a DRAWING (looked at) or a DOCUMENT (read as text)?
 // Body: { name, data (base64 PDF), want_text? }. Called once per file as it lands on the intake
 // screen, with no model call and no size limit, so every file is tagged the moment it's added —
@@ -678,4 +735,4 @@ function pricingHandler(req, res) {
   }
 }
 
-module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, mergeSynopsis, runBatches };
+module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, repairHandler, mergeSynopsis, runBatches };
