@@ -552,7 +552,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.65 (2026-10-06)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.66 (2026-10-07)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -3215,14 +3215,26 @@
       go.disabled = true; resultBox.innerHTML = "";
       const t0 = Date.now();
       const tree0 = buildScopeTree();
+      // Say how big the job really is. The server reads at most 20 sheets per part, one part after
+      // another, and a part of 20 runs about 4-6 minutes (6 on a 20-sheet handrail part, 2026-10-07).
+      // "A minute or two" was right for a 5-sheet job and badly wrong for 53.
+      const sent = runDocList(), leftOut = docs.length - sent.length;
+      const sheetsRead = sheets.length ? sheets.filter((s) => !isOut(s.number)).length
+                                       : sent.reduce((n, d) => n + (d.pages || 1), 0);
+      const parts = Math.max(1, Math.ceil(sheetsRead / 20));
+      const lo = Math.max(1, parts * 3), hi = Math.max(2, parts * 6);
       showBusy("Taking off your material…",
-        filesLine() + " · <b>" + tree0.length + "</b> component" + (tree0.length === 1 ? "" : "s") +
+        "<b>" + sent.length + "</b> file" + (sent.length === 1 ? "" : "s") +
+        (leftOut ? " (" + leftOut + " left out as not our scope)" : "") +
+        " · <b>" + sheetsRead + "</b> drawing" + (sheetsRead === 1 ? "" : "s") +
+        " · <b>" + tree0.length + "</b> component" + (tree0.length === 1 ? "" : "s") +
+        (parts > 1 ? "<br>Read in <b>" + parts + " parts</b> of up to 20 drawings, one after another." : "") +
         "<br>Reading every drawing and parts list, reconciling them against each other, and pricing " +
         "each member against your catalog.",
-        "A minute or two is normal. Keep this tab open — you'll land on the review page when it's done.");
+        "Expect about <b>" + lo + "–" + hi + " minutes</b>. Keep this tab open — you'll land on the review page when it's done.");
       const timer = setInterval(() => {
-        statusEl.innerHTML = '<span class="spin"></span>Reading ' + docs.length +
-          ' document' + (docs.length > 1 ? "s" : "") + '… ' +
+        statusEl.innerHTML = '<span class="spin"></span>Reading ' + sent.length +
+          ' document' + (sent.length > 1 ? "s" : "") + '… ' +
           Math.round((Date.now() - t0) / 1000) + 's';
       }, 250);
 
