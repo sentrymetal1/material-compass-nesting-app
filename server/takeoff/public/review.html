@@ -908,6 +908,7 @@
       const unitSel=(document.getElementById("dwUnit")||{}).value||"lb";
       const unit=x.explicit?x.unit:unitSel;
       d.stated_weight={value:x.value,unit:unit,source:"entered"}; set++;
+      if(unit==="kg" && !(R.synopsis.weight_unit&&R.synopsis.weight_unit.unit)) R.synopsis.weight_unit={unit:"kg",check:"Set when the drawing weights were entered (kilograms chosen)."};
     });
     // Name any number that matches no drawing in this take-off ("8088" typed for 8068).
     const sheetsHere=arr(R.rows).map(function(r){ return r.source_sheet; });
@@ -2289,7 +2290,7 @@
       reconCardHtml()+
       '</div>'+
 
-      '<div class="tabpane" data-tab="material">'+checkNoticeHtml(R)+qtyFixedHtml(R)+
+      '<div class="tabpane" data-tab="material">'+weightUnitNoticeHtml(R)+checkNoticeHtml(R)+qtyFixedHtml(R)+
       // BOM
       '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, grouped by component → drawing</span></h2><div class="body" style="padding:0;">'+
         '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Dimensions</th><th class="num">Unit wt (lb)</th><th class="num">Total wt (lb)</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
@@ -2585,6 +2586,7 @@
       conflicts:  mergeList(cs.conflicts, as.conflicts),
       compliance: mergeList(cs.compliance, as.compliance),
       drawing_scope: mergeList(cs.drawing_scope, as.drawing_scope),
+      weight_unit: cs.weight_unit || as.weight_unit,
       totals:     Object.assign({}, cs.totals),
       confidence: cs.confidence || as.confidence,
     };
@@ -2767,16 +2769,33 @@
       (d.length?'<details><summary>Duplicates removed</summary>'+li(d,function(x){ return esc(x.what)+' (qty '+x.qty+') — kept '+esc(x.kept); })+'</details>':'')+
       '<span class="pillbtn" onclick="hideCheck()">hide</span></div></div>';
   }
+  // The unit the drawings print their weights in, stated plainly at the top of the BOM. Everything on
+  // this page is pounds; this says what the drawings themselves use and how that was decided.
+  function weightUnitNoticeHtml(R){
+    const wu=(R.synopsis||{}).weight_unit;
+    const anyKg=arr((R.synopsis||{}).drawing_scope).some(function(d){ return d&&d.stated_weight&&/kg/i.test(String(d.stated_weight.unit||"")); });
+    const unit=(wu&&wu.unit)||(anyKg?"kg":"");
+    if(!unit) return "";
+    const kg=/kg/i.test(unit);
+    return '<div class="card" style="border-color:'+(kg?'#f1dfb0':'#cfe6d3')+'"><div class="body" style="background:'+(kg?'#fff8e6':'#eef7ee')+';font-size:13px;line-height:1.5">'+
+      '<b>⚖ The weights printed on these drawings are in '+(kg?'KILOGRAMS (kg)':'POUNDS (lb)')+'.</b> '+
+      (kg?'Every weight on this page has been converted to pounds (1 kg = 2.2046 lb).':'Shown here as printed.')+
+      (wu&&wu.check?'<div class="src" style="margin-top:3px">How we know: '+esc(wu.check)+'</div>':'')+
+      '</div></div>';
+  }
   function hideCheck(){ const R=loadResult(); if(R.check){ R.check.hidden=true; saveResult(R); render(); } }
   // The drawing's printed total weight beside the BOM's, red when they differ by more than 15%.
   function statedWeightMeta(R,sheet,bomLb){
     const ds=arr((R.synopsis||{}).drawing_scope).find(function(d){ return d && d.stated_weight && sameSheet(d.sheet,sheet); });
     if(!ds || !(Number(ds.stated_weight.value)>0)) return "";
-    const kg=/kg/i.test(String(ds.stated_weight.unit||"")), lb=kg?Number(ds.stated_weight.value)*2.20462:Number(ds.stated_weight.value);
+    const wu=(R.synopsis||{}).weight_unit;
+    const kg=/kg/i.test(String(ds.stated_weight.unit||(wu&&wu.unit)||"")), lb=kg?Number(ds.stated_weight.value)*2.20462:Number(ds.stated_weight.value);
     const pct=lb?Math.round((bomLb-lb)/lb*100):0, bad=Math.abs(pct)>15;
-    // Pounds only on screen; a metric drawing's printed kg figure is kept for the hover text.
-    return ' · <span style="color:'+(bad?'var(--red)':'var(--grn)')+'" title="Total weight printed on the drawing'+
-      (kg?': '+ds.stated_weight.value+' kg':'')+'">drawing: '+fmtLb(lb)+' lb'+(bad?' ⚠ '+(pct>0?'+':'')+pct+'%':' ✓')+'</span>';
+    // Pounds first; when the drawing prints kilograms, say so on the page — an unlabelled kg figure
+    // read as pounds is how 85.789 (= 189 lb) looked like 86 lb.
+    return ' · <span style="color:'+(bad?'var(--red)':'var(--grn)')+'" title="Total weight printed on the drawing">drawing: '+fmtLb(lb)+' lb'+
+      (kg?' <span class="src">(printed '+ds.stated_weight.value+' kg)</span>':' <span class="src">(printed in lb)</span>')+
+      (bad?' ⚠ '+(pct>0?'+':'')+pct+'%':' ✓')+'</span>';
   }
   function clearQtyFixed(){ const R=loadResult(); delete R.qty_fixed; saveResult(R); render(); }
   function fmtLb(n){ return n>=100?Math.round(n).toLocaleString():(Math.round(n*10)/10).toLocaleString(); }
@@ -3177,6 +3196,7 @@
       confidence:    _has(rs.confidence)?rs.confidence:os.confidence,
       parts_list:    os.parts_list,   // set by the server's parts-list read; the AI never owns it
       drawing_scope: _has(rs.drawing_scope)?rs.drawing_scope:os.drawing_scope,
+      weight_unit:   _has(rs.weight_unit)?rs.weight_unit:os.weight_unit,
     };
     return Object.assign({},cur,{rows:carryRowConfidence(cur.rows,data.rows),fittings:mergeFittings(cur.fittings,data.fittings),
       synopsis:syn,import_csv:data.import_csv,verify_csv:data.verify_csv});

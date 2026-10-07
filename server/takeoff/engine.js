@@ -249,6 +249,17 @@ const SYNOPSIS_SCHEMA = {
         required: ["topic"],
       },
     },
+    // The unit the drawings' parts-table weights are printed in. Metric detailers print kg without
+    // saying so (Amrize, 2026-10-07: 85.789 read as lb was really 189 lb). Decided by arithmetic on a
+    // row, stated once for the package, and shown to the estimator.
+    weight_unit: {
+      type: "object", description: "The unit the drawings' printed weights (parts-table WEIGHT columns and total weights) are in. Decide it by checking ONE row: its size and length give its weight in lb; compare with the printed number.",
+      properties: {
+        unit:  { type: "string", enum: ["kg", "lb"], description: "'kg' or 'lb'." },
+        check: { type: "string", description: "The arithmetic that decided it, e.g. 'p292: 1-1/2\" STD pipe 12\\'-6 7/16\" x 2.72 lb/ft = 34.1 lb; printed 15.473 = 34.1 / 2.2046, so kg'." },
+      },
+      required: ["unit", "check"],
+    },
     // What the fabricator's scope takes off each sheet, and what it leaves for others. Steel quotes
     // carry inclusions/exclusions by sheet; the estimator should never have to reconstruct it.
     drawing_scope: {
@@ -267,7 +278,7 @@ const SYNOPSIS_SCHEMA = {
           notes:    { type: "string", description: "One line, only if something about this sheet's scope needs saying (e.g. 'demolition only — no new steel')." },
           // The drawing's own printed total — the check that catches a misread BOM at a glance.
           stated_weight: { type: "object", description: "The TOTAL WEIGHT printed on this drawing (title block or parts table), if any, exactly as printed. Omit if the drawing states none.",
-                           properties: { value: { type: "number" }, unit: { type: "string", description: "'kg' or 'lb' as printed; 'kg' on a metric drawing that doesn't say." } }, required: ["value"] },
+                           properties: { value: { type: "number" }, unit: { type: "string", description: "'kg' or 'lb' — the unit the number is printed in (see synopsis.weight_unit; most drawings don't label it)." } }, required: ["value"] },
         },
         required: ["sheet"],
       },
@@ -442,7 +453,8 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "Where the drawing also gives a bracketed imperial value like [13-1 5/16], use it. A flat bar given in mm as FB<thickness>x<width> " +
     "(e.g. FB6.35x101.6) is thickness x width converted to inches (1/4 x 4) — never write the width twice. " +
     "In each row's note, quote the drawing's own dimension (e.g. '3990mm') so the conversion can be checked. " +
-    "If the drawing states a TOTAL WEIGHT for the assembly, put it in that drawing's drawing_scope stated_weight (value + kg or lb).\n" +
+    "If the drawing states a TOTAL WEIGHT for the assembly, put it in that drawing's drawing_scope stated_weight (value + unit). " +
+    "Drawings often print weights WITHOUT a unit: decide kg or lb by arithmetic on one parts-table row (its size and length give its weight in lb — 1-1/2\" STD pipe is 2.72 lb/ft, 1/4 x 4 flat bar 3.40 lb/ft; if the printed number is that divided by 2.2046, the unit is kg) and report it once in synopsis.weight_unit with the arithmetic. Never assume lb because the project is in the USA.\n" +
     "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
     "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
     "strictly against the provided catalog — never invent a spec or form type.\n\n" +

@@ -57,7 +57,8 @@ function drawingWeightCheck(rows, synopsis, weights) {
   const out = [];
   ds.forEach(function (d) {
     const sw = d && d.stated_weight; if (!sw || !(Number(sw.value) > 0)) return;
-    const unit = /kg/i.test(String(sw.unit || "")) ? "kg" : "lb";
+    const pkgUnit = synopsis && synopsis.weight_unit && synopsis.weight_unit.unit;
+    const unit = /kg/i.test(String(sw.unit || pkgUnit || "")) ? "kg" : "lb";
     const statedLb = unit === "kg" ? Number(sw.value) * 2.20462 : Number(sw.value);
     let lb = 0, unweighed = 0;
     rows.forEach(function (r) {
