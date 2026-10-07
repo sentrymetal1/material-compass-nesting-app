@@ -872,16 +872,27 @@
     const have=arr((R.synopsis||{}).drawing_scope).filter(function(d){ return d && d.stated_weight && Number(d.stated_weight.value)>0; }).length;
     return '<div class="card"><h2>⚖ Drawing weights <span class="lt">— the total printed on each drawing, checked against the BOM</span></h2><div class="body">'+
       '<div class="src" style="margin-bottom:6px">'+(have?have+' drawing'+(have===1?'':'s')+' have a printed weight to check against. ':'')+
-      'Paste weights as text, e.g. <i>Item 8066 is 86.209 lbs, Item 8067 is 83.966 lbs</i> (one or many; lbs unless you write kg).</div>'+
+      'Paste the weights printed on the drawings, e.g. <i>Item 8066 is 86.209, Item 8067 is 83.966</i> — one or many.</div>'+
+      // Metric drawings print kilograms; everything shown is pounds. Default to kg when the take-off's
+      // rows quote millimetres, so a number copied off the drawing is converted, not misread as lb.
+      '<div style="margin:0 0 6px;font-size:12.5px">The numbers on these drawings are in '+
+        '<select id="dwUnit"><option value="kg"'+(takeoffIsMetric(R)?' selected':'')+'>kilograms (metric drawings) — convert to lb</option>'+
+        '<option value="lb"'+(takeoffIsMetric(R)?'':' selected')+'>pounds</option></select></div>'+
       '<textarea id="dwPaste" rows="3" style="width:100%;padding:7px 9px;border:1px solid #cdd3da;border-radius:7px;font-family:inherit;font-size:12.5px"></textarea>'+
       '<div style="margin-top:6px"><button class="applybtn" onclick="applyDrawingWeights()">Apply drawing weights</button> <span class="src" id="dwMsg"></span></div>'+
       '</div></div>';
+  }
+  // A take-off read off metric (or dual-dimensioned) drawings: its rows quote millimetres.
+  function takeoffIsMetric(R){
+    const rows=arr(R.rows); if(!rows.length) return false;
+    const mm=rows.filter(function(r){ return /\d\s*mm\b/i.test(String(r.note||"")); }).length;
+    return mm/rows.length>0.2;
   }
   function parseDrawingWeights(text){
     const out=[]; const re=/(?:item|dwg|drawing)?\s*#?\s*([A-Za-z]{0,3}-?\d{3,6}[A-Za-z]?)\s*(?:is|=|:|-|–)\s*([\d,]*\.?\d+)\s*(kgs?|lbs?|pounds?)?/gi;
     // "Item 8072 is 8072 is 67.165": a number repeated by mistake is read once.
     const clean=String(text||"").replace(/(\d{3,6})\s+is\s+\1\s+is/gi,"$1 is");
-    let m; while((m=re.exec(clean))){ const v=Number(m[2].replace(/,/g,"")); if(v>0) out.push({sheet:m[1], value:v, unit:/kg/i.test(m[3]||"")?"kg":"lb"}); }
+    let m; while((m=re.exec(clean))){ const v=Number(m[2].replace(/,/g,"")); if(v>0) out.push({sheet:m[1], value:v, unit:/kg/i.test(m[3]||"")?"kg":"lb", explicit:!!m[3]}); }
     return out;
   }
   function applyDrawingWeights(){
@@ -893,7 +904,10 @@
     list.forEach(function(x){
       let d=R.synopsis.drawing_scope.find(function(e){ return e && sameSheet(e.sheet,x.sheet); });
       if(!d){ d={sheet:x.sheet,included:[],excluded:[]}; R.synopsis.drawing_scope.push(d); }
-      d.stated_weight={value:x.value,unit:x.unit,source:"entered"}; set++;
+      // A unit written in the text wins; otherwise the dropdown says what the drawings print.
+      const unitSel=(document.getElementById("dwUnit")||{}).value||"lb";
+      const unit=x.explicit?x.unit:unitSel;
+      d.stated_weight={value:x.value,unit:unit,source:"entered"}; set++;
     });
     // Name any number that matches no drawing in this take-off ("8088" typed for 8068).
     const sheetsHere=arr(R.rows).map(function(r){ return r.source_sheet; });
@@ -2760,8 +2774,9 @@
     if(!ds || !(Number(ds.stated_weight.value)>0)) return "";
     const kg=/kg/i.test(String(ds.stated_weight.unit||"")), lb=kg?Number(ds.stated_weight.value)*2.20462:Number(ds.stated_weight.value);
     const pct=lb?Math.round((bomLb-lb)/lb*100):0, bad=Math.abs(pct)>15;
-    return ' · <span style="color:'+(bad?'var(--red)':'var(--grn)')+'" title="Total weight printed on the drawing">drawing says '+
-      ds.stated_weight.value+' '+(kg?'kg':'lb')+(kg?' ('+fmtLb(lb)+' lb)':'')+(bad?' ⚠ '+(pct>0?'+':'')+pct+'%':' ✓')+'</span>';
+    // Pounds only on screen; a metric drawing's printed kg figure is kept for the hover text.
+    return ' · <span style="color:'+(bad?'var(--red)':'var(--grn)')+'" title="Total weight printed on the drawing'+
+      (kg?': '+ds.stated_weight.value+' kg':'')+'">drawing: '+fmtLb(lb)+' lb'+(bad?' ⚠ '+(pct>0?'+':'')+pct+'%':' ✓')+'</span>';
   }
   function clearQtyFixed(){ const R=loadResult(); delete R.qty_fixed; saveResult(R); render(); }
   function fmtLb(n){ return n>=100?Math.round(n).toLocaleString():(Math.round(n*10)/10).toLocaleString(); }
