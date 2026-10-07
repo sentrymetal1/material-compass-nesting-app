@@ -50,7 +50,7 @@ function batchNote(plan, b) {
 function drawingWeightCheck(rows, synopsis, weights) {
   const ds = (synopsis && Array.isArray(synopsis.drawing_scope)) ? synopsis.drawing_scope : [];
   if (!weights || !ds.length) return [];
-  const nk = function (s) { return String(s == null ? "" : s).toLowerCase().replace(/s+/g, ""); };
+  const nk = function (s) { return String(s == null ? "" : s).toLowerCase().replace(/\s+/g, ""); };
   const idx = {};
   Object.keys(weights).forEach(function (k) { const p = k.split("|"); idx[nk(p[0]) + "|" + nk(p[1]) + "|" + nk(p.slice(2).join("|"))] = weights[k]; idx[nk(p[0]) + "||" + nk(p.slice(2).join("|"))] = idx[nk(p[0]) + "||" + nk(p.slice(2).join("|"))] || weights[k]; });
   const sk = function (s) { return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); };

@@ -807,6 +807,8 @@ const CHAT_SYSTEM =
   "A scope edit → the FULL scope_of_work object with all four streams — never only described in `notes`. If the user pasted a screenshot/image, match " +
   "the quoted text to the exact item and change THAT one. Totals are recounted for you. In `notes`, write ONE short " +
   "past-tense sentence stating exactly what you changed (shown to the estimator as confirmation).\n" +
+  "WEIGHTS: the platform reads the total weight printed on each drawing and checks it against the BOM itself; the estimator can also paste drawing weights on the By drawing tab. " +
+  "Never collapse BOM rows into one summary row per drawing to match a stated weight — the detail rows are what gets ordered, nested and labored. If the BOM is heavier than the drawing says, find the cause (a part read twice from two pages, a wrong length or size) and fix those rows.\n" +
   "Use the prior conversation for context (the user may say 'now also…' or refer to earlier turns). Keep text replies brief.";
 
 async function chatTakeoff(opts) {

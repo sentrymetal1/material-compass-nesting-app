@@ -864,11 +864,49 @@
     });
     return ds;
   }
+  // ---- DRAWING WEIGHTS, PASTED ----------------------------------------------------------------
+  // Take-offs read each drawing's printed total weight themselves now; one run before that (or a
+  // drawing the read missed) can have them pasted: "Item 8066 is 86.209 lbs, Item 8067 is 83.966 ...".
+  // Each lands on that drawing's stated_weight, and the Material tab compares it with the BOM.
+  function drawingWeightsCardHtml(R){
+    const have=arr((R.synopsis||{}).drawing_scope).filter(function(d){ return d && d.stated_weight && Number(d.stated_weight.value)>0; }).length;
+    return '<div class="card"><h2>⚖ Drawing weights <span class="lt">— the total printed on each drawing, checked against the BOM</span></h2><div class="body">'+
+      '<div class="src" style="margin-bottom:6px">'+(have?have+' drawing'+(have===1?'':'s')+' have a printed weight to check against. ':'')+
+      'Paste weights as text, e.g. <i>Item 8066 is 86.209 lbs, Item 8067 is 83.966 lbs</i> (one or many; lbs unless you write kg).</div>'+
+      '<textarea id="dwPaste" rows="3" style="width:100%;padding:7px 9px;border:1px solid #cdd3da;border-radius:7px;font-family:inherit;font-size:12.5px"></textarea>'+
+      '<div style="margin-top:6px"><button class="applybtn" onclick="applyDrawingWeights()">Apply drawing weights</button> <span class="src" id="dwMsg"></span></div>'+
+      '</div></div>';
+  }
+  function parseDrawingWeights(text){
+    const out=[]; const re=/(?:item|dwg|drawing)?\s*#?\s*([A-Za-z]{0,3}-?\d{3,6}[A-Za-z]?)\s*(?:is|=|:|-|–)\s*([\d,]*\.?\d+)\s*(kgs?|lbs?|pounds?)?/gi;
+    // "Item 8072 is 8072 is 67.165": a number repeated by mistake is read once.
+    const clean=String(text||"").replace(/(\d{3,6})\s+is\s+\1\s+is/gi,"$1 is");
+    let m; while((m=re.exec(clean))){ const v=Number(m[2].replace(/,/g,"")); if(v>0) out.push({sheet:m[1], value:v, unit:/kg/i.test(m[3]||"")?"kg":"lb"}); }
+    return out;
+  }
+  function applyDrawingWeights(){
+    const list=parseDrawingWeights((document.getElementById("dwPaste")||{}).value);
+    const msg=document.getElementById("dwMsg");
+    if(!list.length){ if(msg) msg.textContent="No weights found. Write them like: Item 8066 is 86.209 lbs"; return; }
+    const R=loadResult(); R.synopsis=R.synopsis||{}; R.synopsis.drawing_scope=arr(R.synopsis.drawing_scope);
+    let set=0;
+    list.forEach(function(x){
+      let d=R.synopsis.drawing_scope.find(function(e){ return e && sameSheet(e.sheet,x.sheet); });
+      if(!d){ d={sheet:x.sheet,included:[],excluded:[]}; R.synopsis.drawing_scope.push(d); }
+      d.stated_weight={value:x.value,unit:x.unit,source:"entered"}; set++;
+    });
+    // Name any number that matches no drawing in this take-off ("8088" typed for 8068).
+    const sheetsHere=arr(R.rows).map(function(r){ return r.source_sheet; });
+    const unmatched=list.filter(function(x){ return !sheetsHere.some(function(sh){ return sameSheet(sh,x.sheet); }); }).map(function(x){ return x.sheet; });
+    saveResult(R); render();
+    const m2=document.getElementById("dwMsg"); if(m2) m2.textContent="✓ "+set+" drawing weight"+(set===1?"":"s")+" applied — see the Material tab: each drawing shows its BOM weight beside it, red when more than 15% off."+
+      (unmatched.length?" ⚠ No drawing in this take-off matches: "+unmatched.join(", ")+" — check the number.":"");
+  }
   function drawingScopeHtml(R){
     const ds=drawingScopeList(R);
-    if(!ds.length) return '<div class="card"><div class="body" style="color:var(--mut);font-size:13px">'+
+    if(!ds.length) return drawingWeightsCardHtml(R)+'<div class="card"><div class="body" style="color:var(--mut);font-size:13px">'+
       'No per-drawing scope on this take-off — take-offs run from today on include it.</div></div>';
-    return '<div class="card"><h2>📐 Scope by drawing <span class="lt">— what each sheet puts in your scope, and what it leaves to others</span></h2><div class="body">'+
+    return drawingWeightsCardHtml(R)+'<div class="card"><h2>📐 Scope by drawing <span class="lt">— what each sheet puts in your scope, and what it leaves to others</span></h2><div class="body">'+
       ds.map(function(d){
         const rows=arr(R.rows).filter(function(r){ return !r.deleted && (Number(r.quantity)||0)>0 && sameSheet(r.source_sheet,d.sheet); });
         const lf=rows.reduce(function(s,r){ return s+orderQtyOf(r)*(Number(r.length_ft)||0); },0);
