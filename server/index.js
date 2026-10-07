@@ -1870,11 +1870,18 @@ async function fetchShopLearning(mfg) {
       "appears in this take-off, pre-resolve it to this shop's prior choice and set that decision's " +
       "ai_recommendation accordingly. A repeated choice is a strong default. Their history:\n" + decision.join('\n'));
   }
-  if (instruction.length) {
-    out.push("STANDING INSTRUCTIONS FROM THIS FABRICATOR — corrections they have made to previous take-offs. " +
-      "These are how THIS customer's drawings and parts lists are written, so APPLY THEM AGAIN from the " +
-      "start unless the documents in front of you plainly contradict them. Say in `notes` where you applied " +
-      "one:\n" + instruction.join('\n'));
+  // CHAT INSTRUCTIONS ARE NOT INJECTED. Nearly all of them are about ONE job — "double splice plate
+  // quantities", "Replace W8 x 24 with what I gave", "yes" — and feeding them to every later take-off
+  // as standing rules corrupted the next job: on 2026-10-07 a handrail re-run would have been told
+  // "all flat bar is 5/16 x 4" (the drawings say 1/4 x 4) and to double its splice plates. They are
+  // still captured (and shown in learning-check) so a rule worth keeping can be promoted deliberately.
+  if (instruction.length) { /* captured, deliberately not applied — see above */ }
+  // A size re-spelled two different ways ("4 x 4" -> "5/16 x 4" and -> "1 x 4") is not a rule; drop it.
+  const matTargets = {};
+  material.forEach(function (line) { const m = line.match(/: "(.*)" should be written "(.*)"$/); if (m) (matTargets[m[1]] = matTargets[m[1]] || {})[m[2]] = 1; });
+  for (let i = material.length - 1; i >= 0; i--) {
+    const m = material[i].match(/: "(.*)" should be written "(.*)"$/);
+    if (m && Object.keys(matTargets[m[1]] || {}).length > 1) material.splice(i, 1);
   }
   if (material.length) {
     out.push("SIZES THIS SHOP HAS RE-SPELLED BEFORE — the left side is what a take-off wrote, the right side " +
