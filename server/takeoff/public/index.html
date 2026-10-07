@@ -2518,6 +2518,7 @@
       sheets.forEach((s) => {
         const name = String(s.suggestion || "").trim() || suggestComponent(s.title);
         if (!name || !s.number) return;
+        if (isOut(s.number)) return;      // left out as not our scope: never suggest a component for it
         const k = _norm(name);
         if (!byName[k]) { byName[k] = { name: name, sheets: [], exists: named[k] || null }; order.push(k); }
         byName[k].sheets.push(s);
