@@ -61,6 +61,8 @@ app.use(express.json({ limit: '10mb' }));
 const tenantToken = require('./tenantToken');
 app.use(tenantToken.middleware);
 app.get('/api/admin/token-report', (req, res) => res.json(Object.assign({ ok: true }, tenantToken.report())));
+// What the AI has cost: per day, by kind of call, by project and by shop, from the ledger on the volume.
+app.get('/api/admin/ai-cost', (req, res) => res.json(Object.assign({ ok: true }, require('./costLedger').summarize(req.query.days))));
 
 app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 
@@ -974,17 +976,54 @@ async function buildSpecGroups() {
 }
 
 // The same catalog rendered for the model.
+// "3/16 x 24 Ga · 3/16 x 23 Ga · 3/16 x 22 Ga" -> "3/16 x {24 Ga, 23 Ga, 22 Ga}". Lossless: every run of
+// sizes sharing everything up to the last " x " is written once with its last parts in braces. The
+// tube lists (785 round, 609 square) are almost entirely such runs. Order is kept.
+function compactSizes(sizes) {
+  const out = [];
+  let i = 0;
+  while (i < sizes.length) {
+    const s = String(sizes[i]);
+    const cut = s.lastIndexOf(' x ');
+    if (cut < 0) { out.push(s); i++; continue; }
+    const pre = s.slice(0, cut);
+    let j = i;
+    const tails = [];
+    while (j < sizes.length && String(sizes[j]).lastIndexOf(' x ') === cut && String(sizes[j]).slice(0, cut) === pre) {
+      tails.push(String(sizes[j]).slice(cut + 3)); j++;
+    }
+    out.push(tails.length >= 3 ? pre + ' x {' + tails.join(', ') + '}' : sizes.slice(i, j).join(' · '));
+    i = j;
+  }
+  return out.join(' · ');
+}
+
 async function buildLiveCatalogContext() {
   const groups = await buildCatalogGroups();
   let specs = {};
   try { specs = await buildSpecGroups(); } catch (e) { console.error('spec groups unavailable:', e.message || e); }
   const keys = Object.keys(groups).sort();
   if (!keys.length) return '';
-  const body = keys.map(function (k) {
-    const s = specs[k] || specs[k.split('|')[0] + '|any material'];
-    return '### ' + k.replace('|', ' | ') +
-      (s && s.length ? '\n  valid specifications: ' + s.join(' · ') : '') +
-      '\n  sizes: ' + groups[k].join(' · ');
+  // Each IDENTICAL size list is sent once, under every material that shares it. Carbon steel,
+  // aluminum and stainless carry the same 785 round tubes, 609 square tubes, 304 flat bars…, and the
+  // list went to the model three times — most of the ~127k-token prompt that every take-off part
+  // re-sent (2026-10-07). Specifications differ by material, so they stay listed per material.
+  const byForm = {};
+  keys.forEach(function (k) {
+    const p = k.split('|'), form = p[0], mat = p[1] || '';
+    const sig = groups[k].join('\u0001');
+    byForm[form] = byForm[form] || {};
+    (byForm[form][sig] = byForm[form][sig] || { sizes: groups[k], mats: [] }).mats.push(mat);
+  });
+  const body = Object.keys(byForm).sort().map(function (form) {
+    return Object.keys(byForm[form]).map(function (sig) {
+      const g = byForm[form][sig];
+      const specLines = g.mats.map(function (m) {
+        const s = specs[form + '|' + m] || specs[form + '|any material'];
+        return s && s.length ? '\n  valid specifications (' + m + '): ' + s.join(' · ') : '';
+      }).join('');
+      return '### ' + form + ' | ' + g.mats.join(', ') + specLines + '\n  sizes: ' + compactSizes(g.sizes);
+    }).join('\n\n');
   }).join('\n\n');
   // A pair can have specs but no sizes (or vice versa) — list those too, or the model has no way to
   // know the combination is even allowed.
@@ -993,7 +1032,9 @@ async function buildLiveCatalogContext() {
   const total = keys.reduce(function (n, k) { return n + groups[k].length; }, 0);
   const specTotal = Object.keys(specs).reduce(function (n, k) { return n + specs[k].length; }, 0);
   return "THIS SHOP'S LIVE MATERIAL CATALOG — " + total + " sizes and " + specTotal + " specifications across " +
-    keys.length + " Form Type × Material Type combinations. BOTH the `size` AND the `specification` on a " +
+    keys.length + " Form Type × Material Type combinations. Sizes that share a prefix are written once with " +
+    "their endings in braces: \"3/16 x {24 Ga, 22 Ga}\" means the two sizes \"3/16 x 24 Ga\" and \"3/16 x 22 Ga\" — " +
+    "always write the FULL expanded size, never the braces. BOTH the `size` AND the `specification` on a " +
     "row MUST be copied verbatim from the group that matches that row's Form Type and Material Type. " +
     "A specification is NOT interchangeable between forms: A36 is a Plate spec and is not valid for " +
     "Sheet; sheet gauges take sheet specs (A1011 CS Type B and the like). If the group below lists no " +

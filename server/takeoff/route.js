@@ -23,6 +23,8 @@ const { extractPartsList, applyPartsList } = require("./partsList");
 const { extractText, inspect } = require("../pdfkind");
 const docprep = require("./docprep");
 const { fixMetric, dedupeSheets } = require("./metricfix");
+const ledger = require("../costLedger");
+const costMetaOf = function (body) { body = body || {}; return { project_id: body.project_id || "", manufacturer_id: body.manufacturer_id || "" }; };
 
 // ---- RUNNING A PACKAGE TOO BIG FOR ONE REQUEST ---------------------------------
 // Each batch gets its own drawings plus every text document (they're small once read as text, and
@@ -131,9 +133,9 @@ async function runBatches(prepared, plan, engineOpts) {
       (batches[b].pages || 0) + " pages, " + texts.length + " text document(s)");
     try {
       const o = await runTakeoff(opts);
-      console.log("[ai-cost] takeoff part " + (b + 1) + "/" + batches.length + " $" + o.cost_usd +
-        " (in " + ((o.usage && o.usage.input_tokens) || 0) + ", cache-write " + ((o.usage && o.usage.cache_creation_input_tokens) || 0) +
-        ", cache-read " + ((o.usage && o.usage.cache_read_input_tokens) || 0) + ", out " + ((o.usage && o.usage.output_tokens) || 0) + ")");
+      ledger.record("takeoff part", o.cost_usd, Object.assign({}, engineOpts.costMeta || {}, { detail: (b + 1) + "/" + batches.length +
+        ", in " + ((o.usage && o.usage.input_tokens) || 0) + ", cache-write " + ((o.usage && o.usage.cache_creation_input_tokens) || 0) +
+        ", cache-read " + ((o.usage && o.usage.cache_read_input_tokens) || 0) + ", out " + ((o.usage && o.usage.output_tokens) || 0) }));
       // An answer cut off at the length limit is unreadable past the cut — on 2026-10-06 that was the
       // whole package (0 rows). Halve the part and read both halves rather than hand back nothing.
       if (o.truncated && batches[b].parts.length > 1) {
@@ -256,6 +258,7 @@ async function takeoffHandler(req, res, deps) {
     docprep.fitText(prepared);
     const plan = await docprep.planBatches(prepared, { maxPages: docprep.MAX_TAKEOFF_SHEETS });
     const engineOpts = { modelKey: modelKey, includeSynopsis: includeSynopsis, shopLearning: deps.shopLearning, universalKnowledge: deps.universalKnowledge, projectContext: deps.projectContext, liveCatalog: deps.liveCatalog, fittingsCatalog: deps.fittingsCatalog };
+    engineOpts.costMeta = { project_id: project_id, manufacturer_id: manufacturer_id };
     const out = await runBatches(prepared, plan, engineOpts);
     const rows = out.rows;
     // Pipe fittings come back in their own stream: bought complete, quoted separately, and kept OUT
@@ -493,7 +496,7 @@ async function reviseHandler(req, res, deps) {
       attachments: (Array.isArray(body.attachments) && body.attachments.length) ? body.attachments : undefined,
     });
     const rows = out.rows;
-    console.log("[ai-cost] revise $" + out.cost_usd);
+    ledger.record("revise", out.cost_usd, costMetaOf(body));
     const gap_count = rows.filter(function (r) { return (Number(r.quantity) || 0) <= 0; }).length;
     const count = rows.length - gap_count;
     const low_confidence = rows.filter(function (r) { return Number(r.confidence) <= LOW_CONF; }).length;
@@ -540,7 +543,7 @@ async function chatHandler(req, res, deps) {
       attachments: (Array.isArray(body.attachments) && body.attachments.length) ? body.attachments : undefined,
     });
 
-    console.log("[ai-cost] chat $" + out.cost_usd);
+    ledger.record("chat", out.cost_usd, Object.assign(costMetaOf(body), { detail: out.usage ? "in " + (out.usage.input_tokens || 0) + ", cache-read " + (out.usage.cache_read_input_tokens || 0) + ", out " + (out.usage.output_tokens || 0) : "" }));
     if (out.edited) {
       const rows = out.rows;
       return res.json({
@@ -574,7 +577,7 @@ async function indexHandler(req, res) {
       knownComponents: Array.isArray(body.components) ? body.components : [],
       modelKey: body.model || "sonnet",
     });
-    console.log("[ai-cost] preview read $" + out.cost_usd + " (" + (out.batches || 1) + " request(s))");
+    ledger.record("preview read", out.cost_usd, Object.assign(costMetaOf(body), { detail: (out.batches || 1) + " request(s)" }));
     return res.json({ ok: true, sheets: out.sheets, documents: out.documents, pages: out.pages,
                       audit: out.audit, cost_usd: out.cost_usd, model: out.modelId });
   } catch (err) {
@@ -617,7 +620,7 @@ async function addendaHandler(req, res) {
     }
     const out = await require("./engine").compareAddenda({ pairs: pairs, notices: notices,
       bom: body.bom ? String(body.bom).slice(0, 20000) : "", modelKey: body.model || "sonnet" });
-    console.log("[ai-cost] addenda $" + out.cost_usd + " (" + pairs.length + " pairs, " + notices.length + " notices, " + out.requests + " request(s))");
+    ledger.record("addenda", out.cost_usd, Object.assign(costMetaOf(body), { detail: pairs.length + " pairs, " + notices.length + " notices, " + out.requests + " request(s)" }));
     return res.json({ ok: true, sheets: out.sheets, notices: out.notices, overall: out.overall,
                       cost_usd: out.cost_usd, missing: missing.filter(Boolean), at: new Date().toISOString() });
   } catch (err) {
@@ -690,7 +693,7 @@ async function askHandler(req, res) {
       context: body.context ? String(body.context) : "",
       modelKey: body.model || "sonnet",
     });
-    console.log("[ai-cost] ask $" + out.cost_usd);
+    ledger.record("ask", out.cost_usd, costMetaOf(body));
     return res.json({ ok: true, reply: out.reply, cost_usd: out.cost_usd, model: out.modelId });
   } catch (err) {
     console.error("takeoff ask error", err);

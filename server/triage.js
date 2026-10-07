@@ -326,6 +326,7 @@ async function extractManual(client, text, attachments) {
         messages: [{ role: 'user', content: await manualContent(text, attachments, budget) }],
       });
       const toolUse = resp.content.find(b => b.type === 'tool_use');
+      recordTriageCost('triage upload', resp.usage);
       return { out: toolUse ? toolUse.input : null, usage: resp.usage };
     } catch (e) {
       const msg = String((e && e.message) || e);
@@ -354,7 +355,19 @@ async function extractOpportunity(client, email) {
     messages: [{ role: 'user', content: userText }],
   });
   const toolUse = resp.content.find(b => b.type === 'tool_use');
+  recordTriageCost('triage email', resp.usage);
   return { out: toolUse ? toolUse.input : null, usage: resp.usage };
+}
+
+// Triage reads every RFQ email with the AI; that spend belongs in the ledger with everything else.
+// Haiku 4.5: $1 / $5 per million tokens in / out.
+function recordTriageCost(kind, usage) {
+  try {
+    const u = usage || {};
+    const usd = ((u.input_tokens || 0) * 1 + (u.cache_creation_input_tokens || 0) * 1.25 +
+                 (u.cache_read_input_tokens || 0) * 0.1 + (u.output_tokens || 0) * 5) / 1000000;
+    require('./costLedger').record(kind, usd);
+  } catch (e) { /* never let bookkeeping break a scan */ }
 }
 
 // ---- Microsoft Graph ---------------------------------------------------------

@@ -823,6 +823,29 @@ const CHAT_SYSTEM =
   "Never collapse BOM rows into one summary row per drawing to match a stated weight — the detail rows are what gets ordered, nested and labored. If the BOM is heavier than the drawing says, find the cause (a part read twice from two pages, a wrong length or size) and fix those rows.\n" +
   "Use the prior conversation for context (the user may say 'now also…' or refer to earlier turns). Keep text replies brief.";
 
+// The take-off as the chat sees it: a header naming the columns, one line per row and per fitting
+// (each starting with its index `i`, which edits address), then the synopsis as compact JSON.
+function compactPackage(current) {
+  const cell = function (v) { return String(v == null ? "" : v).replace(/[|\r\n]+/g, " ").trim(); };
+  const num = function (v) { const n = Number(v); return Number.isFinite(n) && n ? String(Math.round(n * 1000) / 1000) : ""; };
+  const rows = (Array.isArray(current.rows) ? current.rows : []).map(function (r, i) {
+    return [i, cell(r.form_type), cell(r.material_type), cell(r.size), cell(r.specification), num(r.quantity),
+      (Number(r.units) > 1 ? num(r.units) : ""), num(r.length_ft), num(r.width_ft), cell(r.source_sheet), cell(r.member_mark),
+      cell(r.component), cell(r.disposition), r.galvanized ? "galv" : "", num(r.confidence), r.deleted ? "DELETED" : "",
+      cell(r.note).slice(0, 80)].join("|");
+  });
+  const fits = (Array.isArray(current.fittings) ? current.fittings : []).map(function (f, i) {
+    return [i, cell(f.fitting_type), cell(f.size), cell(f.schedule_or_class), cell(f.end_type), cell(f.specification),
+      num(f.quantity), cell(f.component), cell(f.source_sheet), cell(f.note).slice(0, 60)].join("|");
+  });
+  return "CURRENT TAKE-OFF PACKAGE. Edits address rows and fittings by `i` (the first column).\n" +
+    "ROWS (" + rows.length + ") — i|form_type|material_type|size|specification|quantity|units|length_ft|width_ft|source_sheet|member_mark|component|disposition|galv|confidence|deleted|note\n" +
+    rows.join("\n") +
+    (fits.length ? "\n\nFITTINGS (" + fits.length + ") — i|fitting_type|size|schedule_or_class|end_type|specification|quantity|component|source_sheet|note\n" + fits.join("\n") : "") +
+    "\n\nSYNOPSIS (JSON; conflicts, gaps, decisions and compliance carry their own index `i`):\n" +
+    JSON.stringify(indexedPackage({ rows: [], fittings: [], synopsis: current.synopsis || null }).synopsis);
+}
+
 async function chatTakeoff(opts) {
   opts = opts || {};
   const messages = Array.isArray(opts.messages) ? opts.messages : [];
@@ -848,19 +871,22 @@ async function chatTakeoff(opts) {
       else if (a.data) extra.push({ type: "document", source: { type: "base64", media_type: a.media_type || "application/pdf", data: a.data } });
     });
   }
-  // Fittings are in here for the same reason they are in reviseTakeoff: without them "Ask AI"
-  // cannot see the pipe fittings at all, and answers questions about them as though the table
-  // were empty.
-  extra.push({ type: "text", text: "CURRENT TAKE-OFF PACKAGE (JSON — every row and fitting carries its index `i`):\n" + JSON.stringify(indexedPackage(current)) + "\n\n(The message that follows is the user's latest turn.)" });
   const last = msgs[msgs.length - 1];
-  last.content = extra.concat(last.content);
+  if (extra.length) last.content = extra.concat(last.content);
 
+  // THE PACKAGE IS COMPACT AND CACHED. It used to go as full JSON on the latest turn — fresh every
+  // time, so on a 554-row take-off each question re-sent ~80k tokens (~$0.30, even for "what spec?").
+  // Now it is one line per row and sits in the system prompt behind a cache marker: a follow-up
+  // question reads it at a tenth of the price, and it is only re-sent in full after an edit changes it.
+  // Fittings are in here for the same reason they are in reviseTakeoff: without them "Ask AI" cannot
+  // see the pipe fittings at all.
   const resp = await anthropic.messages.create({
     model: model.id,
     max_tokens: EDIT_MAX_OUT,
     system: [
       { type: "text", text: CHAT_SYSTEM },
-      { type: "text", text: KNOWLEDGE, cache_control: { type: "ephemeral" } },
+      { type: "text", text: KNOWLEDGE },
+      { type: "text", text: compactPackage(current), cache_control: { type: "ephemeral" } },
     ],
     tools: [EDIT_TOOL],
     tool_choice: { type: "auto" },
