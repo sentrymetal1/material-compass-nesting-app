@@ -753,7 +753,68 @@ app.post('/api/takeoff/project-scope/delete', async (req, res) => {
 
 // AI material take-off — PDFs in, BOM + project synopsis out. Injects this shop's prior
 // corrections (Tier-3 per-manufacturer learning) so the take-off pre-applies their preferences.
-app.post('/api/takeoff', async (req, res) => {
+// ---- TAKE-OFF AS A BACKGROUND JOB --------------------------------------------------------------
+// A big package runs 15-20 minutes (53 handrail sheets in 3 parts, 2026-10-07). The browser held one
+// connection open the whole time; it was cut ("Failed to fetch") while the server went on to finish,
+// so a $3.60 result had nowhere to go. With ?async=1 the run starts, the request returns a job id at
+// once, the result is kept (memory + the Railway volume), and the page polls for it — so a dropped
+// connection, a closed tab or a long run can no longer lose a finished take-off.
+const takeoffJobs = new Map();
+function jobFile(id) { return 'takeoff-job-' + id + '.json'; }
+function readJob(id) {
+  if (takeoffJobs.has(id)) return takeoffJobs.get(id);
+  try { return filestore.readJson(jobFile(id), null); } catch (e) { return null; }
+}
+// A response object the take-off handler can write to as if it were the browser's.
+function captureRes(done) {
+  let status = 200, buf = '', finished = false;
+  const fin = function (payload) { if (finished) return; finished = true; done(status, payload); };
+  const r = {
+    statusCode: 200,
+    headersSent: false,                       // keeps the handler on res.json, which carries the meter
+    status: function (c) { status = c; r.statusCode = c; return r; },
+    setHeader: function () { return r; }, flushHeaders: function () {}, on: function () { return r; },
+    write: function (s) { buf += String(s || ''); return true; },
+    json: function (o) { fin(o); return r; },
+    end: function (s) {
+      if (s) buf += String(s);
+      let o; try { o = JSON.parse(buf.trim()); } catch (e) { o = { ok: false, error: 'The take-off returned an unreadable result.' }; }
+      fin(o); return r;
+    },
+  };
+  return r;
+}
+app.post('/api/takeoff', (req, res, next) => {
+  if (!req.query || !req.query.async) return next();
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const pid = String((req.body && req.body.project_id) || '');
+  const job = { id: id, project_id: pid, status: 'running', started_at: new Date().toISOString() };
+  takeoffJobs.set(id, job);
+  res.json({ ok: true, job_id: id });
+  const fake = captureRes(function (status, payload) {
+    job.status = 'done'; job.http_status = status; job.result = payload; job.finished_at = new Date().toISOString();
+    try { filestore.writeJson(jobFile(id), job); } catch (e) { console.error('[takeoff job] could not save ' + id + ':', e.message); }
+    console.log('[takeoff job] ' + id + ' finished (' + status + ', ' + ((payload && payload.rows && payload.rows.length) || 0) + ' rows)');
+  });
+  Promise.resolve(takeoffMount(req, fake)).catch(function (e) {
+    console.error('[takeoff job] ' + id + ' crashed:', e);
+    fake.status(500).json({ ok: false, error: String((e && e.message) || e) });
+  });
+  // Results stay in memory a day; the volume copy outlives a restart.
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  takeoffJobs.forEach(function (j, k) { if (Date.parse(j.started_at) < cutoff) takeoffJobs.delete(k); });
+});
+app.get('/api/takeoff/job/:id', (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^[a-z0-9]{6,24}$/i.test(id)) return res.status(400).json({ ok: false, error: 'bad job id' });
+  const j = readJob(id);
+  if (!j) return res.status(404).json({ ok: false, status: 'unknown',
+    error: 'This take-off is no longer running on the server (it was interrupted, probably by a restart). Nothing was charged; run it again.' });
+  return res.json({ ok: true, status: j.status, http_status: j.http_status || null, started_at: j.started_at,
+                    finished_at: j.finished_at || null, result: j.status === 'done' ? j.result : undefined });
+});
+
+const takeoffMount = async (req, res) => {
   let shopLearning = '', universalKnowledge = '', projectContext = '';
   const mfgId = req.body && req.body.manufacturer_id;
   const price = takeoffPrice((req.body && req.body.model) || 'sonnet');
@@ -824,7 +885,8 @@ app.post('/api/takeoff', async (req, res) => {
   return takeoffHandler(req, res, { shopLearning: shopLearning, universalKnowledge: universalKnowledge,
     projectContext: projectContext, liveCatalog: liveCatalog, catalogGroups: catalogGroups,
     fittingsCatalog: fittingsCatalog, fittingTypes: fittingTypes, fittingEnds: fittingEnds });
-});
+};
+app.post('/api/takeoff', takeoffMount);
 
 // LIVE MATERIAL CATALOG for the take-off prompt — the shop's ACTUAL Form Type × Material Type ×
 // size list, so the AI copies a real size instead of composing one from a format rule (composed

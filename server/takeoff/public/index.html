@@ -730,6 +730,15 @@
     // Deferred one turn so the file list, renderFiles and the preview hook below
     // are all defined before the fetch can come back and reach for them.
     setTimeout(loadSourceFiles, 0);
+    // A take-off started from this browser that the page never received (tab closed, connection
+    // dropped): pick it up — the server kept the result.
+    setTimeout(function resumePendingJob() {
+      let j = null; try { j = JSON.parse(localStorage.getItem(jobKey()) || "null"); } catch (e) {}
+      if (!j || !j.id) return;
+      if (Date.now() - (j.at || 0) > 6 * 60 * 60 * 1000) { try { localStorage.removeItem(jobKey()); } catch (e) {} return; }
+      setScopeStatus("Picking up the take-off you started at " + new Date(j.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + "…");
+      runTakeoff(j.id);
+    }, 1500);
 
     const fileEl = document.getElementById("file");
     const drop = document.getElementById("drop");
@@ -3191,12 +3200,30 @@
       return map;
     }
 
-    async function runTakeoff() {
+    // ---- THE RUN IS A BACKGROUND JOB ----------------------------------------------------------
+    // The server starts the take-off and answers at once with a job id; the page then checks on it.
+    // A big package runs 15-20 minutes, and holding one connection open that long is how a finished
+    // $3.60 take-off was lost on 2026-10-07 ("Failed to fetch" while the server finished). The job id
+    // is kept in this browser, so closing the tab or losing the connection doesn't lose the result.
+    const jobKey = () => "mc_takeoff_job_" + (params.project_id || "_");
+    async function waitForJob(id) {
+      let misses = 0;
+      for (;;) {
+        await new Promise((ok) => setTimeout(ok, 8000));
+        let j;
+        try { const rr = await fetch(RAILWAY_URL + "/api/takeoff/job/" + encodeURIComponent(id)); j = await rr.json(); misses = 0;
+          if (rr.status === 404) return { r: { ok: false, status: 500 }, data: { ok: false, error: j.error || "The take-off was interrupted. Run it again." } };
+        } catch (e) { if (++misses > 40) return { r: { ok: false, status: 0 }, data: { ok: false, error: "Lost touch with the server for several minutes. Reopen this page — if the take-off finished, it will pick the result up." } }; continue; }
+        if (j && j.status === "done") return { r: { ok: (j.http_status || 200) < 400, status: j.http_status || 200 }, data: j.result || { ok: false, error: "Empty result" } };
+      }
+    }
+    async function runTakeoff(resumeId) {
+      if (typeof resumeId !== "string") resumeId = null;
       // Last check before spending anything: re-read the project and make sure what's on screen is
       // still what's on the record. Components and drawings can be edited on the project page (or
       // by someone else) while this screen sits open, and a take-off tagged against a stale list
       // is worse than no take-off — the rows cite drawings that no longer exist.
-      if (params.project_id) {
+      if (params.project_id && !resumeId) {
         const before = JSON.stringify(buildScopeTree());
         try {
           await loadProject();
@@ -3239,7 +3266,7 @@
       }, 250);
 
       try {
-        const r = await fetch(RAILWAY_URL + "/api/takeoff", {
+        const r0 = resumeId ? null : await fetch(RAILWAY_URL + "/api/takeoff?async=1", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -3274,7 +3301,13 @@
             }),
           }),
         });
-        const data = await r.json();
+        let r = r0, data = r0 ? await r0.json() : { job_id: resumeId };
+        if (data && data.job_id) {
+          try { localStorage.setItem(jobKey(), JSON.stringify({ id: data.job_id, at: Date.now() })); } catch (e) {}
+          const out = await waitForJob(data.job_id);
+          r = out.r; data = out.data;
+        }
+        try { localStorage.removeItem(jobKey()); } catch (e) {}
         clearInterval(timer); hideBusy(); statusEl.textContent = "";
 
         // Not enough allowance → 402, refused BEFORE the run, so nothing was spent or charged.

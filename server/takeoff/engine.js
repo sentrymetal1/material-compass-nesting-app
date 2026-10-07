@@ -553,10 +553,21 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
   return blocks;
 }
 
+// A take-off read in several parts re-sends the same ~127k-token catalog and knowledge base with each
+// part, and a part runs 5-9 minutes, longer than the default 5-minute cache. So every part paid to
+// write it again (2026-10-07: three writes, zero reads). Split runs mark it for an hour instead, so
+// parts 2+ read it at a tenth of the price. All markers get the same TTL (longer TTLs must come first).
+function withCacheTtl(blocks, ttl) {
+  if (ttl !== "1h") return blocks;
+  return blocks.map(function (b) { return b.cache_control ? Object.assign({}, b, { cache_control: { type: "ephemeral", ttl: "1h" } }) : b; });
+}
+
 function costOf(usage, model) {
   return (
     usage.input_tokens * model.in +
-    (usage.cache_creation_input_tokens || 0) * model.cacheWrite +
+    // A 1-hour cache write costs 2x input, not 1.25x; usage breaks writes down by TTL.
+    (((usage.cache_creation && usage.cache_creation.ephemeral_1h_input_tokens) || 0) * model.in * 2) +
+    (((usage.cache_creation_input_tokens || 0) - ((usage.cache_creation && usage.cache_creation.ephemeral_1h_input_tokens) || 0)) * model.cacheWrite) +
     (usage.cache_read_input_tokens || 0) * model.cacheRead +
     usage.output_tokens * model.out
   ) / 1_000_000;
@@ -606,7 +617,7 @@ async function runTakeoff(opts) {
   const resp = await anthropic.messages.stream({
     model: model.id,
     max_tokens: (model.maxOut || TAKEOFF_MAX_OUT),
-    system: systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge, opts.projectContext, opts.liveCatalog, opts.fittingsCatalog),
+    system: withCacheTtl(systemBlocks(includeSynopsis, opts.shopLearning, opts.universalKnowledge, opts.projectContext, opts.liveCatalog, opts.fittingsCatalog), opts.cacheTtl),
     tools: [buildTakeoffTool(includeSynopsis)],
     tool_choice: { type: "tool", name: "submit_takeoff" },
     messages: [{

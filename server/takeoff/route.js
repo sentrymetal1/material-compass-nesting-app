@@ -93,7 +93,8 @@ async function runBatches(prepared, plan, engineOpts) {
   let failed = null, wasted = 0;
   for (let b = 0; b < batches.length; b++) {
     const blocks = batches[b].parts.map(docprep.partBlock).concat(texts);
-    const opts = Object.assign({}, engineOpts, { blocks: blocks, batchNote: batches.length > 1 ? batchNote(live, b) : "" });
+    const opts = Object.assign({}, engineOpts, { blocks: blocks, batchNote: batches.length > 1 ? batchNote(live, b) : "",
+      cacheTtl: batches.length > 1 ? "1h" : undefined });   // parts are minutes apart: keep the catalog cached between them
     console.log("[takeoff] part " + (b + 1) + "/" + batches.length + ": " + batches[b].parts.length + " drawing file(s), " +
       (batches[b].pages || 0) + " pages, " + texts.length + " text document(s)");
     try {
