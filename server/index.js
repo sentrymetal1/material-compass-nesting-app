@@ -234,6 +234,11 @@ async function projectHeader(pid, token, base) {
   } catch (e) { return null; }
 }
 
+// Zoho answers an exhausted daily allowance with HTTP 200 + code 4000 and no rows. Read as "none
+// entered", the intake page showed a project with 52 drawings as empty and offered to create every
+// component again.
+const QUOTA_SCOPE_MSG = "Zoho's daily data limit has been reached, so the project's components and drawings " +
+  "could not be read. Nothing is wrong with the project. It resets overnight; reload the page then.";
 app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
   try {
     const pid = req.params.project_id;
@@ -243,6 +248,7 @@ app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
     // Each read is guarded: a zero-match report query throws (Zoho 400/9280) — treat as empty.
     try {
       const rc = await axios.get(base + '/report/All_Project_Components?criteria=(MCP_Customer_Project_Form==' + pid + ')&limit=200', { headers: zohoHeaders(token) });
+      if (rc.data && rc.data.code === 4000) return res.status(429).json({ ok: false, code: 4000, error: QUOTA_SCOPE_MSG });
       components = ((rc.data && rc.data.data) || [])
         // Quantity = HOW MANY OF THIS COMPONENT the job builds. The drawings detail ONE of them, so
         // the take-off reads per-unit and the BOM is multiplied up — the project's own rollups
@@ -253,6 +259,7 @@ app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
     } catch (e) { /* none entered */ }
     try {
       const rd = await axios.get(base + '/report/All_Project_Drawing_Details?criteria=(MCP_Customer_Project_Form==' + pid + ')&limit=200', { headers: zohoHeaders(token) });
+      if (rd.data && rd.data.code === 4000) return res.status(429).json({ ok: false, code: 4000, error: QUOTA_SCOPE_MSG });
       drawings = ((rd.data && rd.data.data) || [])
         // Components is the lookup to the parent component; v2.1 returns it as {ID, display_value}
         // WHEN the report exposes that column. If it doesn't, component_id is '' and we backfill below.
@@ -314,6 +321,9 @@ app.get('/api/takeoff/project-types', async (req, res) => {
     const token = await getAccessToken();
     const r = await axios.get(creatorApiBase() + '/report/Type_Of_Projects_Report?criteria=(Manufacture==' + mfg + ')',
       { headers: zohoHeaders(token) });
+    // An exhausted allowance answers HTTP 200 + code 4000 and no rows. Reported as "no types", the
+    // picker went blank with no reason given.
+    if (r.data && r.data.code === 4000) return res.status(429).json({ ok: false, code: 4000, error: "Zoho's daily data limit has been reached, so the type list could not be read. It resets overnight." });
     const types = ((r.data && r.data.data) || []).map((x) => ({
       id: String(x.ID),
       name: String(x.Project_Type || '').trim(),

@@ -588,7 +588,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.69 (2026-10-07)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.70 (2026-10-07)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -1655,7 +1655,11 @@
             (c.cid ? '<button type="button" class="addd" data-k="adddraw" data-ci="' + ci + '">+ add drawing</button>' : "") +
           "</div>") + "</div>";
       }).join("");
-      host.innerHTML = ((!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + cards;
+      host.innerHTML = (project.failed
+          ? '<div class="aud warn" style="margin:0 0 10px"><b>The project’s components and drawings did not load.</b>' +
+              '<span class="sub2">' + escHtml(project.failed) + " The list below is NOT the project — adding components now " +
+              "would duplicate the ones already there.</span></div>"
+          : (!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + cards;
       renderSummary();
       renderCoverage();          // scope changed ⇒ the accounted-for tally changed
     }
@@ -2538,9 +2542,10 @@
           (project.unassigned.length ? " (" + project.unassigned.length + " not linked to a component yet)" : "") + ".");
         return true;
       } catch (e) {
-        project.loaded = true; renderScope();
+        // Not "this project is empty". Showing it as empty is what invited creating every component again.
+        project.loaded = true; project.failed = String(e.message || e); renderScope();
         setScopeStatus("Could not load the project’s components and drawings (" + escHtml(e.message || e) +
-          "). Fix that, or enter them on the project page, before running.");
+          "). Don’t add components until they load. ↻ Reload from project once that’s fixed.");
         return false;
       }
     }
