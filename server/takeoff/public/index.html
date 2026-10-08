@@ -588,7 +588,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.70 (2026-10-07)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.71 (2026-10-08)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -740,9 +740,24 @@
         .catch(function () {});
     }
 
+    // RFQ files the estimator ✕'d on this project: key → name. Read with no argument, write with one.
+    function rfqOff(set) {
+      const k = "mc_rfqoff_" + (params.project_id || "_");
+      try {
+        if (set) { localStorage.setItem(k, JSON.stringify(set)); return set; }
+        return JSON.parse(localStorage.getItem(k) || "{}") || {};
+      } catch (e) { return set || {}; }
+    }
+    document.getElementById("fromRfq").addEventListener("click", (e) => {
+      if (!e.target.closest("[data-k='rfqback']")) return;
+      e.preventDefault();
+      rfqOff({}); sourceFilesDone = false; loadSourceFiles();
+    });
+
     async function loadSourceFiles() {
       if (sourceFilesDone || !params.project_id) return;
       sourceFilesDone = true;
+      const off = rfqOff();
       const box = document.getElementById("fromRfq");
       let d;
       try {
@@ -758,8 +773,10 @@
         box.innerHTML = "📎 Loading " + pdfs.length + " document" + (pdfs.length === 1 ? "" : "s") + " that came with this RFQ…";
       }
       let loaded = 0;
+      const skipped = [];
       for (const f of pdfs) {
         const key = f.name + "|" + f.size;
+        if (off[key]) { skipped.push(f.name); continue; }
         if (docs.some((x) => x.key === key)) continue;
         try {
           const r = await fetch(RAILWAY_URL + "/api/files/project/" + encodeURIComponent(params.project_id) +
@@ -776,7 +793,9 @@
         if (others.length) bits.push("<b>" + others.length + "</b> other file" + (others.length === 1 ? "" : "s") +
           " came with the RFQ but " + (others.length === 1 ? "is" : "are") + " not a PDF, so " + (others.length === 1 ? "it is" : "they are") +
           " not part of the take-off: " + others.map((f) => escHtml(f.name)).join(", ") + ".");
-        if (!loaded && !others.length) { box.style.display = "none"; return; }
+        if (skipped.length) bits.push("<b>" + skipped.length + "</b> you removed " + (skipped.length === 1 ? "is" : "are") +
+          " left out: " + skipped.map((n) => escHtml(n)).join(", ") + ' — <a href="#" data-k="rfqback">put back</a>.');
+        if (!loaded && !others.length && !skipped.length) { box.style.display = "none"; return; }
         box.innerHTML = "📎 " + bits.join(" ");
       }
       if (loaded) { renderFiles(); inspectAll(); }
@@ -835,7 +854,12 @@
       if (pb) { e.preventDefault(); const v = pb.getAttribute("data-putback"); putBack(v === "all", Number(v)); return; }
       const btn = e.target.closest(".fx"); if (!btn) return;
       const i = Number(btn.getAttribute("data-i"));
-      if (i >= 0 && i < docs.length) { docs.splice(i, 1); invalidateScan(); renderFiles(); }
+      if (i >= 0 && i < docs.length) {
+        // An RFQ file reloads every time the page opens. Removing one has to stick, or a combined
+        // "complete package" PDF came back on every visit and every drawing was read twice.
+        if (docs[i].fromRfq) { const off = rfqOff(); off[docs[i].key] = docs[i].name; rfqOff(off); }
+        docs.splice(i, 1); invalidateScan(); renderFiles();
+      }
     });
 
     // The reading overlay. One place, used by both passes, so they can't drift out of step.
