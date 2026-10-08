@@ -588,7 +588,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.68 (2026-10-07)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.69 (2026-10-07)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -1344,6 +1344,9 @@
     }
     // This run mirrors the project, minus whatever the estimator ticked out of it.
     function scopeFromProject() {
+      // The list is rebuilt, so a half-typed "new component" box no longer points at the card it was
+      // opened on. Left set, it sat over whichever component landed at that position and hid it.
+      creating = null;
       scope = project.components.filter((c) => !excluded.c[String(c.id)])
         .slice().sort((a, b) => natCmp(a.name, b.name))          // components A→Z
         .map((c) => ({
@@ -1494,6 +1497,13 @@
             (String(d.id) === String(selId) ? " selected" : "") + ">" + escHtml(d.number) + "</option>").join("") +
           "</optgroup>";
       }
+      // Drawings on the project's OTHER components. Picking one moves it here, which is how one
+      // drawing changes component (e.g. a 2-assembly drawing into a ×2 component).
+      project.components.filter((o) => String(o.id) !== String(cid) && o.drawings.length).forEach((o) => {
+        html += '<optgroup label="' + escAttr("On " + o.name + " — picking one moves it here") + '">' +
+          o.drawings.slice().sort(byNumber).map((d) => '<option value="' + escAttr(d.id) + '">' + escHtml(d.number) + "</option>").join("") +
+          "</optgroup>";
+      });
       return html + '<option value="__new">＋ New drawing…</option>';
     }
     function rowBtns(kind, ci, di, id) {
@@ -1735,6 +1745,26 @@
         if (t.value === "__new") { creating = { ci: ci, di: di }; renderScope(); focusScopeInput('input[data-k="nval"]'); return; }
         const d = drawingById(t.value);
         if (!d) { scope[ci].drawings[di] = { id: "", number: "" }; renderScope(); return; }
+        // A drawing from another component: move it here on the project — every record with that
+        // number on that component, so both sheets of a "1 OF 2 / 2 OF 2" drawing travel together.
+        const from = scope[ci].cid && project.components.find((o) => String(o.id) !== String(scope[ci].cid) &&
+          o.drawings.some((x) => String(x.id) === String(d.id)));
+        if (from) {
+          const recs = from.drawings.filter((x) => _norm(x.number) === _norm(d.number));
+          if (!(await mcConfirm("Move drawing " + d.number + (recs.length > 1 ? " (" + recs.length + " sheets)" : "") +
+              " from “" + from.name + "” to “" + scope[ci].name + "” on the project?",
+              { title: "AI Take-off", okText: "Move it" }))) { renderScope(); return; }
+          setScopeStatus('<span class="spin"></span>Moving ' + escHtml(d.number) + " to " + escHtml(scope[ci].name) + "…");
+          try {
+            for (const x of recs) {
+              await scopeApi("update", { kind: "drawing", id: x.id, value: x.number, component_id: scope[ci].cid });
+              delete excluded.d[String(x.id)];
+            }
+            await loadProject(); scopeFromProject(); saveScope(); renderScope();
+            setScopeStatus("Moved " + escHtml(d.number) + " from “" + escHtml(from.name) + "” to “" + escHtml(scope[ci].name) + "”.");
+          } catch (err) { setScopeStatus("Could not move it: " + escHtml(err.message || err)); renderScope(); }
+          return;
+        }
         scope[ci].drawings[di] = { id: String(d.id), number: d.number };
         delete excluded.d[String(d.id)];
         saveScope();
@@ -2268,6 +2298,31 @@
       const u = project.unassigned.find((x) => _norm(x.number) === n);
       return u ? { id: u.id, number: u.number, owner: null, ownerName: "" } : null;
     }
+    // The records with this number that may be filed under `cid`: unlinked ones, and ones on another
+    // component that were ✕'d out of this run. That is how an estimator says "this drawing belongs
+    // somewhere else" (a 2-assembly drawing pulled out of a 1-unit component). Records still in use on
+    // another component are left alone.
+    function movableRecords(num, cid) {
+      const n = _norm(num), out = [];
+      project.components.forEach((c) => {
+        if (String(c.id) === String(cid)) return;
+        c.drawings.forEach((d) => { if (_norm(d.number) === n && excluded.d[String(d.id)]) out.push(d); });
+      });
+      project.unassigned.forEach((d) => { if (_norm(d.number) === n) out.push(d); });
+      return out;
+    }
+    async function fileDrawingUnder(s, cid) {
+      const moves = movableRecords(s.number, cid);
+      for (const d of moves) {
+        await scopeApi("update", { kind: "drawing", id: d.id, value: d.number, component_id: cid });
+        delete excluded.d[String(d.id)];
+      }
+      if (!moves.length && !findDrawingByNumber(s.number) && !drawingOnComp(cid, s.number)) {
+        await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: cid, description: s.title || "" });
+      }
+      descMap[s.number] = s.title || "";
+    }
+
     function planAlloc() {
       const plan = { match: [], link: [], create: [], elsewhere: [], skipped: 0 };
       const seen = {};
@@ -2811,12 +2866,7 @@
         setScopeStatus('<span class="spin"></span>Adding to “' + escHtml(scope[ci].name) + "”… " +
           (n + 1) + "/" + list.length + " · " + escHtml(s.number));
         try {
-          const rec = findDrawingByNumber(s.number);
-          if (rec && !rec.owner) await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: scope[ci].cid });
-          else if (!rec && !drawingOnComp(scope[ci].cid, s.number)) {
-            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: scope[ci].cid, description: s.title || "" });
-          }
-          descMap[s.number] = s.title || "";
+          await fileDrawingUnder(s, scope[ci].cid);
           if (asRef) markReference(s, "Reference only — no material taken off");
         } catch (err) { failed.push(s.number); }
       }
@@ -2847,15 +2897,8 @@
           const out = await scopeApi("add", { project_id: params.project_id, kind: "component", value: name });
           cid = String(out.id);
         }
-        for (const s of g.missing) {
-          const rec = findDrawingByNumber(s.number);
-          if (rec && !rec.owner) {                      // on the project but unfiled — file it here
-            await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: cid });
-          } else if (!rec && !drawingOnComp(cid, s.number)) {
-            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: cid, description: s.title || "" });
-          }
-          descMap[s.number] = s.title || "";
-        }
+        for (const s of g.missing) await fileDrawingUnder(s, cid);
+        delete excluded.c[cid];
         suggestNames = {}; suggestTarget = {};   // indexes shift as groups are taken
         await loadProject(); scopeFromProject(); saveScope(); renderScope();
         if (!quiet) setScopeStatus("Added “" + escHtml(name) + "” with " + g.missing.length + " drawing" +
@@ -3144,8 +3187,7 @@
         }
         setScopeStatus('<span class="spin"></span>Adding ' + escHtml(sheet.number) + " under " + escHtml(scope[ci].name) + "…");
         try {
-          await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: sheet.number, component_id: scope[ci].cid, description: sheet.title || "" });
-          descMap[sheet.number] = sheet.title || "";
+          await fileDrawingUnder(sheet, scope[ci].cid);    // moves a ✕'d record across rather than making a twin
           if (asRef) markReference(sheet, "Reference only — no material taken off");
           await loadProject(); scopeFromProject(); renderScope(); renderCoverage(); saveScope();
           setScopeStatus(escHtml(sheet.number) + " added under " + escHtml(scope[ci].name) +
