@@ -588,7 +588,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.67 (2026-10-07)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.68 (2026-10-07)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -1360,6 +1360,7 @@
     // found", naming no row — the error lands nowhere near its cause. So it is chosen once,
     // up front, and stamped on every component this page creates.
     let projectTypes = [], selectedType = "";
+    const ptypeKey = () => "mc_ptype_" + (params.project_id || "_");
 
     function ptypeHint(msg, warn) {
       const el = document.getElementById("ptypeHint");
@@ -1392,6 +1393,13 @@
         const d = await r.json();
         if (!r.ok || d.ok === false) throw new Error(d.error || ("HTTP " + r.status));
         projectTypes = d.types || [];
+        // The type chosen last time on this project. It was forgotten on every reload, and
+        // "+ Add component" then refused with "Choose a Type of project first".
+        if (!selectedType) {
+          let was = "";
+          try { was = localStorage.getItem(ptypeKey()) || ""; } catch (err) {}
+          if (was && projectTypes.some((t) => t.id === was)) selectedType = was;
+        }
         // One type and nothing chosen? Choose it. There is no decision to make.
         if (!selectedType && projectTypes.length === 1) selectedType = projectTypes[0].id;
         renderFiles();      // one type auto-selects, which can un-gate Run
@@ -1411,6 +1419,7 @@
     document.getElementById("ptypeSel").addEventListener("change", (e) => {
       if (e.target.value === "__new") { e.target.value = selectedType; showNewType(true); return; }
       selectedType = e.target.value;
+      try { localStorage.setItem(ptypeKey(), selectedType); } catch (err) {}
       renderFiles();        // the Run button is gated on this too
       renderProjectTypes();
     });
@@ -1429,6 +1438,7 @@
         const d = await r.json();
         if (!r.ok || d.ok === false) throw new Error(d.error || ("HTTP " + r.status));
         selectedType = d.type.id;
+        try { localStorage.setItem(ptypeKey(), selectedType); } catch (err) {}
         document.getElementById("ptypeName").value = "";
         document.getElementById("ptypeDiff").value = "";
         showNewType(false);
