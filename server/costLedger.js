@@ -62,4 +62,28 @@ function summarize(days) {
   return out;
 }
 
-module.exports = { record, summarize, flush, today };
+// One project's AI spend over the last `days` days — what the estimator sees on the take-off pages,
+// so the true cost of a quote is known before it is priced.
+function forProject(projectId, days) {
+  flush();
+  const id = String(projectId || "");
+  const n = Math.max(1, Math.min(365, Number(days) || 120));
+  const out = { project_id: id, by_kind: {}, total_usd: 0, calls: 0, first: "", last: "" };
+  if (!id) return out;
+  for (let d = n - 1; d >= 0; d--) {
+    const day = new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
+    (filestore.readJson(DAY_FILE(day), []) || []).forEach(function (e) {
+      if (String(e.project_id) !== id) return;
+      const k = out.by_kind[e.kind] = out.by_kind[e.kind] || { usd: 0, calls: 0 };
+      k.usd += Number(e.usd) || 0; k.calls++;
+      out.total_usd += Number(e.usd) || 0; out.calls++;
+      if (!out.first) out.first = e.at;
+      out.last = e.at;
+    });
+  }
+  Object.keys(out.by_kind).forEach(function (k) { out.by_kind[k].usd = Math.round(out.by_kind[k].usd * 100) / 100; });
+  out.total_usd = Math.round(out.total_usd * 100) / 100;
+  return out;
+}
+
+module.exports = { record, summarize, forProject, flush, today };

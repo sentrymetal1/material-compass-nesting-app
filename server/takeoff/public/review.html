@@ -31,6 +31,9 @@
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .appbar .projhead b{color:#1f3a5f;} .appbar .projhead .sub{color:var(--mut);}
   .appbar .projhead.wrong{color:var(--red);font-weight:600;white-space:normal;}
+  /* What this project's AI work has cost so far — the true cost the quote has to recover. */
+  .aicost{margin-left:auto;font-size:11.5px;font-weight:600;color:#2c5c96;background:#eef4fb;border:1px solid #d7e5f5;
+    border-radius:12px;padding:3px 10px;white-space:nowrap;cursor:help;}
   .applybtn{font-size:11px;color:#fff;background:var(--blue);border:0;border-radius:5px;padding:2px 9px;cursor:pointer;margin-left:4px;}
   /* Fittings grid inputs — quiet until touched, so 58 rows don't read as a wall of boxes */
   .fin{font:inherit;font-size:12px;padding:2px 5px;margin:0 3px 2px 0;border:1px solid transparent;
@@ -175,7 +178,8 @@
 <body>
 <div id="busy" class="busy"></div>
 <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span class="projhead" id="projHead"></span><span id="saveInd" role="button" tabindex="0" title="Saves by itself after every change. Click to save now." onclick="saveNow()" style="font-size:11px;color:var(--mut);margin-left:12px;cursor:pointer"></span>
-  <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:auto;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
+  <span id="aiCost" class="aicost" style="display:none"></span>
+  <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
   <a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a>
   <a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
 <input type="file" id="addFile" accept="application/pdf" multiple style="display:none" onchange="addDrawings(this)">
@@ -187,7 +191,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.60 · 2026-10-01";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.61 · 2026-10-07";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -206,6 +210,36 @@
     ZOHO.CREATOR.init().then(()=>{ try{ const p=ZOHO.CREATOR.UTIL.getQueryParams();
       params={project_id:p.project_id||params.project_id, manufacturer_id:p.manufacturer_id||params.manufacturer_id};}catch(e){} });
   }
+
+  // ---- AI cost of this project ------------------------------------------------
+  // The running total of what this project's AI calls have cost (take-off, preview, questions,
+  // chat, addenda), from the server's cost ledger. Refreshed after every AI call, so the
+  // estimator knows the true cost before pricing the quote.
+  const AI_KIND = {"takeoff part":"take-off","preview read":"preview","ask":"questions","chat":"chat","revise":"revisions","addenda":"addenda"};
+  let aiCostTimer = null;
+  function loadAiCost(){
+    const el=document.getElementById("aiCost"); if(!el||!params.project_id) return;
+    fetch(RAILWAY_URL+"/api/takeoff/ai-cost/"+encodeURIComponent(params.project_id)).then(function(r){ return r.json(); }).then(function(j){
+      if(!j||!j.ok) return;
+      const bk=j.by_kind||{};
+      const lines=Object.keys(bk).sort(function(a,b){ return bk[b].usd-bk[a].usd; })
+        .map(function(k){ return (AI_KIND[k]||k)+": $"+bk[k].usd.toFixed(2)+" ("+bk[k].calls+" call"+(bk[k].calls===1?"":"s")+")"; });
+      el.textContent="AI cost, this project: $"+Number(j.total_usd||0).toFixed(2);
+      el.title=(lines.length?lines.join("\n")+"\n\n":"")+"What the AI work on this project has cost so far. Counted from Oct 7, 2026; earlier runs are not included.";
+      el.style.display="";
+    }).catch(function(){});
+  }
+  // Any AI call on this page changes the total — refresh shortly after it returns.
+  (function(){
+    const f=window.fetch;
+    window.fetch=function(u){
+      const p=f.apply(this,arguments);
+      if(/\/api\/takeoff(\/(chat|revise|addenda|ask|index))?(\?|$)/.test(String(u||"")))
+        p.then(function(){ clearTimeout(aiCostTimer); aiCostTimer=setTimeout(loadAiCost,800); }, function(){});
+      return p;
+    };
+  })();
+  setTimeout(loadAiCost, 1500);   // after ZOHO init has settled the project id
 
   // ---- data source + persistence ---------------------------------------------
   // Results are saved to localStorage keyed by project, so closing & reopening this

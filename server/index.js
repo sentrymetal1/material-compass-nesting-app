@@ -63,6 +63,8 @@ app.use(tenantToken.middleware);
 app.get('/api/admin/token-report', (req, res) => res.json(Object.assign({ ok: true }, tenantToken.report())));
 // What the AI has cost: per day, by kind of call, by project and by shop, from the ledger on the volume.
 app.get('/api/admin/ai-cost', (req, res) => res.json(Object.assign({ ok: true }, require('./costLedger').summarize(req.query.days))));
+// What this project's AI work has cost so far (take-off, preview, questions, chat, addenda).
+app.get('/api/takeoff/ai-cost/:project_id', (req, res) => res.json(Object.assign({ ok: true }, require('./costLedger').forProject(req.params.project_id, req.query.days))));
 
 app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 

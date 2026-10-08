@@ -23,6 +23,9 @@
     .appbar .projhead b { color:#1f3a5f; }
     .appbar .projhead .sub { color:#667; }
     .appbar .projhead.wrong { color:#b91c1c; font-weight:600; white-space:normal; }
+    /* What this project's AI work has cost so far — the true cost the quote has to recover. */
+    .aicost { margin-left:auto; font-size:11.5px; font-weight:600; color:#2c5c96; background:#eef4fb;
+              border:1px solid #d7e5f5; border-radius:12px; padding:3px 10px; white-space:nowrap; cursor:help; }
     .card { max-width:var(--w); margin:0 auto; background:#fff; border:1px solid #e3e6ea;
             border-radius:10px; padding:26px 28px; }
     h1 { font-size:19px; margin:0 0 4px; }
@@ -83,6 +86,23 @@
     .files .fx { border:0; background:transparent; color:#b45309; cursor:pointer; font-size:14px;
       line-height:1; padding:2px 7px; border-radius:4px; }
     .files .fx:hover { background:#fdeeee; color:#c0392b; }
+    /* Grouped drawing files (long lists): one collapsible group per file-name prefix. */
+    .files details.fgrp { border:1px solid #e3e8ef; border-radius:8px; margin:8px 0; background:#fafbfc; }
+    .files details.fgrp > summary { cursor:pointer; padding:7px 10px; display:flex; gap:10px; align-items:baseline;
+      list-style:none; font-size:12.5px; }
+    .files details.fgrp > summary::-webkit-details-marker { display:none; }
+    .files details.fgrp > summary::before { content:"▸"; color:#8893a0; font-size:11px; }
+    .files details.fgrp[open] > summary::before { content:"▾"; }
+    .files .fgname { font-weight:600; color:#2b3340; word-break:break-all; }
+    .files div.fgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(176px, 1fr)); gap:5px;
+      padding:2px 8px 9px; border-bottom:0; }
+    .files div.fchip { display:flex; align-items:center; gap:6px; padding:3px 4px 3px 8px; background:#fff;
+      border:1px solid #e3e8ef; border-radius:6px; font-size:12px; min-width:0; border-bottom:1px solid #e3e8ef; }
+    .files .fchip .fnum { font-weight:700; color:#1f3a5f; font-variant-numeric:tabular-nums; }
+    .files .fchip .fsh { color:#66707c; font-size:11px; white-space:nowrap; }
+    .files .fchip .fmb { margin-left:auto; font-size:10.5px; }
+    .files .fchip .rtag { font-size:9.5px; padding:1px 5px; margin:0; }
+    .files .fchip .fx { font-size:12px; padding:1px 4px; }
     label.model { display:block; margin:18px 0 6px; font-size:12px; color:#556; }
     select { width:100%; padding:8px; border:1px solid #cdd3da; border-radius:6px; }
     button.go { margin-top:18px; width:100%; padding:12px; border:0; border-radius:6px;
@@ -163,6 +183,22 @@
             font-size:13px; font-weight:600; border-radius:6px; padding:9px; width:100%; }
     .addc:hover { border-color:var(--blue); background:#f0f6fc; }
     .comp .ddesc { font-size:11px; color:#8893a0; margin:2px 0 0 4px; }
+    /* Drawings as chips — a compact grid instead of one full-width picker per drawing. */
+    .comp .dgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(92px, 1fr)); gap:5px; margin-top:6px; }
+    .comp .dchip { display:flex; align-items:center; gap:2px; background:#fff; border:1px solid #d9e0e8;
+                   border-radius:6px; padding:1px 1px 1px 2px; min-width:0; }
+    .comp .dchip:hover { border-color:#b9c7d8; }
+    .comp .dnum { border:0; background:transparent; font:inherit; font-size:12px; font-weight:700; color:#1f3a5f;
+                  cursor:pointer; padding:3px 5px; text-align:left; flex:1; min-width:0; overflow:hidden;
+                  text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .comp .dnum:hover { color:var(--blue); text-decoration:underline; }
+    .comp .dmul { font-size:10px; color:#66707c; background:#eef2f6; border-radius:8px; padding:0 5px; cursor:help; }
+    .comp .dchip .xbtn { font-size:11px; padding:2px 5px; }
+    .comp .dsep { border-top:1px dashed #e3e6ea; margin:8px 0 2px; }
+    .comp .ctog { border:0; background:transparent; color:#66707c; cursor:pointer; font-size:12px; padding:2px 4px;
+                  flex:0 0 auto; }
+    .comp .ctog:hover { color:var(--blue); }
+    .comp.closed { padding-bottom:10px; }
     .comp .ccount { font-size:10.5px; color:#66707c; background:#eef2f6; border-radius:10px;
                     padding:2px 7px; white-space:nowrap; flex:0 0 auto; }
     /* How many of this component the job builds — the drawings detail one of them. */
@@ -401,7 +437,7 @@
   </style>
 </head>
 <body>
-  <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off</span><span class="projhead" id="projHead"></span></div>
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off</span><span class="projhead" id="projHead"></span><span id="aiCost" class="aicost" style="display:none"></span></div>
   <div class="card">
     <h1>AI Material Take-off</h1>
     <p class="sub">Upload everything the job comes with (PDF — select several at once): drawings,
@@ -552,7 +588,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.66 (2026-10-07)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.67 (2026-10-07)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -595,6 +631,37 @@
       return { project_id: q.get("project_id"), manufacturer_id: q.get("manufacturer_id") };
     }
     let params = getParams();
+
+    // ---- AI cost of this project --------------------------------------------
+    // The running total of what this project's AI calls have cost (preview, questions, take-off,
+    // chat, addenda), from the server's cost ledger — refreshed after every AI call, so the
+    // estimator knows the true cost before pricing the quote.
+    const AI_KIND = { "takeoff part": "take-off", "preview read": "preview", ask: "questions", chat: "chat", revise: "revisions", addenda: "addenda" };
+    let aiCostTimer = null;
+    function loadAiCost() {
+      const el = document.getElementById("aiCost");
+      if (!el || !params.project_id) return;
+      fetch(RAILWAY_URL + "/api/takeoff/ai-cost/" + encodeURIComponent(params.project_id)).then((r) => r.json()).then((j) => {
+        if (!j || !j.ok) return;
+        const bk = j.by_kind || {};
+        const lines = Object.keys(bk).sort((a, b) => bk[b].usd - bk[a].usd)
+          .map((k) => (AI_KIND[k] || k) + ": $" + bk[k].usd.toFixed(2) + " (" + bk[k].calls + " call" + (bk[k].calls === 1 ? "" : "s") + ")");
+        el.textContent = "AI cost, this project: $" + Number(j.total_usd || 0).toFixed(2);
+        el.title = (lines.length ? lines.join("\n") + "\n\n" : "") +
+          "What the AI work on this project has cost so far. Counted from Oct 7, 2026; earlier runs are not included.";
+        el.style.display = "";
+      }).catch(() => {});
+    }
+    (function () {
+      const f = window.fetch;
+      window.fetch = function (u) {
+        const p = f.apply(this, arguments);
+        if (/\/api\/takeoff(\/(chat|revise|addenda|ask|index))?(\?|$)/.test(String(u || "")))
+          p.then(() => { clearTimeout(aiCostTimer); aiCostTimer = setTimeout(loadAiCost, 800); }, () => {});
+        return p;
+      };
+    })();
+    setTimeout(loadAiCost, 1500);   // after ZOHO init has settled the project id
     // If a saved take-off exists for this project, offer a way back to it (no re-run, no re-cost).
     async function showResume() {
       if (!params.project_id) return;
@@ -1039,6 +1106,60 @@
       invalidateScan(); renderFiles(); maybeAutoPreview();
     }
 
+    // ---- LONG FILE LISTS ------------------------------------------------------
+    // A 54-file drawing set listed one per line, in upload order, was a wall of near-identical
+    // names. Past 10 files, drawings that share a file-name prefix ("ML001-DOMI-SS12-5910000-")
+    // are grouped under it, sorted by drawing number, and shown as a compact grid that shows
+    // only the number and sheet ("8067 · 1/2"). The full name is in the tooltip. Documents
+    // read as text, and any file that fits no group, keep their full row.
+    let fgOpen = {};                                  // group prefix → open/closed, survives re-renders
+    function fileParts(name) {
+      const base = String(name || "").replace(/\.[a-z0-9]+$/i, "");
+      const m = base.match(/^(.*[-_ ])(\d{3,}[A-Z]?)(?![\dA-Z])(.*)$/i);
+      if (!m) return null;
+      const sh = m[3].match(/(\d+)\s*OF\s*(\d+)/i);
+      return { prefix: m[1], num: m[2], sheet: sh && Number(sh[2]) > 1 ? sh[1] + "/" + sh[2] : "", rest: m[3] };
+    }
+    function groupedFilesHtml(fileRow) {
+      const full = [], groups = {};
+      docs.forEach((d, i) => {
+        const p = (d.read_as === "text" && d.text) || d.is_image ? null : fileParts(d.name);
+        if (!p) { full.push(i); return; }
+        (groups[p.prefix] = groups[p.prefix] || []).push({ d: d, i: i, p: p });
+      });
+      // A "group" of one is just a file — list it in full.
+      Object.keys(groups).forEach((k) => { if (groups[k].length < 2) { full.push(groups[k][0].i); delete groups[k]; } });
+      const keys = Object.keys(groups).sort((a, b) => natCmp(a, b));
+      const grid = keys.map((k) => {
+        const list = groups[k].sort((a, b) => natCmp(a.p.num + " " + a.p.rest, b.p.num + " " + b.p.rest));
+        const mb = list.reduce((s, x) => s + x.d.mb, 0);
+        const docsIn = list.filter((x) => x.d.read_as === "text").length;
+        const open = k in fgOpen ? fgOpen[k] : list.length <= 12;
+        const chips = list.map((x) => {
+          const d = x.d, i = x.i;
+          const tag = !d.read_as ? '<span class="rtag wait">…</span>'
+            : '<button type="button" class="rtag ' + (d.read_as === "text" ? "doc" : "dwg") + '" data-flip="' + i + '" title="' +
+                escHtml((d.why ? d.why + ". " : "") + "Click to read it as a " + (d.read_as === "text" ? "drawing" : "document") + " instead.") + '">' +
+                (d.read_as === "text" ? "doc" : "dwg") + "</button>";
+          return '<div class="fchip" title="' + escAttr(d.name + " — " + d.mb.toFixed(1) + " MB" + (d.pages ? ", " + d.pages + " page" + (d.pages === 1 ? "" : "s") : "")) + '">' +
+            '<span class="fnum">' + escHtml(x.p.num) + "</span>" +
+            (x.p.sheet ? '<span class="fsh">sheet ' + escHtml(x.p.sheet) + "</span>" : "") +
+            '<span class="fmb">' + d.mb.toFixed(1) + "</span>" + tag +
+            '<button type="button" class="fx" data-i="' + i + '" title="Remove this file" aria-label="Remove">✕</button></div>';
+        }).join("");
+        return '<details class="fgrp" data-fg="' + escAttr(k) + '"' + (open ? " open" : "") + ">" +
+          '<summary><span class="fgname">' + escHtml(k.replace(/[-_ ]+$/, "")) + "</span>" +
+          '<span class="fmb">' + list.length + " file" + (list.length === 1 ? "" : "s") + (docsIn ? "" : ", all drawings") + " · " + mb.toFixed(1) + " MB" +
+            (docsIn ? " · " + docsIn + " read as text" : "") + "</span></summary>" +
+          '<div class="fgrid">' + chips + "</div></details>";
+      }).join("");
+      return full.sort((a, b) => a - b).map((i) => fileRow(docs[i], i)).join("") + grid;
+    }
+    document.getElementById("fileList").addEventListener("toggle", (e) => {
+      const g = e.target && e.target.getAttribute && e.target.getAttribute("data-fg");
+      if (g != null) fgOpen[g] = e.target.open;
+    }, true);
+
     function renderFiles() {
       const totalMb = docs.reduce((s, d) => s + d.mb, 0);
       const sendMb = docs.reduce((s, d) => s + sendMbOf(d), 0);
@@ -1047,7 +1168,7 @@
       // A rough count of reads — the server plans the real split (pages count too).
       // PDFs grow by a third when encoded for sending; the server packs ~25 MB of that per read.
       const parts = Math.max(1, Math.ceil(drawMb * 4 / 3 / 25));
-      const rows = docs.map((d, i) => {
+      const fileRow = (d, i) => {
         // Once read, say what each file IS on the file itself — a 34-page parts list looked
         // identical to a 34-page drawing set here, which is how it went unnoticed.
         const m = docList.find((x) => Number(x.doc) === i + 1);
@@ -1071,7 +1192,8 @@
                 escHtml(m.trimmed.kept.join(", ")) + " only</span>" : "") +
           (kind ? '<span class="dtag' + (m.kind === "bom" ? " bom" : "") + '">' + kind + "</span>" : "") + "</span>" +
           '<button type="button" class="fx" data-i="' + i + '" title="Remove this file" aria-label="Remove">✕</button></div>';
-      }).join("");
+      };
+      const rows = docs.length > 10 ? groupedFilesHtml(fileRow) : docs.map(fileRow).join("");
       const aside = setAside.length
         ? '<div class="aside"><b>' + setAside.length + " older sheet" + (setAside.length === 1 ? "" : "s") +
             " set aside</b> — a newer issue of " + (setAside.length === 1 ? "it is" : "each is") +
@@ -1140,6 +1262,8 @@
     let audit = null;                                 // last sheet-read's page reconciliation (server-parsed page count)
     let editing = null;                               // {kind,id} being renamed in place
     let creating = null;                              // {ci,di} row swapped into "type the new value"
+    let drawOpen = {};                                // "cid|NUMBER" → drawing chip opened into its full picker row
+    let compClosed = {};                              // component id → drawings collapsed
     let excluded = { c: {}, d: {} };                  // record ids left OUT of this take-off (local only)
     let allocPlan = null;                             // pending "here's what this does to the project" confirmation
     let suggestNames = {};                            // per-suggestion renames before they are taken
@@ -1443,7 +1567,37 @@
       const cards = scope.map((c, ci) => {
         const used = {};
         (c.drawings || []).forEach((d) => { if (d && d.id) used[String(d.id)] = 1; });
-        const rows = (c.drawings && c.drawings.length ? c.drawings : [{ id: "", number: "" }]).map((d, di) => {
+        // Drawings show as a grid of number chips — 52 full-width pickers was a wall. A chip opens
+        // into the full picker row (✎ rename, 🗑 delete) when clicked. Rows being added,
+        // renamed or still unchosen always show in full. Records that share a number (one per
+        // sheet of a "1 OF 2" drawing) are one chip marked ×2.
+        const list = c.drawings && c.drawings.length ? c.drawings : [{ id: "", number: "" }];
+        const fullIdx = [], chipGroups = [], chipAt = {};
+        list.forEach((d, di) => {
+          const key = _norm(d && d.number);
+          const inFull = !d || !d.id || !key ||
+            (creating && creating.ci === ci && creating.di === di) ||
+            (editing && editing.kind === "drawing" && String(editing.id) === String(d.id)) ||
+            drawOpen[c.cid + "|" + key];
+          if (inFull) { fullIdx.push(di); return; }
+          if (!(key in chipAt)) { chipAt[key] = chipGroups.length; chipGroups.push({ key: key, number: d.number, ids: [], dis: [] }); }
+          chipGroups[chipAt[key]].ids.push(String(d.id));
+          chipGroups[chipAt[key]].dis.push(di);
+        });
+        const chips = chipGroups.map((g) => {
+          const desc = descMap[String(g.number || "").trim()];
+          return '<span class="dchip"' + (desc ? ' title="' + escAttr(desc) + '"' : "") + ">" +
+            '<button type="button" class="dnum" data-k="dopen" data-ci="' + ci + '" data-key="' + escAttr(g.key) + '" title="' +
+              escAttr((desc ? desc + " — " : "") + "click to change, rename or delete") + '">' + escHtml(g.number) + "</button>" +
+            (g.ids.length > 1 ? '<span class="dmul" title="' + g.ids.length + " drawing records on the project carry this number — " +
+              'usually one per sheet. All are included.">×' + g.ids.length + "</span>" : "") +
+            '<button type="button" class="xbtn" data-k="dxg" data-ci="' + ci + '" data-ids="' + escAttr(g.ids.join(",")) +
+              '" title="Leave out of this take-off">✕</button></span>';
+        }).join("");
+        const openKeys = {};
+        fullIdx.forEach((di) => { const d = list[di]; const key = _norm(d && d.number); if (key && drawOpen[c.cid + "|" + key]) openKeys[key] = 1; });
+        const rows = fullIdx.map((di) => {
+          const d = list[di];
           const desc = descMap[String((d && d.number) || "").trim()];
           const cell = (creating && creating.ci === ci && creating.di === di)
             ? newCell("drawing", ci, di, "New drawing no. (e.g. RIS-48300-S1-A-1)")
@@ -1467,12 +1621,19 @@
           ? '<span class="cqty" title="How many of this component the job builds — the drawings detail one">×' +
               '<input type="number" min="1" step="1" data-k="cqty" data-ci="' + ci + '" value="' + qty + '" />ea</span>'
           : "";
-        return '<div class="comp"><div class="crow">' + ccell + qcell +
+        const closed = c.cid && compClosed[c.cid];
+        const doneBtn = Object.keys(openKeys).length
+          ? '<button type="button" class="addd" data-k="dclose" data-ci="' + ci + '">✓ done</button> ' : "";
+        return '<div class="comp' + (closed ? " closed" : "") + '"><div class="crow">' +
+          (c.cid ? '<button type="button" class="ctog" data-k="ctog" data-ci="' + ci + '" title="' +
+            (closed ? "Show" : "Hide") + ' the drawings">' + (closed ? "▸" : "▾") + "</button>" : "") +
+          ccell + qcell +
           '<span class="ccount">' + nd + " dwg" + (nd === 1 ? "" : "s") + "</span>" +
           rowBtns("component", ci, null, c.cid) + "</div>" +
-          '<div class="draws">' + rows +
+          (closed ? "" : '<div class="draws">' + rows + (rows && chips ? '<div class="dsep"></div>' : "") +
+            (chips ? '<div class="dgrid">' + chips + "</div>" : "") + doneBtn +
             (c.cid ? '<button type="button" class="addd" data-k="adddraw" data-ci="' + ci + '">+ add drawing</button>' : "") +
-          "</div></div>";
+          "</div>") + "</div>";
       }).join("");
       host.innerHTML = ((!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + cards;
       renderSummary();
@@ -1604,6 +1765,18 @@
       if (k === "esave") { saveRename(btn); return; }
       if (k === "nsave") { saveNew(btn); return; }
       if (!scope[ci]) return;
+      if (k === "ctog") { const id = scope[ci].cid; if (id) { compClosed[id] = !compClosed[id]; renderScope(); } return; }
+      if (k === "dopen") { drawOpen[scope[ci].cid + "|" + btn.getAttribute("data-key")] = 1; renderScope(); return; }
+      if (k === "dclose") {
+        Object.keys(drawOpen).forEach((x) => { if (x.indexOf(scope[ci].cid + "|") === 0) delete drawOpen[x]; });
+        renderScope(); return;
+      }
+      if (k === "dxg") {                                         // a chip: every record with that number
+        const ids = String(btn.getAttribute("data-ids") || "").split(",").filter(Boolean);
+        ids.forEach((id) => { excluded.d[id] = 1; });
+        scope[ci].drawings = (scope[ci].drawings || []).filter((d) => !(d && ids.indexOf(String(d.id)) > -1));
+        saveScope(); renderScope(); return;
+      }
       if (k === "adddraw") { (scope[ci].drawings = scope[ci].drawings || []).push({ id: "", number: "" }); renderScope(); return; }
       if (k === "cx") {                                          // out of THIS take-off, still on the project
         if (scope[ci].cid) excluded.c[String(scope[ci].cid)] = 1;
@@ -1914,6 +2087,7 @@
           // two sheets into one drawing — and this read is what every later count is measured
           // against, so it's the wrong place to save a few cents.
           body: JSON.stringify({ pdfs: payloadDocs(), names: docs.map((d) => d.name),
+                                 project_id: params.project_id, manufacturer_id: params.manufacturer_id,   // cost ledger
                                  // so it proposes YOUR components rather than variants of them
                                  components: project.components.map((c) => c.name),
                                  model: (document.getElementById("model") || {}).value || "sonnet" }),
@@ -3053,6 +3227,7 @@
             // Only the real turns — the pending placeholder isn't part of the conversation.
             messages: askThread.filter((m) => !m.pending && !m.note).map((m) => ({ role: m.role, text: m.text })),
             context: askContext(),
+            project_id: params.project_id, manufacturer_id: params.manufacturer_id,   // cost ledger
             model: (document.getElementById("model") || {}).value || "sonnet",
           }),
         });
