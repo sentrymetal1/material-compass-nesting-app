@@ -191,7 +191,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.61 · 2026-10-07";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.62 · 2026-10-08";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -2262,7 +2262,7 @@
           '<span class="chip">📄 '+(arr(s.project?.sheets_read).length||"?")+' sheets/specs</span>'+
           '<span class="chip">🧱 '+fab.length+' fab rows</span>'+
           weightChipHtml(WT, FW, t)+
-          (R.cost_usd!=null?'<span class="chip">💲 $'+R.cost_usd+'</span>':'')+
+          (R.cost_usd!=null?'<span class="chip" title="What the AI charged to read the drawings for this take-off (including any drawings added later). Questions and edits afterwards are in the AI cost total at the top.">💲 AI read $'+Number(R.cost_usd).toFixed(2)+'</span>':'')+
           (gaps.length?'<span class="chip">◷ '+gaps.length+' gaps</span>':'')+
         '</div></div></div>'+
 
