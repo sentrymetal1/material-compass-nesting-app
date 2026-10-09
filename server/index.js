@@ -8,6 +8,7 @@ const FormData = require('form-data');
 const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, repairHandler } = require('./takeoff/route');
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
 const filestore = require('./filestore');        // the project's own copy of the drawings
+const nestStore = require('./nestStore');        // a saved nesting run's stock pieces + cuts, one file per run
 
 const app = express();
 app.use(cors());
@@ -2565,7 +2566,19 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     }
 
     let s1d = 0;
-    for (const result of results_1d || []) {
+    let s2d = 0;
+    // The stock pieces and cuts go to ONE file on the volume (nestStore.js), not one Zoho
+    // record per piece — a 10,800-piece run was ~10,800 records and a day's API allowance.
+    // Same shape GET .../nesting-results returns, so loading is a straight read.
+    const useFile = nestStore.available();
+    if (useFile) {
+      const built = nestStore.build(results_1d, results_2d, getBomData, calcStockWt);
+      nestStore.save(nestRunID, Object.assign({ project_id: String(projectId), saved_at: new Date().toISOString() }, built));
+      s1d = built.results_1d.length; s2d = built.results_2d.length;
+      console.log('[nest] run ' + nestRunID + ' saved to file: ' + s1d + ' 1D + ' + s2d + ' 2D stock pieces (no Zoho stock records)');
+    }
+
+    for (const result of (useFile ? [] : results_1d || [])) {
       if (result.error || !result.cuts?.length) continue;
       try {
         const bd = getBomData(result);
@@ -2576,8 +2589,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
       } catch (e) { console.error('1D save error:', e.response?.data || e.message); }
     }
 
-    let s2d = 0;
-    for (const result of results_2d || []) {
+    for (const result of (useFile ? [] : results_2d || [])) {
       if (result.error || !result.cuts?.length) continue;
       try {
         const bd = getBomData(result);
@@ -2590,7 +2602,7 @@ app.post('/api/project/:id/save-results', async (req, res) => {
     }
 
     try {
-      await axios.patch(creatorApiBase()+'/report/Nesting_Run_Header_Report/'+nestRunID, { data: { Total_Stock_Pieces: s1d + s2d, Total_Waste_Inches: Math.round((summary?.total_remnant_length_in || 0) * 10000) / 10000, Notes: 'Saved '+s1d+' 1D + '+s2d+' 2D | Waste: '+(summary?.avg_waste_pct_1d || 0)+'%' } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      await axios.patch(creatorApiBase()+'/report/Nesting_Run_Header_Report/'+nestRunID, { data: { Total_Stock_Pieces: s1d + s2d, Total_Waste_Inches: Math.round((summary?.total_remnant_length_in || 0) * 10000) / 10000, Notes: 'Saved '+s1d+' 1D + '+s2d+' 2D | Waste: '+(summary?.avg_waste_pct_1d || 0)+'%' + (useFile ? ' | detail kept on the Material Compass server (file), not as Zoho stock records' : '') } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     } catch (e) { console.error('Header patch failed'); }
 
     // Only now is it safe to demote the previous run. If nothing was written,
@@ -3153,6 +3165,28 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
     var runHeader = runs[0];
     var nestRunID = runHeader.ID;
     console.log('Loading nesting run:', nestRunID, 'Run #'+runHeader.Run_Number);
+    var headerOut = { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: (typeof runHeader.Run_Date === 'object') ? '' : (runHeader.Run_Date || ''),
+      superseded_only: supersededOnly, run_status: String(runHeader.Run_Status || ''), run_by: (runHeader.Run_By && typeof runHeader.Run_By === 'object') ? (runHeader.Run_By.zc_display_value || '') : (runHeader.Run_By || ''),
+      kerf_1d: parseFloat(runHeader.Kerf_1D) || 0, kerf_2d: parseFloat(runHeader.Kerf_2D) || 0,
+      notes: (typeof runHeader.Notes === 'object') ? '' : (runHeader.Notes || ''), total_stock_pieces: parseInt(runHeader.Total_Stock_Pieces) || 0 };
+    // Saved as a file (nestStore.js): the whole run in one read, no Zoho calls.
+    var fromFile = nestStore.load(nestRunID);
+    if (fromFile) {
+      headerOut.total_stock_pieces = headerOut.total_stock_pieces || (fromFile.results_1d.length + fromFile.results_2d.length);
+      return res.json({ found: true, run_header: headerOut, results_1d: fromFile.results_1d || [], results_2d: fromFile.results_2d || [],
+        summary: fromFile.summary || { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
+    }
+    // Saved the old way, one Zoho record per stock piece. Reading a big one back costs
+    // ~1 call per 10 pieces plus fallbacks — the 10,800-piece Chiller run ate the whole
+    // daily allowance just opening the page. Refuse those rather than spend the day.
+    var OLD_RUN_MAX = 400;
+    if (headerOut.total_stock_pieces > OLD_RUN_MAX) {
+      console.warn('Nesting run ' + nestRunID + ' has ' + headerOut.total_stock_pieces + ' Zoho stock records; not loading them');
+      return res.json({ found: false, too_big: true, run_header: headerOut,
+        message: 'Saved run #' + headerOut.run_number + ' has ' + headerOut.total_stock_pieces.toLocaleString('en-US') +
+          ' stock pieces stored the old way, and reading them would use the day\'s data allowance. Run the nest again and save it — ' +
+          'new runs are stored so any size opens instantly.' });
+    }
     var stockResults = [];
     var startIndex = 0;
     var hasMore = true;
@@ -3674,7 +3708,16 @@ app.post('/api/standalone/save-results', async (req, res) => {
     }
 
     let s1d = 0;
-    for (const result of results_1d || []) {
+    let s2d = 0;
+    // One file per run on the volume, not one Zoho record per stock piece (nestStore.js).
+    const useFile = nestStore.available();
+    if (useFile) {
+      const built = nestStore.build(results_1d, results_2d, getPartData, calcStockWt);
+      nestStore.save(nestRunID, Object.assign({ standalone: true, saved_at: new Date().toISOString() }, built));
+      s1d = built.results_1d.length; s2d = built.results_2d.length;
+      console.log('[nest] standalone run ' + nestRunID + ' saved to file: ' + s1d + ' 1D + ' + s2d + ' 2D stock pieces');
+    }
+    for (const result of (useFile ? [] : results_1d || [])) {
       if (result.error || !result.cuts?.length) continue;
       try {
         const pd = getPartData(result);
@@ -3706,8 +3749,7 @@ app.post('/api/standalone/save-results', async (req, res) => {
       } catch (e) { console.error('Standalone 1D save error:', e.response?.data || e.message); }
     }
 
-    let s2d = 0;
-    for (const result of results_2d || []) {
+    for (const result of (useFile ? [] : results_2d || [])) {
       if (result.error || !result.cuts?.length) continue;
       try {
         const pd = getPartData(result);
@@ -3841,6 +3883,29 @@ app.get('/api/standalone/nesting-results', async (req, res) => {
         };
       });
     } catch (e) { if (e.response?.data?.code !== 9280) console.error('Input parts fetch error:', e.response?.data || e.message); }
+
+    var headerOf = function (r1, r2) {
+      return { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: safeStr(runHeader.Run_Date), run_status: safeStr(runHeader.Run_Status),
+        run_by: safeStr(runHeader.Run_By), nest_source: safeStr(runHeader.Nest_Source), run_title: safeStr(runHeader.Run_Title), run_notes: safeStr(runHeader.Run_Notes),
+        created_by: safeStr(runHeader.Created_By) || safeStr(runHeader.Added_User), project_id: safeId(runHeader.Project_Lookup),
+        project_name: (typeof runHeader.Project_Lookup === 'object') ? (runHeader.Project_Lookup?.zc_display_value || runHeader.Project_Lookup?.display_value || '') : '',
+        kerf_1d: parseFloat(runHeader.Kerf_1D) || 0, kerf_2d: parseFloat(runHeader.Kerf_2D) || 0,
+        notes: (typeof runHeader.Notes === 'object') ? '' : (runHeader.Notes || ''),
+        total_stock_pieces: parseInt(runHeader.Total_Stock_Pieces) || (r1.length + r2.length) };
+    };
+    // Saved as a file (nestStore.js): no Zoho reads for the stock pieces.
+    var fromFile = nestStore.load(nestRunID);
+    if (fromFile) {
+      return res.json({ found: true, run_header: headerOf(fromFile.results_1d || [], fromFile.results_2d || []), input_parts: inputParts,
+        results_1d: fromFile.results_1d || [], results_2d: fromFile.results_2d || [],
+        summary: fromFile.summary || { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
+    }
+    // Saved the old way and too big to read back without spending the day's allowance.
+    if ((parseInt(runHeader.Total_Stock_Pieces) || 0) > 400) {
+      return res.json({ found: false, too_big: true, run_header: headerOf([], []),
+        message: 'Saved run #' + (parseInt(runHeader.Run_Number) || 1) + ' has ' + (parseInt(runHeader.Total_Stock_Pieces) || 0).toLocaleString('en-US') +
+          ' stock pieces stored the old way, and reading them would use the day\'s data allowance. Run the nest again and save it.' });
+    }
 
     // Load stock results + cuts (mirrors project nesting-results)
     var stockResults = [];
