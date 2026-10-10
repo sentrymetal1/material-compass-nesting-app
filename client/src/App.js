@@ -1879,7 +1879,11 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ purchase_lines: lines }),
       });
-      if (!resp.ok) throw new Error('Save failed');
+      if (!resp.ok) {
+        let why = '';
+        try { const b = await resp.json(); why = b.error || b.message || ''; } catch (_) {}
+        throw new Error(why || 'Save failed');
+      }
       const data = await resp.json();
       const failures = data.failures || [];
       const attempted = data.items_attempted != null ? data.items_attempted : lines.length;
@@ -2179,7 +2183,12 @@ export default function App() {
           }),
         });
       }
-      if (!resp.ok) throw new Error('Save failed');
+      // Say WHY — "daily data limit reached, try tonight" and a real failure need different action.
+      if (!resp.ok) {
+        let why = '';
+        try { const b = await resp.json(); why = b.error || b.message || ''; } catch (_) {}
+        throw new Error(why || 'Save failed');
+      }
       const data = await resp.json();
       setSaveStatus(`Saved! Run #${data.run_number} — ${data.saved_1d || 0} 1D + ${data.saved_2d || 0} 2D results (Status: ${data.run_status})`);
       savedOk = true;
@@ -3968,7 +3977,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.17 — one Save to Project, patterns and purchase list together</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.18 — one Save to Project, patterns and purchase list together</span></footer>
     </div>
   );
 }
