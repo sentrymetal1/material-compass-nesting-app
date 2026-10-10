@@ -1309,6 +1309,17 @@ function registerTriageRoutes(app, deps) {
   // Cheap now that dedup is in-memory (~4 Zoho calls per re-scan). The manual
   // Scan button stays available; this just keeps the list fresh on its own.
   async function runScheduledScan() {
+    const meter = require('./zohoMeter');
+    // A background job must not spend the shared allowance people need for the pages. Past 60%
+    // of the day it waits for tomorrow; the Scan button still works on demand.
+    if (meter.lowOnCalls(0.6)) {
+      const t = meter.today();
+      console.warn('[triage] scheduled scan skipped: ' + t.total + ' of ' + t.limit + ' Zoho calls used today');
+      return;
+    }
+    return meter.runAs('triage daily scan', scanAll);
+  }
+  async function scanAll() {
     try {
       const conns = await getConnectedMailboxes();
       for (const c of conns) {

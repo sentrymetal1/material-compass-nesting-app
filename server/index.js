@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const zohoMeter = require('./zohoMeter');        // counts every Zoho call by route; loaded before anything calls Zoho
 const path = require('path');
 const zlib = require('zlib');
 const FormData = require('form-data');
@@ -12,6 +13,7 @@ const nestStore = require('./nestStore');        // a saved nesting run's stock 
 
 const app = express();
 app.use(cors());
+app.use(zohoMeter.middleware);   // every Zoho call made while serving a request is put down to its route
 
 // ── ADMIN GATE ──────────────────────────────────────────────────────────────────────────────
 // Debug, diagnostic and admin routes that no customer page calls, but that were open to anyone:
@@ -64,6 +66,8 @@ app.use(tenantToken.middleware);
 app.get('/api/admin/token-report', (req, res) => res.json(Object.assign({ ok: true }, tenantToken.report())));
 // What the AI has cost: per day, by kind of call, by project and by shop, from the ledger on the volume.
 app.get('/api/admin/ai-cost', (req, res) => res.json(Object.assign({ ok: true }, require('./costLedger').summarize(req.query.days))));
+// Zoho calls per day: which pages and jobs spent the shared allowance, and on which reports.
+app.get('/api/admin/zoho-calls', (req, res) => res.json({ ok: true, today: zohoMeter.today(), days: zohoMeter.report(req.query.days) }));
 // What this project's AI work has cost so far (take-off, preview, questions, chat, addenda).
 app.get('/api/takeoff/ai-cost/:project_id', (req, res) => res.json(Object.assign({ ok: true }, require('./costLedger').forProject(req.params.project_id, req.query.days))));
 
