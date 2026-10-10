@@ -234,10 +234,13 @@ function staleWhileRefresh(fetchFn, maxAgeMs) {
 function registerIntel(app, deps) {
   const { fetchAllZohoPages, cachedLookup, projectHeader } = deps;
   const enc = (s) => encodeURIComponent(s);
+  // Market prices move over days, not minutes. At 30 minutes the shared refresh (~13 reads) could
+  // run 20 times in a working day — about a quarter of the 1,000-call allowance every tenant shares.
+  const QUOTES_MAX_AGE = 4 * 60 * 60 * 1000;
   const structuralQuotes = staleWhileRefresh(async () =>
-    (await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + enc('(Price_Per_Lb > 0)'))).map(normQuote), 30 * 60 * 1000);
+    (await fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + enc('(Price_Per_Lb > 0)'))).map(normQuote), QUOTES_MAX_AGE);
   const fittingQuoteRows = staleWhileRefresh(async () =>
-    (await fetchAllZohoPages('/report/RFQs_Sent_Fittings_Report')).map(normFittingQuote), 30 * 60 * 1000);
+    (await fetchAllZohoPages('/report/RFQs_Sent_Fittings_Report')).map(normFittingQuote), QUOTES_MAX_AGE);
   // Deliberately NOT warmed at start-up: that would spend ~13 Zoho reads per instance on every deploy
   // against the 1,000/day allowance. The first panel opened after a deploy waits; nobody after it does.
 
@@ -249,9 +252,10 @@ function registerIntel(app, deps) {
       if (!project) return res.status(404).json({ ok: false, error: 'project not found' });
       const myMfg = String(project.manufacture || '');
       const [bom, fittings, quotes, fittingQuotes] = await Promise.all([
-        cachedLookup('intel:bom:' + pid, 2 * 60 * 1000, () =>
+        // 10 minutes: the panel is opened every time the project page is, often several times in a row.
+        cachedLookup('intel:bom:' + pid, 10 * 60 * 1000, () =>
           fetchAllZohoPages('/report/Project_Bill_Of_Material_Detail_Form_Report?criteria=' + enc('(MCP_Customer_Project_Form==' + pid + ')'))),
-        cachedLookup('intel:fit:' + pid, 2 * 60 * 1000, () =>
+        cachedLookup('intel:fit:' + pid, 10 * 60 * 1000, () =>
           fetchAllZohoPages('/report/Project_BOM_Fittings_Quote_Form_Report?criteria=' + enc('(MCP_Customer_Project_Form==' + pid + ')'))),
         // Every shop's priced structural quotes, trimmed, shared by every project.
         structuralQuotes(),
