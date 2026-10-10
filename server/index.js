@@ -3001,6 +3001,24 @@ app.get('/api/project/:id/purchase-list', async (req, res) => {
  * A full batch (limit reached) can't be trusted not to have truncated, so those
  * fall back to per-id fetches — correctness first, savings where they're safe.
  */
+// A run saved the old way (Zoho Nesting_Stock_Result records). ONE read, never paged:
+// the loaders used to page with `&from=`, which Creator v2.1 ignores, so a run with 200+
+// records got the same first page back forever — 861 reads plus 3,568 cut-detail reads
+// opening the Chiller job on 2026-10-10, the whole day's allowance and more. A run too
+// big for one page is refused instead; re-saving it puts it in a file (nestStore.js).
+const OLD_RUN_MAX_RECORDS = 150;
+async function readOldStockResults(token, runId) {
+  try {
+    const r = await axios.get(creatorApiBase() + '/report/Nesting_Stock_Results?criteria=(Nesting_Run_Header==' + runId + ')&limit=200',
+      { headers: zohoHeaders(token) });
+    if (r.data && r.data.code === 4000) throw Object.assign(new Error('Daily data limit reached'), { response: { data: r.data } });
+    return (r.data && r.data.data) || [];
+  } catch (e) {
+    if (e.response?.data?.code === 9280) return [];
+    throw e;
+  }
+}
+
 async function fetchCutDetailsBatched(token, stockResultIds) {
   const BATCH = 10, LIMIT = 200;
   let out = [];
@@ -3014,31 +3032,27 @@ async function fetchCutDetailsBatched(token, stockResultIds) {
     });
     return rows;
   };
+  // A full page is followed with Creator v2.1's record_cursor header (it ignores `from`),
+  // never re-fetched id by id — that fallback is what multiplied the calls. Any error
+  // (the daily limit included) stops the whole read: a partial plan is not shown as whole.
   for (let i = 0; i < stockResultIds.length; i += BATCH) {
     const chunk = stockResultIds.slice(i, i + BATCH);
     const crit = '(' + chunk.map(id => 'Nesting_Stock_Result_Lookup==' + id).join('%7C%7C') + ')';
-    let rows = null;
-    try {
-      const resp = await axios.get(
-        creatorApiBase() + '/report/All_Nesting_Cut_Details?criteria=' + crit + '&limit=' + LIMIT,
-        { headers: zohoHeaders(token) });
-      rows = resp.data.data || [];
-    } catch (e) {
-      if (e.response?.data?.code === 9280) rows = [];   // zero matches
-      else { console.error('Cut detail batch error:', e.response?.data || e.message); rows = null; }
-    }
-    if (rows !== null && rows.length < LIMIT) { out = out.concat(stamp(rows, chunk)); continue; }
-    // Batch failed, or came back full and may be truncated — redo it one at a time.
-    if (rows !== null) console.warn('Cut detail batch hit the ' + LIMIT + ' row limit; refetching ' + chunk.length + ' individually');
-    for (const id of chunk) {
+    let cursor = null;
+    for (let page = 0; page < 10; page++) {
+      const headers = zohoHeaders(token);
+      if (cursor) headers.record_cursor = cursor;
+      let resp;
       try {
-        const r = await axios.get(
-          creatorApiBase() + '/report/All_Nesting_Cut_Details?criteria=(Nesting_Stock_Result_Lookup==' + id + ')&limit=' + LIMIT,
-          { headers: zohoHeaders(token) });
-        out = out.concat(stamp(r.data.data || [], [id]));
+        resp = await axios.get(creatorApiBase() + '/report/All_Nesting_Cut_Details?criteria=' + crit + '&limit=' + LIMIT, { headers });
       } catch (e) {
-        if (e.response?.data?.code !== 9280) console.error('Cut detail fetch error for SR', id, ':', e.response?.data || e.message);
+        if (e.response?.data?.code === 9280) break;   // zero matches
+        throw e;
       }
+      if (resp.data && resp.data.code === 4000) throw Object.assign(new Error('Daily data limit reached'), { response: { data: resp.data } });
+      out = out.concat(stamp(resp.data.data || [], chunk));
+      cursor = resp.headers['record_cursor'] || null;
+      if (!cursor || (resp.data.data || []).length < LIMIT) break;
     }
   }
   return out;
@@ -3180,33 +3194,14 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
       return res.json({ found: true, run_header: headerOut, results_1d: fromFile.results_1d || [], results_2d: fromFile.results_2d || [],
         summary: fromFile.summary || { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
     }
-    // Saved the old way, one Zoho record per stock piece. Reading a big one back costs
-    // ~1 call per 10 pieces plus fallbacks — the 10,800-piece Chiller run ate the whole
-    // daily allowance just opening the page. Refuse those rather than spend the day.
-    var OLD_RUN_MAX = 400;
-    if (headerOut.total_stock_pieces > OLD_RUN_MAX) {
-      console.warn('Nesting run ' + nestRunID + ' has ' + headerOut.total_stock_pieces + ' Zoho stock records; not loading them');
+    // Saved the old way, one Zoho record per stock pattern. One read decides: past
+    // OLD_RUN_MAX_RECORDS it is refused (see readOldStockResults).
+    var stockResults = await readOldStockResults(token, nestRunID);
+    if (stockResults.length > OLD_RUN_MAX_RECORDS) {
+      console.warn('Nesting run ' + nestRunID + ' has ' + stockResults.length + '+ Zoho stock records; not loading them');
       return res.json({ found: false, too_big: true, run_header: headerOut,
-        message: 'Saved run #' + headerOut.run_number + ' has ' + headerOut.total_stock_pieces.toLocaleString('en-US') +
-          ' stock pieces stored the old way, and reading them would use the day\'s data allowance. Run the nest again and save it — ' +
-          'new runs are stored so any size opens instantly.' });
-    }
-    var stockResults = [];
-    var startIndex = 0;
-    var hasMore = true;
-    while (hasMore) {
-      try {
-        var srUrl = creatorApiBase()+'/report/Nesting_Stock_Results?criteria=(Nesting_Run_Header=='+nestRunID+')&limit=200';
-        if (startIndex > 0) srUrl += '&from='+startIndex;
-        var srResp = await axios.get(srUrl, { headers: zohoHeaders(token) });
-        var batch = srResp.data.data || [];
-        stockResults = stockResults.concat(batch);
-        hasMore = batch.length === 200;
-        startIndex += 200;
-      } catch (e) {
-        if (e.response?.data?.code === 9280) hasMore = false;
-        else throw e;
-      }
+        message: 'Saved run #' + headerOut.run_number + ' is stored the old way (' + stockResults.length + '+ stock records), and reading it ' +
+          'back would use the day\'s data allowance. Run the nest again and save it — new runs open instantly at any size.' });
     }
     function safeStr(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.zc_display_value || val.display_value || val.ID || ''; return String(val); }
     function safeId(val) { if (val === null || val === undefined) return ''; if (typeof val === 'object') return val.ID || val.zc_display_value || ''; return String(val); }
@@ -3260,6 +3255,13 @@ app.get('/api/project/:id/nesting-results', async (req, res) => {
     results_1d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
     results_2d.sort(function(a, b) { return a.stock_sequence - b.stock_sequence; });
     var avgWaste1d = count1d > 0 ? totalWaste1d / count1d : 0;
+    // Read from Zoho once; from now on this run opens from its file.
+    if (nestStore.available() && (results_1d.length || results_2d.length)) {
+      try {
+        nestStore.save(nestRunID, { project_id: String(projectId), converted_from_zoho: new Date().toISOString(), results_1d: results_1d, results_2d: results_2d,
+          summary: { total_stock_pieces: results_1d.length + results_2d.length, avg_waste_pct_1d: Math.round(avgWaste1d * 10) / 10, errors: [] } });
+      } catch (e) { console.error('[nest] could not keep run ' + nestRunID + ' as a file:', e.message); }
+    }
     res.json({ found: true, run_header: { id: nestRunID, run_number: parseInt(runHeader.Run_Number) || 1, run_date: safeStr(runHeader.Run_Date), superseded_only: supersededOnly, run_status: safeStr(runHeader.Run_Status), run_by: safeStr(runHeader.Run_By), kerf_1d: parseFloat(runHeader.Kerf_1D) || 0, kerf_2d: parseFloat(runHeader.Kerf_2D) || 0, notes: (typeof runHeader.Notes === 'object') ? '' : (runHeader.Notes || ''), total_stock_pieces: parseInt(runHeader.Total_Stock_Pieces) || (results_1d.length + results_2d.length) }, results_1d: results_1d, results_2d: results_2d, summary: { total_stock_pieces: results_1d.length + results_2d.length, avg_waste_pct_1d: Math.round(avgWaste1d * 10) / 10, errors: [] }, _nameLookup: nameLookup });
   } catch (err) {
     console.error('Error fetching nesting results:', err.response?.data || err.message);
@@ -3904,29 +3906,12 @@ app.get('/api/standalone/nesting-results', async (req, res) => {
         results_1d: fromFile.results_1d || [], results_2d: fromFile.results_2d || [],
         summary: fromFile.summary || { total_stock_pieces: 0, avg_waste_pct_1d: 0, errors: [] }, _nameLookup: {} });
     }
-    // Saved the old way and too big to read back without spending the day's allowance.
-    if ((parseInt(runHeader.Total_Stock_Pieces) || 0) > 400) {
+    // Saved the old way: one read decides (readOldStockResults); too big for it is refused.
+    var stockResults = await readOldStockResults(token, nestRunID);
+    if (stockResults.length > OLD_RUN_MAX_RECORDS) {
       return res.json({ found: false, too_big: true, run_header: headerOf([], []),
-        message: 'Saved run #' + (parseInt(runHeader.Run_Number) || 1) + ' has ' + (parseInt(runHeader.Total_Stock_Pieces) || 0).toLocaleString('en-US') +
-          ' stock pieces stored the old way, and reading them would use the day\'s data allowance. Run the nest again and save it.' });
-    }
-
-    // Load stock results + cuts (mirrors project nesting-results)
-    var stockResults = [];
-    var startIndex = 0, hasMore = true;
-    while (hasMore) {
-      try {
-        var srUrl = creatorApiBase()+'/report/Nesting_Stock_Results?criteria=(Nesting_Run_Header=='+nestRunID+')&limit=200';
-        if (startIndex > 0) srUrl += '&from='+startIndex;
-        var srResp = await axios.get(srUrl, { headers: zohoHeaders(token) });
-        var batch = srResp.data.data || [];
-        stockResults = stockResults.concat(batch);
-        hasMore = batch.length === 200;
-        startIndex += 200;
-      } catch (e) {
-        if (e.response?.data?.code === 9280) hasMore = false;
-        else throw e;
-      }
+        message: 'Saved run #' + (parseInt(runHeader.Run_Number) || 1) + ' is stored the old way (' + stockResults.length + '+ stock records), and ' +
+          'reading it back would use the day\'s data allowance. Run the nest again and save it.' });
     }
 
     var stockResultIds = stockResults.map(function(sr) { return sr.ID; });
