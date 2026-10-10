@@ -430,6 +430,17 @@ function groupStockFromRows(rows) {
  *  bin). Those are specific physical pieces, not a size you can order any
  *  number of, so two of them never merge. Quantity and reference ride along on
  *  the chip so clicking it doesn't quietly discard what's on hand. */
+/** A stock size for a chip, feet first with the inches in brackets: 600 → `50 Ft (600")`,
+ *  a length that isn't whole feet keeps its inches: 125 → `10 Ft 5" (125")`. */
+function chipFt(inches) {
+  const n = Number(inches) || 0;
+  const ft = Math.floor(n / 12), rem = Math.round((n - ft * 12) * 100) / 100;
+  return (ft ? `${ft} Ft` : '') + (rem ? `${ft ? ' ' : ''}${rem}"` : '');
+}
+function chipLabel(c) {
+  return c.wid ? `${chipFt(c.len)} × ${chipFt(c.wid)} (${c.len}" × ${c.wid}")` : `${chipFt(c.len)} (${c.len}")`;
+}
+
 function groupChips(group, stockLibrary) {
   const seen = new Set();
   const out = [];
@@ -3170,10 +3181,10 @@ export default function App() {
                                   {stdChips.map(c => (
                                     <button
                                       key={c.label} className="btn btn-small"
-                                      style={{ borderRadius: 999, fontSize: 11, padding: '2px 10px' }}
+                                      style={{ borderRadius: 999, fontSize: 11, padding: '2px 10px', color: '#000' }}
                                       onClick={() => addChip(c)}
                                     >
-                                      {c.wid ? `${c.len}" × ${c.wid}"` : `${c.len}"`}
+                                      {chipLabel(c)}
                                     </button>
                                   ))}
                                 </div>
@@ -3184,10 +3195,10 @@ export default function App() {
                                   {ownChips.map(c => (
                                     <button
                                       key={c.label} className="btn btn-small"
-                                      style={{ borderRadius: 999, fontSize: 11, padding: '2px 10px' }}
+                                      style={{ borderRadius: 999, fontSize: 11, padding: '2px 10px', color: '#000' }}
                                       onClick={() => addChip(c)}
                                     >
-                                      {c.wid ? `${c.len}" × ${c.wid}"` : `${c.len}"`}
+                                      {chipLabel(c)}
                                     </button>
                                   ))}
                                 </div>
@@ -3957,7 +3968,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <footer className="footer"><span>Material Compass Nesting v2.16 — one Save to Project, patterns and purchase list together</span></footer>
+      <footer className="footer"><span>Material Compass Nesting v2.17 — one Save to Project, patterns and purchase list together</span></footer>
     </div>
   );
 }
