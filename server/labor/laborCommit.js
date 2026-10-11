@@ -129,7 +129,11 @@ function registerLaborCommit(app, deps) {
     return String(rec.ID || '');
   }
 
-  // One totals row per project: update it if it exists, create it if not. Returns the sums written.
+  // One totals row per project: UPDATE it if it exists, never create one. A row created here is
+  // invisible to the project's Labor Totals subform (no bidirectional link), so the first labour row
+  // added by hand made the form create a SECOND row — the -1/$0 junk row and a header reading stale
+  // totals on Chiller Yard Trestle (2026-10-10). The project form now creates its own visible row on
+  // Update To Save ("Recount Labor Totals", validations on submission); this only keeps it current.
   async function upsertTotals(base, token, projectId, mfg) {
     const [rows, existing] = await Promise.all([
       fetchAllZohoPages('/report/All_Project_Labor_Details?criteria=' + crit('(Project_LU==' + projectId + ')')),
@@ -150,9 +154,22 @@ function registerLaborCommit(app, deps) {
       check(await axios.patch(base + '/report/Project_Quote_Labor_Totals_Report/' + existing[0].ID, { data }, { headers: zohoHeaders(token) }));
       return { ok: true, id: String(existing[0].ID), created: false, Total_Hrs: data.Total_Hrs, Total_Amt: data.Total_Amt };
     }
-    const body = check(await axios.post(base + '/form/Project_Quote_Labor_Totals', { data }, { headers: zohoHeaders(token) }));
-    const rec = Array.isArray(body.data) ? (body.data[0] || {}) : (body.data || {});
-    return { ok: true, id: String(rec.ID || ''), created: true, Total_Hrs: data.Total_Hrs, Total_Amt: data.Total_Amt };
+    return { ok: true, id: '', created: false, pending_save: true, Total_Hrs: data.Total_Hrs, Total_Amt: data.Total_Amt,
+      note: 'The project builds its Labor Totals row on the next Update To Save.' };
+  }
+
+  // The project's own rate fields. Populate Fields copies them onto every labour row added by hand,
+  // and a take-off project never had them, so those rows came in at $0 (2026-10-10).
+  // Field names from the project form's Populate Fields workflow.
+  const PROJECT_RATE_FIELD = { Cutting: 'Cutting_Rate', CNC: 'CNC_Rate', Assy: 'Assembly_Rate', Fab: 'Fabrication_Rate',
+    Weld: 'Welding_Rate', Labor: 'Labor_Rate', Inspection: 'Inspection_Rate', Misc: 'Misc_Rate' };
+  async function setProjectRates(base, token, projectId, rates) {
+    const data = {};
+    for (const stem of Object.keys(PROJECT_RATE_FIELD)) if (rates[stem] != null) data[PROJECT_RATE_FIELD[stem]] = rates[stem];
+    const r = await axios.patch(base + '/report/All_Projects/' + projectId, { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+    const body = r.data || {};
+    if (body.code !== 3000) throw new Error('Zoho refused the project rates (code ' + body.code + '): ' + (body.message || JSON.stringify(body).slice(0, 200)));
+    return data;
   }
 
   // body: { project_id, manufacturer_id, components: [{ name, items:[{bucket,hours}] }], prior_ids: [] }
@@ -220,8 +237,12 @@ function registerLaborCommit(app, deps) {
       let totals = null;
       try { totals = await upsertTotals(base, token, projectId, mfg); }
       catch (e) { totals = { ok: false, error: e.message }; console.error('[labor] totals row failed:', e.message); }
+      // Give the project the rates the take-off used, so hand-added rows match.
+      let project_rates = null;
+      try { project_rates = { ok: true, set: await setProjectRates(base, token, projectId, rates) }; }
+      catch (e) { project_rates = { ok: false, error: e.message }; console.error('[labor] project rates failed:', e.message); }
 
-      res.json({ ok: true, written, skipped, failed, replaced: removed.length, not_removed: keep, totals,
+      res.json({ ok: true, written, skipped, failed, replaced: removed.length, not_removed: keep, totals, project_rates,
         rates_estimated: estimated, folded, shop_types_known: shopTypes.length > 0,
         total_hours: r2(written.reduce((a, w) => a + w.hours, 0)) });
     } catch (err) {
