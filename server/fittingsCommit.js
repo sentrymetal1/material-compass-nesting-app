@@ -115,7 +115,15 @@ function registerFittingsCommit(app, deps) {
       const base = creatorApiBase();
       const comps = await componentsOf(projectId);
       const dwgs  = await drawingsOf(projectId);
-      let line = await nextLineItem(projectId);
+      // RE-APPROVE REPLACES, like the labour commit: the page sends the ids it wrote last time
+      // (prior_ids) and those rows go once the new ones are in. Without it every approve ADDED the
+      // fittings again — Amrize got the same 50 return bends three times (2026-10-12). Only ids that
+      // really are fittings on THIS project are touched; rows entered by hand are never deleted.
+      const priorIds = new Set((Array.isArray((req.body || {}).prior_ids) ? req.body.prior_ids : []).map(String));
+      const onProject = await fetchAllZohoPages('/report/Project_BOM_Fittings_Quote_Form_Report?criteria=' +
+        encodeURIComponent('(MCP_Customer_Project_Form==' + projectId + ')'));
+      let line = 1;
+      (onProject || []).forEach((r) => { if (priorIds.has(String(r.ID))) return; const n = num(r.Line_Item_Fitting); if (n && n >= line) line = n + 1; });
 
       const written = [], skipped = [], failed = [], provisional = [], unresolvedId = [], matched = [], nameGaps = [];
 
@@ -420,7 +428,21 @@ function registerFittingsCommit(app, deps) {
         }
       }
 
+      // Only now, with the new rows in, remove what the last approve wrote.
+      let replaced = 0;
+      const notRemoved = [];
+      if (written.length && priorIds.size) {
+        const mine = (onProject || []).filter((r) => priorIds.has(String(r.ID)));
+        for (const r of mine) {
+          try {
+            const d = await axios.delete(base + '/report/Project_BOM_Fittings_Quote_Form_Report/' + r.ID, { headers: zohoHeaders(token) });
+            if (d.data && d.data.code === 3000) replaced++; else notRemoved.push(String(r.ID));
+          } catch (e) { notRemoved.push(String(r.ID)); }
+        }
+      }
+
       console.log('[fittings] project ' + projectId + ': wrote ' + written.length + ' of ' + list.length +
+        (replaced ? ', replaced ' + replaced + ' from the last approve' : '') +
         (matched.length ? ', matched ' + matched.length + ' to existing catalog rows' : '') +
         (provisional.length ? ', created ' + provisional.length + ' catalog row' + (provisional.length === 1 ? '' : 's') : '') +
         (unresolvedId.length ? ', ' + unresolvedId.length + ' without a Fitting_ID' : '') +
@@ -428,6 +450,7 @@ function registerFittingsCommit(app, deps) {
         (specDefaulted ? ', set WPB | ASTM A234 on ' + specDefaulted + ' carbon steel butt-weld' : '') +
         (skipped.length ? ', skipped ' + skipped.length : '') + (failed.length ? ', failed ' + failed.length : ''));
       res.json({ ok: true, written: written.length, lines: written, skipped: skipped, failed: failed,
+        replaced: replaced, not_removed: notRemoved,
         // Butt-weld weights this commit supplied because the Deluge workflow does not
         // produce them on an API write. Surfaced so the count is visible rather than implied.
         computed_butt_weld_weights: computedBw,

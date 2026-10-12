@@ -191,7 +191,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.64 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.65 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -302,7 +302,8 @@
     // quote_notes likewise: the clarifications keep every dismissed conflict and gap, which the
     // synopsis no longer holds, so they can't be rebuilt from it on another machine.
     const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
-                superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[], check:R.check||null, checked_v1:!!R.checked_v1 };
+                superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[], check:R.check||null, checked_v1:!!R.checked_v1,
+                fittings_written:R.fittings_written||[] };
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
@@ -3433,8 +3434,11 @@
           if(fl.length && params.project_id){
             c.innerHTML='<span class="spin"></span>Putting the fittings on the project…';
             const fr=await fetch(RAILWAY_URL+"/api/takeoff/commit-fittings",{method:"POST",headers:{"Content-Type":"application/json"},
-              body:JSON.stringify({project_id:params.project_id, manufacturer_id:params.manufacturer_id, fittings:fl})});
+              body:JSON.stringify({project_id:params.project_id, manufacturer_id:params.manufacturer_id, fittings:fl,
+                // The rows the last approve wrote — replaced, not added to (Amrize got its fittings 3×).
+                prior_ids:arr(R.fittings_written).map(function(w){ return w.id; }).filter(Boolean)})});
             fit=await fr.json();
+            if(fit&&fit.ok){ const R4=loadResult(); R4.fittings_written=arr(fit.lines); saveResult(R4); }
           }
         }catch(e){ console.error("[commit-fittings]",e); }
         // Labor hours onto the project, one record per component. Best-effort like the fittings.
