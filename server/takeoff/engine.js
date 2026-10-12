@@ -449,6 +449,9 @@ const TAKEOFF_TOOL = buildTakeoffTool(true);
 
 function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, projectContext, liveCatalog, fittingsCatalog) {
   const base =
+    "PIPE NOTATION: the only wall designations are STD (SCH 40), XS (SCH 80) and XXS. A digit run into the schedule belongs to the SIZE: " +
+    "'PIPE 1-1/2\"STD', '1-1/22STD' or a line-wrapped '1-1/' + '2STD' is 1-1/2\" STD (SCH 40) — there is no '2STD' or 'double standard' schedule, " +
+    "so never raise it as a question or conflict. (Amrize 2026-10-11: '2STD' became a decision and was quoted as XS.)\n" +
     "METRIC DRAWINGS: lengths are in FEET in your output. Convert millimetres by dividing by 304.8 (1 ft = 304.8 mm; 6414 mm = 21.04 ft, NOT 210.4). " +
     "Where the drawing also gives a bracketed imperial value like [13-1 5/16], use it. A flat bar given in mm as FB<thickness>x<width> " +
     "(e.g. FB6.35x101.6) is thickness x width converted to inches (1/4 x 4) — never write the width twice. " +
