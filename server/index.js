@@ -1619,18 +1619,41 @@ app.post('/api/takeoff/commit', async (req, res) => {
     const recId = createResp.data && createResp.data.data && createResp.data.data.ID;
     if (!recId) return res.status(502).json({ ok: false, error: 'create returned no record ID', detail: createResp.data });
 
-    // 2. upload the CSV to the BOM_CSV_File field
-    const fd = new FormData();
-    fd.append('file', Buffer.from(import_csv, 'utf8'), { filename: 'takeoff-bom-' + project_id + '.csv', contentType: 'text/csv' });
-    await axios.post(base + '/report/Import_BOM_Form_Report/' + recId + '/BOM_CSV_File/upload', fd,
-      { headers: { ...zohoHeaders(token), ...fd.getHeaders() } });
+    // 2+3. upload the CSV and set Run_Import (the edit fires the validator with the file present).
+    //
+    // IN PIECES. The validator reads the file with `input.BOM_CSV_File.content`, which comes back
+    // EMPTY for a file of ~20-30 KB and up — no error, just "Validation complete — 0 valid". Amrize's
+    // 530 rows (42 KB) staged nothing; 120 and 200 rows went through (tested 2026-10-12). So a long
+    // BOM goes up CHUNK_ROWS at a time, each piece re-using the template's 6 header lines. The first
+    // piece clears staging as before; later pieces set Chunk_Append, which the validator honours by
+    // skipping its "delete this import's staging rows" step — one import, one staging page.
+    const CHUNK_ROWS = 150;
+    const lines = String(import_csv).split(/\r?\n/);
+    const head = lines.slice(0, 6), data = lines.slice(6).filter(function (l) { return l.trim() !== ''; });
+    const pieces = [];
+    for (let i = 0; i < data.length; i += CHUNK_ROWS) pieces.push(head.concat(data.slice(i, i + CHUNK_ROWS)).join('\n'));
+    if (!pieces.length) pieces.push(String(import_csv));
+    const check = (r, what) => {
+      const b = r && r.data;
+      if (b && typeof b.code === 'number' && b.code !== 3000) throw new Error(what + ' refused by the data service (code ' + b.code + '): ' + (b.message || JSON.stringify(b).slice(0, 200)));
+    };
+    for (let p = 0; p < pieces.length; p++) {
+      const fd = new FormData();
+      fd.append('file', Buffer.from(pieces[p], 'utf8'), { filename: 'takeoff-bom-' + project_id + (pieces.length > 1 ? '-part' + (p + 1) : '') + '.csv', contentType: 'text/csv' });
+      check(await axios.post(base + '/report/Import_BOM_Form_Report/' + recId + '/BOM_CSV_File/upload', fd,
+        { headers: { ...zohoHeaders(token), ...fd.getHeaders() } }), 'BOM file upload' + (pieces.length > 1 ? ' (part ' + (p + 1) + ')' : ''));
+      const patch = p === 0 ? { Run_Import: 'true' } : { Chunk_Append: 'true', Run_Import: 'true' };
+      if (p > 0) {
+        // Re-arm the trigger: Run_Import is already true after the first piece.
+        await axios.patch(base + '/report/Import_BOM_Form_Report/' + recId, { data: { Run_Import: 'false' } },
+          { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      }
+      check(await axios.patch(base + '/report/Import_BOM_Form_Report/' + recId, { data: patch },
+        { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } }), 'Starting the BOM validation' + (pieces.length > 1 ? ' (part ' + (p + 1) + ')' : ''));
+    }
+    if (pieces.length > 1) console.log('[takeoff commit] BOM sent in ' + pieces.length + ' parts of up to ' + CHUNK_ROWS + ' rows (' + data.length + ' rows) to import ' + recId);
 
-    // 3. set Run_Import -> the edit fires the import workflow with the file present
-    await axios.patch(base + '/report/Import_BOM_Form_Report/' + recId,
-      { data: { Run_Import: 'true' } },
-      { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-
-    return res.json({ ok: true, import_id: recId });
+    return res.json({ ok: true, import_id: recId, parts: pieces.length, rows: data.length });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('takeoff commit error:', detail);
