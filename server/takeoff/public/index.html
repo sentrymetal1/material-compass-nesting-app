@@ -599,7 +599,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.72 (2026-10-11)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.73 (2026-10-11)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -2374,6 +2374,15 @@
       return out;
     }
     async function fileDrawingUnder(s, cid) {
+      // Already on this very component but ✕'d out of the run: bring it back. Nothing to write — this
+      // case used to do nothing at all, so "Add these drawings" looked broken.
+      const here = compById(cid);
+      const onHere = here ? here.drawings.filter((d) => _norm(d.number) === _norm(s.number)) : [];
+      if (onHere.length) {
+        onHere.forEach((d) => { delete excluded.d[String(d.id)]; });
+        descMap[s.number] = s.title || descMap[s.number] || "";
+        return;
+      }
       const moves = movableRecords(s.number, cid);
       for (const d of moves) {
         await scopeApi("update", { kind: "drawing", id: d.id, value: d.number, component_id: cid });
