@@ -191,7 +191,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.63 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.64 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -3357,6 +3357,19 @@
 
   async function approve(){
     const R=loadResult();
+    // Always ask first. The button sits just under the AI chat's Send, and one stray click wrote the
+    // BOM, labor and clarifications to the project (Mark, 2026-10-12).
+    if(!R.__demo){
+      const nRows=arr(R.rows).filter(function(x){ return !x.deleted; }).length, nFit=arr(R.fittings).length;
+      let wtLb=0;
+      if(typeof rowWeight==="function") arr(R.rows).forEach(function(x){ if(x.deleted) return; const w=rowWeight(x); if(w&&w.total) wtLb+=w.total; });
+      const wt={lb:wtLb};
+      if(!(await mcConfirm("Approve & submit this take-off to the project?\n\n"+
+          nRows+" BOM row"+(nRows===1?"":"s")+(nFit?" · "+nFit+" fitting line"+(nFit===1?"":"s"):"")+
+          (wt&&wt.lb?" · "+Math.round(wt.lb).toLocaleString("en-US")+" lb":"")+
+          "\n\nThis writes the bill of material, labor and quote clarifications onto the project.",
+          {title:"Approve & Submit",okText:"Yes, submit",cancelText:"Not yet"}))) return;
+    }
     // Soft-gate: if the drawings reference components not on the project, they'll import with a
     // blank Component link. Warn (don't block) — mirrors the "your call" decisions philosophy.
     if(!R.__demo && params.project_id && PROJECT_SCOPE){
