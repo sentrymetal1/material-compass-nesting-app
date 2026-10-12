@@ -1358,7 +1358,10 @@ function registerTriageRoutes(app, deps) {
       console.error('[triage] scheduled scan error:', e.response?.data || e.message);
     }
   }
-  let lastDailyScanDay = null;
+  // The day of the last scan is kept on the volume. In memory only, every deploy restarted the
+  // server and scanned again — four deploys on 2026-10-11 meant four "daily" scans, 109 Zoho calls.
+  const SCAN_DAY_FILE = 'triage-last-daily-scan.json';
+  let lastDailyScanDay = (function () { try { return (filestore.readJson(SCAN_DAY_FILE, {}) || {}).day || null; } catch (e) { return null; } })();
   function dailyCheck() {
     try {
       const now = new Date();
@@ -1366,6 +1369,7 @@ function registerTriageRoutes(app, deps) {
       const etDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
       if (etHour >= 6 && lastDailyScanDay !== etDay) {
         lastDailyScanDay = etDay;
+        try { filestore.writeJson(SCAN_DAY_FILE, { day: etDay, at: now.toISOString() }); } catch (e) { /* worst case: one extra scan */ }
         console.log('[triage] daily scheduled scan trigger for ' + etDay);
         runScheduledScan();
       }
