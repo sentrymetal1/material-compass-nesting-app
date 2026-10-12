@@ -43,7 +43,31 @@ function batchNote(plan, b) {
     (b === 0
       ? " If a parts list has items that appear on NO drawing in the whole package (this part or the others listed above), raise them here as list_only."
       : " Do NOT raise rows that come only from a parts list (list_only) — part 1 handles those. Use the list here to check and correct the members you find on these drawings.") +
-    " Your synopsis should cover THIS part only; the parts are combined afterwards.";
+    " Your synopsis should cover THIS part only; the parts are combined afterwards." +
+    " The drawings in the other parts ARE being taken off: never list them as gaps, missing, 'not attached' or 'in another part'," +
+    " and never mention parts or 'Part N of N' in the project summary — the reader sees one combined take-off.";
+}
+
+// After the parts are combined: drop what only made sense inside one part. Amrize (2026-10-11): five
+// gaps like "Drawings 10060–10066 not attached to this part" and a summary saying "This is Part 1 of 3"
+// reached the quote clarifications as exclusions, though every one of those drawings WAS taken off.
+const PART_TALK = /\b(other[\s-]+parts?|this part|in part \d|parts? \d+\s*(of|and|or|\/|&)\s*\d+|not attached to this part|taken off in (the )?other|remaining drawings are taken off)\b/i;
+function scrubPartTalk(syn) {
+  if (!syn || typeof syn !== "object") return syn;
+  const dropped = [];
+  ["gaps", "conflicts", "decisions", "compliance"].forEach(function (k) {
+    if (!Array.isArray(syn[k])) return;
+    syn[k] = syn[k].filter(function (it) {
+      const t = typeof it === "string" ? it : JSON.stringify(it || {});
+      if (PART_TALK.test(t)) { dropped.push(k + ": " + (it && (it.item || it.gap || it.question || it.title) || t).toString().slice(0, 80)); return false; }
+      return true;
+    });
+  });
+  if (syn.project && typeof syn.project.summary === "string") {
+    syn.project.summary = syn.project.summary.split(/(?<=[.!?])\s+/).filter(function (s) { return !PART_TALK.test(s) && !/\bpart \d+ of \d+\b/i.test(s); }).join(" ");
+  }
+  if (dropped.length) console.log("[takeoff] dropped " + dropped.length + " part-batching note(s): " + dropped.join(" | "));
+  return syn;
 }
 
 // BOM weight per drawing vs the drawing's printed total (synopsis.drawing_scope[].stated_weight).
@@ -171,7 +195,7 @@ async function runBatches(prepared, plan, engineOpts) {
       .filter(Boolean).join("\n\n"),
     incomplete: failed ? { part: failed.part, of: batches.length, missing: failed.missing } : null,
     truncated: outs.some(function (o) { return o.truncated; }),
-    synopsis: mergeSynopsis(outs.map(function (o) { return o.synopsis; })),
+    synopsis: outs.length > 1 ? scrubPartTalk(mergeSynopsis(outs.map(function (o) { return o.synopsis; }))) : mergeSynopsis(outs.map(function (o) { return o.synopsis; })),
     // Includes any part that was cut off and re-read in halves: that read was paid for too.
     cost_usd: Number((sum(function (o) { return o.cost_usd; }) + wasted).toFixed(4)),
     usage: { input_tokens: sum(function (o) { return o.usage && o.usage.input_tokens; }),
