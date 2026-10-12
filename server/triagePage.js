@@ -346,6 +346,9 @@ function renderTriagePage() {
           + '<button class="btn quote" onclick="decide(this,\\'quote\\')">✓ Quote</button>'
           + '<button class="btn skip" onclick="decide(this,\\'skip\\')">✗ Skip</button>'
           + link + removeBtn + '</div>'
+        // ⚠ DO NOT REMOVE — Mark's standing requirement (2026-10-11): every Quoting card shows the
+        // "What to quote" box. It went missing twice after other edits. Guarded by
+        // server/triage.quotenote.test.js — run it after ANY change to this file.
         : status==='Quoting' ? '<div class="qnote" style="margin:10px 0 2px">'
           + '<div style="font-weight:700;font-size:12.5px;color:#2b3340;margin-bottom:4px">What to quote <span style="font-weight:400;color:#8893a0">— the AI Take-off follows this</span></div>'
           + '<textarea onchange="saveNote(this)" style="width:100%;min-height:54px;box-sizing:border-box;font:inherit;font-size:13px;padding:7px 9px;border:1px solid #cdd3da;border-radius:6px;resize:vertical" '
