@@ -871,6 +871,15 @@ const takeoffMount = async (req, res) => {
     if (treeCtx) { projectContext = treeCtx; }
     else { const pid = req.body && req.body.project_id; if (pid) projectContext = await fetchProjectContext(pid); }
   } catch (e) {}
+  // WHAT TO QUOTE — the estimator's own words for this job ("handrail only, no anchor rods, galv").
+  // Written on the RFQ at Create Project or on the take-off page. It outranks the model's reading of
+  // scope: a job quoted for handrail only must not come back with the support steel in it.
+  const brief = String((req.body && req.body.quote_brief) || '').trim().slice(0, 4000);
+  if (brief) {
+    projectContext = 'THE ESTIMATOR\'S INSTRUCTIONS FOR THIS JOB (what to quote — follow these over your own reading of the scope; ' +
+      'anything they exclude is not taken off, and say in the notes where you left something out because of them):\n' +
+      brief + '\n\n' + (projectContext || '');
+  }
 
   // Phase 0 meter: deduct the visual price after a successful run, attach balance to the response.
   const origJson = res.json.bind(res);

@@ -955,6 +955,23 @@ function registerTriageRoutes(app, deps) {
   // platform is already holding. The copy into the project's own scope happens
   // here, on first read, so a later decision on the opportunity can never pull
   // documents out from under a live job.
+  // WHAT TO QUOTE — the estimator's note for a job ("handrail only, no anchor rods, galvanized"),
+  // written at Create Project and/or on the take-off page, and sent to the AI with the run.
+  // Kept on the volume (no Zoho calls, no new field), keyed 'o:<opportunity>' and 'p:<project>'.
+  const NOTES_FILE = 'quote-notes.json';
+  const readNotes = () => { try { return filestore.readJson(NOTES_FILE, {}) || {}; } catch (e) { return {}; } };
+  app.post('/api/triage/quote-note', (req, res) => {
+    const b = req.body || {};
+    const key = /^\d{6,25}$/.test(String(b.project_id || '')) ? 'p:' + b.project_id
+              : /^\d{6,25}$/.test(String(b.opportunity_id || '')) ? 'o:' + b.opportunity_id : '';
+    if (!key) return res.status(400).json({ ok: false, error: 'project_id or opportunity_id required' });
+    const notes = readNotes();
+    const note = String(b.note || '').trim().slice(0, 4000);
+    if (note) notes[key] = { note: note, at: new Date().toISOString() }; else delete notes[key];
+    try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+    res.json({ ok: true, note: note });
+  });
+
   app.get('/api/triage/source-files/:projectId', async (req, res) => {
     const projectId = req.params.projectId;
     try {
@@ -968,10 +985,20 @@ function registerTriageRoutes(app, deps) {
           try { files = filestore.listFiles('project', projectId); } catch (e) { /* leave empty */ }
         }
       }
+      // The RFQ's "what to quote" note follows it onto the project the first time the project is
+      // matched to its RFQ; after that it is the project's own (editable on the take-off page).
+      const notes = readNotes();
+      let quoteNote = notes['p:' + projectId] ? notes['p:' + projectId].note : '';
+      if (!quoteNote && opp && opp.ID && notes['o:' + opp.ID]) {
+        quoteNote = notes['o:' + opp.ID].note;
+        notes['p:' + projectId] = { note: quoteNote, at: new Date().toISOString(), from_opportunity: String(opp.ID) };
+        try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { /* the note still goes back this time */ }
+      }
       res.json({
         ok: true, project_id: projectId, files,
         durable: filestore.isDurable(),
         opportunity: opp ? { id: opp.ID, project: opp.Project || '', summary: opp.Summary || '' } : null,
+        quote_note: quoteNote,
       });
     } catch (err) {
       if (isQuotaError(err)) return res.json({ ok: true, project_id: projectId, files: [], quota: true });

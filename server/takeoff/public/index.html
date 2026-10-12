@@ -453,6 +453,17 @@
     <div id="fromRfq" style="display:none;margin:0 0 16px;padding:11px 13px;background:#eefaf1;
          border:1px solid #bfe3c9;border-radius:8px;font-size:13px;color:#264;"></div>
 
+    <!-- WHAT TO QUOTE: the estimator's instructions for this job, written at Create Project on the
+         RFQ or here. Sent with the run; the AI follows it over its own reading of the scope. -->
+    <div style="margin:0 0 16px;padding:11px 13px;background:#fbfcfe;border:1px solid #dfe6ee;border-radius:8px;">
+      <label for="quoteBrief" style="display:block;font-size:13px;font-weight:700;color:#2b3340;margin-bottom:5px">
+        What to quote <span style="font-weight:400;color:#8893a0">— optional; the AI follows it</span></label>
+      <textarea id="quoteBrief" rows="2" style="width:100%;box-sizing:border-box;font:inherit;font-size:13px;padding:7px 9px;
+        border:1px solid #cdd3da;border-radius:6px;resize:vertical"
+        placeholder="e.g. Handrail and guardrail only. Exclude anchor rods and the support steel. Hot-dip galvanized."></textarea>
+      <div id="quoteBriefNote" style="font-size:11.5px;color:#8893a0;margin-top:4px"></div>
+    </div>
+
     <div id="resume" style="display:none;margin:0 0 16px;padding:11px 13px;background:#f0f6fc;
          border:1px solid #cfe0f2;border-radius:8px;font-size:13px;color:#334;">
       💾 You have a saved take-off for this project.
@@ -588,7 +599,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.71 (2026-10-08)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.72 (2026-10-11)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -740,6 +751,22 @@
         .catch(function () {});
     }
 
+    // "What to quote": saved for the project when it changes (on the server's own disk, no Zoho calls),
+    // so a reopened take-off and the next run get the same instructions.
+    (function () {
+      const qb = document.getElementById("quoteBrief");
+      if (!qb) return;
+      qb.addEventListener("change", () => {
+        if (!params.project_id) return;
+        fetch(RAILWAY_URL + "/api/triage/quote-note", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_id: params.project_id, note: qb.value.trim() }) })
+          .then((r) => r.json()).then((j) => {
+            const qn = document.getElementById("quoteBriefNote");
+            if (qn && j && j.ok) qn.textContent = j.note ? "Saved for this project. The AI follows it on the next run." : "Cleared.";
+          }).catch(() => {});
+      });
+    })();
+
     // RFQ files the estimator ✕'d on this project: key → name. Read with no argument, write with one.
     function rfqOff(set) {
       const k = "mc_rfqoff_" + (params.project_id || "_");
@@ -764,6 +791,13 @@
         const r = await fetch(RAILWAY_URL + "/api/triage/source-files/" + encodeURIComponent(params.project_id));
         d = await r.json();
       } catch (e) { return; }
+      // The "what to quote" note written on the RFQ at Create Project (or here, earlier).
+      const qb = document.getElementById("quoteBrief");
+      if (qb && !qb.value.trim() && d && d.quote_note) {
+        qb.value = d.quote_note;
+        const qn = document.getElementById("quoteBriefNote");
+        if (qn) qn.textContent = "From the RFQ. Edit it if the scope has changed — it is saved for this project.";
+      }
       const all = (d && d.files) || [];
       if (!all.length) return;
       const pdfs = all.filter((f) => /pdf$/i.test(f.media_type || "") || /\.pdf$/i.test(f.name || ""));
@@ -3544,6 +3578,7 @@
               .map((d) => ({ name: d.name, file_id: d.fileId || null })),
             model: document.getElementById("model").value,
             scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
+            quote_brief: ((document.getElementById("quoteBrief") || {}).value || "").trim(),   // the estimator's "what to quote"
             // Everything the estimator decided about coverage travels with the run: which sheets to
             // skip and why, and any sheet whose number on the drawing differs from the project's.
             reference_drawings: referenceSheets.map((x) => ({ number: x.number, title: x.title, reason: x.reason }))

@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-09-30-1';
+const BUILD_TAG = 'triage-ui-2026-10-11-1';
 
 // The narrated walkthrough of this page. Linked rather than embedded: this page
 // is itself inside an iframe on the Zoho dashboard and a nested iframe with sound
@@ -652,10 +652,38 @@ function renderTriagePage() {
     var x=new Date(t);
     return MON3[x.getMonth()]+' '+String(x.getDate()).padStart(2,'0')+','+x.getFullYear()+' 00:00:00';
   }
-  window.createProject=function(btn){
+  // Create Project first asks what is being quoted. The note travels with the RFQ to the take-off,
+  // which shows it and sends it to the AI as the estimator's instructions for the job.
+  function oppOf(btn){
     var c=btn.closest('.card'); var id=c.getAttribute('data-id');
-    var o=null; for(var i=0;i<all.length;i++){ if(String(all[i].id)===String(id)){ o=all[i]; break; } }
+    for(var i=0;i<all.length;i++){ if(String(all[i].id)===String(id)) return all[i]; }
+    return null;
+  }
+  window.createProject=function(btn){
+    var c=btn.closest('.card');
+    if(c.querySelector('.qnote')) return;
+    var box=document.createElement('div');
+    box.className='qnote';
+    box.style.cssText='margin-top:10px;padding:12px;border:1px solid #cfe0f2;border-radius:8px;background:#f5f9fd';
+    box.innerHTML='<div style="font-weight:700;font-size:13px;margin-bottom:6px">What do you want quoted?</div>'
+      + '<textarea style="width:100%;min-height:70px;box-sizing:border-box;font:inherit;font-size:13px;padding:8px;border:1px solid #cdd3da;border-radius:6px" '
+      + 'placeholder="e.g. Handrail and guardrail only. Exclude anchor rods and the support steel. Hot-dip galvanized."></textarea>'
+      + '<div style="font-size:11.5px;color:#66707c;margin:4px 0 8px">The AI Take-off follows this note. You can change it there before the run.</div>'
+      + '<button class="btn project" onclick="confirmCreate(this)">Create Project</button> '
+      + '<button class="btn skip" onclick="this.closest(&quot;.qnote&quot;).remove()">Cancel</button>';
+    c.appendChild(box);
+    box.querySelector('textarea').focus();
+  };
+  window.confirmCreate=function(btn){
+    var o=oppOf(btn);
     if(!o){ notify('Could not find this opportunity to create a project.','bad'); return; }
+    var note=(btn.closest('.qnote').querySelector('textarea').value||'').trim();
+    openProjectForm(o);   // first, while it is still the click: an await before window.open gets it blocked
+    btn.closest('.qnote').remove();
+    if(note) fetch('/api/triage/quote-note',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({opportunity_id:o.id, note:note})}).catch(function(){ notify('The quote note could not be saved.','bad'); });
+  };
+  function openProjectForm(o){
     var qp='?description='+encodeURIComponent(o.project||'');
     var dueField=fmtDueForField(o.due_date); if(dueField) qp+='&due='+encodeURIComponent(dueField);
     if(o.id) qp+='&quote_id='+encodeURIComponent(o.id);
