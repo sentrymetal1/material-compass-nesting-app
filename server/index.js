@@ -922,21 +922,35 @@ app.post('/api/takeoff', takeoffMount);
 // given and the weights the review page shows both come from this, so weights cost no Zoho calls of
 // their own. Weight_Lb_Ft is per FOOT for shapes and per SQUARE FOOT for area-measured forms (plate,
 // sheet, tread plate: 1/2" steel plate = 20.42, 10 ga sheet = 5.624).
+// THE STEEL CATALOG, ONCE. Beam_Channel_Tee_Lookup_Report (~8,858 sizes, ~45 Zoho calls) was
+// downloaded separately by the take-off catalog (12 h), the nesting BOM's weight map (12 h) and the
+// approve-time BOM preview (15 min!) — up to ~45 calls per copy, several times a day, from the
+// 1,000-call allowance every shop shares. One trimmed copy now serves all three; at 12 h it is also
+// kept on the volume, so a deploy does not buy it again.
+async function catalogSizeRows() {
+  return cachedLookup('catalog:size-rows', 12 * 60 * 60 * 1000, async () =>
+    (await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report')).map(function (x) {
+      return { id: String(x.ID), d: String(x.Description || '').trim(),
+               ft: String((x.Form_Types && x.Form_Types.ID) || ''), mt: String((x.Material_Types && x.Material_Types.ID) || ''),
+               spec: String((x.Specification && x.Specification.ID) || ''),
+               w: parseFloat(x.Weight_Lb_Ft) || 0, sa: parseFloat(x.Surface_Area_Per_FT) || 0 };
+    }));
+}
+
 async function catalogRows() {
   return cachedLookup('takeoff:catalog-rows', 12 * 60 * 60 * 1000, async () => {
     // Same reports the BOM-editor lookups use — proven link names, don't guess new ones.
     const ftRows = await fetchAllZohoPages('/report/Form_Types_Report?criteria=(Active==true)');
     const mtRows = await fetchAllZohoPages('/report/Material_Types_Report');
-    const sizes = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report');
+    const sizes = await catalogSizeRows();
     const ft = {}, mt = {};
     ftRows.forEach(function (r) { ft[String(r.ID)] = String(r.Form_Type || '').trim(); });
     mtRows.forEach(function (r) { mt[String(r.ID)] = String(r.Material_Type || '').trim(); });
     const out = [];
     sizes.forEach(function (r) {
-      const d = String(r.Description || '').trim();
-      const f = ft[String((r.Form_Types && r.Form_Types.ID) || '')] || '';
-      if (!d || !f) return;
-      out.push({ d: d, f: f, m: mt[String((r.Material_Types && r.Material_Types.ID) || '')] || '', w: parseFloat(r.Weight_Lb_Ft) || 0 });
+      const f = ft[r.ft] || '';
+      if (!r.d || !f) return;
+      out.push({ d: r.d, f: f, m: mt[r.mt] || '', w: r.w });
     });
     return out;
   });
@@ -1462,15 +1476,8 @@ app.post('/api/takeoff/bom-preview', async (req, res) => {
                              matTypeId: String((x.Material_Type && x.Material_Type.ID) || ''),
                              typeDetail: String(x.Type_Detail || '').trim() }));
       }),
-      cachedLookup('bom-lookups:materials:*|*', 15 * 60 * 1000, async () => {
-        const r = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report');
-        return r.map(x => ({ id: String(x.ID), description: String(x.Description || '').trim(),
-                             formTypeId: String((x.Form_Types && x.Form_Types.ID) || ''),
-                             matTypeId: String((x.Material_Types && x.Material_Types.ID) || ''),
-                             specId: String((x.Specification && x.Specification.ID) || ''),
-                             weightPerFt: parseFloat(x.Weight_Lb_Ft) || 0,
-                             saPerFt: parseFloat(x.Surface_Area_Per_FT) || 0 }));
-      }),
+      catalogSizeRows().then(r => r.map(x => ({ id: x.id, description: x.d, formTypeId: x.ft, matTypeId: x.mt,
+                                                 specId: x.spec, weightPerFt: x.w, saPerFt: x.sa }))),
       fetchAllZohoPages('/report/All_Project_Components?criteria=(MCP_Customer_Project_Form==' + pid + ')')
         .then(r => r.map(x => ({ id: String(x.ID), name: String(x.Project_Component || '').trim() })))
         .catch(() => []),
@@ -2103,9 +2110,9 @@ const MATERIAL_WEIGHT_TTL_MS = 12 * 60 * 60 * 1000;
 async function getMaterialWeightMap() {
   return cachedLookup('material-weight-map', MATERIAL_WEIGHT_TTL_MS, async () => {
     const startedAt = Date.now();
-    const rows = await fetchAllZohoPages('/report/Beam_Channel_Tee_Lookup_Report');
+    const rows = await catalogSizeRows();   // the shared copy — no download of its own
     const map = {};
-    rows.forEach(r => { map[String(r.ID)] = parseFloat(r.Weight_Lb_Ft) || 0; });
+    rows.forEach(r => { map[r.id] = r.w; });
     console.log('material-weight-map built: ' + Object.keys(map).length + ' materials from '
       + rows.length + ' rows (~' + Math.ceil(rows.length / 200) + ' API calls, '
       + (Date.now() - startedAt) + 'ms) — cached for ' + (MATERIAL_WEIGHT_TTL_MS / 3600000) + 'h');
