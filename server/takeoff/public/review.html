@@ -191,7 +191,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.62 · 2026-10-08";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.63 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -2288,13 +2288,18 @@
 
       // gaps + conflicts
       ((gaps.length||conflicts.length)?'<div class="card"><h2>◷ Gaps &amp; ⚡ Conflicts</h2><div class="body twoup">'+
-        (gaps.length?'<details open><summary>◷ Gaps to verify ('+gaps.length+')</summary><ul>'+
+        (gaps.length?'<details open><summary>◷ Gaps to verify ('+gaps.length+')</summary>'+
+          '<div class="src" style="margin:4px 0 6px">No action needed: anything left here goes on your quote as an exclusion '+
+          '(<i>not included unless confirmed</i>). <b>✕ Not needed</b> = it is handled or does not apply — removed from the quote.</div><ul>'+
           gaps.map((g,i)=>'<li>'+esc(g.item)+(g.where?' <span class="src">'+esc(g.where)+'</span>':'')+
-          ' <button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="dismissGap('+i+')" title="Remove this gap">✕</button>'+
+          ' <button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="dismissGap('+i+')" title="Handled or does not apply: remove it from this list and from the quote. The BOM is not changed.">✕ Not needed</button>'+
           (g.suggested_action?'<br><span class="src">→ '+esc(g.suggested_action)+'</span>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
-        (conflicts.length?'<details open><summary>⚡ Conflicts ('+conflicts.length+')</summary><ul>'+
+        (conflicts.length?'<details open><summary>⚡ Conflicts ('+conflicts.length+')</summary>'+
+          '<div class="src" style="margin:4px 0 6px">No action needed: anything left here goes on your quote as a clarification '+
+          '(<i>this quote is based on…</i>). <b>Apply &amp; resolve</b> = the AI changes the BOM to follow the → recommendation. '+
+          '<b>✕ Keep BOM</b> = leave the BOM as it is and drop the note.</div><ul>'+
           conflicts.map((c,i)=>'<li><b>'+esc(c.topic)+'</b>'+
-          ' <button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="dismissConflict('+i+')" title="Remove this conflict (no change to BOM)">✕</button>'+
+          ' <button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="dismissConflict('+i+')" title="Leave the BOM as it is and drop this note (also from the quote).">✕ Keep BOM</button>'+
           (c.drawing_says?' — drawing: '+esc(c.drawing_says):'')+(c.spec_says?' · spec: '+esc(c.spec_says):'')+
           conflictWhereHtml(c)+
           (c.recommendation?'<br><span class="src">→ '+esc(c.recommendation)+'</span> <button class="applybtn" onclick="applyConflict('+i+')">Apply &amp; resolve</button>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
