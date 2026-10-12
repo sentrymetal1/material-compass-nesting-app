@@ -461,7 +461,12 @@
         navigateParentURL: function (url) { post("takeoff:navigate", { url: url }); },
       },
       API: {
-        getAllRecords: function () { return Promise.resolve({ code: 3000, data: rows.slice() }); },
+        // Paged like Zoho: the editor loops while a page comes back full, so handing every
+        // row back for every page would never end.
+        getAllRecords: function (a) {
+          var size = (a && a.pageSize) || 200, page = (a && a.page) || 1;
+          return Promise.resolve({ code: 3000, data: rows.slice((page - 1) * size, page * size) });
+        },
         getRecordById: function () { return Promise.resolve({ code: 3000, data: project || {} }); },
         updateRecord: function (a) {
           var r = byId(a && a.id), d = (a && a.data && a.data.data) || {};
@@ -588,7 +593,7 @@
 <div id="bom-table" style="display:none;"></div>
 
 <div class="footer-note">
-  <span id="build-tag-display">v2.26.1</span> — Rows you add but leave blank (no material, or qty 0) are now caught on Save or Back to Project: discard them, or go back and finish. v2.25.0: Add Row appends at the BOTTOM and takes the next number; existing rows keep theirs.
+  <span id="build-tag-display">v2.27.0</span> — Tab now always moves to the next editable cell and commits what you picked or typed (dropdowns used to swallow it). New rows get their line number as the Tag. The # column shows in full and can be dragged wider. v2.26.1: blank rows you add are caught on Save or Back to Project.
 </div>
 
 <div id="toast" class="toast"></div>
@@ -611,7 +616,7 @@
 </div>
 
 <script>
-const BUILD_TAG = "v2.27.0 (2026-08-21)";
+const BUILD_TAG = "v2.28.0 (2026-10-12)";
 console.log('[BOM Editor] build:', BUILD_TAG);
 // The footer used to carry its own hardcoded version and drifted two releases
 // behind BUILD_TAG, which reads as "the deploy didn't work". Drive it from the
@@ -1160,7 +1165,7 @@ async function commitChanges() {
 
     if (survived.length > 0) {
       await customAlert(
-        `Saved — totals recalculated.\n\n${survived.length} row(s) marked for delete were NOT removed. They are still recorded as tied to purchasing or allocated material, so the delete-protection kept them.\n\nIf the project's Purchase Material tab is empty, that count is stale — turn on "Show deleted" and use the red ✕ to permanently delete those rows.`,
+        `Saved — totals recalculated.\n\n${survived.length} row(s) marked for delete were NOT removed. Zoho still reports them as tied to purchasing/allocated material, so the delete-protection kept them.\n\nIf the project's Purchase Material tab is empty, that count is stale — turn on "Show deleted" and use the red ✕ to permanently delete those rows.`,
         {title: 'Save complete — some rows kept', okText: 'Got it'}
       );
     } else {
@@ -1517,14 +1522,20 @@ async function loadOneLookup(reportName) {
   cache.optionsList.sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
 }
 
+// Zoho caps a page at 200, so ask for exactly 200 and keep going while pages come back full.
+// (Asking for 1000 got 200 back, read as "last page", and stopped. A single 200 read showed
+// Amrize as 200 rows / 2,418 lb of its 530 rows, 2026-10-12.) Zoho answers a page past the end
+// with an error instead of an empty list, so a failure after page 1 means "done".
 async function fetchAllPages(reportName, criteria) {
   const all = [];
   let page = 1;
-  const pageSize = 1000;
+  const pageSize = 200;
   while (true) {
     const params = { appName: APP_NAME, reportName: reportName, page: page, pageSize: pageSize };
     if (criteria) params.criteria = criteria;
-    const resp = await ZOHO.CREATOR.API.getAllRecords(params);
+    let resp;
+    try { resp = await ZOHO.CREATOR.API.getAllRecords(params); }
+    catch (e) { if (page > 1) break; throw e; }
     const rows = Array.isArray(resp?.data) ? resp.data : Array.isArray(resp) ? resp : [];
     if (rows.length === 0) break;
     all.push(...rows);
@@ -1551,11 +1562,11 @@ async function fetchRailwayLookup(path) {
     try { body = await resp.json(); } catch (_) {}
     if (body?.zoho_code === 4000 && !zohoQuotaExhausted) {
       zohoQuotaExhausted = true;
-      showToast('Daily data limit reached. Dropdowns will repopulate after it resets overnight.', 'error');
+      showToast('Zoho daily API quota reached. Dropdowns will repopulate after midnight UTC.', 'error');
       const banner = document.getElementById('quota-banner');
       if (banner) banner.style.display = 'block';
     }
-    throw new Error('Daily data limit reached on ' + path);
+    throw new Error('Zoho quota exhausted on ' + path);
   }
   if (!resp.ok) throw new Error('HTTP ' + resp.status + ' on ' + path);
   return await resp.json();
@@ -1642,16 +1653,9 @@ function computeNestDims(row) {
 //   Panel Area (if SA):  ((L_in × W_in) / 144) × 2 × Quantity   (top + bottom faces)
 //   Linear Area (if SA): Quantity × Surface_Area_Per_Ft × (Length_FT + Length_INCH.Result / 12)
 //   Galv_LB = CalcWeight when Galv ticked, else 0
-//     (The Zoho workflow spells this `if (row.Galv = true)`. That is NOT a bug and
-//      Galv_LB is not always set: Deluge treats a single `=` inside an if() as a
-//      COMPARISON. An earlier note here called it an assignment and it was wrong —
-//      corrected 2026-09-26. Proof it compares: the `populate subforms` action on
-//      Job_Form loops the whole WO BOM guarded by `if(Work_Order_LU.Job_Form =
-//      input.ID)`; if that assigned, every WO BOM row on the platform would have
-//      been reassigned to the last job opened. Production data is intact.
-//      This matters here because Galv_LB is what a GALVANIZER quotes against —
-//      they price per pound, not per square foot — so an over-reported one would
-//      put weight on the RFQ for parts nobody is galvanizing.)
+//     (NB: Zoho workflow has bug `if (row.Galv = true)` — assignment, not comparison.
+//      That makes Galv_LB always set even when unchecked. Widget uses correct
+//      boolean check; if you ever want to mirror the buggy behavior, ping me.)
 // (Zoho workflow gates the whole unit-weight block behind `if CalcWeight != 0` —
 //  chicken-and-egg for new rows. Widget always computes, no gate.)
 function computeBomCalcs(row) {
@@ -1659,11 +1663,6 @@ function computeBomCalcs(row) {
   const meta = materialMetaById[row.material];
   if (!meta || !meta.weight_per_ft) return null;
   const wpf = meta.weight_per_ft;
-  // A material record with no Surface_Area_Per_Ft collapses to 0 here, and a linear row with
-  // SA ticked then reports 0.00 ft² — indistinguishable on screen from a row that genuinely
-  // has no area. Same failure as a blank Weight_Per_Ft becoming a zero weight in nesting.
-  // The number still has to be a number for the Zoho write, so it stays 0; what changes is
-  // that the row now SAYS it is unknown, and the totals say how many.
   const sapf = meta.surface_area_per_ft || 0;
 
   const lengthFt    = Number(row.ftL) || 0;
@@ -1695,11 +1694,6 @@ function computeBomCalcs(row) {
     }
   }
 
-  // Asked for an area, on a linear row, and the catalog cannot supply the per-foot figure.
-  // That is UNKNOWN, not zero. Panel rows are exempt: their area comes from their own
-  // dimensions, so they never need the catalog value.
-  const areaUnknown = row.sa === true && !isPanelRow(row) && !(sapf > 0);
-
   // Galv_LB — only set if Galv checkbox is on.
   const galvLb = row.galv === true ? totWt : 0;
 
@@ -1707,9 +1701,6 @@ function computeBomCalcs(row) {
     unitWt: Math.round(unitWt * 100) / 100,
     totWt:  Math.round(totWt  * 100) / 100,
     area:   Math.round(area   * 100) / 100,
-    // Carried so the row and the totals can say the figure was never known, rather than
-    // letting a 0.00 pass for a measurement.
-    areaUnknown: areaUnknown,
     // Galv_LB Zoho field is configured for 0 decimal places — must be integer.
     galvLb: Math.round(galvLb),
     // Per-foot weight from the material catalog. Persisted to the BOM's
@@ -1944,19 +1935,10 @@ async function preloadCombosFromBOM() {
 
 async function loadBOM() {
   try {
-    const [resp] = await Promise.all([
-      ZOHO.CREATOR.API.getAllRecords({
-        appName:    APP_NAME,
-        reportName: REPORT_NAME,
-        criteria:   `MCP_Customer_Project_Form == ${projectId}`,
-        pageSize:   200
-      }),
+    const [rows] = await Promise.all([
+      fetchAllPages(REPORT_NAME, `MCP_Customer_Project_Form == ${projectId}`),
       loadLookups()
     ]);
-
-    const rows = Array.isArray(resp?.data) ? resp.data
-              : Array.isArray(resp)        ? resp
-              : [];
 
     bomData = rows.map(mapRecord).sort((a, b) => a.lineItem - b.lineItem);
     // Backfill mandatory Supplied/Finish on rows imported before these defaults
@@ -2046,27 +2028,7 @@ function updateStats() {
   const totalGalv  = kept.reduce((s,r) => s + (r.galvLb  || 0), 0);
   const totalAlloc = kept.reduce((s,r) => s + (r.allocatedAmt || 0), 0);
   document.getElementById('stat-weight').textContent  = Math.round(totalWt).toLocaleString() + ' lbs';
-  // ── AN AREA THAT WAS NEVER KNOWN MUST NOT READ AS ZERO ────────────────────────────────
-  // Surface area is what a COATER quotes against, so a silent 0.00 sends a paint or powder
-  // RFQ out with no quantity on it and nothing to say why. Counted here rather than threaded
-  // through every row update: same inputs, one place.
-  const areaUnknownRows = kept.filter(function (r) {
-    if (r.sa !== true || isPanelRow(r)) return false;      // panels need no catalog figure
-    const m = r.material ? materialMetaById[r.material] : null;
-    return !(m && m.surface_area_per_ft > 0);
-  }).length;
-  const areaEl = document.getElementById('stat-area');
-  areaEl.textContent = totalArea.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ft²';
-  if (areaUnknownRows) {
-    areaEl.textContent += '  (+' + areaUnknownRows + ' unknown)';
-    areaEl.style.color = '#9a6400';
-    areaEl.title = areaUnknownRows + ' row' + (areaUnknownRows === 1 ? ' has' : 's have') +
-      ' surface area ticked but no Surface Area Per FT on the material record, so they ' +
-      'contribute nothing to this total. The coating RFQ will be short by that much.';
-  } else {
-    areaEl.style.color = '';
-    areaEl.title = '';
-  }
+  document.getElementById('stat-area').textContent    = totalArea.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ft²';
   document.getElementById('stat-galv').textContent    = Math.round(totalGalv).toLocaleString() + ' lbs';
   document.getElementById('stat-dollars').textContent = '$' + totalAlloc.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
 }
@@ -2604,7 +2566,7 @@ async function hardDeleteAllMarked() {
     return;
   }
   if (!(await customConfirm(
-        `Permanently delete ${marked.length} row(s) marked for delete? This deletes the records outright and CANNOT be undone.`,
+        `Permanently delete ${marked.length} row(s) marked for delete? This calls Zoho's record-delete directly and CANNOT be undone.`,
         {title: 'Permanently delete all marked', okText: `Delete ${marked.length}`}))) return;
 
   btn.disabled = true;
@@ -2656,11 +2618,11 @@ async function hardDeleteAllMarked() {
   } else if (ok === 0) {
     // EVERY call failed -> systemic (permission, API method, or a deny workflow), not per-row.
     await customAlert(
-      `All ${failed} deletes failed — none succeeded.\n\nThis is a single root cause, not row-by-row blocking (delete permission, API call, or a deny workflow).\n\nExact error returned:\n${firstErrDetail}`,
+      `All ${failed} deletes failed — none succeeded.\n\nThis is a single root cause, not row-by-row blocking (delete permission, API call, or a deny workflow).\n\nExact error Zoho returned:\n${firstErrDetail}`,
       {title: 'Delete failed', okText: 'OK'});
   } else {
     await customAlert(
-      `${ok} row(s) deleted, ${failed} failed.\n\nThe failed rows are likely still tied to purchasing or allocated material.\n\nFirst error:\n${firstErrDetail}`,
+      `${ok} row(s) deleted, ${failed} failed.\n\nThe failed rows are likely still tied to purchasing/allocated material in Zoho.\n\nFirst error:\n${firstErrDetail}`,
       {title: 'Partly done'});
   }
 }

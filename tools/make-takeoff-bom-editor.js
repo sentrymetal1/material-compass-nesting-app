@@ -82,7 +82,12 @@ const SHIM = `
         navigateParentURL: function (url) { post("takeoff:navigate", { url: url }); },
       },
       API: {
-        getAllRecords: function () { return Promise.resolve({ code: 3000, data: rows.slice() }); },
+        // Paged like Zoho: the editor loops while a page comes back full, so handing every
+        // row back for every page would never end.
+        getAllRecords: function (a) {
+          var size = (a && a.pageSize) || 200, page = (a && a.page) || 1;
+          return Promise.resolve({ code: 3000, data: rows.slice((page - 1) * size, page * size) });
+        },
         getRecordById: function () { return Promise.resolve({ code: 3000, data: project || {} }); },
         updateRecord: function (a) {
           var r = byId(a && a.id), d = (a && a.data && a.data.data) || {};
