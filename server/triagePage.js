@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-10-11-1';
+const BUILD_TAG = 'triage-ui-2026-10-11-2';
 
 // The narrated walkthrough of this page. Linked rather than embedded: this page
 // is itself inside an iframe on the Zoho dashboard and a nested iframe with sound
@@ -346,7 +346,12 @@ function renderTriagePage() {
           + '<button class="btn quote" onclick="decide(this,\\'quote\\')">✓ Quote</button>'
           + '<button class="btn skip" onclick="decide(this,\\'skip\\')">✗ Skip</button>'
           + link + removeBtn + '</div>'
-        : status==='Quoting' ? '<div class="actions">'
+        : status==='Quoting' ? '<div class="qnote" style="margin:10px 0 2px">'
+          + '<div style="font-weight:700;font-size:12.5px;color:#2b3340;margin-bottom:4px">What to quote <span style="font-weight:400;color:#8893a0">— the AI Take-off follows this</span></div>'
+          + '<textarea onchange="saveNote(this)" style="width:100%;min-height:54px;box-sizing:border-box;font:inherit;font-size:13px;padding:7px 9px;border:1px solid #cdd3da;border-radius:6px;resize:vertical" '
+          + 'placeholder="e.g. Handrail and guardrail only. Exclude anchor rods and the support steel. Hot-dip galvanized.">'+esc(o.quote_note||'')+'</textarea>'
+          + '<div class="qsaved" style="font-size:11px;color:#8893a0;min-height:14px"></div></div>'
+          + '<div class="actions">'
           + '<button class="btn project" onclick="createProject(this)">＋ Create Project</button>'
           + '<button class="btn skip" onclick="decide(this,\\'skip\\')" title="Not quoting this after all — moves it to Declined, where you can reopen it">✗ Skip</button>'
           + link + removeBtn + '</div>'
@@ -659,29 +664,27 @@ function renderTriagePage() {
     for(var i=0;i<all.length;i++){ if(String(all[i].id)===String(id)) return all[i]; }
     return null;
   }
-  window.createProject=function(btn){
-    var c=btn.closest('.card');
-    if(c.querySelector('.qnote')) return;
-    var box=document.createElement('div');
-    box.className='qnote';
-    box.style.cssText='margin-top:10px;padding:12px;border:1px solid #cfe0f2;border-radius:8px;background:#f5f9fd';
-    box.innerHTML='<div style="font-weight:700;font-size:13px;margin-bottom:6px">What do you want quoted?</div>'
-      + '<textarea style="width:100%;min-height:70px;box-sizing:border-box;font:inherit;font-size:13px;padding:8px;border:1px solid #cdd3da;border-radius:6px" '
-      + 'placeholder="e.g. Handrail and guardrail only. Exclude anchor rods and the support steel. Hot-dip galvanized."></textarea>'
-      + '<div style="font-size:11.5px;color:#66707c;margin:4px 0 8px">The AI Take-off follows this note. You can change it there before the run.</div>'
-      + '<button class="btn project" onclick="confirmCreate(this)">Create Project</button> '
-      + '<button class="btn skip" onclick="this.closest(&quot;.qnote&quot;).remove()">Cancel</button>';
-    c.appendChild(box);
-    box.querySelector('textarea').focus();
+  // The card's "What to quote" box saves as soon as it changes, so the note is there whether or not
+  // Create Project is pressed today.
+  function postNote(o, note, done){
+    fetch('/api/triage/quote-note',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({opportunity_id:o.id, note:note})})
+      .then(function(r){return r.json();})
+      .then(function(j){ if(j&&j.ok){ o.quote_note=note; if(done) done(true); } else if(done) done(false); })
+      .catch(function(){ if(done) done(false); });
+  }
+  window.saveNote=function(ta){
+    var o=oppOf(ta); if(!o) return;
+    var msg=ta.closest('.qnote').querySelector('.qsaved');
+    postNote(o, (ta.value||'').trim(), function(ok){ if(msg) msg.textContent= ok ? 'Saved.' : 'Could not save the note — try again.'; });
   };
-  window.confirmCreate=function(btn){
+  window.createProject=function(btn){
     var o=oppOf(btn);
     if(!o){ notify('Could not find this opportunity to create a project.','bad'); return; }
-    var note=(btn.closest('.qnote').querySelector('textarea').value||'').trim();
+    var ta=btn.closest('.card').querySelector('.qnote textarea');
+    var note=ta ? (ta.value||'').trim() : '';
     openProjectForm(o);   // first, while it is still the click: an await before window.open gets it blocked
-    btn.closest('.qnote').remove();
-    if(note) fetch('/api/triage/quote-note',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({opportunity_id:o.id, note:note})}).catch(function(){ notify('The quote note could not be saved.','bad'); });
+    if(note!==(o.quote_note||'')) postNote(o, note);
   };
   function openProjectForm(o){
     var qp='?description='+encodeURIComponent(o.project||'');

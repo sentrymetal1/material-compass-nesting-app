@@ -1119,7 +1119,12 @@ function registerTriageRoutes(app, deps) {
       // Project button can pre-fill the Client lookup. Cached; non-fatal.
       let clientMap = {};
       try { clientMap = await getClientMap(req.query.manufacture); } catch (e) { /* skip matching */ }
-      const opportunities = rows.map(mapOpportunity).map(o => { o.client_id = matchClientId(clientMap, o.customer); return o; });
+      const notes = readNotes();   // "what to quote", shown and edited on the card
+      const opportunities = rows.map(mapOpportunity).map(o => {
+        o.client_id = matchClientId(clientMap, o.customer);
+        o.quote_note = (notes['o:' + o.id] && notes['o:' + o.id].note) || '';
+        return o;
+      });
       res.json({ status, count: rows.length, manufacture_label: label, last_synced, opportunities });
     } catch (err) {
       console.error('[triage] opportunities error:', err.response?.data || err.message);
