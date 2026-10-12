@@ -1637,19 +1637,22 @@ app.post('/api/takeoff/commit', async (req, res) => {
       const b = r && r.data;
       if (b && typeof b.code === 'number' && b.code !== 3000) throw new Error(what + ' refused by the data service (code ' + b.code + '): ' + (b.message || JSON.stringify(b).slice(0, 200)));
     };
+    // ONE validator run per piece. The validator fires on EVERY save of this record — a file upload
+    // counts — so the first try ran it three times a piece: piece 1 was wiped and the rest staged two
+    // and three times (990 rows for 530, Amrize 2026-10-12). It is now gated on Run_Import == "true"
+    // (workflow condition, Zoho side), and each piece goes: Run_Import off (+ Chunk_Append set) →
+    // upload (no run) → Run_Import on (one run).
+    const J = { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } };
     for (let p = 0; p < pieces.length; p++) {
+      const tag = pieces.length > 1 ? ' (part ' + (p + 1) + ')' : '';
+      check(await axios.patch(base + '/report/Import_BOM_Form_Report/' + recId,
+        { data: { Run_Import: 'false', Chunk_Append: p > 0 ? 'true' : 'false' } }, J), 'Preparing the BOM import' + tag);
       const fd = new FormData();
       fd.append('file', Buffer.from(pieces[p], 'utf8'), { filename: 'takeoff-bom-' + project_id + (pieces.length > 1 ? '-part' + (p + 1) : '') + '.csv', contentType: 'text/csv' });
       check(await axios.post(base + '/report/Import_BOM_Form_Report/' + recId + '/BOM_CSV_File/upload', fd,
-        { headers: { ...zohoHeaders(token), ...fd.getHeaders() } }), 'BOM file upload' + (pieces.length > 1 ? ' (part ' + (p + 1) + ')' : ''));
-      const patch = p === 0 ? { Run_Import: 'true' } : { Chunk_Append: 'true', Run_Import: 'true' };
-      if (p > 0) {
-        // Re-arm the trigger: Run_Import is already true after the first piece.
-        await axios.patch(base + '/report/Import_BOM_Form_Report/' + recId, { data: { Run_Import: 'false' } },
-          { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-      }
-      check(await axios.patch(base + '/report/Import_BOM_Form_Report/' + recId, { data: patch },
-        { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } }), 'Starting the BOM validation' + (pieces.length > 1 ? ' (part ' + (p + 1) + ')' : ''));
+        { headers: { ...zohoHeaders(token), ...fd.getHeaders() } }), 'BOM file upload' + tag);
+      check(await axios.patch(base + '/report/Import_BOM_Form_Report/' + recId, { data: { Run_Import: 'true' } }, J),
+        'Starting the BOM validation' + tag);
     }
     if (pieces.length > 1) console.log('[takeoff commit] BOM sent in ' + pieces.length + ' parts of up to ' + CHUNK_ROWS + ' rows (' + data.length + ' rows) to import ' + recId);
 
