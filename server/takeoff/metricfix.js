@@ -37,6 +37,24 @@ function mmValues(note) {
   return out;
 }
 
+// A "flat bar" whose two sides are equal (1/2 x 1/2, 0.75 x 3/4) is square bar, sold and
+// catalogued as Bar - Square by its side. Drawings call it flat bar anyway; the catalog has no
+// such flat bar, so it landed in Material Check (Amrize transport box, 2026-10-12). Returns the
+// side as catalog spells it ("1/2", "1-1/4"), or "" when the sides differ.
+function sizeNum(s) {
+  s = String(s || "").trim().replace(/["″]/g, "");
+  let m = s.match(/^(\d+)[\s-]+(\d+)\/(\d+)$/); if (m) return +m[1] + m[2] / m[3];
+  m = s.match(/^(\d+)\/(\d+)$/); if (m) return m[1] / m[2];
+  return /^\d*\.?\d+$/.test(s) ? Number(s) : NaN;
+}
+function squareSide(size) {
+  const m = String(size || "").replace(/["″]/g, "").match(/^\s*([\d\/.\s-]+?)\s*[x×]\s*([\d\/.\s-]+?)\s*$/i);
+  if (!m) return "";
+  const a = sizeNum(m[1]), b = sizeNum(m[2]);
+  if (!(a > 0) || Math.abs(a - b) > 1e-6) return "";
+  return frac16(a);
+}
+
 // Returns { fixed:[{what, field, was, now, why}], flagged:[{what, why}] } and edits rows in place.
 function fixMetric(rows) {
   const fixed = [], flagged = [];
@@ -54,9 +72,13 @@ function fixMetric(rows) {
           fixed.push({ what: what, field: "size", was: r.size || "", now: size, why: "FB" + fb[1] + "x" + fb[2] + " mm = " + size + " in" });
           r.size = size;
         }
-      } else {
-        const sq = String(r.size || "").match(/^\s*([\d\/.-]+)\s*x\s*([\d\/.-]+)\s*$/i);
-        if (sq && sq[1] === sq[2]) flagged.push({ what: what, why: "a flat bar can't be " + r.size + " (that's a square bar) — check the size" });
+      }
+      // After any mm repair, so an "FB12.7x12.7" lands as square bar too.
+      const sq = squareSide(r.size);
+      if (sq) {
+        fixed.push({ what: what, field: "form_type", was: (r.form_type || "") + " " + (r.size || ""), now: "Bar - Square " + sq,
+                     why: "a " + r.size + " flat bar is " + sq + "\" square bar" });
+        r.form_type = "Bar - Square"; r.size = sq;
       }
     }
 
@@ -139,4 +161,4 @@ function dedupeSheets(rows) {
   return removed;
 }
 
-module.exports = { fixMetric, dedupeSheets, frac16, mmValues };
+module.exports = { fixMetric, dedupeSheets, frac16, mmValues, squareSide };

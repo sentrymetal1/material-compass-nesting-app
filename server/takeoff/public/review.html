@@ -191,7 +191,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.66 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.67 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -2137,6 +2137,7 @@
       if(R.metric_checked){ R.check={fixed:arr(R.metric_fixed),flagged:arr(R.metric_flagged),dup:arr(R.dup_removed)}; R.checked_v1=true; saveResult(R); }
       else if(arr(R.rows).length) runRepairOnce();
     }
+    if(!R.__demo && squareBarFix(R)){ recomputeCsv(R); saveResult(R); }
     const rows = arr(R.rows);
     const s = R.synopsis || {};
     DECISIONS = arr(s.decisions).map((d,i)=>({
@@ -2796,6 +2797,28 @@
   // ---- CHECKED AGAINST THE DRAWINGS' OWN NUMBERS ------------------------------------------------
   // Metric lengths off by 10x, a flat bar written in mm read as a square bar, the same part raised
   // from two pages of one drawing (2026-10-07: 48,949 lb of handrail that was really ~7,300).
+  // A flat bar with equal sides (1/2 x 1/2) is square bar — the catalog has it as Bar - Square, 1/2.
+  // New take-offs are converted on the server (metricfix.js squareSide); this is the same rule for a
+  // take-off saved before that, so its rows stop landing in Material Check. Returns true if it changed any.
+  function _sizeNum(s){
+    s=String(s||"").trim().replace(/["″]/g,"");
+    let m=s.match(/^(\d+)[\s-]+(\d+)\/(\d+)$/); if(m) return +m[1]+m[2]/m[3];
+    m=s.match(/^(\d+)\/(\d+)$/); if(m) return m[1]/m[2];
+    return /^\d*\.?\d+$/.test(s)?Number(s):NaN;
+  }
+  function _frac16(x){ const n=Math.round(x*16), w=Math.floor(n/16); let r=n%16, d=16; while(r&&r%2===0){ r/=2; d/=2; } return r?(w?w+"-":"")+r+"/"+d:String(w); }
+  function squareBarFix(R){
+    let n=0;
+    arr(R.rows).forEach(function(r){
+      if(!r||r.deleted||!/bar\s*-\s*flat/i.test(String(r.form_type||""))) return;
+      const m=String(r.size||"").replace(/["″]/g,"").match(/^\s*([\d\/.\s-]+?)\s*[x×]\s*([\d\/.\s-]+?)\s*$/i);
+      if(!m) return;
+      const a=_sizeNum(m[1]), b=_sizeNum(m[2]);
+      if(!(a>0)||Math.abs(a-b)>1e-6) return;
+      r.form_type="Bar - Square"; r.size=_frac16(a); n++;
+    });
+    return n>0;
+  }
   let REPAIRING=false;
   async function runRepairOnce(){
     if(REPAIRING) return; REPAIRING=true;
