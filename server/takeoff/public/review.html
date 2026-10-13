@@ -147,7 +147,12 @@
   .lab-in.txt{width:100%;text-align:left;}
   .lab-ball{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:#fafbfc;font-size:12.5px;}
   .lab-held td{background:#f3f8fd;}
-  tr.lab-item td{font-size:12px;color:#334;padding:4px 8px 4px 26px;}
+  tr.lab-item td{font-size:12px;color:#334;padding:4px 8px 4px 44px;}
+  tr.lab-grp td{font-size:12.5px;font-weight:600;color:#1f3a5f;padding:5px 8px 5px 22px;background:#f8fafc;border-bottom:1px solid #edf1f5;}
+  tr.lab-grp.zero td{font-weight:400;color:#9aa6b2;background:#fff;}
+  tr.lab-grp .tg{cursor:pointer;user-select:none;display:inline-block;min-width:200px;}
+  tr.lab-grp .tg .car{display:inline-block;width:14px;color:#7b8a9b;}
+  tr.lab-grp .cnt{font-weight:400;color:#7b8a9b;font-size:11.5px;margin-left:6px;}
   tr.lab-item td.n{padding-left:8px;}
   /* Tabs — one area of the review at a time */
   .tabs{display:flex;gap:4px;margin:0 0 14px;border-bottom:2px solid #d7e0ec;overflow-x:auto;position:sticky;top:0;z-index:5;background:#eef1f5;padding-top:4px;}
@@ -191,7 +196,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.67 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.68 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -765,7 +770,21 @@
     labEdit(function(L){ L.components.forEach(function(c){ if(!c.held) c.items.forEach(function(i){ i.hours=Math.round((Number(i.hours)||0)*k*100)/100; }); }); });
   }
   function laborHold(ci,on){ labEdit(function(L){ L.components[ci].held=!!on; }); }
-  function laborAddItem(ci){ labEdit(function(L){ L.components[ci].items.push({what:"", bucket:"Fab_Hrs", hours:0, entered:true}); }); }
+  // Labor type groups inside a component (Mark, 2026-10-12): Cutting, Fit & assemble, Welding…
+  // each a collapsible row with its own editable total. A new type total spreads over that type's
+  // items in proportion to their current hours (the standards' own share, which follows size and
+  // weight); a type with no items yet gets one entered line carrying the whole figure.
+  const LAB_OPEN={};
+  function laborTog(ci,b){ const k=ci+"|"+b; LAB_OPEN[k]=!LAB_OPEN[k]; render(); }
+  function labType(c,b){ return arr(c.items).reduce(function(a,i){ return a+(i.bucket===b?(Number(i.hours)||0):0); },0); }
+  function laborType(ci,b,v){ const n=labNum(v); if(n==null){ render(); return; }
+    labEdit(function(L){
+      const c=L.components[ci], its=c.items.filter(function(i){ return i.bucket===b; }), cur=labType(c,b);
+      if(cur>0) its.forEach(function(i){ i.hours=Math.round((Number(i.hours)||0)*n/cur*100)/100; });
+      else if(its.length) its[0].hours=n;
+      else if(n>0){ c.items.push({what:LAB_BUCKET[b]+" — entered", bucket:b, hours:n, entered:true}); LAB_OPEN[ci+"|"+b]=true; }
+    }); }
+  function laborAddItem(ci,b){ labEdit(function(L){ L.components[ci].items.push({what:"", bucket:b||"Fab_Hrs", hours:0, entered:true}); }); if(b) LAB_OPEN[ci+"|"+b]=true; }
   function laborDelItem(ci,ii){ labEdit(function(L){ L.components[ci].items.splice(ii,1); }); }
   function laborAddComp(){ labEdit(function(L){ L.components.push({name:"Other work", units:1, tons:0, held:false, missing:[], items:[{what:"", bucket:"Fab_Hrs", hours:0, entered:true}]}); }); }
   function laborCompName(ci,v){ labEdit(function(L){ L.components[ci].name=String(v||"").trim().slice(0,120)||L.components[ci].name; }); }
@@ -800,7 +819,7 @@
         (c.tons?' <span class="grp-meta">'+labFmt(c.tons,2)+' t</span>':'')+'</td>'+
         '<td style="text-align:right"><input class="lab-in" value="'+labFmt(tot,1)+'" onchange="laborComp('+ci+',this.value)" title="Change this and the items below scale with it"></td>'+
         '<td style="white-space:nowrap;font-size:12px"><label title="Hold keeps this component fixed when the job total changes"><input type="checkbox"'+(c.held?' checked':'')+' onchange="laborHold('+ci+',this.checked)"> Hold</label></td></tr>';
-      h+=arr(c.items).map(function(it,ii){
+      const itemRow=function(it,ii){
         const what = it.entered
           ? '<input class="lab-in txt" placeholder="what the work is" value="'+escAttr(it.what)+'" onchange="laborItemText('+ci+','+ii+',\'what\',this.value)">'
           : esc(it.what)+' <span class="src" title="'+escAttr(it.source_ref||"")+'">'+esc(it.standard||"")+'</span>'+
@@ -808,15 +827,29 @@
             (it.auto!=null && Math.abs((Number(it.hours)||0)-it.auto)>0.005?' <span class="src">(standard '+labFmt(it.auto,2)+')</span>':'');
         const bucket = it.entered
           ? '<select style="font-size:12px;padding:2px 4px;border:1px solid #dfe5ec;border-radius:5px" onchange="laborItemText('+ci+','+ii+',\'bucket\',this.value)">'+bucketOpts(it.bucket)+'</select>'
-          : esc(LAB_BUCKET[it.bucket]||it.bucket);
+          : (LAB_BUCKET[it.bucket]?'':esc(it.bucket));   // the type heading above already says it
         return '<tr class="lab-item"><td>'+what+'</td><td class="n">'+bucket+'</td>'+
           '<td style="text-align:right"><input class="lab-in" value="'+labFmt(it.hours,2)+'" onchange="laborItem('+ci+','+ii+',this.value)"></td>'+
           '<td><button class="applybtn" style="background:#9aa6b2;padding:1px 7px" title="Remove this line" onclick="laborDelItem('+ci+','+ii+')">✕</button></td></tr>';
-      }).join("");
-      h+='<tr class="lab-item"><td colspan="4"><span class="pillbtn" style="margin-left:0" onclick="laborAddItem('+ci+')">+ add work</span>'+
-        (miss.length?' <details style="display:inline-block;margin-left:10px;font-size:12px"><summary style="font-weight:600;color:var(--ylw)">'+miss.length+' not estimated — add hours for these</summary><ul>'+
-          miss.map(function(m){ return '<li>'+esc(m.what)+' — <span class="src">'+esc(m.reason)+'</span></li>'; }).join("")+'</ul></details>':'')+
-        '</td></tr>';
+      };
+      // One row per labor type, every type shown so hours the standards missed (no Cutting on a
+      // job that clearly needs it) can be typed straight in. Items sit under their type, closed.
+      Object.keys(LAB_BUCKET).forEach(function(b){
+        const idx=[]; arr(c.items).forEach(function(it,ii){ if(it.bucket===b) idx.push(ii); });
+        const bt=labType(c,b), open=!!LAB_OPEN[ci+"|"+b];
+        h+='<tr class="lab-grp'+(bt>0.005||idx.length?'':' zero')+'"><td colspan="2"><span class="tg" onclick="laborTog('+ci+',\''+b+'\')">'+
+            '<span class="car">'+(open?'▾':'▸')+'</span>'+LAB_BUCKET[b]+(idx.length?'<span class="cnt">'+idx.length+' item'+(idx.length===1?'':'s')+'</span>':'')+'</span></td>'+
+          '<td style="text-align:right"><input class="lab-in" value="'+labFmt(bt,1)+'" onchange="laborType('+ci+',\''+b+'\',this.value)" title="'+
+            (idx.length?'Change this and the '+LAB_BUCKET[b]+' items below share it out':'Type hours here to add '+LAB_BUCKET[b]+' the standards did not count')+'"></td><td></td></tr>';
+        if(open){
+          h+=idx.map(function(ii){ return itemRow(c.items[ii],ii); }).join("");
+          h+='<tr class="lab-item"><td colspan="4"><span class="pillbtn" style="margin-left:0" onclick="laborAddItem('+ci+',\''+b+'\')">+ add '+esc(LAB_BUCKET[b])+' line</span></td></tr>';
+        }
+      });
+      // A line on a type outside the 8 still shows (and still counts), never silently hidden.
+      arr(c.items).forEach(function(it,ii){ if(!LAB_BUCKET[it.bucket]) h+=itemRow(it,ii); });
+      if(miss.length) h+='<tr class="lab-item"><td colspan="4"><details style="display:inline-block;font-size:12px"><summary style="font-weight:600;color:var(--ylw)">'+miss.length+' not estimated — add hours for these</summary><ul>'+
+          miss.map(function(m){ return '<li>'+esc(m.what)+' — <span class="src">'+esc(m.reason)+'</span></li>'; }).join("")+'</ul></details></td></tr>';
       return h;
     }).join("");
     return head+
@@ -838,7 +871,7 @@
       '<div class="src" style="margin:-4px 0 10px;font-size:12px">From the standards: <b>'+labFmt(S.bottom_up,1)+' hrs</b> — this only prices what the take-off could count, so it runs low; '+
         'each component lists what it could not estimate. '+(S.unweighed_rows?S.unweighed_rows+' row'+(S.unweighed_rows===1?' has':'s have')+' no weight, so the tonnage is short. ':'')+
         'Your own numbers matter most: '+setupLink+'</div>'+
-      '<table><thead><tr><th>Work</th><th>Bucket</th><th style="text-align:right">Hours</th><th></th></tr></thead><tbody>'+
+      '<table><thead><tr><th>Work</th><th></th><th style="text-align:right">Hours</th><th></th></tr></thead><tbody>'+
         (rows||'<tr><td colspan="4" style="color:var(--mut)">Nothing on this take-off carries shop hours.</td></tr>')+'</tbody></table>'+
       '<div style="margin-top:10px;font-size:12px"><span class="pillbtn" style="margin-left:0" onclick="laborAddComp()">+ add a component</span>'+
         ' <span class="pillbtn" onclick="laborCalc(true)">↻ recalculate from standards</span></div>'+
