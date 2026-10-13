@@ -196,7 +196,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.68 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.69 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -749,15 +749,48 @@
   }
   function labEdit(fn){ const R=loadResult(); if(!R.labor) return; fn(R.labor); R.labor.edited=true; saveResult(R); render(); }
   function labNum(v){ const n=Number(String(v).replace(/,/g,"")); return Number.isFinite(n)&&n>=0?n:null; }
+  // Each line is Qty x Hrs each = Total (Mark, 2026-10-12). Qty is what the standard counts —
+  // pieces, ft of cut, ft of weld, tons, joints — for the whole job. Editing Qty or Hrs each
+  // recomputes the Total; editing the Total (or any scaling from a type, component or job total)
+  // changes Hrs each and leaves the Qty, which is physical, alone. A line saved before Qty existed
+  // (or typed in) counts as 1 x its hours.
+  function labQty(i){ const q=Number(i.qty); return i.qty!=null&&Number.isFinite(q)?q:1; }
+  function labEach(i){ if(i.each!=null&&Number.isFinite(Number(i.each))) return Number(i.each); const q=labQty(i); return q>0?(Number(i.hours)||0)/q:(Number(i.hours)||0); }
+  function labSetHours(i,h){ i.hours=Math.round(h*100)/100; const q=labQty(i); i.each=q>0?h/q:h; if(i.qty==null) i.qty=1; }
   function laborItem(ci,ii,v){ const n=labNum(v); if(n==null){ render(); return; }
-    labEdit(function(L){ L.components[ci].items[ii].hours=n; }); }
+    labEdit(function(L){ labSetHours(L.components[ci].items[ii],n); }); }
+  function laborItemQty(ci,ii,v){ const n=labNum(v); if(n==null){ render(); return; }
+    labEdit(function(L){ const i=L.components[ci].items[ii], e=labEach(i); i.qty=n; i.each=e; i.hours=Math.round(e*n*100)/100; }); }
+  function laborItemEach(ci,ii,v){ const n=labNum(v); if(n==null){ render(); return; }
+    labEdit(function(L){ const i=L.components[ci].items[ii], q=labQty(i); if(i.qty==null) i.qty=1; i.each=n; i.hours=Math.round(n*q*100)/100; }); }
+  function labScale(i,k){ labSetHours(i,(Number(i.hours)||0)*k); }
+  // Labor worked out before Qty existed: fetch the standards once and copy each line's Qty and
+  // unit onto it, matched by component + type + description. The hours stay exactly as they are
+  // (they may have been edited), so Hrs each is worked back from them.
+  let LAB_QTY_TRIED=false;
+  async function labBackfillQty(){
+    LAB_QTY_TRIED=true;
+    try{
+      const R=loadResult(); if(!R.labor) return;
+      const x=await labFetch(R, R.labor.job_type);
+      const key=function(c,i){ return String(c).toLowerCase()+"|"+i.bucket+"|"+String(i.what||"").toLowerCase(); };
+      const src={}; arr(x.components).forEach(function(c){ arr(c.items).forEach(function(i){ if(i.qty!=null) src[key(c.name,i)]=i; }); });
+      const R2=loadResult(); let n=0;
+      arr(R2.labor&&R2.labor.components).forEach(function(c){ arr(c.items).forEach(function(i){
+        if(i.entered||i.qty!=null) return;
+        const s=src[key(c.name,i)]; if(!s||!(Number(s.qty)>0)) return;
+        i.qty=Number(s.qty); i.unit_label=s.unit_label||""; i.each=(Number(i.hours)||0)/i.qty; n++;
+      }); });
+      if(n){ saveResult(R2); render(); }
+    }catch(e){ console.warn("[labor] qty backfill:",e.message); }
+  }
   function laborItemText(ci,ii,k,v){ labEdit(function(L){ L.components[ci].items[ii][k]=String(v||"").slice(0,120); }); }
   // A component total scales its items. One with no items yet gets a single entered line.
   function laborComp(ci,v){ const n=labNum(v); if(n==null){ render(); return; }
     labEdit(function(L){
       const c=L.components[ci], cur=labComp(c);
-      if(cur>0) c.items.forEach(function(i){ i.hours=Math.round((Number(i.hours)||0)*n/cur*100)/100; });
-      else c.items.push({what:"entered for "+c.name, bucket:"Fab_Hrs", hours:n, entered:true});
+      if(cur>0) c.items.forEach(function(i){ labScale(i,n/cur); });
+      else c.items.push({what:"entered for "+c.name, bucket:"Fab_Hrs", hours:n, qty:1, each:n, entered:true});
     }); }
   // The job total scales every component NOT on Hold. Held ones stay exactly as they are.
   async function laborJob(v){
@@ -767,7 +800,7 @@
     if(n<held){ await mcAlert("The components on Hold already come to "+labFmt(held,1)+" hrs, more than "+labFmt(n,1)+". Release a Hold or enter a larger total.",{title:"Shop labor"}); render(); return; }
     if(free<=0){ await mcAlert("Every component is on Hold or has no hours yet, so there is nothing to spread the total over. Enter hours on a component first.",{title:"Shop labor"}); render(); return; }
     const k=(n-held)/free;
-    labEdit(function(L){ L.components.forEach(function(c){ if(!c.held) c.items.forEach(function(i){ i.hours=Math.round((Number(i.hours)||0)*k*100)/100; }); }); });
+    labEdit(function(L){ L.components.forEach(function(c){ if(!c.held) c.items.forEach(function(i){ labScale(i,k); }); }); });
   }
   function laborHold(ci,on){ labEdit(function(L){ L.components[ci].held=!!on; }); }
   // Labor type groups inside a component (Mark, 2026-10-12): Cutting, Fit & assemble, Welding…
@@ -780,11 +813,11 @@
   function laborType(ci,b,v){ const n=labNum(v); if(n==null){ render(); return; }
     labEdit(function(L){
       const c=L.components[ci], its=c.items.filter(function(i){ return i.bucket===b; }), cur=labType(c,b);
-      if(cur>0) its.forEach(function(i){ i.hours=Math.round((Number(i.hours)||0)*n/cur*100)/100; });
-      else if(its.length) its[0].hours=n;
-      else if(n>0){ c.items.push({what:LAB_BUCKET[b]+" — entered", bucket:b, hours:n, entered:true}); LAB_OPEN[ci+"|"+b]=true; }
+      if(cur>0) its.forEach(function(i){ labScale(i,n/cur); });
+      else if(its.length) labSetHours(its[0],n);
+      else if(n>0){ c.items.push({what:LAB_BUCKET[b]+" — entered", bucket:b, hours:n, qty:1, each:n, entered:true}); LAB_OPEN[ci+"|"+b]=true; }
     }); }
-  function laborAddItem(ci,b){ labEdit(function(L){ L.components[ci].items.push({what:"", bucket:b||"Fab_Hrs", hours:0, entered:true}); }); if(b) LAB_OPEN[ci+"|"+b]=true; }
+  function laborAddItem(ci,b){ labEdit(function(L){ L.components[ci].items.push({what:"", bucket:b||"Fab_Hrs", hours:0, qty:1, each:0, entered:true}); }); if(b) LAB_OPEN[ci+"|"+b]=true; }
   function laborDelItem(ci,ii){ labEdit(function(L){ L.components[ci].items.splice(ii,1); }); }
   function laborAddComp(){ labEdit(function(L){ L.components.push({name:"Other work", units:1, tons:0, held:false, missing:[], items:[{what:"", bucket:"Fab_Hrs", hours:0, entered:true}]}); }); }
   function laborCompName(ci,v){ labEdit(function(L){ L.components[ci].name=String(v||"").trim().slice(0,120)||L.components[ci].name; }); }
@@ -804,6 +837,8 @@
         : labLive(R).rows.length ? '<div style="color:var(--mut);font-size:13px"><span class="spin"></span> Working out shop hours…</div>'
         : '<div style="color:var(--mut);font-size:13px">No quantified rows to estimate labor from.</div>')+'</div></div>';
     }
+    if(!LAB_QTY_TRIED && !R.__demo && L.components.some(function(c){ return arr(c.items).some(function(i){ return !i.entered && i.qty==null; }); }))
+      setTimeout(labBackfillQty,0);
     const S=L.server||{}, bp=S.ballpark||{}, types=S.job_types||{};
     const job=labJob(L), stale=L.sig!==labSig(R);
     const bucketOpts=function(sel){ return Object.keys(LAB_BUCKET).map(function(b){ return '<option value="'+b+'"'+(b===sel?' selected':'')+'>'+LAB_BUCKET[b]+'</option>'; }).join(""); };
@@ -813,7 +848,7 @@
       : 'No ballpark: '+esc(bp.reason||'')+'. '+setupLink+' — add a finished job of this type and it shows here.';
     const rows=L.components.map(function(c,ci){
       const tot=labComp(c), miss=arr(c.missing);
-      let h='<tr class="grp-comp'+(c.held?' lab-held':'')+'"><td colspan="2">'+
+      let h='<tr class="grp-comp'+(c.held?' lab-held':'')+'"><td colspan="3">'+
         '<input class="lab-in txt" style="font-weight:700;background:transparent;border-color:transparent;width:auto;min-width:160px" value="'+escAttr(c.name)+'" onchange="laborCompName('+ci+',this.value)">'+
         (c.units>1?' <span class="grp-units">× '+c.units+' units</span>':'')+
         (c.tons?' <span class="grp-meta">'+labFmt(c.tons,2)+' t</span>':'')+'</td>'+
@@ -826,9 +861,13 @@
             (it.derived?' <span class="src" style="color:var(--ylw);font-weight:600" title="'+escAttr(it.note||"")+'">≈ derived</span>':'')+
             (it.auto!=null && Math.abs((Number(it.hours)||0)-it.auto)>0.005?' <span class="src">(standard '+labFmt(it.auto,2)+')</span>':'');
         const bucket = it.entered
-          ? '<select style="font-size:12px;padding:2px 4px;border:1px solid #dfe5ec;border-radius:5px" onchange="laborItemText('+ci+','+ii+',\'bucket\',this.value)">'+bucketOpts(it.bucket)+'</select>'
-          : (LAB_BUCKET[it.bucket]?'':esc(it.bucket));   // the type heading above already says it
-        return '<tr class="lab-item"><td>'+what+'</td><td class="n">'+bucket+'</td>'+
+          ? ' <select style="font-size:12px;padding:2px 4px;border:1px solid #dfe5ec;border-radius:5px" onchange="laborItemText('+ci+','+ii+',\'bucket\',this.value)">'+bucketOpts(it.bucket)+'</select>'
+          : (LAB_BUCKET[it.bucket]?'':' '+esc(it.bucket));   // the type heading above already says it
+        const q=labQty(it), e=labEach(it), unit=it.unit_label||'';
+        return '<tr class="lab-item"><td>'+what+bucket+'</td>'+
+          '<td class="n" style="text-align:right;white-space:nowrap"><input class="lab-in" style="width:64px" value="'+labFmt(q,q%1?2:0)+'" onchange="laborItemQty('+ci+','+ii+',this.value)">'+
+            (unit?' <span class="src" style="font-size:11px">'+esc(unit)+'</span>':'')+'</td>'+
+          '<td style="text-align:right"><input class="lab-in" style="width:70px" value="'+labFmt(e,e>0&&e<0.1?4:2)+'" onchange="laborItemEach('+ci+','+ii+',this.value)"></td>'+
           '<td style="text-align:right"><input class="lab-in" value="'+labFmt(it.hours,2)+'" onchange="laborItem('+ci+','+ii+',this.value)"></td>'+
           '<td><button class="applybtn" style="background:#9aa6b2;padding:1px 7px" title="Remove this line" onclick="laborDelItem('+ci+','+ii+')">✕</button></td></tr>';
       };
@@ -837,18 +876,18 @@
       Object.keys(LAB_BUCKET).forEach(function(b){
         const idx=[]; arr(c.items).forEach(function(it,ii){ if(it.bucket===b) idx.push(ii); });
         const bt=labType(c,b), open=!!LAB_OPEN[ci+"|"+b];
-        h+='<tr class="lab-grp'+(bt>0.005||idx.length?'':' zero')+'"><td colspan="2"><span class="tg" onclick="laborTog('+ci+',\''+b+'\')">'+
+        h+='<tr class="lab-grp'+(bt>0.005||idx.length?'':' zero')+'"><td colspan="3"><span class="tg" onclick="laborTog('+ci+',\''+b+'\')">'+
             '<span class="car">'+(open?'▾':'▸')+'</span>'+LAB_BUCKET[b]+(idx.length?'<span class="cnt">'+idx.length+' item'+(idx.length===1?'':'s')+'</span>':'')+'</span></td>'+
           '<td style="text-align:right"><input class="lab-in" value="'+labFmt(bt,1)+'" onchange="laborType('+ci+',\''+b+'\',this.value)" title="'+
             (idx.length?'Change this and the '+LAB_BUCKET[b]+' items below share it out':'Type hours here to add '+LAB_BUCKET[b]+' the standards did not count')+'"></td><td></td></tr>';
         if(open){
           h+=idx.map(function(ii){ return itemRow(c.items[ii],ii); }).join("");
-          h+='<tr class="lab-item"><td colspan="4"><span class="pillbtn" style="margin-left:0" onclick="laborAddItem('+ci+',\''+b+'\')">+ add '+esc(LAB_BUCKET[b])+' line</span></td></tr>';
+          h+='<tr class="lab-item"><td colspan="5"><span class="pillbtn" style="margin-left:0" onclick="laborAddItem('+ci+',\''+b+'\')">+ add '+esc(LAB_BUCKET[b])+' line</span></td></tr>';
         }
       });
       // A line on a type outside the 8 still shows (and still counts), never silently hidden.
       arr(c.items).forEach(function(it,ii){ if(!LAB_BUCKET[it.bucket]) h+=itemRow(it,ii); });
-      if(miss.length) h+='<tr class="lab-item"><td colspan="4"><details style="display:inline-block;font-size:12px"><summary style="font-weight:600;color:var(--ylw)">'+miss.length+' not estimated — add hours for these</summary><ul>'+
+      if(miss.length) h+='<tr class="lab-item"><td colspan="5"><details style="display:inline-block;font-size:12px"><summary style="font-weight:600;color:var(--ylw)">'+miss.length+' not estimated — add hours for these</summary><ul>'+
           miss.map(function(m){ return '<li>'+esc(m.what)+' — <span class="src">'+esc(m.reason)+'</span></li>'; }).join("")+'</ul></details></td></tr>';
       return h;
     }).join("");
@@ -871,8 +910,8 @@
       '<div class="src" style="margin:-4px 0 10px;font-size:12px">From the standards: <b>'+labFmt(S.bottom_up,1)+' hrs</b> — this only prices what the take-off could count, so it runs low; '+
         'each component lists what it could not estimate. '+(S.unweighed_rows?S.unweighed_rows+' row'+(S.unweighed_rows===1?' has':'s have')+' no weight, so the tonnage is short. ':'')+
         'Your own numbers matter most: '+setupLink+'</div>'+
-      '<table><thead><tr><th>Work</th><th></th><th style="text-align:right">Hours</th><th></th></tr></thead><tbody>'+
-        (rows||'<tr><td colspan="4" style="color:var(--mut)">Nothing on this take-off carries shop hours.</td></tr>')+'</tbody></table>'+
+      '<table><thead><tr><th>Work</th><th style="text-align:right">Qty</th><th style="text-align:right">Hrs each</th><th style="text-align:right">Total hrs</th><th></th></tr></thead><tbody>'+
+        (rows||'<tr><td colspan="5" style="color:var(--mut)">Nothing on this take-off carries shop hours.</td></tr>')+'</tbody></table>'+
       '<div style="margin-top:10px;font-size:12px"><span class="pillbtn" style="margin-left:0" onclick="laborAddComp()">+ add a component</span>'+
         ' <span class="pillbtn" onclick="laborCalc(true)">↻ recalculate from standards</span></div>'+
       '</div></div>';

@@ -51,6 +51,10 @@ function laborForTakeoff(takeoff, profile, jobType) {
       items: c.lines.map((l) => ({
         what: l.what, bucket: l.bucket, standard: l.standard, source_ref: l.source_ref,
         per_unit: r2(l.hours), hours: r2(l.hours * units),
+        // What the hours were counted from, so the review can show Qty x Hrs each = Total and
+        // recompute when either is edited: pieces, ft of cut, ft of weld, tons or joints (job qty).
+        qty: l.units != null ? Math.round(Number(l.units) * units * 1000) / 1000 : null,
+        unit_label: l.unit_label || '', each: l.per_unit != null ? Number(l.per_unit) : null,
         derived: !!l.derived, note: l.note || null,
       })),
       missing: c.missing,
