@@ -92,7 +92,7 @@ test('take-off estimate: hours per component, sources named, gaps listed', () =>
   // Gaps are filled from library rows, and every filled line says it was derived and why.
   const tube = skid.lines.find((l) => /Tube/.test(l.what) && l.bucket === 'Assy_Hrs');
   assert.ok(tube && tube.derived && /Angle|Channel/.test(tube.note), 'tube priced from a stand-in welded-frame row, marked derived');
-  assert.ok(skid.lines.some((l) => /^weld Plate/.test(l.what) && l.derived && /perimeter/.test(l.note)), 'plate weld along the perimeter, marked as an assumption');
+  assert.ok(skid.lines.some((l) => /weld Plate/.test(l.what) && l.derived && /perimeter/.test(l.note)), 'plate weld along the perimeter, marked as an assumption');
   assert.ok(skid.lines.some((l) => /Tube/.test(l.what) && /^handle/.test(l.what)), 'tube is weighed now, so it gets handling');
   assert.strictEqual(skid.missing.length, 0, 'nothing on this take-off is left unpriced: ' + JSON.stringify(skid.missing));
   assert.ok(!est.components.Grating, 'buyout carries no shop hours');

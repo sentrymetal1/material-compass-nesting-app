@@ -134,26 +134,78 @@ function line(bucket, hours, found, units, unitLabel, what) {
 }
 
 // One BOM row -> { lines, missing }.
+//
+// Carbon steel at library defaults gives the same TOTAL as before (2026-10-14); what changed is
+// that the work is split by what it is, and scaled for any other material or process:
+//   members — Sentry's "square cut and welded all around" rate (cut + fit + weld in one number)
+//             split by the shop's shares into a saw cut, a fit and a weld line, each scaled by
+//             processModel.memberFactors (this material on its routed process ÷ carbon steel on
+//             MIG and a band saw);
+//   plate   — burning from the routed cutter's own speed at this thickness, plus pierces, plus
+//             handling per cut part; fit per piece × the material's fit factor; the perimeter
+//             weld at the library's carbon-steel rate × the same weld factor;
+//   every row with a weight — handling per ton.
+const pm = require('./processModel');
+const PM_DEFAULT = pm.params({});
+
+function modelLine(bucket, hours, units, unitLabel, what, standard, basis, note, derived) {
+  return { bucket, hours, what, standard, operation: what, source: derived ? 'Derived' : 'Shop Model', source_ref: basis,
+    per_unit: units > 0 ? hours / units : hours, unit_basis: 'Hr/' + unitLabel, units, unit_label: unitLabel,
+    derived: !!derived, note: note || null };
+}
+const pct = (x) => (x >= 10 ? x.toFixed(1) : x.toFixed(2));
+const procLabel = (k) => (pm.PROC[k] || { label: k }).label;
+
+// Wall / flange / thickness that decides thin vs thick for welding a member: the last number in
+// the size for angle, tube and pipe-like sizes; 1/4" when the name carries none (rolled shapes).
+function memberThickness(row) {
+  const n = sizeNumbers(row.size);
+  if (/bar/i.test(String(row.form_type || ''))) return n.length ? Math.min.apply(null, n) : 0.25;
+  return n.length >= 3 ? n[n.length - 1] : 0.25;
+}
+
 function estimateRow(row, ctx) {
   const c = Object.assign({}, DEFAULTS, ctx || {});
+  const P = c.model || PM_DEFAULT;
   const out = { lines: [], missing: [] };
   const disp = String(row.disposition || 'fabricate').toLowerCase();
   if (disp !== 'fabricate') return out;                 // bought complete or by others — not our hours
 
   const form = libraryForm(row.form_type);
   const material = libraryMaterial(row.material_type, row.specification);
+  const mat = pm.materialKey(row.material_type, row.specification);
+  const matLabel = pm.MAT[mat].label.toLowerCase();
   const qty = toNumber(row.quantity);
   const label = [row.form_type, row.size, row.member_mark].filter(Boolean).join(' ');
   if (!(qty > 0)) { out.missing.push({ what: label, reason: 'no quantity' }); return out; }
   const overrides = c.overrides;
+  const G = P.general;
+  // Library rows are carbon steel; a stainless or aluminum row still finds its CS row and is scaled.
+  const libMat = mat === 'CS' ? material : 'Carbon Steel';
 
   if (form !== 'Plate') {
-    const { found, proxy } = frameMember(form, material, bandDepth(row.size), c, overrides);
-    if (found.missing) out.missing.push({ what: label, reason: found.missing });
+    const { found, proxy } = frameMember(form, libMat, bandDepth(row.size), c, overrides);
+    if (found.missing) { out.missing.push({ what: label, reason: found.missing }); }
     else {
-      const l = line(found.bucket, found.row.hours * qty, found, qty, 'pcs', 'cut, fit & weld ' + label);
-      if (proxy) { l.derived = true; l.note = 'no row for ' + (row.form_type || 'this form') + ' — ' + proxy + ' welded-frame rate applied'; }
-      out.lines.push(l);
+      const each = found.row.hours;                      // hr per piece, cut + fit + weld, carbon steel
+      const lbFt = rolledShapeLbPerFt(row.size) || sectionLbPerFt(row.form_type, row.size, row.material_type);
+      const area = lbFt ? lbFt / (pm.matDensity(mat) * 12) : 0;
+      const f = pm.memberFactors(P, mat, memberThickness(row), area);
+      const why = (proxy ? 'no row for ' + (row.form_type || 'this form') + ' — ' + proxy + ' welded-frame rate; ' : '') +
+        'Sentry "square cut and welded all around" ' + each + ' hr/pc split ' + Math.round(G.share_cut.value * 100) + '/' +
+        Math.round(G.share_fit.value * 100) + '/' + Math.round(G.share_weld.value * 100) + ' cut/fit/weld';
+      const part = (bucket, share, factor, verb, procKey, missingWhy) => {
+        if (factor == null) { out.missing.push({ what: label, reason: missingWhy }); return; }
+        const hrs = each * share * factor * qty;
+        const scaled = Math.abs(factor - 1) > 1e-9;
+        const note = why + (scaled ? '; × ' + pct(factor) + ' for ' + matLabel + (procKey ? ' on ' + procLabel(procKey) : '') + ' vs carbon steel on MIG / band saw' : '');
+        out.lines.push(Object.assign(modelLine(bucket, hrs, qty, 'pcs', verb + ' ' + label, found.row.code, found.row.sourceRef, note,
+          !!proxy || scaled), { process: procKey || null, material: mat }));
+      };
+      part('Cutting_Hrs', G.share_cut.value, f.cut, (f.cut_process ? procLabel(f.cut_process).toLowerCase() + ' cut' : 'cut'), f.cut_process, f.cut_missing);
+      part('Assy_Hrs', G.share_fit.value, f.fit, 'fit', null, null);
+      part('Weld_Hrs', G.share_weld.value, f.weld, (f.weld_process ? procLabel(f.weld_process).split(' ')[0] + ' weld' : 'weld'), f.weld_process, f.weld_missing);
+      if (f.substituted.length) out.missing.push({ what: label, reason: 'routed process not in your shop, used ' + f.substituted.join(', ') + ' — check your routing' });
     }
   } else {
     const len = toNumber(row.length_ft), w = toNumber(row.width_ft);
@@ -161,42 +213,51 @@ function estimateRow(row, ctx) {
     if (!(len > 0) || !(w > 0) || !(t > 0)) {
       out.missing.push({ what: label, reason: 'plate needs thickness, length and width to price the burning' });
     } else {
-      const perimeter = 2 * (len + w) * qty;
-      let found = resolve({ category: 'Cutting', operation: c.plateCutOperation, process: c.plateCutProcess,
-        form, material, size: { 'Plate Thickness (in)': t } }, { overrides });
-      let fallback = false;
-      // The plasma row stops short of heavy plate; burn that with the flame-cut row for its thickness.
-      if (found.missing && c.plateCutProcess !== 'Oxy-Fuel') {
-        const f = resolve({ category: 'Cutting', operation: 'Flame cut square', process: 'Oxy-Fuel',
-          form, material, size: { 'Plate Thickness (in)': t } }, { overrides });
-        if (f.row) { found = f; fallback = true; }
-      }
-      if (found.missing) out.missing.push({ what: label, reason: found.missing });
+      const perimFt = 2 * (len + w) * qty;
+      const cp = pm.plateCutProcessFor(P, mat, t);
+      if (cp.missing) out.missing.push({ what: label, reason: cp.missing });
       else {
-        const l = line(found.bucket, found.row.hours * perimeter, found, perimeter, 'ft of cut', 'burn ' + label);
-        if (fallback) { l.derived = true; l.note = c.plateCutProcess + ' row does not cover ' + row.size + ' — flame-cut rate applied'; }
-        out.lines.push(l);
+        const r = pm.cutRate(P, mat, cp.process, t);
+        if (r.missing) out.missing.push({ what: label, reason: r.missing });
+        else {
+          const hrs = perimFt * r.hr_per_ft + qty * r.hr_per_pierce;
+          out.lines.push(Object.assign(modelLine('Cutting_Hrs', hrs, perimFt, 'ft of cut', procLabel(cp.process).split(',')[0].toLowerCase() + ' cut ' + label,
+            'CUT-' + cp.process + '-' + mat, r.basis + ' + one pierce per part', cp.substituted ? 'routed ' + cp.routed + ' is not in your shop — ' + cp.process + ' used' : null,
+            r.source === 'typical'), { process: cp.process, material: mat }));
+          const hh = pm.cutHandlingHr(P, cp.process);
+          if (hh > 0) out.lines.push(Object.assign(modelLine('Cutting_Hrs', hh * qty, qty, 'pcs', 'load, mark & unload ' + label,
+            'CUT-HANDLE-' + cp.process, Math.round(hh * 60 * 10) / 10 + ' min per cut part', null, (P.cut_handling_min[cp.process] || {}).source !== 'yours'),
+            { process: cp.process, material: mat }));
+        }
       }
     }
     // Fit & weld. The take-off does not measure weld length, so this ASSUMES each plate is fitted
     // once and intermittently welded along its full perimeter, fillet sized to the plate (3/16"
-    // up to 3/8" from 1/2" plate on). Both rows are library rows; the assumption is on the line.
+    // up to 3/8" from 1/2" plate on). Carbon steel keeps the library row; other materials and
+    // processes scale it by the weld model.
     if (len > 0 && w > 0 && t > 0) {
-      const fit = resolve({ category: 'Fitup', operation: /^Fitting and tacking clips$/ }, { overrides });
-      if (fit.row) {
-        const l = line(fit.bucket, fit.row.hours * qty, fit, qty, 'pcs', 'fit & tack ' + label);
-        l.derived = true; l.note = 'clip fit-up rate applied per plate';
-        out.lines.push(l);
-      }
+      const fitF = (P.fit_factor[mat] || { value: 1 }).value;
+      out.lines.push(Object.assign(modelLine('Assy_Hrs', G.fit_hr_piece.value * fitF * qty, qty, 'pcs', 'fit & tack ' + label, 'FIT-CLIP-TACK',
+        G.fit_hr_piece.value + ' hr/pc (' + (G.fit_hr_piece.source === 'yours' ? 'yours' : 'Sentry 1997 clip fit-up') + ')' + (fitF !== 1 ? ' × ' + fitF + ' for ' + matLabel : ''),
+        'clip fit-up rate applied per plate', true), { material: mat }));
       const leg = Math.min(0.75, Math.max(0.1875, t >= 0.5 ? 0.375 : t));
       const weld = resolve({ category: 'Welding', operation: /^Fillet weld intermittent - clips base plates gussets$/,
         size: { 'Weld Size (in)': leg } }, { overrides });
-      if (weld.row) {
-        const ft = 2 * (len + w) * qty;
-        const l = line(weld.bucket, weld.row.hours * ft, weld, ft, 'ft of weld', 'weld ' + label);
-        l.derived = true; l.note = 'assumes intermittent fillet along the full perimeter — check';
-        out.lines.push(l);
-      } else out.missing.push({ what: label, reason: 'no fillet weld row for ' + leg + '" — plate weld not estimated' });
+      const wp = pm.weldProcessFor(P, mat, t);
+      if (!weld.row) out.missing.push({ what: label, reason: 'no fillet weld row for ' + leg + '" — plate weld not estimated' });
+      else if (wp.missing) out.missing.push({ what: label, reason: wp.missing });
+      else {
+        const mine = pm.weldHrPerFt(P, mat, wp.process, leg), base = pm.weldHrPerFt(PM_DEFAULT, 'CS', 'MIG', leg);
+        const factor = mine.missing ? null : mine.value / base.value;
+        if (factor == null) out.missing.push({ what: label, reason: mine.missing });
+        else {
+          const ft = 2 * (len + w) * qty;
+          out.lines.push(Object.assign(modelLine('Weld_Hrs', weld.row.hours * factor * ft, ft, 'ft of weld',
+            procLabel(wp.process).split(' ')[0] + ' weld ' + label, weld.row.code,
+            weld.row.sourceRef + (Math.abs(factor - 1) > 1e-9 ? '; × ' + pct(factor) + ' (' + mine.basis + ')' : ''),
+            'assumes intermittent fillet along the full perimeter — check', true), { process: wp.process, material: mat }));
+        }
+      }
     }
   }
 
@@ -205,9 +266,9 @@ function estimateRow(row, ctx) {
   if (lb == null) {
     out.missing.push({ what: label, reason: 'weight unknown, so handling (per ton) not estimated' });
   } else {
-    const found = resolve({ category: 'Handling', form, material }, { overrides });
-    if (found.missing) out.missing.push({ what: label, reason: found.missing });
-    else out.lines.push(line(found.bucket, found.row.hours * lb / 2000, found, lb / 2000, 'tons', 'handle ' + label));
+    const h = G.handling_hr_ton;
+    out.lines.push(Object.assign(modelLine('Labor_Hrs', h.value * lb / 2000, lb / 2000, 'tons', 'handle ' + label, 'HANDLE-TON',
+      h.value + ' hr/ton (' + (h.source === 'yours' ? 'yours' : 'library') + ')', null, false), { material: mat }));
   }
   return out;
 }

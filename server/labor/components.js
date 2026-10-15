@@ -73,18 +73,44 @@ function stringerPerFt(size, rate) {
   return lb && rate > 0 ? rate * lb / 100 : null;
 }
 
+// The same component in stainless, aluminum, … : no library row exists for any of them, so the
+// carbon-steel value is scaled the way a frame member is — cut, fit and weld shares, each by this
+// material on the shop's routed process (processModel.memberFactors). Sized on 1-1/2" Sch 40
+// (0.145" wall, ~0.8 sq in), the usual rail; marked derived so it is the first thing to replace.
+function materialFactor(P, mat) {
+  if (!P || mat === 'CS') return { value: 1 };
+  const pm = require('./processModel');
+  const f = pm.memberFactors(P, mat, 0.145, 0.8);
+  if (f.weld == null || f.cut == null) return { value: null, why: f.weld_missing || f.cut_missing };
+  const g = P.general;
+  const v = g.share_cut.value * f.cut + g.share_fit.value * f.fit + g.share_weld.value * f.weld;
+  return { value: v, why: '× ' + v.toFixed(2) + ' vs carbon steel (' + (f.weld_process || '?') + ' weld, ' + (f.cut_process || '?') + ') — check this' };
+}
+
 // Library default and the shop's own value side by side, for the setup screen and the estimate.
-// shopRates: { [key]: number } from the shop profile.
-function catalog(shopRates) {
+// shopRates: { [key]: number, [key|MAT]: number } from the shop profile (plain key = carbon steel).
+// P / mats (optional): the shop's process parameters and materials, for the per-material columns.
+function catalog(shopRates, P, mats) {
   const mine = shopRates || {};
+  const list = (mats && mats.length ? mats : ['CS']);
+  const factors = Object.fromEntries(list.map((m) => [m, materialFactor(P, m)]));
   return Object.entries(STANDARD).map(([key, s]) => {
     const d = s.default();
-    const yours = Number(mine[key]) > 0 ? Number(mine[key]) : null;
+    const cell = (m) => {
+      const k = m === 'CS' ? key : key + '|' + m;
+      const yours = Number(mine[k]) > 0 ? Number(mine[k]) : null;
+      const f = factors[m] || { value: 1 };
+      const lib = d.value == null || f.value == null ? null : Math.round(d.value * f.value * 10000) / 10000;
+      return { key: k, yours, library: lib, value: yours != null ? yours : lib,
+        source: yours != null ? 'yours' : (lib == null ? 'missing' : 'library'),
+        derived: m !== 'CS' || !!s.derived, ref: m === 'CS' ? d.ref : (f.why || '') };
+    };
+    const cs = cell('CS');
     return {
       key, group: s.group, label: s.label, unit: s.unit, derived: !!s.derived,
-      library: d.value == null ? null : Math.round(d.value * 10000) / 10000, library_ref: d.ref,
-      yours, value: yours != null ? yours : (d.value == null ? null : d.value),
-      source: yours != null ? 'yours' : (d.value == null ? 'missing' : 'library'),
+      library: cs.library, library_ref: d.ref,
+      yours: cs.yours, value: cs.value, source: cs.source,
+      by_material: Object.fromEntries(list.map((m) => [m, cell(m)])),
     };
   });
 }

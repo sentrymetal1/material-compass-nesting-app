@@ -16,6 +16,7 @@
 const { estimateTakeoff, rowPounds } = require('./estimate');
 const { BUCKETS } = require('./standards');
 const shop = require('./shop');
+const pm = require('./processModel');
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const unitsOf = (x) => Math.max(1, Math.round(Number(x && x.units) || 1));
@@ -66,16 +67,27 @@ function laborForTakeoff(takeoff, profile, jobType) {
   const tons = r2(lb / 2000);
   const bottomUp = r2(components.reduce((s, c) => s + c.items.reduce((a, i) => a + i.hours, 0), 0));
 
+  // The take-off's main material by weight, so the ballpark compares like with like: stainless
+  // handrail against the shop's stainless handrail jobs when it has any, else the type overall.
+  const byMat = {};
+  for (const r of rows) {
+    if (String(r.disposition || 'fabricate').toLowerCase() !== 'fabricate') continue;
+    const p = rowPounds(r); if (p == null) continue;
+    const k = pm.materialKey(r.material_type, r.specification); byMat[k] = (byMat[k] || 0) + p * unitsOf(r);
+  }
+  const mainMat = Object.keys(byMat).sort((a, b) => byMat[b] - byMat[a])[0] || 'CS';
   const rates = shop.referenceRates(profile);
   const type = shop.JOB_TYPES[jobType] ? jobType : null;
-  const ref = type && rates[type];
+  const exact = type && rates[type + '|' + mainMat];
+  const ref = exact || (type && rates[type]);
   const ballpark = ref && tons > 0
-    ? { hours: r2(ref.hr_per_ton * tons), hr_per_ton: ref.hr_per_ton, jobs: ref.jobs, type }
+    ? { hours: r2(ref.hr_per_ton * tons), hr_per_ton: ref.hr_per_ton, jobs: ref.jobs, type, material: mainMat,
+        matched: exact ? 'type and material' : 'type only (no ' + pm.MAT[mainMat].label.toLowerCase() + ' reference jobs of this type)' }
     : { hours: null, type, reason: !type ? 'pick a job type' : !ref ? 'no reference jobs of this type yet' : 'no weight on this take-off' };
 
   return {
     buckets: BUCKETS, components, tons, unweighed_rows: unweighed,
-    bottom_up: bottomUp, ballpark, reference_rates: rates, job_types: shop.JOB_TYPES,
+    bottom_up: bottomUp, ballpark, reference_rates: rates, job_types: shop.JOB_TYPES, main_material: mainMat,
   };
 }
 

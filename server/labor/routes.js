@@ -18,6 +18,7 @@ const shop = require('./shop');
 const { catalog } = require('./components');
 const { weldHoursPerFt, deposition, operatingFactor } = require('./weldTime');
 const { laborForTakeoff } = require('./takeoffLabor');
+const pm = require('./processModel');
 
 function shopId(req) {
   if (req.tenant && req.tenant.kind === 'm') return req.tenant.id;
@@ -25,9 +26,42 @@ function shopId(req) {
   return String((req.query && req.query.manufacturer_id) || b.manufacturer_id || '').trim();
 }
 
+// What a set of process parameters works out to, for the setup page to show beside each input:
+// a 1/4" fillet per weld process and material, cut speeds at three thicknesses, the factor a
+// frame member in each material carries against carbon steel, and where routing really lands.
+function modelPreview(P) {
+  const weld = {}, cut = {}, member = {}, routing = {};
+  for (const mat of P.materials) {
+    for (const p of pm.PROCESSES.filter((x) => x.family === 'weld')) {
+      const w = pm.weldHrPerFt(P, mat, p.key, 0.25);
+      if (!w.missing) weld[p.key + '|' + mat] = { hr_per_ft: w.value, source: w.source };
+    }
+    for (const p of pm.PROCESSES.filter((x) => x.family === 'cut')) {
+      const row = {};
+      for (const t of [0.25, 0.5, 1]) { const c = pm.cutRate(P, mat, p.key, t); row[t] = c.missing ? null : Math.round(c.ipm * 10) / 10; }
+      if (Object.values(row).some((v) => v != null)) cut[p.key + '|' + mat] = row;
+    }
+    const thin = pm.memberFactors(P, mat, 0.125, 1), thick = pm.memberFactors(P, mat, 0.5, 4);
+    const tot = (f) => f.weld == null || f.cut == null ? null :
+      P.general.share_cut.value * f.cut + P.general.share_fit.value * f.fit + P.general.share_weld.value * f.weld;
+    member[mat] = { thin: tot(thin), thick: tot(thick), thin_weld: thin.weld_process, thick_weld: thick.weld_process,
+      missing: thin.weld_missing || thin.cut_missing || thick.weld_missing || null };
+    const wt = pm.weldProcessFor(P, mat, 0.125), wk = pm.weldProcessFor(P, mat, 0.75);
+    const ct = pm.plateCutProcessFor(P, mat, 0.25), ck = pm.plateCutProcessFor(P, mat, 1.5);
+    routing[mat] = { weld_thin: wt.process || null, weld_thick: wk.process || null, plate_thin: ct.process || null, plate_thick: ck.process || null,
+      notes: [wt, wk, ct, ck].filter((x) => x.missing || x.substituted).map((x) => x.missing || ('routed ' + x.routed + ' is not in your shop — ' + x.process + ' used')) };
+  }
+  return { weld, cut, member, routing };
+}
+
 function view(profile) {
+  const P = pm.params(shop.modelOf(profile));
   return Object.assign({}, profile, {
-    catalog: catalog(profile.rates),
+    catalog: catalog(profile.rates, P, P.materials),
+    model_params: P,
+    model_input: shop.modelOf(profile),   // what the page edits: the saved model, or the old settings mapped onto it
+    model_defaults: pm.defaults(),
+    model_preview: modelPreview(P),
     reference_rates: shop.referenceRates(profile),
     weld: { deposition: deposition(profile.settings), operating_factor: operatingFactor(profile.settings) },
     job_types: shop.JOB_TYPES,
@@ -70,6 +104,14 @@ function registerLaborRoutes(app) {
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
 
+  // Unsaved setup → what it would work out to. Cleaned exactly as a save would be.
+  app.post('/api/labor/model-preview', (req, res) => {
+    try {
+      const P = pm.params(pm.cleanModel((req.body || {}).model || {}));
+      res.json({ ok: true, params: P, preview: modelPreview(P), catalog: catalog((req.body || {}).rates || {}, P, P.materials) });
+    } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
+  });
+
   app.post('/api/labor/weld-time', (req, res) => {
     try {
       const b = req.body || {};
@@ -78,4 +120,4 @@ function registerLaborRoutes(app) {
   });
 }
 
-module.exports = { registerLaborRoutes, weldSettings };
+module.exports = { registerLaborRoutes, weldSettings, modelPreview };

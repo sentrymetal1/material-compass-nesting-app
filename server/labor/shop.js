@@ -17,6 +17,7 @@
 const { readJson, writeJson } = require('../filestore');
 const { STANDARD } = require('./components');
 const { pipeDims } = require('./pipeJoint');
+const pm = require('./processModel');
 
 const JOB_TYPES = {
   skid_frame: 'Welded skid / frame',
@@ -24,6 +25,11 @@ const JOB_TYPES = {
   plate_tank: 'Plate / tank',
   pipe_spool: 'Pipe spool',
   structural: 'Structural (beams & columns)',
+  handrail: 'Handrail & guardrail',
+  stairs_ladders: 'Stairs & ladders',
+  vessel: 'Tank / vessel / hopper',
+  sheet_metal: 'Sheet metal / enclosures',
+  machined: 'Machined parts',
   misc: 'Misc. / other',
 };
 const WELD_PROCESSES = ['GMAW (MIG)', 'SMAW', 'FCAW', 'GTAW'];
@@ -35,7 +41,7 @@ const fileFor = (mfg) => {
 };
 
 function empty(mfg) {
-  return { manufacturer_id: String(mfg), settings: {}, rates: {}, pipe_anchors: [], reference_jobs: [], updated: null };
+  return { manufacturer_id: String(mfg), settings: {}, rates: {}, model: null, pipe_anchors: [], reference_jobs: [], updated: null };
 }
 
 function load(mfg) {
@@ -60,7 +66,11 @@ function clean(input, mfg) {
     start_from_sentry: s.start_from_sentry === true,   // Mark + partner to decide; off until they do
   };
   const rates = {};
-  for (const key of Object.keys(STANDARD)) { const v = pos((i.rates || {})[key]); if (v != null) rates[key] = v; }
+  // Plain key = carbon steel; key|SS, key|AL … = the same component in that material.
+  for (const key of Object.keys(STANDARD)) for (const m of pm.MATERIALS) {
+    const k = m.key === 'CS' ? key : key + '|' + m.key;
+    const v = pos((i.rates || {})[k]); if (v != null) rates[k] = v;
+  }
   const pipe_anchors = (Array.isArray(i.pipe_anchors) ? i.pipe_anchors : []).slice(0, 4)
     .map((a) => ({ size: txt(a.size, 12), schedule: txt(a.schedule, 16), hours: pos(a.hours) }))
     .filter((a) => a.hours != null && pipeDims(a.size, a.schedule));   // a joint the scaler cannot read is no anchor
@@ -68,6 +78,7 @@ function clean(input, mfg) {
     .map((j, n) => ({
       id: txt(j.id, 40) || ('rj' + Date.now().toString(36) + n),
       type: JOB_TYPES[j.type] ? j.type : 'misc',
+      material: pm.MAT[j.material] ? j.material : 'CS',
       name: txt(j.name, 120),
       tons: pos(j.tons),
       hours: pos(j.hours),
@@ -77,7 +88,9 @@ function clean(input, mfg) {
       source: j.source === 'workorder' ? 'workorder' : 'entered',
     }))
     .filter((j) => j.tons != null && j.hours != null);
-  return { manufacturer_id: String(mfg), settings, rates, pipe_anchors, reference_jobs, updated: new Date().toISOString() };
+  // The materials x processes setup (processModel.js). Absent on a profile saved before it existed.
+  const model = i.model && typeof i.model === 'object' ? pm.cleanModel(i.model) : null;
+  return { manufacturer_id: String(mfg), settings, rates, model, pipe_anchors, reference_jobs, updated: new Date().toISOString() };
 }
 
 function save(mfg, input) {
@@ -97,20 +110,46 @@ function pipeChoices() {
 }
 
 // Hours per ton per job type, weighted by tonnage so one tiny job cannot swing a big type.
+// Also per type + material ("handrail|SS"), so stainless handrail is checked against stainless
+// handrail and not carbon; the plain type is every material together.
 function referenceRates(profile) {
   const out = {};
   for (const j of (profile && profile.reference_jobs) || []) {
-    const r = out[j.type] = out[j.type] || { type: j.type, label: JOB_TYPES[j.type], hours: 0, tons: 0, jobs: 0 };
-    r.hours += j.hours; r.tons += j.tons; r.jobs += 1;
+    const mat = pm.MAT[j.material] ? j.material : 'CS';
+    for (const key of [j.type, j.type + '|' + mat]) {
+      const r = out[key] = out[key] || { type: j.type, material: key === j.type ? null : mat,
+        label: JOB_TYPES[j.type] + (key === j.type ? '' : ' — ' + pm.MAT[mat].label.toLowerCase()), hours: 0, tons: 0, jobs: 0 };
+      r.hours += j.hours; r.tons += j.tons; r.jobs += 1;
+    }
   }
   for (const r of Object.values(out)) r.hr_per_ton = Math.round((r.hours / r.tons) * 10) / 10;
   return out;
+}
+
+// A profile saved before the materials x processes setup: its one weld process, its own deposition
+// and arc time, and its one plate cutter become the carbon-steel cells and routing of the new model,
+// so nothing the shop entered is lost or silently replaced.
+function legacyModel(s) {
+  const m = { routing: { CS: {} }, weld: {} };
+  const wp = { 'GMAW (MIG)': 'MIG', SMAW: 'STICK', FCAW: 'FCAW', GTAW: 'TIG' }[s.weld_process];
+  if (wp) { m.routing.CS.weld = wp; m.routing.CS.weld_thin = wp; }
+  const dep = pos(s.deposition_lb_hr) || (wp === 'STICK' && pos(s.smaw_amps) > 9 ? 0.0223 * (pos(s.smaw_amps) - 9) : null);
+  const of = pos(s.operating_factor) && pos(s.operating_factor) <= 1 ? pos(s.operating_factor) : null;
+  if (wp && (dep || of)) m.weld[wp + '|CS'] = { dep, of };
+  if (s.plate_cut_process === 'Plasma') { m.routing.CS.plate = 'PLASMA'; m.routing.CS.plate_thick = 'OXY'; }
+  if (s.plate_cut_process === 'Oxy-Fuel') { m.routing.CS.plate = 'OXY'; m.routing.CS.plate_thick = 'OXY'; }
+  return m;
+}
+function modelOf(profile) {
+  if (profile && profile.model) return profile.model;
+  return legacyModel((profile && profile.settings) || {});
 }
 
 // What the estimate needs from a shop, in the shapes estimate.js and resolve() take.
 function estimateContext(profile) {
   const s = (profile && profile.settings) || {};
   return {
+    model: pm.params(modelOf(profile)),
     pipeAnchors: (profile && profile.pipe_anchors) || [],
     plateCutProcess: s.plate_cut_process || 'Oxy-Fuel',
     plateCutOperation: s.plate_cut_process === 'Plasma' ? 'Plasma cut - mild steel' : 'Flame cut square',
@@ -120,4 +159,4 @@ function estimateContext(profile) {
   };
 }
 
-module.exports = { load, save, clean, referenceRates, estimateContext, pipeChoices, JOB_TYPES, WELD_PROCESSES, PLATE_CUT };
+module.exports = { load, save, clean, referenceRates, estimateContext, modelOf, legacyModel, pipeChoices, JOB_TYPES, WELD_PROCESSES, PLATE_CUT };

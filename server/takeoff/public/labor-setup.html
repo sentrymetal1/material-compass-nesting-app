@@ -9,8 +9,12 @@
   Shop labour setup. Reads and saves ONE shop's numbers through /api/labor/shop (Railway volume,
   no Zoho calls). Opened from Material Compass as
     /takeoff/labor-setup.html?manufacturer_id=<MFG record id>&t=<tenant token>
-  Blank means "use the library value"; the server drops anything that is not a positive number,
-  so this page checks first and says which entries would be lost instead of letting them vanish.
+
+  v0.3 (2026-10-14): every number is per MATERIAL and PROCESS. A shop ticks the materials it works
+  and the processes it owns, says which process does which job for each material (routing), and
+  can replace any typical value. Blank = the typical value shown as the placeholder. The server
+  (labor/processModel.js) re-checks everything and drops anything that is not a positive number;
+  this page names those entries before saving instead of letting them vanish.
 -->
 <style>
   :root{
@@ -20,8 +24,8 @@
   }
   *{box-sizing:border-box;}
   body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
-  .wrap{max-width:1000px;margin:0 auto;}
-  .appbar{max-width:1000px;margin:0 auto 14px;display:flex;align-items:center;gap:10px;padding:2px;flex-wrap:wrap;}
+  .wrap{max-width:1120px;margin:0 auto;}
+  .appbar{max-width:1120px;margin:0 auto 14px;display:flex;align-items:center;gap:10px;padding:2px;flex-wrap:wrap;}
   .appbar .brand{font-weight:800;font-size:16px;color:var(--blue);letter-spacing:.2px;}
   .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
   .appbar .state{font-size:12px;color:var(--mut);margin-left:auto;}
@@ -34,41 +38,50 @@
   .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:11px;font-size:14px;font-weight:600;display:none;box-shadow:0 2px 10px rgba(0,0,0,.18);background:var(--blue);}
   .busy.show{display:block;} .busy.err{background:var(--red);} .busy.ok{background:var(--grn);}
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;overflow:hidden;}
-  .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:13px 18px;border-bottom:1px solid var(--line);background:#fafbfc;}
+  .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:13px 18px;border-bottom:1px solid var(--line);background:#fafbfc;cursor:pointer;user-select:none;}
   .card h2 .lt{text-transform:none;letter-spacing:0;font-weight:400;}
+  .card h2 .car{display:inline-block;width:14px;color:#9aa6b2;}
+  .card.closed .body{display:none;}
   .card .body{padding:16px 18px;}
+  .hero h2{cursor:default;}
   .hero .body{padding:18px;background:linear-gradient(180deg,#fff,#f7f9fc);}
   .hero h1{margin:0 0 6px;font-size:20px;}
-  .hero p{margin:0;font-size:13.5px;line-height:1.55;color:#334;max-width:760px;}
+  .hero p{margin:0 0 6px;font-size:13.5px;line-height:1.55;color:#334;max-width:820px;}
   .note{font-size:12.5px;color:var(--mut);line-height:1.5;margin:0 0 12px;}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px 18px;}
   label.f{display:block;font-size:12px;font-weight:600;color:#445;}
   label.f .h{display:block;font-weight:400;color:var(--mut);margin-top:2px;}
   input,select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cdd3da;border-radius:6px;background:#fff;color:var(--ink);width:100%;margin-top:4px;}
+  input::placeholder{color:#a3adb8;}
   input:focus,select:focus{border-color:var(--blue);outline:none;}
   input.bad{border-color:var(--red);background:#fff6f6;}
+  input.mine{border-color:#9cc79f;background:#f6fbf6;}
   input.num{text-align:right;}
-  .preview{margin-top:14px;border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:#fafbfc;font-size:13px;}
-  .preview .big{font-size:18px;font-weight:700;}
-  .preview .src{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle;}
-  .preview ul{margin:8px 0 0;padding-left:18px;color:var(--mut);font-size:12px;line-height:1.55;}
-  .preview .miss{color:var(--ylw);font-weight:600;}
-  .src.yours{background:var(--grnbg);color:var(--grn);} .src.library{background:#eef3fa;color:#3d6ea8;} .src.missing{background:var(--ylwbg);color:var(--ylw);}
   table{width:100%;border-collapse:collapse;font-size:13px;}
-  th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);}
-  td{padding:6px 5px;border-bottom:1px solid #f0f2f4;vertical-align:middle;}
+  th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap;}
+  td{padding:5px 5px;border-bottom:1px solid #f0f2f4;vertical-align:middle;}
   td input,td select{margin-top:0;}
+  td.sm input{width:70px;} td.xs input{width:56px;}
   tr.grp td{background:#fafbfc;font-weight:700;font-size:12px;color:#445;padding-top:10px;}
   td.ref{font-size:11.5px;color:var(--mut);line-height:1.4;}
-  td.lib{white-space:nowrap;text-align:right;}
   td.r{text-align:right;white-space:nowrap;}
+  td.calc{font-size:12px;color:#3d6ea8;white-space:nowrap;text-align:right;}
   .rates{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
   .rate{border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:12.5px;background:#fafbfc;}
   .rate b{font-size:15px;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px;}
+  .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #cdd3da;border-radius:16px;padding:4px 11px;font-size:12.5px;cursor:pointer;background:#fff;user-select:none;}
+  .chip input{width:auto;margin:0;}
+  .chip.on{background:#eaf2fb;border-color:var(--blue);color:#1f3a5f;font-weight:600;}
+  .fam{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);font-weight:700;margin-top:6px;}
+  .src{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:9px;white-space:nowrap;}
+  .src.yours{background:var(--grnbg);color:var(--grn);} .src.typical{background:var(--ylwbg);color:var(--ylw);} .src.sentry,.src.library{background:#eef3fa;color:#3d6ea8;} .src.missing{background:var(--redbg);color:var(--red);}
+  .warn{font-size:12px;color:var(--ylw);}
   .foot{display:flex;align-items:center;gap:14px;justify-content:flex-end;margin:4px 0 30px;}
   .errs{background:var(--redbg);border:1px solid #f3c9c9;color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:14px;display:none;}
   .errs.show{display:block;} .errs ul{margin:6px 0 0;padding-left:18px;}
   .scroll{overflow-x:auto;}
+  .legend{font-size:12px;color:var(--mut);display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px;}
   @media (max-width:640px){ body{padding:12px 16px;} .card .body{padding:14px;} }
 </style>
 </head>
@@ -81,18 +94,27 @@
 <script>
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.2 · 2026-09-30";  // bump on every push so you can verify what loaded
+  const VERSION = "v0.3 · 2026-10-14";  // bump on every push so you can verify what loaded
   console.log("Material Compass labor-setup.html " + VERSION);
 
   const MFG = (new URLSearchParams(location.search).get("manufacturer_id") || "").trim();
-  let SHOP = null;     // last response from the server (settings + catalog + choices)
-  let S = null;        // what is on screen: { settings, rates, pipe_anchors, reference_jobs }
+  let SHOP = null;     // last response from the server
+  let S = null;        // what is on screen: { settings, rates, model, pipe_anchors, reference_jobs }
+  let PV = null;       // live preview of S.model: { params, preview, catalog }
   let dirty = false;
+  const CLOSED = {};   // card id -> collapsed
 
   const $ = (id) => document.getElementById(id);
   const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const num = (v) => { const s = String(v == null ? "" : v).trim(); if (!s) return null; const n = Number(s); return Number.isFinite(n) ? n : NaN; };
-  const fmt = (n, d) => n == null ? "" : String(Math.round(n * Math.pow(10, d)) / Math.pow(10, d));
+  const fmt = (n, d) => n == null || !Number.isFinite(Number(n)) ? "" : String(Math.round(n * Math.pow(10, d)) / Math.pow(10, d));
+  const D = () => SHOP.model_defaults;
+  const P = () => (PV && PV.params) || SHOP.model_params;
+  const matLabel = (k) => (D().materials.find((m) => m.key === k) || { label: k }).label;
+  const procs = (fam) => D().processes.filter((p) => p.family === fam);
+  const procLabel = (k) => (D().processes.find((p) => p.key === k) || { label: k }).label;
+  const has = (k) => S.model.capabilities.indexOf(k) > -1;
+  const mats = () => S.model.materials;
 
   function busy(msg, kind, ms) {
     const b = $("busy"); b.className = "busy show" + (kind ? " " + kind : ""); b.textContent = msg;
@@ -102,7 +124,7 @@
     dirty = on;
     const st = $("state");
     st.className = "state" + (on ? " dirty" : "");
-    st.textContent = on ? "Unsaved changes" : (S && SHOP.updated ? "Saved " + new Date(SHOP.updated).toLocaleString() : "Not saved yet");
+    st.textContent = on ? "Unsaved changes" : (SHOP && SHOP.updated ? "Saved " + new Date(SHOP.updated).toLocaleString() : "Not saved yet");
   }
   window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
@@ -121,50 +143,274 @@
     }
     try {
       const j = await api("/api/labor/shop?manufacturer_id=" + encodeURIComponent(MFG));
-      take(j.shop);
-      render();
-      markDirty(false);
-      preview();
+      take(j.shop); PV = null; render(); markDirty(false);
     } catch (e) {
       $("wrap").innerHTML = '<div class="card"><div class="body">Could not load your shop setup: ' + esc(e.message) + '</div></div>';
     }
   }
 
-  // Server shape → the editable copy. start_from_sentry is carried through untouched: it is
-  // not on this page until Mark and his partner decide, and a save must not switch it off.
+  // Server shape → the editable copy. Old single-process settings arrive already mapped onto the
+  // model (model_input), so a shop's earlier entries show in their new places.
   function take(shop) {
     SHOP = shop;
+    const mi = JSON.parse(JSON.stringify(shop.model_input || {}));
+    const p = shop.model_params;
     S = {
       settings: Object.assign({}, shop.settings),
       rates: Object.assign({}, shop.rates),
+      model: Object.assign({ weld: {}, cut: {}, saw: {}, cut_handling_min: {}, saw_setup_min: {}, cleanup: {}, fit_factor: {},
+        shear_max_t: {}, general: {}, form: {}, routing: {} }, mi,
+        { capabilities: (mi.capabilities && mi.capabilities.length ? mi.capabilities : p.capabilities).slice(),
+          materials: (mi.materials && mi.materials.length ? mi.materials : p.materials).slice() }),
       pipe_anchors: (shop.pipe_anchors || []).map((a) => Object.assign({}, a)),
-      reference_jobs: (shop.reference_jobs || []).map((j) => Object.assign({}, j)),
+      reference_jobs: (shop.reference_jobs || []).map((j) => Object.assign({ material: "CS" }, j)),
     };
   }
 
   // ---- render ----------------------------------------------------------------
+  function card(id, title, sub, body) {
+    const closed = !!CLOSED[id];
+    return '<div class="card' + (closed ? " closed" : "") + '" id="card_' + id + '"><h2 onclick="togCard(\'' + id + '\')"><span class="car">' + (closed ? "▸" : "▾") + '</span>' +
+      title + (sub ? ' <span class="lt">· ' + sub + '</span>' : "") + '</h2><div class="body">' + body + '</div></div>';
+  }
+  function togCard(id) { CLOSED[id] = !CLOSED[id]; const c = $("card_" + id); c.classList.toggle("closed", CLOSED[id]); c.querySelector(".car").textContent = CLOSED[id] ? "▸" : "▾"; }
+
   function render() {
     $("wrap").innerHTML =
       '<div class="card hero"><div class="body"><h1>Your shop\'s labor numbers</h1>' +
-      '<p><b>What you enter here matters more than anything else in the labor estimate.</b> The built-in library gives a starting point, ' +
-      'but every shop welds, cuts and fits at its own pace. Your reference jobs (real jobs with real hours) carry the accuracy: ' +
-      'one finished job per type moves the estimate further than all the library numbers together. ' +
-      'Anything you leave blank uses the library value shown beside it. These numbers are private to your shop.</p></div></div>' +
+      '<p><b>What you enter here matters more than anything else in the labor estimate.</b> Hours are worked out from how the work is done — ' +
+      'the weld metal and how fast you lay it, the length of cut and how fast your cutter goes, the parts you handle — for each <b>material</b> and <b>process</b> you run.</p>' +
+      '<p>Every box shows a starting value in grey. <span class="src sentry">Sentry</span> values come from Sentry\'s own records; <span class="src typical">typical</span> values are ' +
+      'general industry figures to replace with your own. Type over any of them and it turns <span class="src yours">yours</span>. Reference jobs (real jobs with real hours) carry the most weight of all. ' +
+      'These numbers are private to your shop.</p></div></div>' +
       '<div id="errs" class="errs"></div>' +
-      jobsCard() + weldCard() + shopCard() + componentsCard() + pipeCard() +
+      card("caps", "1. What your shop works with", "materials and processes", capsBody()) +
+      card("route", "2. Which process does which job", "per material", '<div id="routeBox"></div>') +
+      card("weld", "3. Welding", "per process and material", '<div id="weldBox"></div>') +
+      card("cut", "4. Cutting", "plate profiles, saws and shears", '<div id="cutBox"></div>') +
+      card("fit", "5. Fit-up, handling and frame members", "", '<div id="fitBox"></div>') +
+      card("comp", "6. Standard components", "per foot or per piece, by material", '<div id="compBox"></div>') +
+      card("form", "7. Forming & machining", "for the processes you ticked", '<div id="formBox"></div>') +
+      card("jobs", "8. Reference jobs", "the most important section", jobsBody()) +
+      card("pipe", "9. Pipe butt welds", "only if you do pipe work", pipeBody()) +
       '<div class="foot"><span id="footState" class="note" style="margin:0"></span><button class="btn" id="saveBtn" onclick="save()">Save setup</button></div>';
-    renderJobs(); renderComponents(); renderPipe(); syncWeldFields();
+    renderAll();
+  }
+  function renderAll() { renderRoute(); renderWeld(); renderCut(); renderFit(); renderComponents(); renderForm(); renderJobs(); renderPipe(); }
+
+  // Generic input bound to a path in S.model, e.g. ["weld","MIG|CS","dep"]. Blank deletes it.
+  function inp(path, placeholder, opts) {
+    const o = opts || {};
+    let v = S.model; for (const k of path) v = v == null ? undefined : v[k];
+    const shown = v == null ? "" : (o.pct ? fmt(v * 100, 1) : v);
+    const typ = placeholder == null || placeholder === "" ? "" : (o.pct ? fmt(placeholder * 100, 1) : fmt(placeholder, o.d == null ? 3 : o.d));
+    return '<input class="num' + (v != null && v !== "" ? " mine" : "") + '" inputmode="decimal" data-p="' + esc(JSON.stringify(path)) + '"' + (o.pct ? ' data-pct="1"' : "") +
+      ' value="' + esc(shown) + '" placeholder="' + esc(typ) + '" oninput="setM(this)" title="' + esc(o.title || "Blank uses the grey value") + '">';
+  }
+  function setM(el) {
+    const path = JSON.parse(el.dataset.p);
+    let o = S.model; for (let i = 0; i < path.length - 1; i++) { o[path[i]] = o[path[i]] || {}; o = o[path[i]]; }
+    const last = path[path.length - 1], x = num(el.value);
+    if (x == null) delete o[last]; else o[last] = el.dataset.pct ? (Number.isFinite(x) ? x / 100 : NaN) : el.value;
+    el.classList.toggle("mine", x != null);
+    el.classList.toggle("bad", x != null && (!Number.isFinite(x) || (path[0] === "cleanup" ? x < 0 : !(x > 0)) || (el.dataset.pct && path[0] !== "cleanup" && x > 100)));
+    markDirty(true); refresh();
+  }
+  let pvTimer = null;
+  function refresh() { clearTimeout(pvTimer); pvTimer = setTimeout(runPreview, 400); }
+  async function runPreview() {
+    try {
+      PV = await api("/api/labor/model-preview", { manufacturer_id: MFG, model: payload().model, rates: payload().rates });
+      updateCalcs();
+      // Component starting values follow the welding and cutting numbers; redraw them unless one is being typed in.
+      if (!(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.key)) renderComponents();
+    } catch (e) { console.warn("[preview]", e.message); }
+  }
+  // Only the read-only figures redraw, so a box being typed in keeps its focus.
+  function updateCalcs() {
+    document.querySelectorAll("[data-calc]").forEach((el) => { el.innerHTML = calcText(el.dataset.calc); });
+  }
+  function calcText(k) {
+    const pv = (PV && PV.preview) || SHOP.model_preview;
+    const [kind, a, b] = k.split(":");
+    if (kind === "weld") { const w = pv.weld[a]; return w ? fmt(w.hr_per_ft, 4) + ' <span class="note">hr/ft</span>' : '<span class="warn">—</span>'; }
+    if (kind === "cut") { const c = pv.cut[a]; return c ? [0.25, 0.5, 1].map((t) => c[t] == null ? "—" : fmt(c[t], 1)).join(" / ") : '<span class="warn">—</span>'; }
+    if (kind === "member") { const m = pv.member[a]; if (!m) return ""; if (m.missing) return '<span class="warn">' + esc(m.missing) + '</span>';
+      return '× <b>' + fmt(m.thin, 2) + '</b> thin wall (' + esc(m.thin_weld || "?") + ') &nbsp; × <b>' + fmt(m.thick, 2) + '</b> heavy (' + esc(m.thick_weld || "?") + ')'; }
+    if (kind === "route") { const r = pv.routing[a]; if (!r) return ""; return r.notes.length ? '<span class="warn">' + r.notes.map(esc).join("<br>") + '</span>' : '<span class="note">✓</span>'; }
+    if (kind === "comp") { const c = ((PV && PV.catalog) || SHOP.catalog).find((x) => x.key === a); const cell = c && c.by_material && c.by_material[b];
+      return cell && cell.library != null ? fmt(cell.library, 3) : '<span class="warn">—</span>'; }
+    return "";
+  }
+  const calc = (k) => '<span data-calc="' + esc(k) + '">' + calcText(k) + '</span>';
+
+  // 1. Capabilities ---------------------------------------------------------------
+  function capsBody() {
+    const chip = (kind, key, label, on) => '<label class="chip' + (on ? " on" : "") + '"><input type="checkbox"' + (on ? " checked" : "") +
+      ' onchange="togCap(\'' + kind + '\',\'' + key + '\',this)">' + esc(label) + '</label>';
+    const fams = [["weld", "Welding"], ["cut", "Profile cutting"], ["saw", "Sawing & shearing"], ["form", "Forming"], ["machine", "Machining & drilling"], ["finish", "Finishing in-house"]];
+    return '<p class="note">Tick every material you work and every process you own. Only these are asked about below and used in estimates. ' +
+      'A process that cannot do a material (oxy-fuel on stainless or aluminum, stick on aluminum) is never chosen for it.</p>' +
+      '<div class="fam">Materials</div><div class="chips">' + D().materials.map((m) => chip("mat", m.key, m.label, mats().indexOf(m.key) > -1)).join("") + '</div>' +
+      fams.map(([f, l]) => '<div class="fam">' + l + '</div><div class="chips">' + procs(f).map((p) => chip("proc", p.key, p.label, has(p.key))).join("") + '</div>').join("");
+  }
+  function togCap(kind, key, el) {
+    const list = kind === "mat" ? S.model.materials : S.model.capabilities;
+    const i = list.indexOf(key);
+    if (el.checked && i < 0) list.push(key); if (!el.checked && i > -1) list.splice(i, 1);
+    el.parentNode.classList.toggle("on", el.checked);
+    markDirty(true); renderAll(); refresh();
   }
 
-  // Reference jobs --------------------------------------------------------------
-  function jobsCard() {
-    return '<div class="card"><h2>Reference jobs <span class="lt">· the most important section</span></h2><div class="body">' +
-      '<p class="note">Finished jobs with their actual shop hours. We work out hours per ton for each type of job and use it to check and scale the estimate. ' +
+  // 2. Routing ---------------------------------------------------------------------
+  function sel(path, fam, mat) {
+    const cur = (S.model.routing[mat] || {})[path] || (P().routing[mat] || {})[path];
+    const opts = procs(fam).filter((p) => has(p.key));
+    const known = opts.some((p) => p.key === cur);
+    return '<select onchange="setRoute(\'' + mat + '\',\'' + path + '\',this.value)">' +
+      (known ? "" : '<option value="' + esc(cur) + '" selected>' + esc(procLabel(cur)) + ' (not ticked)</option>') +
+      opts.map((p) => '<option value="' + p.key + '"' + (p.key === cur ? " selected" : "") + '>' + esc(p.label) + '</option>').join("") + '</select>';
+  }
+  function splitIn(mat, f) {
+    const v = (S.model.routing[mat] || {})[f];
+    const d = (P().routing[mat] || {})[f];
+    return '<input class="num' + (v != null ? " mine" : "") + '" style="width:60px" inputmode="decimal" value="' + esc(v == null ? "" : v) + '" placeholder="' + esc(d) + '" oninput="setRoute(\'' + mat + '\',\'' + f + '\',this.value,this)">';
+  }
+  function setRoute(mat, f, v, el) {
+    S.model.routing[mat] = S.model.routing[mat] || {};
+    if (v === "" || v == null) delete S.model.routing[mat][f]; else S.model.routing[mat][f] = v;
+    if (el) el.classList.toggle("mine", v !== "");
+    markDirty(true); refresh();
+  }
+  function renderRoute() {
+    $("routeBox").innerHTML = '<p class="note">For each material: the welding process for thin work (at or under the split thickness) and for heavier work, the cutter for plate up to the split and above it, and the saw for members and bar. ' +
+      'A process you have not ticked is skipped and the nearest one you have is used — shown in orange.</p>' +
+      '<div class="scroll"><table><thead><tr><th>Material</th><th>Weld thin</th><th>Split, in</th><th>Weld heavy</th><th>Plate up to</th><th>Split, in</th><th>Plate thicker</th><th>Members & bar</th><th></th></tr></thead><tbody>' +
+      mats().map((m) => '<tr><td><b>' + esc(matLabel(m)) + '</b></td><td>' + sel("weld_thin", "weld", m) + '</td><td>' + splitIn(m, "weld_split") + '</td><td>' + sel("weld", "weld", m) + '</td>' +
+        '<td>' + sel("plate", "cut", m) + '</td><td>' + splitIn(m, "plate_split") + '</td><td>' + sel("plate_thick", "cut", m) + '</td><td>' + sel("member", "saw", m) + '</td>' +
+        '<td class="ref">' + calc("route:" + m) + '</td></tr>').join("") + '</tbody></table></div>';
+  }
+
+  // 3. Welding ---------------------------------------------------------------------
+  function renderWeld() {
+    const ws = procs("weld").filter((p) => has(p.key));
+    const dflt = D().weld;
+    let rows = "";
+    ws.forEach((p) => {
+      rows += '<tr class="grp"><td colspan="5">' + esc(p.label) + '</td></tr>';
+      mats().forEach((m) => {
+        const d = (dflt[p.key] || {})[m];
+        const key = p.key + "|" + m, src = d && d[2] === "sentry" ? "sentry" : "typical";
+        rows += '<tr><td style="padding-left:18px">' + esc(matLabel(m)) + (d ? ' <span class="src ' + src + '">' + src + '</span>' : "") + '</td>' +
+          '<td class="sm">' + inp(["weld", key, "dep"], d && d[0], { d: 2 }) + '</td><td class="sm">' + inp(["weld", key, "of"], d && d[1], { pct: true }) + '</td>' +
+          '<td class="calc">' + calc("weld:" + key) + '</td><td class="ref">' + (d ? "" : 'not usually done — enter both numbers if your shop does it') + '</td></tr>';
+      });
+    });
+    $("weldBox").innerHTML = '<p class="note">Weld hours come from the weld itself: the metal in the joint ÷ how fast your welders lay it down with the arc on ÷ the share of the day the arc is actually lit. ' +
+      '<b>Arc-on %</b> is the number to replace first — it is where shops differ most. The figure on the right is what that gives for a 1/4" fillet, flat.</p>' +
+      (ws.length ? '<div class="scroll"><table><thead><tr><th>Process / material</th><th>Deposition, lb/hr</th><th>Arc on, %</th><th class="r">1/4" fillet</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+        : '<p class="warn">No welding process ticked in section 1.</p>') +
+      '<div class="fam" style="margin-top:14px">Cleanup after welding, % of weld time</div><p class="note">Grinding, brushing, pickling and passivating. Carbon steel is 0 because Sentry\'s welding rate already includes it.</p>' +
+      '<div class="grid">' + mats().map((m) => '<label class="f">' + esc(matLabel(m)) + inp(["cleanup", m], D().cleanup[m], { pct: true }) + '</label>').join("") + '</div>';
+  }
+
+  // 4. Cutting ---------------------------------------------------------------------
+  function renderCut() {
+    const cs = procs("cut").filter((p) => has(p.key)), ss = procs("saw").filter((p) => has(p.key) && D().saw[p.key]);
+    const dflt = D().cut;
+    let rows = "";
+    cs.forEach((p) => {
+      rows += '<tr class="grp"><td colspan="6">' + esc(p.label) + '</td><td class="r" style="font-weight:400">handling ' + inp(["cut_handling_min", p.key], D().cut_handling_min[p.key], { d: 1, title: "Minutes per cut part: load, mark, unload, deburr" }).replace('class="num', 'style="width:56px;display:inline-block" class="num') + ' min/part</td></tr>';
+      mats().forEach((m) => {
+        const d = (dflt[p.key] || {})[m], key = p.key + "|" + m;
+        rows += '<tr><td style="padding-left:18px">' + esc(matLabel(m)) + (d ? ' <span class="src typical">typical</span>' : ' <span class="src missing">cannot cut</span>') + '</td>' +
+          '<td class="xs">' + inp(["cut", key, "ipm"], d && d[0], { d: 1 }) + '</td><td class="xs">' + inp(["cut", key, "k"], d && d[1], { d: 2, title: "How fast the speed falls with thickness: speed = speed at 1/2\" × (0.5 / t) ^ this" }) + '</td>' +
+          '<td class="xs">' + inp(["cut", key, "max_t"], d && d[2], { d: 3 }) + '</td><td class="xs">' + inp(["cut", key, "pierce_s"], d && d[3], { d: 0 }) + '</td>' +
+          '<td class="calc">' + calc("cut:" + key) + '</td><td></td></tr>';
+      });
+    });
+    let sawRows = "";
+    ss.forEach((p) => {
+      sawRows += '<tr class="grp"><td colspan="3">' + esc(p.label) + '</td><td class="r" style="font-weight:400">setup ' + inp(["saw_setup_min", p.key], D().saw_setup_min[p.key], { d: 1, title: "Minutes per cut around the cut itself: measure, clamp, unload" }).replace('class="num', 'style="width:56px;display:inline-block" class="num') + ' min/cut</td></tr>';
+      mats().forEach((m) => {
+        const d = (D().saw[p.key] || {})[m];
+        sawRows += '<tr><td style="padding-left:18px">' + esc(matLabel(m)) + ' <span class="src typical">typical</span></td><td class="sm">' + inp(["saw", p.key + "|" + m, "sqin_min"], d, { d: 1 }) + '</td><td colspan="2"></td></tr>';
+      });
+    });
+    $("cutBox").innerHTML = '<p class="note">Cutting time = length of cut ÷ the cutter\'s speed at that thickness + time to pierce + <b>handling per part</b> (load, mark, unload, deburr). ' +
+      'Handling is usually most of the cutting time on small parts and was missing before — set it first. Speed is entered at 1/2"; the right-hand column shows what it gives at 1/4" / 1/2" / 1" (in/min).</p>' +
+      (cs.length ? '<div class="scroll"><table><thead><tr><th>Cutter / material</th><th>In/min at 1/2"</th><th>Falloff</th><th>Max thick, in</th><th>Pierce, sec</th><th class="r">1/4 / 1/2 / 1" in/min</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+        : '<p class="warn">No profile cutter ticked in section 1.</p>') +
+      (ss.length ? '<div class="fam" style="margin-top:14px">Saws — members, tube, pipe and bar</div><p class="note">Square inches of section cut per minute, plus setup per cut.</p>' +
+        '<div class="scroll"><table style="max-width:620px"><thead><tr><th>Saw / material</th><th>Sq in/min</th><th colspan="2"></th></tr></thead><tbody>' + sawRows + '</tbody></table></div>' : "") +
+      (has("SHEAR") ? '<div class="fam" style="margin-top:14px">Shear</div><div class="grid"><label class="f">Minutes per shear cut' + inp(["general", "shear_min"], D().shear_min, { d: 2 }) + '</label>' +
+        mats().map((m) => '<label class="f">Max ' + esc(matLabel(m).toLowerCase()) + ', in' + inp(["shear_max_t", m], D().shear_max_t[m], { d: 3 }) + '</label>').join("") + '</div>' : "");
+  }
+
+  // 5. Fit-up & handling --------------------------------------------------------------
+  function renderFit() {
+    const g = D().general, s = S.settings;
+    $("fitBox").innerHTML = '<div class="grid">' +
+      '<label class="f">Fit & tack, hr per plate or part' + inp(["general", "fit_hr_piece"], g.fit_hr_piece, { d: 2 }) + '<span class="h">Sentry 1997 clip fit-up</span></label>' +
+      '<label class="f">Handling, hr per ton' + inp(["general", "handling_hr_ton"], g.handling_hr_ton, { d: 2 }) + '<span class="h">Unload, store, move, load out</span></label>' +
+      '<label class="f">Frame members are usually<select onchange="S.settings.member_method=this.value;markDirty(true)">' +
+        '<option value="welded"' + (s.member_method !== "framed" ? " selected" : "") + '>Square cut and welded all around</option>' +
+        '<option value="framed"' + (s.member_method === "framed" ? " selected" : "") + '>Framed (coped, clipped connections)</option></select></label>' +
+      '</div>' +
+      '<div class="fam" style="margin-top:14px">Fit-up per material, × carbon steel</div><div class="grid">' +
+        mats().map((m) => '<label class="f">' + esc(matLabel(m)) + inp(["fit_factor", m], D().fit_factor[m], { d: 2 }) + '</label>').join("") + '</div>' +
+      '<div class="fam" style="margin-top:14px">Frame members — how Sentry\'s per-piece rate splits</div>' +
+      '<p class="note">Members are priced from Sentry\'s 1997 "square cut and welded all around" rate, one figure per piece. It is split into cutting, fit-up and welding so each shows in its own bucket, ' +
+      'and each part is scaled for the member\'s material and process. Enter all three or none; they must add to 100%.</p><div class="grid">' +
+        '<label class="f">Cutting, %' + inp(["general", "share_cut"], g.share_cut, { pct: true }) + '</label>' +
+        '<label class="f">Fit-up, %' + inp(["general", "share_fit"], g.share_fit, { pct: true }) + '</label>' +
+        '<label class="f">Welding, %' + inp(["general", "share_weld"], g.share_weld, { pct: true }) + '</label></div>' +
+      '<div class="fam" style="margin-top:14px">What that makes a frame member, against carbon steel</div><table style="max-width:760px"><tbody>' +
+        mats().map((m) => '<tr><td style="width:180px">' + esc(matLabel(m)) + '</td><td>' + calc("member:" + m) + '</td></tr>').join("") + '</tbody></table>';
+  }
+
+  // 6. Standard components --------------------------------------------------------------
+  function renderComponents() {
+    const cat = (PV && PV.catalog) || SHOP.catalog; let grp = "";
+    const ms = mats();
+    $("compBox").innerHTML = '<p class="note">Handrail, stairs and typical details vary most from shop to shop. Carbon steel comes from the library; stainless, aluminum and the rest are the carbon value scaled by that material\'s ' +
+      'own welding, cutting and fit-up above — <b>check those first</b>. Grey is the starting value; type your own over it.</p>' +
+      '<div class="scroll"><table><thead><tr><th>Component</th><th>Unit</th>' + ms.map((m) => '<th class="r">' + esc(matLabel(m)) + '</th>').join("") + '</tr></thead><tbody>' +
+      cat.map((c) => {
+        const head = c.group !== grp ? '<tr class="grp"><td colspan="' + (2 + ms.length) + '">' + esc(grp = c.group) + '</td></tr>' : "";
+        return head + '<tr><td title="' + esc(c.library_ref) + '">' + esc(c.label) + (c.derived ? ' <span class="src typical">check</span>' : "") + '</td><td class="ref">' + esc(c.unit) + '</td>' +
+          ms.map((m) => { const k = m === "CS" ? c.key : c.key + "|" + m; const cell = (c.by_material || {})[m] || {};
+            return '<td class="sm r"><input class="num' + (S.rates[k] != null ? " mine" : "") + '" inputmode="decimal" data-key="' + esc(k) + '" value="' + esc(S.rates[k] == null ? "" : S.rates[k]) +
+              '" placeholder="' + esc(cell.library == null ? "" : fmt(cell.library, 3)) + '" title="' + esc(cell.ref || "") + '" oninput="setRate(this)"></td>'; }).join("") + '</tr>';
+      }).join("") + '</tbody></table></div>';
+  }
+  function setRate(el) {
+    const v = num(el.value);
+    if (v == null) delete S.rates[el.dataset.key]; else S.rates[el.dataset.key] = el.value;
+    el.classList.toggle("bad", v != null && !(v > 0)); el.classList.toggle("mine", v != null);
+    markDirty(true);
+  }
+
+  // 7. Forming & machining -----------------------------------------------------------------
+  function renderForm() {
+    const F = D().form, names = { setup_min: "Setup, min", per_hit_sec: "Per hit, sec", per_ft_min: "Per ft, min", per_hole_min: "Per hole, min", per_part_min: "Per part, min" };
+    const list = Object.keys(F).filter((k) => has(k));
+    $("formBox").innerHTML = list.length
+      ? '<p class="note">Stored now and used as soon as a take-off counts bends, holes and machined parts. Setup is per job lot; the rest per hit, hole, foot or part.</p>' +
+        '<div class="scroll"><table style="max-width:760px"><thead><tr><th>Process</th><th colspan="2"></th></tr></thead><tbody>' +
+        list.map((k) => '<tr><td><b>' + esc(procLabel(k)) + '</b></td>' + Object.keys(F[k]).map((f) => '<td class="sm"><label class="f" style="font-weight:400">' + names[f] + inp(["form", k, f], F[k][f], { d: 1 }) + '</label></td>').join("") + '</tr>').join("") +
+        '</tbody></table></div>'
+      : '<p class="note">No forming or machining process ticked in section 1.</p>';
+  }
+
+  // 8. Reference jobs ---------------------------------------------------------------------
+  function jobsBody() {
+    return '<p class="note">Finished jobs with their actual shop hours. We work out hours per ton for each type of job — and per material, so stainless handrail is checked against your stainless handrail, not carbon. ' +
       'Tons are the fabricated weight; hours are the shop hours actually booked. A job with no tons or no hours cannot be used and will not be saved.</p>' +
-      '<div class="scroll"><table><thead><tr><th style="min-width:140px">Type</th><th style="min-width:130px">Job name</th><th>Job #</th><th>Date</th>' +
+      '<div class="scroll"><table><thead><tr><th style="min-width:150px">Type</th><th>Material</th><th style="min-width:130px">Job name</th><th>Job #</th><th>Date</th>' +
       '<th class="r">Tons</th><th class="r">Hours</th><th class="r">Pieces</th><th class="r">Hr/ton</th><th></th></tr></thead><tbody id="jobsBody"></tbody></table></div>' +
       '<button class="lnk" onclick="addJob()">+ Add a reference job</button>' +
-      '<div id="rates" class="rates"></div></div></div>';
+      '<div id="rates" class="rates"></div>';
   }
   function renderJobs() {
     const types = SHOP.job_types;
@@ -172,17 +418,19 @@
       const t = num(j.tons), h = num(j.hours);
       const hpt = t > 0 && h > 0 ? fmt(h / t, 1) : "";
       const wo = j.source === "workorder";
-      const inp = (k, cls, extra) => '<input class="' + (cls || "") + '" value="' + esc(j[k]) + '" ' + (extra || "") + (wo ? " disabled" : "") +
+      const box = (k, cls, extra) => '<input class="' + (cls || "") + '" value="' + esc(j[k]) + '" ' + (extra || "") + (wo ? " disabled" : "") +
         ' oninput="setJob(' + i + ',\'' + k + '\',this)">';
       return '<tr><td><select ' + (wo ? "disabled" : "") + ' onchange="setJob(' + i + ',\'type\',this)">' +
         Object.keys(types).map((k) => '<option value="' + k + '"' + (k === j.type ? " selected" : "") + '>' + esc(types[k]) + '</option>').join("") + '</select></td>' +
-        '<td>' + inp("name", "", 'maxlength="120"') + '</td><td>' + inp("job_number", "", 'maxlength="40" style="width:70px"') + '</td>' +
-        '<td>' + inp("date", "", 'type="date" style="width:128px"') + '</td>' +
-        '<td>' + inp("tons", "num", 'inputmode="decimal" style="width:64px"') + '</td><td>' + inp("hours", "num", 'inputmode="decimal" style="width:76px"') + '</td>' +
-        '<td>' + inp("pieces", "num", 'inputmode="decimal" style="width:56px"') + '</td>' +
+        '<td><select ' + (wo ? "disabled" : "") + ' onchange="setJob(' + i + ',\'material\',this)">' +
+        D().materials.map((m) => '<option value="' + m.key + '"' + (m.key === (j.material || "CS") ? " selected" : "") + '>' + esc(m.label) + '</option>').join("") + '</select></td>' +
+        '<td>' + box("name", "", 'maxlength="120"') + '</td><td>' + box("job_number", "", 'maxlength="40" style="width:70px"') + '</td>' +
+        '<td>' + box("date", "", 'type="date" style="width:128px"') + '</td>' +
+        '<td>' + box("tons", "num", 'inputmode="decimal" style="width:64px"') + '</td><td>' + box("hours", "num", 'inputmode="decimal" style="width:76px"') + '</td>' +
+        '<td>' + box("pieces", "num", 'inputmode="decimal" style="width:56px"') + '</td>' +
         '<td class="r" id="hpt' + i + '">' + hpt + '</td>' +
         '<td>' + (wo ? '<span class="note" title="Added from a finished work order">WO</span>' : '<button class="x" title="Remove" onclick="delJob(' + i + ')">✕</button>') + '</td></tr>';
-    }).join("") : '<tr><td colspan="9" class="note" style="padding:12px 8px">No reference jobs yet. Add one or two jobs you know well; they make the biggest difference.</td></tr>';
+    }).join("") : '<tr><td colspan="10" class="note" style="padding:12px 8px">No reference jobs yet. Add one or two jobs you know well; they make the biggest difference.</td></tr>';
     S.reference_jobs.forEach((j, i) => flagJob(i));
     renderRates();
   }
@@ -191,8 +439,8 @@
     if (k === "tons" || k === "hours") {
       const t = num(S.reference_jobs[i].tons), h = num(S.reference_jobs[i].hours);
       $("hpt" + i).textContent = t > 0 && h > 0 ? fmt(h / t, 1) : "";
-      renderRates();
     }
+    if (k === "tons" || k === "hours" || k === "type" || k === "material") renderRates();
     flagJob(i);
     markDirty(true);
   }
@@ -202,118 +450,34 @@
     ["tons", "hours", "pieces"].forEach((k, n) => {
       const v = num(j[k]);
       const bad = (k === "pieces" ? v != null : true) && !(v > 0);
-      row.cells[4 + n].firstChild.classList.toggle("bad", bad && (k === "pieces" || String(j.tons || j.hours || j.name || "").trim() !== ""));
+      const c = row.cells[5 + n] && row.cells[5 + n].firstChild; if (!c) return;
+      c.classList.toggle("bad", bad && (k === "pieces" || String(j.tons || j.hours || j.name || "").trim() !== ""));
     });
   }
   function addJob() {
-    S.reference_jobs.push({ type: "skid_frame", name: "", job_number: "", date: "", tons: "", hours: "", pieces: "", source: "entered" });
+    S.reference_jobs.push({ type: "skid_frame", material: "CS", name: "", job_number: "", date: "", tons: "", hours: "", pieces: "", source: "entered" });
     renderJobs(); markDirty(true);
   }
   function delJob(i) { S.reference_jobs.splice(i, 1); renderJobs(); markDirty(true); }
-  // Same arithmetic as shop.referenceRates: weighted by tonnage, so a tiny job cannot swing a type.
+  // Same arithmetic as shop.referenceRates: weighted by tonnage, per type and per type + material.
   function renderRates() {
     const out = {};
     S.reference_jobs.forEach((j) => {
       const t = num(j.tons), h = num(j.hours); if (!(t > 0 && h > 0)) return;
-      const r = out[j.type] = out[j.type] || { h: 0, t: 0, n: 0 }; r.h += h; r.t += t; r.n++;
+      const k = j.type + "|" + (j.material || "CS");
+      const r = out[k] = out[k] || { h: 0, t: 0, n: 0, type: j.type, mat: j.material || "CS" }; r.h += h; r.t += t; r.n++;
     });
     const keys = Object.keys(out);
-    $("rates").innerHTML = keys.length ? keys.map((k) => '<div class="rate">' + esc(SHOP.job_types[k]) + '<br><b>' + fmt(out[k].h / out[k].t, 1) +
+    $("rates").innerHTML = keys.length ? keys.map((k) => '<div class="rate">' + esc(SHOP.job_types[out[k].type]) + ' — ' + esc(matLabel(out[k].mat).toLowerCase()) + '<br><b>' + fmt(out[k].h / out[k].t, 1) +
       '</b> hr/ton <span class="note">· ' + out[k].n + ' job' + (out[k].n > 1 ? "s" : "") + ', ' + fmt(out[k].t, 1) + ' t</span></div>').join("") : "";
   }
 
-  // Welding ---------------------------------------------------------------------
-  function weldCard() {
-    const s = S.settings, w = SHOP.weld || {};
-    const libOf = w.operating_factor && w.operating_factor.source === "library" ? fmt(w.operating_factor.value * 100, 0) : "47";
-    return '<div class="card"><h2>Welding</h2><div class="body">' +
-      '<p class="note">Weld hours are worked out from the weld itself: the metal in the joint, how fast your welders lay it down, and how much of the day the arc is actually on. ' +
-      'Your own deposition rate and arc time replace the library defaults.</p><div class="grid">' +
-      '<label class="f">Main welding process<select id="w_proc" onchange="setWeld()">' +
-      SHOP.weld_processes.map((p) => '<option' + (p === s.weld_process ? " selected" : "") + '>' + esc(p) + '</option>').join("") + '</select></label>' +
-      '<label class="f" id="ampsBox">Usual amperage (stick)<input id="w_amps" class="num" inputmode="decimal" value="' + esc(s.smaw_amps) + '" placeholder="e.g. 175" oninput="setWeld()">' +
-      '<span class="h">Used to read deposition off the 1962 stick chart</span></label>' +
-      '<label class="f">Deposition, lb/hr with the arc on<input id="w_dep" class="num" inputmode="decimal" value="' + esc(s.deposition_lb_hr) + '" placeholder="library" oninput="setWeld()">' +
-      '<span class="h">Leave blank for the library value</span></label>' +
-      '<label class="f">Arc time, % of the shift<input id="w_of" class="num" inputmode="decimal" value="' + esc(s.operating_factor != null ? fmt(s.operating_factor * 100, 1) : "") + '" placeholder="library ≈ ' + libOf + '" oninput="setWeld()">' +
-      '<span class="h">The share of a welder\'s day the arc is actually lit — the number to replace first</span></label>' +
-      '</div><div id="weldPrev" class="preview">Working out…</div></div></div>';
-  }
-  function syncWeldFields() { $("ampsBox").style.display = $("w_proc").value === "SMAW" ? "" : "none"; }
-  let weldTimer = null;
-  function setWeld() {
-    const s = S.settings;
-    s.weld_process = $("w_proc").value;
-    s.smaw_amps = $("w_amps").value;
-    s.deposition_lb_hr = $("w_dep").value;
-    const pct = num($("w_of").value);
-    s.operating_factor = pct == null ? null : (pct > 0 ? pct / 100 : NaN);
-    $("w_amps").classList.toggle("bad", num(s.smaw_amps) != null && !(num(s.smaw_amps) > 9));
-    $("w_dep").classList.toggle("bad", num(s.deposition_lb_hr) != null && !(num(s.deposition_lb_hr) > 0));
-    $("w_of").classList.toggle("bad", pct != null && !(pct > 0 && pct <= 100));
-    syncWeldFields(); markDirty(true);
-    clearTimeout(weldTimer); weldTimer = setTimeout(preview, 350);
-  }
-  // 1/4" fillet, flat and vertical — the weld every estimator knows a number for.
-  async function preview() {
-    const box = $("weldPrev"); if (!box) return;
-    const settings = payload().settings;
-    try {
-      const [flat, vert] = await Promise.all(["flat", "vertical"].map((position) =>
-        api("/api/labor/weld-time", { manufacturer_id: MFG, settings, weld: { kind: "fillet", size: 0.25, position } })));
-      const f = flat.result, v = vert.result;
-      if (f.missing) { box.innerHTML = '<span class="miss">' + esc(f.missing) + '</span>'; return; }
-      box.innerHTML = '1/4" fillet, flat: <span class="big">' + fmt(f.hours_per_ft, 4) + '</span> hr/ft' +
-        '<span class="src ' + f.source + '">' + (f.source === "yours" ? "your numbers" : "library") + '</span>' +
-        ' &nbsp;·&nbsp; vertical: <b>' + fmt(v.hours_per_ft, 4) + '</b> hr/ft' +
-        '<ul>' + f.basis.map((b) => '<li>' + esc(b) + '</li>').join("") + '</ul>';
-    } catch (e) { box.innerHTML = '<span class="miss">Preview unavailable: ' + esc(e.message) + '</span>'; }
-  }
-
-  // Cutting & fitting -----------------------------------------------------------
-  function shopCard() {
-    const s = S.settings;
-    return '<div class="card"><h2>Cutting & fitting</h2><div class="body"><div class="grid">' +
-      '<label class="f">Plate cutting<select onchange="S.settings.plate_cut_process=this.value;markDirty(true)">' +
-      SHOP.plate_cut.map((p) => '<option' + (p === s.plate_cut_process ? " selected" : "") + '>' + esc(p) + '</option>').join("") + '</select></label>' +
-      '<label class="f">Frame members are usually<select onchange="S.settings.member_method=this.value;markDirty(true)">' +
-      '<option value="welded"' + (s.member_method !== "framed" ? " selected" : "") + '>Square cut and welded all around</option>' +
-      '<option value="framed"' + (s.member_method === "framed" ? " selected" : "") + '>Framed (coped, clipped connections)</option></select></label>' +
-      '</div></div></div>';
-  }
-
-  // Standard components ---------------------------------------------------------
-  function componentsCard() {
-    return '<div class="card"><h2>Standard components <span class="lt">· priced per foot or per piece</span></h2><div class="body">' +
-      '<p class="note">Handrail, stairs and typical details vary most from shop to shop. Enter your own hours where you know them. ' +
-      'Items marked <b>(please check)</b> have no library row of their own and are built from the nearest one; they are the first to replace with your own.</p>' +
-      '<div class="scroll"><table><thead><tr><th>Component</th><th class="r">Library</th><th class="r" style="width:120px">Yours</th><th>Unit</th><th>Where the library number comes from</th></tr></thead>' +
-      '<tbody id="compBody"></tbody></table></div></div></div>';
-  }
-  function renderComponents() {
-    let grp = "";
-    $("compBody").innerHTML = SHOP.catalog.map((c) => {
-      const head = c.group !== grp ? '<tr class="grp"><td colspan="5">' + esc(grp = c.group) + '</td></tr>' : "";
-      return head + '<tr><td>' + esc(c.label) + '</td>' +
-        '<td class="lib">' + (c.library == null ? '<span class="src missing">needs your number</span>' : fmt(c.library, 3)) + '</td>' +
-        '<td><input class="num" inputmode="decimal" data-key="' + c.key + '" value="' + esc(S.rates[c.key]) + '" placeholder="' + (c.library == null ? "" : "library") + '" oninput="setRate(this)"></td>' +
-        '<td class="ref">' + esc(c.unit) + '</td><td class="ref">' + esc(c.library_ref) + (c.derived ? ' <b>(please check)</b>' : "") + '</td></tr>';
-    }).join("");
-  }
-  function setRate(el) {
-    const v = num(el.value);
-    if (v == null) delete S.rates[el.dataset.key]; else S.rates[el.dataset.key] = el.value;
-    el.classList.toggle("bad", v != null && !(v > 0));
-    markDirty(true);
-  }
-
-  // Pipe reference joints -------------------------------------------------------
-  function pipeCard() {
-    return '<div class="card"><h2>Pipe butt welds <span class="lt">· only if you do pipe work</span></h2><div class="body">' +
-      '<p class="note">There is no library number for pipe joints. Give the hours for one or two butt-weld joints you know (fit-up and welding, one joint). ' +
+  // 9. Pipe reference joints -----------------------------------------------------------------
+  function pipeBody() {
+    return '<p class="note">There is no library number for pipe joints. Give the hours for one or two butt-weld joints you know (fit-up and welding, one joint). ' +
       'Every other size and schedule is scaled from these by joint length and weld volume. Two joints of different sizes, say 4" and 8", scale far better than one.</p>' +
       '<table style="max-width:520px"><thead><tr><th>Size</th><th>Schedule</th><th class="r">Hours per joint</th><th></th></tr></thead><tbody id="pipeBody"></tbody></table>' +
-      '<button class="lnk" id="addPipe" onclick="addPipe()">+ Add a reference joint</button></div></div>';
+      '<button class="lnk" id="addPipe" onclick="addPipe()">+ Add a reference joint</button>';
   }
   function schedulesFor(size) { const c = SHOP.pipe_choices.find((p) => p.size === size); return c ? c.schedules : []; }
   function renderPipe() {
@@ -338,37 +502,49 @@
   function delPipe(i) { S.pipe_anchors.splice(i, 1); renderPipe(); markDirty(true); }
 
   // ---- save ------------------------------------------------------------------
+  // Numbers out of the model as numbers; blanks are already deleted by setM.
+  function modelOut() {
+    const m = JSON.parse(JSON.stringify(S.model));
+    const walk = (o) => { for (const k of Object.keys(o)) { const v = o[k];
+      if (v && typeof v === "object" && !Array.isArray(v)) walk(v);
+      else if (typeof v === "string" && !/^(capabilities|materials)$/.test(k) && num(v) != null && !Number.isNaN(num(v)) && !isProc(v)) o[k] = num(v); } };
+    walk(m); return m;
+  }
+  const isProc = (v) => D().processes.some((p) => p.key === v);
   function payload() {
     const s = S.settings;
     const n = (v) => { const x = num(v); return x == null ? null : x; };
     return {
       manufacturer_id: MFG,
-      settings: {
-        weld_process: s.weld_process, smaw_amps: n(s.smaw_amps), deposition_lb_hr: n(s.deposition_lb_hr),
-        operating_factor: Number.isFinite(s.operating_factor) ? s.operating_factor : null,
-        plate_cut_process: s.plate_cut_process, member_method: s.member_method,
-        start_from_sentry: SHOP.settings.start_from_sentry === true,
-      },
+      settings: Object.assign({}, s, { start_from_sentry: SHOP.settings.start_from_sentry === true }),
       rates: Object.fromEntries(Object.entries(S.rates).map(([k, v]) => [k, n(v)])),
+      model: modelOut(),
       pipe_anchors: S.pipe_anchors.map((a) => ({ size: a.size, schedule: a.schedule, hours: n(a.hours) })),
       reference_jobs: S.reference_jobs.map((j) => Object.assign({}, j, { tons: n(j.tons), hours: n(j.hours), pieces: n(j.pieces) })),
     };
   }
   // The server drops anything that is not a positive number. Name it here instead.
   function problems() {
-    const out = [], s = S.settings;
-    const bad = (v) => { const x = num(v); return x != null && !(x > 0); };
-    if (s.weld_process === "SMAW" && bad(s.smaw_amps)) out.push("Welding: amperage must be a number above zero.");
-    if (bad(s.deposition_lb_hr)) out.push("Welding: deposition must be a number above zero, or blank for the library.");
-    if (Number.isNaN(s.operating_factor) || s.operating_factor > 1) out.push("Welding: arc time must be a percent between 1 and 100, or blank for the library.");
-    SHOP.catalog.forEach((c) => { if (bad(S.rates[c.key])) out.push("Standard components: " + c.label + " must be a number above zero, or blank."); });
+    const out = [];
+    document.querySelectorAll("#wrap input.bad").forEach((el) => {
+      const row = el.closest("tr"), lab = el.closest("label"), cardEl = el.closest(".card");
+      let grp = row; while (grp && !(grp.classList && grp.classList.contains("grp"))) grp = grp.previousElementSibling;
+      const where = [cardEl ? cardEl.querySelector("h2").innerText.replace(/^[▸▾]\s*/, "").split("·")[0].trim() : "",
+        grp && grp !== row ? grp.cells[0].innerText.trim() : "",
+        row ? row.cells[0].innerText.replace(/\b(typical|sentry|cannot cut)\b/g, "").trim() : lab ? lab.firstChild.textContent.trim() : ""].filter(Boolean).join(" › ");
+      out.push(where + ": \"" + el.value + "\" is not a usable number (blank uses the grey value).");
+    });
+    const g = S.model.general || {};
+    const sh = ["share_cut", "share_fit", "share_weld"].map((k) => g[k]);
+    if (sh.some((x) => x != null) && (sh.some((x) => x == null) || Math.abs(sh.reduce((a, b) => a + Number(b || 0), 0) - 1) > 0.02))
+      out.push("Frame member split: enter all three percentages adding to 100, or leave all three blank.");
+    if (!mats().length) out.push("Section 1: tick at least one material.");
     S.pipe_anchors.forEach((a) => { if (!(num(a.hours) > 0)) out.push("Pipe joint " + a.size + " " + a.schedule + ": hours are needed, or remove the row."); });
     S.reference_jobs.forEach((j, i) => {
       const name = j.name || j.job_number || ("row " + (i + 1));
       if (!(num(j.tons) > 0) || !(num(j.hours) > 0)) out.push("Reference job \"" + name + "\": needs both tons and hours above zero, or remove the row.");
-      if (bad(j.pieces)) out.push("Reference job \"" + name + "\": pieces must be above zero, or blank.");
     });
-    return out;
+    return out.filter((x, i, a) => a.indexOf(x) === i);
   }
   async function save() {
     const p = problems(), box = $("errs");
@@ -381,7 +557,7 @@
     $("saveBtn").disabled = true; busy("Saving…");
     try {
       const j = await api("/api/labor/shop", payload());
-      take(j.shop); render(); markDirty(false); preview();
+      take(j.shop); PV = null; render(); markDirty(false);
       busy("Saved", "ok", 1800);
     } catch (e) { busy("Save failed: " + e.message, "err", 6000); }
     finally { const b = $("saveBtn"); if (b) b.disabled = false; }
