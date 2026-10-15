@@ -452,6 +452,7 @@ function defaults() {
     ops: Object.fromEntries(Object.entries(OPS).map(([k, o]) => [k, { group: o.group, label: o.label, bucket: o.bucket, type: o.type,
       fields: Object.fromEntries(Object.entries(o.f).map(([f, [v, help]]) => [f, { value: v, help }])) }])),
     codes: CODES, machinability: MACHINABILITY,
+    ranges: require('./ranges').RANGES,   // what is normal for each number, and how to check yours
     joints: Object.fromEntries(Object.entries(JOINTS).map(([k, j]) => [k, { label: j.label, size: j.size, bevels: j.bevels, gouge: !!j.gouge, backing: !!j.backing, nde: !!j.nde }])) };
 }
 

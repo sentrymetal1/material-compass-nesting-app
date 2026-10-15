@@ -81,6 +81,9 @@
   .errs{background:var(--redbg);border:1px solid #f3c9c9;color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:14px;display:none;}
   .errs.show{display:block;} .errs ul{margin:6px 0 0;padding-left:18px;}
   .scroll{overflow-x:auto;}
+  .rng{font-size:10.5px;color:#7b8a9b;margin-top:2px;white-space:nowrap;cursor:help;}
+  .rng.odd{color:var(--ylw);font-weight:600;}
+  .rng .how{color:#9fb3c8;}
   .legend{font-size:12px;color:var(--mut);display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px;}
   @media (max-width:640px){ body{padding:12px 16px;} .card .body{padding:14px;} }
 </style>
@@ -94,7 +97,7 @@
 <script>
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.5 · 2026-10-14";  // bump on every push so you can verify what loaded
+  const VERSION = "v0.6 · 2026-10-14";  // bump on every push so you can verify what loaded
   console.log("Material Compass labor-setup.html " + VERSION);
 
   const MFG = (new URLSearchParams(location.search).get("manufacturer_id") || "").trim();
@@ -200,13 +203,35 @@
   function renderAll() { renderRoute(); renderWeld(); renderCut(); renderFit(); renderOps(); renderComponents(); renderForm(); renderJobs(); renderPipe(); }
 
   // Generic input bound to a path in S.model, e.g. ["weld","MIG|CS","dep"]. Blank deletes it.
+  // What is normal for this box (server labor/ranges.js): most specific key first —
+  // weld.MIG|SS.dep, then weld.MIG.dep, then weld.*.dep.
+  function rangeFor(path) {
+    const R = D().ranges || {};
+    const keys = [path.join(".")];
+    if (path.length >= 2 && /\|/.test(path[1])) { const p = path[1].split("|")[0]; keys.push([path[0], p].concat(path.slice(2)).join(".")); }
+    keys.push([path[0], "*"].concat(path.slice(2)).join("."));
+    for (const k of keys) if (R[k]) return R[k];
+    return null;
+  }
+  const rfmt = (x, pct) => pct ? fmt(x * 100, 1) + "%" : (Math.abs(x) >= 100 ? fmt(x, 0) : fmt(x, 3));
+  // "usual 25–55%" under the box; orange when the entry is outside it. Never blocks a save.
+  function rangeNote(path, v, pct) {
+    const r = rangeFor(path); if (!r) return "";
+    const x = v == null || v === "" ? null : Number(v);
+    const out = x != null && Number.isFinite(x) && (x < r[0] * 0.999 || x > r[1] * 1.001);
+    return (r[0] === r[1] ? "reference " + rfmt(r[0], pct) : "usual " + rfmt(r[0], pct) + "–" + rfmt(r[1], pct)) + (out ? " · outside the usual range — check" : "");
+  }
   function inp(path, placeholder, opts) {
     const o = opts || {};
     let v = S.model; for (const k of path) v = v == null ? undefined : v[k];
     const shown = v == null ? "" : (o.pct ? fmt(v * 100, 1) : v);
     const typ = placeholder == null || placeholder === "" ? "" : (o.pct ? fmt(placeholder * 100, 1) : fmt(placeholder, o.d == null ? 3 : o.d));
-    return '<input class="num' + (v != null && v !== "" ? " mine" : "") + '" inputmode="decimal" data-p="' + esc(JSON.stringify(path)) + '"' + (o.pct ? ' data-pct="1"' : "") +
-      ' value="' + esc(shown) + '" placeholder="' + esc(typ) + '" oninput="setM(this)" title="' + esc(o.title || "Blank uses the grey value") + '">';
+    const r = rangeFor(path), note = rangeNote(path, v, o.pct);
+    const tip = (o.title ? o.title + ". " : "") + (r ? "How to check yours: " + r[2] : "Blank uses the grey value");
+    const box = '<input class="num' + (v != null && v !== "" ? " mine" : "") + '" inputmode="decimal" data-p="' + esc(JSON.stringify(path)) + '"' + (o.pct ? ' data-pct="1"' : "") +
+      ' value="' + esc(shown) + '" placeholder="' + esc(typ) + '" oninput="setM(this)" title="' + esc(tip) + '">';
+    if (o.inline || !r) return box;
+    return box + '<div class="rng' + (/outside/.test(note) ? " odd" : "") + '" title="' + esc(r[2]) + '">' + esc(note) + ' <span class="how">ⓘ</span></div>';
   }
   function setM(el) {
     const path = JSON.parse(el.dataset.p);
@@ -217,6 +242,8 @@
     // !! matters: toggle(name, undefined) flips the class instead of clearing it, so a good one-character
     // entry used to turn red (and a second keystroke turned it back).
     el.classList.toggle("bad", !!(x != null && (!Number.isFinite(x) || (path[0] === "cleanup" ? x < 0 : !(x > 0)) || (el.dataset.pct && path[0] !== "cleanup" && x > 100))));
+    const rn = el.nextElementSibling;
+    if (rn && rn.classList.contains("rng")) { const t = rangeNote(path, x == null ? null : (el.dataset.pct ? x / 100 : x), !!el.dataset.pct); rn.firstChild.textContent = t + " "; rn.classList.toggle("odd", /outside/.test(t)); }
     markDirty(true); refresh();
   }
   let pvTimer = null;
@@ -363,7 +390,7 @@
     const dflt = D().cut;
     let rows = "";
     cs.forEach((p) => {
-      rows += '<tr class="grp"><td colspan="6">' + esc(p.label) + '</td><td class="r" style="font-weight:400">handling ' + inp(["cut_handling_min", p.key], D().cut_handling_min[p.key], { d: 1, title: "Minutes per cut part: load, mark, unload, deburr" }).replace('class="num', 'style="width:56px;display:inline-block" class="num') + ' min/part</td></tr>';
+      rows += '<tr class="grp"><td colspan="6">' + esc(p.label) + '</td><td class="r" style="font-weight:400">handling ' + inp(["cut_handling_min", p.key], D().cut_handling_min[p.key], { d: 1, inline: true, title: "Minutes per cut part: load, mark, unload, deburr" }).replace('class="num', 'style="width:56px;display:inline-block" class="num') + ' min/part</td></tr>';
       mats().forEach((m) => {
         const d = (dflt[p.key] || {})[m], key = p.key + "|" + m;
         rows += '<tr><td style="padding-left:18px">' + esc(matLabel(m)) + (d ? ' <span class="src typical">typical</span>' : ' <span class="src missing">cannot cut</span>') + '</td>' +
@@ -374,7 +401,7 @@
     });
     let sawRows = "";
     ss.forEach((p) => {
-      sawRows += '<tr class="grp"><td colspan="3">' + esc(p.label) + '</td><td class="r" style="font-weight:400">setup ' + inp(["saw_setup_min", p.key], D().saw_setup_min[p.key], { d: 1, title: "Minutes per cut around the cut itself: measure, clamp, unload" }).replace('class="num', 'style="width:56px;display:inline-block" class="num') + ' min/cut</td></tr>';
+      sawRows += '<tr class="grp"><td colspan="3">' + esc(p.label) + '</td><td class="r" style="font-weight:400">setup ' + inp(["saw_setup_min", p.key], D().saw_setup_min[p.key], { d: 1, inline: true, title: "Minutes per cut around the cut itself: measure, clamp, unload" }).replace('class="num', 'style="width:56px;display:inline-block" class="num') + ' min/cut</td></tr>';
       mats().forEach((m) => {
         const d = (D().saw[p.key] || {})[m];
         sawRows += '<tr><td style="padding-left:18px">' + esc(matLabel(m)) + ' <span class="src typical">typical</span></td><td class="sm">' + inp(["saw", p.key + "|" + m, "sqin_min"], d, { d: 1 }) + '</td><td colspan="2"></td></tr>';
