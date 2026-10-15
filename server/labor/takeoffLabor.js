@@ -17,6 +17,7 @@ const { estimateTakeoff, rowPounds } = require('./estimate');
 const { BUCKETS } = require('./standards');
 const shop = require('./shop');
 const pm = require('./processModel');
+const { typeForLine } = require('./laborTypes');
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const unitsOf = (x) => Math.max(1, Math.round(Number(x && x.units) || 1));
@@ -57,6 +58,8 @@ function laborForTakeoff(takeoff, profile, jobType) {
         qty: l.units != null ? Math.round(Number(l.units) * units * 1000) / 1000 : null,
         unit_label: l.unit_label || '', each: l.per_unit != null ? Number(l.per_unit) : null,
         derived: !!l.derived, note: l.note || null,
+        // The detail under the broad bucket (MIG, TIG, plasma, band saw…), laborTypes.js.
+        labor_type: typeForLine(l), process: l.process || null, material: l.material || null,
       })),
       missing: c.missing,
     };

@@ -153,6 +153,7 @@
   tr.lab-grp .tg{cursor:pointer;user-select:none;display:inline-block;min-width:200px;}
   tr.lab-grp .tg .car{display:inline-block;width:14px;color:#7b8a9b;}
   tr.lab-grp .cnt{font-weight:400;color:#7b8a9b;font-size:11.5px;margin-left:6px;}
+  select.lab-type{font-size:11.5px;padding:1px 4px;margin-left:6px;border:1px solid #dfe5ec;border-radius:5px;background:#f7f9fb;color:#3d6ea8;max-width:170px;}
   tr.lab-item td.n{padding-left:8px;}
   /* Tabs — one area of the review at a time */
   .tabs{display:flex;gap:4px;margin:0 0 14px;border-bottom:2px solid #d7e0ec;overflow-x:auto;position:sticky;top:0;z-index:5;background:#eef1f5;padding-top:4px;}
@@ -196,7 +197,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.69 · 2026-10-12";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.70 · 2026-10-14";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -785,6 +786,26 @@
     }catch(e){ console.warn("[labor] qty backfill:",e.message); }
   }
   function laborItemText(ci,ii,k,v){ labEdit(function(L){ L.components[ci].items[ii][k]=String(v||"").slice(0,120); }); }
+  // Two levels of labour (Mark, 2026-10-14): the 8 broad categories the project carries, and the
+  // detail under them — server/labor/laborTypes.js, fetched once. A line saved before types existed
+  // shows its category's usual type until someone picks one.
+  let LAB_TYPES=[];
+  const LAB_TYPE_DEFAULT={Cutting_Hrs:"CUT_BANDSAW",CNC_Hrs:"CNC_MACHINE",Assy_Hrs:"FIT_TACK",Fab_Hrs:"FAB_GRIND",Weld_Hrs:"WELD_MIG",Labor_Hrs:"HANDLE",Inspection_Hrs:"INSPECT",Misc_Hrs:"MISC"};
+  function labTypeOf(it){
+    const ok=function(c){ return LAB_TYPES.some(function(t){ return t.code===c && t.bucket===it.bucket; }); };
+    if(it.labor_type && ok(it.labor_type)) return it.labor_type;
+    if(it.bucket==="Cutting_Hrs" && /^load, mark/i.test(String(it.what||""))) return "CUT_HANDLE";
+    if(it.bucket==="Weld_Hrs" && /\btig\b/i.test(String(it.what||""))) return "WELD_TIG";
+    return LAB_TYPE_DEFAULT[it.bucket]||"MISC";
+  }
+  (function(){ fetch(RAILWAY_URL+"/api/labor/types").then(function(r){ return r.json(); })
+    .then(function(j){ if(j&&j.ok){ LAB_TYPES=j.types||[]; render(); } }).catch(function(){}); })();
+  function laborItemType(ci,ii,code){
+    const t=LAB_TYPES.find(function(x){ return x.code===code; }); if(!t) return;
+    labEdit(function(L){ const it=L.components[ci].items[ii];
+      if(!it.entered && t.bucket!==it.bucket) return;   // a worked-out line keeps its category
+      it.labor_type=t.code; if(it.entered) it.bucket=t.bucket; });
+  }
   // A component total scales its items. One with no items yet gets a single entered line.
   function laborComp(ci,v){ const n=labNum(v); if(n==null){ render(); return; }
     labEdit(function(L){
@@ -860,9 +881,16 @@
           : esc(it.what)+' <span class="src" title="'+escAttr(it.source_ref||"")+'">'+esc(it.standard||"")+'</span>'+
             (it.derived?' <span class="src" style="color:var(--ylw);font-weight:600" title="'+escAttr(it.note||"")+'">≈ derived</span>':'')+
             (it.auto!=null && Math.abs((Number(it.hours)||0)-it.auto)>0.005?' <span class="src">(standard '+labFmt(it.auto,2)+')</span>':'');
-        const bucket = it.entered
-          ? ' <select style="font-size:12px;padding:2px 4px;border:1px solid #dfe5ec;border-radius:5px" onchange="laborItemText('+ci+','+ii+',\'bucket\',this.value)">'+bucketOpts(it.bucket)+'</select>'
-          : (LAB_BUCKET[it.bucket]?'':' '+esc(it.bucket));   // the type heading above already says it
+        // The detail type (MIG, TIG, plasma…). A worked-out line can change type within its broad
+        // category; a line typed in can be any type, and picking one files it under that type's category.
+        const curType=labTypeOf(it);
+        const choices=LAB_TYPES.filter(function(t){ return it.entered || t.bucket===it.bucket; });
+        const bucket = choices.length
+          ? ' <select class="lab-type" title="Labor type — the detail under '+escAttr(LAB_BUCKET[it.bucket]||it.bucket)+'" onchange="laborItemType('+ci+','+ii+',this.value)">'+
+              (it.entered ? Object.keys(LAB_BUCKET).map(function(b){ return '<optgroup label="'+escAttr(LAB_BUCKET[b])+'">'+choices.filter(function(t){ return t.bucket===b; })
+                  .map(function(t){ return '<option value="'+t.code+'"'+(t.code===curType?' selected':'')+'>'+esc(t.label)+'</option>'; }).join("")+'</optgroup>'; }).join("")
+                : choices.map(function(t){ return '<option value="'+t.code+'"'+(t.code===curType?' selected':'')+'>'+esc(t.label)+'</option>'; }).join(""))+'</select>'
+          : (LAB_BUCKET[it.bucket]?'':' '+esc(it.bucket));
         const q=labQty(it), e=labEach(it), unit=it.unit_label||'';
         return '<tr class="lab-item"><td>'+what+bucket+'</td>'+
           '<td class="n" style="text-align:right;white-space:nowrap"><input class="lab-in" style="width:64px" value="'+labFmt(q,q%1?2:0)+'" onchange="laborItemQty('+ci+','+ii+',this.value)">'+

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Labor Detail</title>
+<!--
+  Read-only labour detail for one project, opened from the project's Labor tab:
+    /takeoff/labor-detail.html?project_id=<project record id>&t=<tenant token>
+  The project's labour subform stays BROAD (8 categories, hours x rate). This is the detail
+  underneath — MIG, TIG, plasma, band saw… — from the AI take-off the hours came from
+  (agreed with Mark 2026-10-14). One read of the saved take-off; nothing is written.
+  Actual hours by the same detail types join this page once they are entered on the work order.
+-->
+<style>
+  :root{ --blue:#5F94CE; --ink:#1f2a37; --mut:#667; --line:#e3e6ea; --ylw:#b45309; }
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:980px;margin:0 auto;}
+  .appbar{max-width:980px;margin:0 auto 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .appbar .brand{font-weight:800;font-size:16px;color:var(--blue);}
+  .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;overflow:hidden;}
+  .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:13px 18px;border-bottom:1px solid var(--line);background:#fafbfc;}
+  .card h2 .lt{text-transform:none;letter-spacing:0;font-weight:400;}
+  .card .body{padding:14px 18px;}
+  .kpis{display:flex;gap:10px;flex-wrap:wrap;}
+  .kpi{border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:150px;background:#fafbfc;}
+  .kpi .l{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);}
+  .kpi .v{font-size:20px;font-weight:700;margin-top:2px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);}
+  th.r,td.r{text-align:right;white-space:nowrap;}
+  td{padding:6px 8px;border-bottom:1px solid #f0f2f4;}
+  tr.cat td{font-weight:700;background:#f6f8fb;cursor:pointer;user-select:none;}
+  tr.cat td .car{display:inline-block;width:14px;color:#7b8a9b;}
+  tr.cat.zero td{font-weight:400;color:#9aa6b2;background:#fff;cursor:default;}
+  tr.det td{font-size:12.5px;color:#334;}
+  tr.det td:first-child{padding-left:30px;}
+  tr.comp td{background:#eef2f7;color:#1f3a5f;font-weight:700;border-top:2px solid #cdd8e6;}
+  .bar{display:inline-block;height:8px;border-radius:4px;background:#cfe0f3;vertical-align:middle;margin-right:6px;}
+  .note{font-size:12.5px;color:var(--mut);line-height:1.5;margin:0 0 10px;}
+  .muted{color:#9aa6b2;}
+  .warn{color:var(--ylw);font-size:12.5px;}
+  @media (max-width:640px){ body{padding:12px 16px;} }
+</style>
+</head>
+<body>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">Labor Detail</span></div>
+<div class="wrap" id="wrap"><div class="card"><div class="body">Loading…</div></div></div>
+<script>
+  const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
+  const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
+  const VERSION = "v0.1 · 2026-10-14";
+  console.log("Material Compass labor-detail.html " + VERSION);
+  const PID = (new URLSearchParams(location.search).get("project_id") || "").trim();
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const f1 = (n) => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  let TYPES = [], BUCKETS = {}, LAB = null, OPEN = {};
+  const DEFAULT = { Cutting_Hrs: "CUT_BANDSAW", CNC_Hrs: "CNC_MACHINE", Assy_Hrs: "FIT_TACK", Fab_Hrs: "FAB_GRIND", Weld_Hrs: "WELD_MIG", Labor_Hrs: "HANDLE", Inspection_Hrs: "INSPECT", Misc_Hrs: "MISC" };
+
+  // Same rule as the review page: a line's own type, else what it says, else its category's usual type.
+  function typeOf(it) {
+    if (it.labor_type && TYPES.some((t) => t.code === it.labor_type && t.bucket === it.bucket)) return it.labor_type;
+    if (it.bucket === "Cutting_Hrs" && /^load, mark/i.test(String(it.what || ""))) return "CUT_HANDLE";
+    if (it.bucket === "Weld_Hrs" && /\btig\b/i.test(String(it.what || ""))) return "WELD_TIG";
+    return DEFAULT[it.bucket] || "MISC";
+  }
+  const typeLabel = (c) => (TYPES.find((t) => t.code === c) || { label: c }).label;
+
+  async function get(path) {
+    const r = await fetch(RAILWAY_URL + path); let j = null; try { j = await r.json(); } catch (e) {}
+    if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || ("server said " + r.status));
+    return j;
+  }
+  async function load() {
+    if (!/^\d{6,25}$/.test(PID)) { $("wrap").innerHTML = '<div class="card"><div class="body">Open this page from the project so it knows which project to show.</div></div>'; return; }
+    try {
+      const [t, saved] = await Promise.all([get("/api/labor/types"), get("/api/takeoff/saved/" + encodeURIComponent(PID))]);
+      TYPES = t.types || []; BUCKETS = t.buckets || {};
+      if (!saved.found || !saved.package || !saved.package.labor) {
+        $("wrap").innerHTML = '<div class="card"><div class="body">This project has no AI take-off labor to break down' +
+          (saved.damaged ? ' (its saved take-off could not be read)' : '') + '. Hours entered straight on the project carry only the broad categories.</div></div>';
+        return;
+      }
+      LAB = saved.package.labor; LAB._updated = saved.updated_at;
+      render();
+    } catch (e) { $("wrap").innerHTML = '<div class="card"><div class="body">Could not load the labor detail: ' + esc(e.message) + '</div></div>'; }
+  }
+
+  // { bucket: { hours, types: { code: hours } } } over the given components.
+  function sum(comps) {
+    const out = {}; Object.keys(BUCKETS).forEach((b) => { out[b] = { hours: 0, types: {} }; });
+    comps.forEach((c) => (c.items || []).forEach((it) => {
+      const h = Number(it.hours) || 0; if (!out[it.bucket]) out[it.bucket] = { hours: 0, types: {} };
+      const code = typeOf(it); out[it.bucket].hours += h; out[it.bucket].types[code] = (out[it.bucket].types[code] || 0) + h;
+    }));
+    return out;
+  }
+  function tog(k) { OPEN[k] = !OPEN[k]; render(); }
+  function rowsFor(key, s, total) {
+    return Object.keys(s).map((b) => {
+      const c = s[b], k = key + "|" + b, open = !!OPEN[k], types = Object.keys(c.types).filter((t) => c.types[t] > 0.005);
+      const pct = total > 0 ? c.hours / total * 100 : 0;
+      let h = '<tr class="cat' + (c.hours > 0.005 ? "" : " zero") + '"' + (types.length ? ' onclick="tog(\'' + k + '\')"' : "") + '><td><span class="car">' + (types.length ? (open ? "▾" : "▸") : "") + '</span>' + esc(BUCKETS[b] || b) +
+        (types.length ? ' <span class="muted" style="font-weight:400;font-size:12px">' + types.length + ' type' + (types.length === 1 ? "" : "s") + '</span>' : "") + '</td>' +
+        '<td class="r"><span class="bar" style="width:' + Math.round(pct * 1.2) + 'px"></span>' + (c.hours > 0.005 ? Math.round(pct) + "%" : "") + '</td>' +
+        '<td class="r">' + (c.hours > 0.005 ? f1(c.hours) : '<span class="muted">0.0</span>') + '</td><td class="r muted">—</td></tr>';
+      if (open) h += types.sort((a, z) => c.types[z] - c.types[a]).map((t) => '<tr class="det"><td>' + esc(typeLabel(t)) + '</td><td class="r muted">' +
+        (c.hours > 0 ? Math.round(c.types[t] / c.hours * 100) + "% of " + esc((BUCKETS[b] || b).toLowerCase()) : "") + '</td><td class="r">' + f1(c.types[t]) + '</td><td class="r muted">—</td></tr>').join("");
+      return h;
+    }).join("");
+  }
+  function render() {
+    const comps = LAB.components || [];
+    const all = sum(comps), total = Object.values(all).reduce((a, c) => a + c.hours, 0);
+    const head = '<thead><tr><th>Category / type</th><th class="r">Share</th><th class="r">Quoted hrs</th><th class="r">Actual hrs</th></tr></thead>';
+    $("wrap").innerHTML =
+      '<div class="card"><div class="body"><div class="kpis">' +
+        '<div class="kpi"><div class="l">Quoted labor</div><div class="v">' + f1(total) + ' hrs</div></div>' +
+        '<div class="kpi"><div class="l">Components</div><div class="v">' + comps.length + '</div></div>' +
+        '<div class="kpi"><div class="l">Actual</div><div class="v muted">—</div></div>' +
+      '</div><p class="note" style="margin:12px 0 0">The project carries labor in its 8 broad categories. This is the detail underneath, from the AI take-off' +
+        (LAB._updated ? ' (saved ' + esc(new Date(LAB._updated).toLocaleString()) + ')' : '') + '. Click a category to see its types. ' +
+        'Actual hours will show beside each line once hours are entered against the work order by labor type.</p>' +
+        (LAB.edited ? '<p class="warn" style="margin:6px 0 0">Some hours were edited on the take-off by hand; the types shown are the ones those lines carry.</p>' : '') +
+      '</div></div>' +
+      '<div class="card"><h2>Whole job <span class="lt">· by category, then type</span></h2><div class="body"><table>' + head + '<tbody>' + rowsFor("job", all, total) + '</tbody></table></div></div>' +
+      '<div class="card"><h2>By component</h2><div class="body"><table>' + head + '<tbody>' +
+        comps.map((c, i) => { const s = sum([c]), t = Object.values(s).reduce((a, x) => a + x.hours, 0);
+          return '<tr class="comp"><td>' + esc(c.name) + (c.units > 1 ? ' <span class="muted" style="font-weight:400">× ' + c.units + ' units</span>' : '') + '</td><td></td><td class="r">' + f1(t) + '</td><td class="r muted">—</td></tr>' + rowsFor("c" + i, s, t); }).join("") +
+      '</tbody></table></div></div>';
+  }
+  load();
+</script>
+</body>
+</html>

@@ -19,6 +19,7 @@ const { catalog } = require('./components');
 const { weldHoursPerFt, deposition, operatingFactor } = require('./weldTime');
 const { laborForTakeoff } = require('./takeoffLabor');
 const pm = require('./processModel');
+const laborTypes = require('./laborTypes');
 
 function shopId(req) {
   if (req.tenant && req.tenant.kind === 'm') return req.tenant.id;
@@ -80,6 +81,11 @@ function weldSettings(id, body) {
 }
 
 function registerLaborRoutes(app) {
+  // The two levels of labour: 8 broad buckets and the detail types under them. Same for every shop.
+  app.get('/api/labor/types', (req, res) => {
+    res.json({ ok: true, buckets: laborTypes.BUCKET_LABEL, types: laborTypes.TYPES });
+  });
+
   app.get('/api/labor/library', (req, res) => {
     res.json({ ok: true, buckets: BUCKETS, standards: library(), not_hours: nonHoursRows().map((r) => r.code), catalog: catalog({}) });
   });
