@@ -23,13 +23,15 @@ const r2 = (n) => Math.round(n * 100) / 100;
 const unitsOf = (x) => Math.max(1, Math.round(Number(x && x.units) || 1));
 const compKey = (name) => String(name || '').trim() || '(no component)';
 
-// takeoff = { rows, fittings } exactly as the review page holds them.
+// takeoff = { rows, fittings, welds } exactly as the review page holds them.
 function laborForTakeoff(takeoff, profile, jobType) {
   const live = (r) => r && !r.deleted && Number(r.quantity) > 0;
   const rows = ((takeoff && takeoff.rows) || []).filter(live);
   const fittings = ((takeoff && takeoff.fittings) || []).filter(live);
+  // The weld schedule read off the drawings; a weld counts when it has a count, like a row a quantity.
+  const welds = ((takeoff && takeoff.welds) || []).filter((w) => w && !w.deleted && Number(w.count) > 0);
   const ctx = shop.estimateContext(profile);
-  const est = estimateTakeoff({ rows, fittings }, ctx);
+  const est = estimateTakeoff({ rows, fittings, welds }, ctx);
 
   // Units and weight per component. A component's units are the most any of its rows carries,
   // the same rule the review page uses for its group headers.
@@ -60,6 +62,7 @@ function laborForTakeoff(takeoff, profile, jobType) {
         derived: !!l.derived, note: l.note || null,
         // The detail under the broad bucket (MIG, TIG, plasma, band saw…), laborTypes.js.
         labor_type: typeForLine(l), process: l.process || null, material: l.material || null,
+        from_drawing: !!l.from_drawing,
       })),
       missing: c.missing,
     };

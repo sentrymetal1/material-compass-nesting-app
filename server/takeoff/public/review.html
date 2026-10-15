@@ -197,7 +197,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.70 · 2026-10-14";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.71 · 2026-10-14";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -309,7 +309,7 @@
     // synopsis no longer holds, so they can't be rebuilt from it on another machine.
     const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
                 superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[], check:R.check||null, checked_v1:!!R.checked_v1,
-                fittings_written:R.fittings_written||[] };
+                fittings_written:R.fittings_written||[], welds:R.welds||[] };
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
@@ -696,19 +696,20 @@
   function labJob(L){ return arr(L.components).reduce(function(a,c){ return a+labComp(c); },0); }
   function labLive(R){
     const live=function(r){ return r && !r.deleted && Number(r.quantity)>0; };
-    return { rows:arr(R.rows).filter(live), fittings:arr(R.fittings).filter(live) };
+    return { rows:arr(R.rows).filter(live), fittings:arr(R.fittings).filter(live), welds:arr(R.welds).filter(function(w){ return w && !w.deleted && Number(w.count)>0; }) };
   }
   // What the labor was worked out from. When the BOM changes afterwards, say so — never
   // silently keep hours for steel that is no longer on the take-off.
   function labSig(R){
     const t=labLive(R);
     return JSON.stringify(t.rows.map(function(r){ return [r.component,r.form_type,r.size,r.quantity,r.units,r.length_ft,r.width_ft,r.disposition]; })
-      .concat(t.fittings.map(function(f){ return [f.component,f.fitting_type,f.size,f.end_type,f.quantity,f.units]; })));
+      .concat(t.fittings.map(function(f){ return [f.component,f.fitting_type,f.size,f.end_type,f.quantity,f.units]; }))
+      .concat(t.welds.map(function(w){ return [w.component,w.source_sheet,w.joint,w.groove,w.size_in,w.length_in,w.all_around,w.around_member,w.count,w.both_sides,w.pitch,w.position,w.field_weld]; })));
   }
   async function labFetch(R, jobType){
     const t=labLive(R);
     const r=await fetch(RAILWAY_URL+"/api/labor/estimate",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({manufacturer_id:params.manufacturer_id||"", job_type:jobType||"", rows:t.rows, fittings:t.fittings})});
+      body:JSON.stringify({manufacturer_id:params.manufacturer_id||"", job_type:jobType||"", rows:t.rows, fittings:t.fittings, welds:t.welds})});
     const j=await r.json().catch(function(){ return null; });
     if(!r.ok||!j||!j.ok) throw new Error((j&&j.error)||("server said "+r.status));
     return j.labor;
@@ -945,12 +946,98 @@
       '</div></div>';
   }
 
+  // ---- WELDS — the weld schedule read off the drawings ---------------------------------------
+  // Each entry is one kind of weld on one drawing (joint, size, length or all-around member, how
+  // many per unit). The labour step prices welding from it: on a drawing that has entries, they
+  // REPLACE the assumed welds (a member's weld share, a plate's perimeter fillet). An all-around
+  // weld's length is measured from the member's section on the server, never taken on trust.
+  const WELD_JOINTS=[["fillet","Fillet"],["cjp","CJP groove"],["pjp","PJP groove"],["flare_bevel","Flare-bevel"],["plug","Plug / slot"],["unknown","Unknown"]];
+  const WELD_GROOVES=[["","—"],["single_v","Single-V"],["double_v","Double-V"],["single_bevel","Single-bevel"],["double_bevel","Double-bevel"],["j","J"]];
+  const WELD_POS=[["","flat"],["horizontal","horizontal"],["vertical","vertical"],["overhead","overhead"]];
+  function liveWeldJS(w){ return w && !w.deleted && Number(w.count)>0; }
+  // What would leave a weld unpriced or guessed — shown in orange and counted on the tab.
+  function weldIssue(w){
+    if(!liveWeldJS(w)) return "";
+    if(w.field_weld) return "field weld — not shop hours";
+    if(["fillet","cjp","pjp","flare_bevel"].indexOf(String(w.joint))<0) return "joint type needed";
+    if(!(Number(w.size_in)>0)) return "size needed";
+    if(!w.all_around && !(Number(w.length_in)>0)) return "length needed";
+    if(w.all_around && !w.around_member && !(Number(w.length_in)>0)) return "member needed";
+    if(Number(w.confidence)<0.5) return "low confidence — check";
+    return "";
+  }
+  function weldProblems(R){ return arr(R.welds).filter(function(w){ const x=weldIssue(w); return x && x.indexOf("field")<0; }); }
+  function weldSet(i,k,el){
+    const R=loadResult(); const w=arr(R.welds)[i]; if(!w) return;
+    let v=el.type==="checkbox"?el.checked:el.value;
+    if(["size_in","length_in","count"].indexOf(k)>-1){ const n=parseFrac(v); if(v!=="" && n==null){ render(); return; } v=n==null?0:n; }
+    w[k]=v; if(k!=="note") w.confidence=Math.max(Number(w.confidence)||0,0.9);   // checked by a person now
+    saveResult(R); render();
+  }
+  // "1/4", "0.25", "1-1/2" -> number; "" -> null.
+  function parseFrac(v){
+    const s=String(v==null?"":v).trim().replace(/["”]/g,""); if(!s) return null;
+    let m=s.match(/^(\d+)[\s-]+(\d+)\/(\d+)$/); if(m) return +m[1]+m[2]/m[3];
+    m=s.match(/^(\d+)\/(\d+)$/); if(m) return m[1]/m[2];
+    return /^\d*\.?\d+$/.test(s)?Number(s):null;
+  }
+  function weldDel(i){ const R=loadResult(); if(!arr(R.welds)[i]) return; R.welds.splice(i,1); saveResult(R); render(); }
+  function weldAdd(sheet,comp){
+    const R=loadResult(); R.welds=arr(R.welds);
+    R.welds.push({joint:"fillet",size_in:0.25,length_in:0,count:1,both_sides:false,all_around:false,around_member:"",component:comp||"",source_sheet:sheet||"",symbol:"added by hand",confidence:1});
+    saveResult(R); render();
+  }
+  function weldsCardHtml(R){
+    const W=arr(R.welds);
+    const head='<div class="card"><h2>🔥 Weld schedule <span class="lt">— read off the drawings; welding hours are worked out from it</span></h2><div class="body">';
+    if(!W.length) return head+'<div style="color:var(--mut);font-size:13px">No weld schedule on this take-off. Welding hours use the assumed welds '+
+      '(each member welded all around, each plate a fillet round its edge). Take-offs run from now on read the weld symbols on the drawings.</div></div></div>';
+    const sheets={}; W.forEach(function(w,i){ const k=String(w.source_sheet||"(no drawing)"); (sheets[k]=sheets[k]||[]).push(i); });
+    const opt=function(list,cur){ return list.map(function(o){ return '<option value="'+escAttr(o[0])+'"'+(String(cur||"")===o[0]?' selected':'')+'>'+esc(o[1])+'</option>'; }).join(""); };
+    const sel='style="font-size:12px;padding:2px 4px;border:1px solid #dfe5ec;border-radius:5px;max-width:120px"';
+    const num=function(i,k,v,wd,dis){ return '<input class="lab-in" style="width:'+(wd||54)+'px" value="'+escAttr(v==null||v===0?"":v)+'"'+(dis?' disabled title="measured from the member\'s section"':'')+' onchange="weldSet('+i+',\''+k+'\',this)">'; };
+    const chk=function(i,k,v,t){ return '<input type="checkbox"'+(v?' checked':'')+' title="'+escAttr(t)+'" onchange="weldSet('+i+',\''+k+'\',this)">'; };
+    const probs=weldProblems(R).length;
+    let rows="";
+    Object.keys(sheets).sort().forEach(function(sh){
+      const idx=sheets[sh], comp=W[idx[0]].component||"";
+      rows+='<tr class="grp-comp"><td colspan="12">Drawing '+esc(sh)+(comp?' <span class="grp-meta">'+esc(comp)+'</span>':'')+
+        ' <span class="pillbtn" style="margin-left:8px" onclick="weldAdd(\''+escAttr(sh)+'\',\''+escAttr(comp)+'\')">+ add weld</span></td></tr>';
+      idx.forEach(function(i){
+        const w=W[i], issue=weldIssue(w), groove=w.joint==="cjp"||w.joint==="pjp";
+        rows+='<tr class="lab-item"'+(w.deleted?' style="opacity:.45"':'')+'>'+
+          '<td><select '+sel+' onchange="weldSet('+i+',\'joint\',this)">'+opt(WELD_JOINTS,w.joint)+'</select>'+
+            (groove?' <select '+sel+' onchange="weldSet('+i+',\'groove\',this)">'+opt(WELD_GROOVES,w.groove)+'</select>':'')+'</td>'+
+          '<td>'+num(i,"size_in",w.size_in)+'</td>'+
+          '<td>'+chk(i,"all_around",w.all_around,"weld all around")+' '+(w.all_around
+              ? '<input class="lab-in txt" style="width:170px" placeholder="member it goes round" value="'+escAttr(w.around_member||"")+'" onchange="weldSet('+i+',\'around_member\',this)">'
+              : num(i,"length_in",w.length_in,54))+'</td>'+
+          '<td>'+chk(i,"both_sides",w.both_sides,"both sides")+'</td>'+
+          '<td><input class="lab-in" style="width:52px" placeholder="L-P" value="'+escAttr(w.pitch||"")+'" onchange="weldSet('+i+',\'pitch\',this)"></td>'+
+          '<td>'+num(i,"count",w.count,44)+'</td>'+
+          '<td><select '+sel+' onchange="weldSet('+i+',\'position\',this)">'+opt(WELD_POS,w.position)+'</select></td>'+
+          '<td>'+chk(i,"field_weld",w.field_weld,"field weld (on site)")+'</td>'+
+          '<td style="font-size:11.5px;color:var(--mut);max-width:220px">'+esc(w.symbol||"")+(w.member_mark?' · '+esc(w.member_mark):'')+
+            (issue?'<div style="color:var(--ylw);font-weight:600">'+esc(issue)+'</div>':'')+'</td>'+
+          '<td class="n">'+(w.confidence!=null?Math.round(Number(w.confidence)*100)+'%':'')+'</td>'+
+          '<td><button class="applybtn" style="background:#9aa6b2;padding:1px 7px" title="Remove" onclick="weldDel('+i+')">✕</button></td></tr>';
+      });
+    });
+    return head+
+      '<div class="src" style="margin:0 0 10px;font-size:12.5px;line-height:1.5">'+W.filter(liveWeldJS).length+' welds on '+Object.keys(sheets).length+' drawing'+(Object.keys(sheets).length===1?'':'s')+'. '+
+        'On these drawings the Labor tab prices welding from this schedule — joint, size, length, both sides, position — instead of the assumed welds. '+
+        'An all-around weld is measured round the member\'s section. Sizes and lengths in <b>inches</b> (1/4 or 0.25). '+
+        (probs?'<b style="color:var(--ylw)">'+probs+' to check.</b> ':'')+'After changes, <b>Recalculate</b> on the Labor tab.</div>'+
+      '<div style="overflow-x:auto"><table><thead><tr><th>Joint</th><th>Size, in</th><th>All around / length, in</th><th>Both sides</th><th>Pitch</th><th>Count</th><th>Position</th><th>Field</th><th>Symbol on drawing</th><th>Conf.</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      '</div></div>';
+  }
+
   // ---- Tabs ---------------------------------------------------------------------------------
   // The review used to be one long column. Now one area at a time; the header and the dock
   // (chat + Approve) stay. Switching only shows and hides panes — no re-render — so the BOM
   // editor iframe, a half-typed edit and every id other code looks up survive a tab change.
   // The chosen tab is remembered per project for this browser tab.
-  const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["labor","Labor"],["ai","Ask the AI"]];
+  const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["welds","Welds"],["labor","Labor"],["ai","Ask the AI"]];
   function tabKey(){ return "mc_review_tab_"+(params.project_id||"sample"); }
   let TAB=(function(){ try{ return sessionStorage.getItem(tabKey())||"overview"; }catch(e){ return "overview"; } })();
   function setTab(t){
@@ -976,6 +1063,7 @@
       addenda: arr(R.superseded).length?[(R.addenda?'':'warn'),arr(R.superseded).length]:null,
       material: ['',arr(fab).length],
       fittings: arr(R.fittings).length?[fprobs?'bad':'',arr(R.fittings).length]:null,
+      welds: arr(R.welds).filter(liveWeldJS).length?[weldProblems(R).length?'warn':'',arr(R.welds).filter(liveWeldJS).length]:null,
       labor: hrs!=null?['',labFmt(hrs,0)+' h']:null,
       ai: chat?['',chat]:null,
     };
@@ -2461,6 +2549,9 @@
       // what each addendum changed, original vs reissue
       '<div class="tabpane" data-tab="addenda">'+addendaHtml(R)+'</div>'+
 
+      // the weld schedule read off the drawings — welding hours come from it
+      '<div class="tabpane" data-tab="welds">'+weldsCardHtml(R)+'</div>'+
+
       // shop labor — hours for this take-off, at job / component / item level
       '<div class="tabpane" data-tab="labor">'+laborCardHtml(R)+'</div>'+
 
@@ -2711,6 +2802,10 @@
   function mergeAddon(cur, addon){
     const out = JSON.parse(JSON.stringify(cur || {}));
     out.rows = mergeList(cur.rows, addon.rows);
+    // Added drawings are new sheets: their fittings and welds are appended. Neither was carried
+    // before, so the fittings on a drawing added later were silently lost (found 2026-10-14).
+    out.fittings = arr(cur && cur.fittings).concat(arr(addon && addon.fittings));
+    out.welds = arr(cur && cur.welds).concat(arr(addon && addon.welds));
     const cs = (cur && cur.synopsis) || {}, as = (addon && addon.synopsis) || {};
     const sw1 = cs.scope_of_work || {}, sw2 = as.scope_of_work || {};
     const proj = cs.project || as.project || {};

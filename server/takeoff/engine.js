@@ -114,6 +114,36 @@ const FITTING_ITEM = {
   required: ["fitting_type", "size", "quantity", "component", "source_sheet", "confidence"],
 };
 
+// WELDS, read off the drawings (Mark 2026-10-14: "what about 3/8 fillet … Complete Penetration welds,
+// or other weld requirements"). Before this the labour step ASSUMED every weld: a member was "square
+// cut and welded all around" by the piece, a plate a fillet sized to the plate along its whole
+// perimeter. The drawings say what is actually welded. Each entry is one kind of weld on one drawing;
+// its LENGTH is never invented — an all-around weld is measured downstream from the member's own
+// section, and a length the drawing does not give is marked scaled with low confidence.
+const WELD_ITEM = {
+  type: "object",
+  properties: {
+    joint:        { type: "string", description: "EXACTLY one of: 'fillet', 'cjp' (complete joint penetration groove), 'pjp' (partial penetration groove), 'flare_bevel' (pipe/round bar to flat), 'plug' (plug or slot), 'unknown'." },
+    groove:       { type: "string", description: "For cjp/pjp only: 'single_v', 'double_v', 'single_bevel', 'double_bevel', 'j', or '' if not shown." },
+    size_in:      { type: "number", description: "Fillet / flare-bevel: the LEG in inches (1/4 = 0.25). PJP: the effective throat. CJP: the thickness of the THINNER part joined. 0 if not given anywhere (no general note either)." },
+    both_sides:   { type: "boolean", description: "true when the symbol is on BOTH sides of the reference line (arrow side and other side) — the weld is made twice." },
+    all_around:   { type: "boolean", description: "true when the symbol carries the weld-all-around circle, or a note says 'all around'." },
+    around_member:{ type: "string", description: "For an all-around weld: the member it goes round, as form + size the way the BOM writes it, e.g. 'Pipe 1-1/2\" SCH 40 (STD)', 'Tube - Square 2 x 1/4', 'Angle L3 x 3 x 1/4', 'Bar - Flat 1/4 x 4'. Its length is measured from this — do not give length_in for it." },
+    length_in:    { type: "number", description: "Length of ONE weld (one side) in inches, as dimensioned on the symbol or the view. Leave 0 for all-around welds. If the drawing does not give it, scale it from the view, set confidence ≤ 0.4 and say 'length scaled' in note." },
+    pitch:        { type: "string", description: "Intermittent welds only: the length-pitch exactly as on the symbol, e.g. '2-12'. Empty for continuous welds." },
+    count:        { type: "number", description: "How many of this identical weld in ONE unit of the component (same rule as the BOM: never multiply by the number of units). E.g. 8 posts welded all around at the base = 8." },
+    field_weld:   { type: "boolean", description: "true when the symbol carries the field-weld flag (made on site, not in the shop)." },
+    position:     { type: "string", description: "'flat', 'horizontal', 'vertical' or 'overhead' only if the drawing or the joint's orientation makes it plain; otherwise ''." },
+    component:    { type: "string", description: "The component/assembly, spelled EXACTLY as in the project's confirmed scope." },
+    source_sheet: { type: "string", description: "Drawing number the weld was read from." },
+    member_mark:  { type: "string", description: "The part mark(s) it joins, if shown, e.g. 'p242 to pl196'." },
+    symbol:       { type: "string", description: "The callout as printed, verbatim and short, e.g. '1/4 fillet both sides, all around', 'CJP TC-U4a', or the general note it comes from ('ALL WELDS 3/16 FILLET U.N.O.')." },
+    confidence:   { type: "number", description: "0.0–1.0. A weld read off a clear symbol is high; one applied from a general note to joints you counted is medium; a scaled length is low." },
+    note:         { type: "string", description: "OPTIONAL one short phrase (≤100 chars)." },
+  },
+  required: ["joint", "count", "component", "source_sheet", "confidence", "symbol"],
+};
+
 const SYNOPSIS_SCHEMA = {
   type: "object",
   description: "Structured project review for the estimator's approval page — the full bid-package analysis.",
@@ -435,6 +465,7 @@ function buildTakeoffTool(includeSynopsis) {
   const properties = {
     rows: { type: "array", description: "One row per distinct member size/length/spec combination. STRUCTURAL AND MISC-METAL MEMBERS ONLY — pipe fittings go in `fittings`, never here.", items: ROW_ITEM },
     fittings: { type: "array", description: "Pipe fittings — elbows, tees, flanges, reducers, caps, couplings, unions, nipples and branch outlets, each named as the catalog names it. One entry per distinct type+size+schedule+spec. Empty array if the package has none.", items: FITTING_ITEM },
+    welds: { type: "array", description: "The WELD SCHEDULE: every weld the drawings call for, one entry per distinct weld (joint + size + length or all-around member) per drawing, with how many. Read the weld symbols on every view and detail, and the general weld notes ('all welds … unless noted'). Empty array only if the drawings show no welding at all.", items: WELD_ITEM },
     notes: { type: "string", description: "Anything ambiguous/illegible/assumed not captured elsewhere — for the human reviewer." },
   };
   if (includeSynopsis) properties.synopsis = SYNOPSIS_SCHEMA;
@@ -458,6 +489,12 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "In each row's note, quote the drawing's own dimension (e.g. '3990mm') so the conversion can be checked. " +
     "If the drawing states a TOTAL WEIGHT for the assembly, put it in that drawing's drawing_scope stated_weight (value + unit). " +
     "Drawings often print weights WITHOUT a unit: decide kg or lb by arithmetic on one parts-table row (its size and length give its weight in lb — 1-1/2\" STD pipe is 2.72 lb/ft, 1/4 x 4 flat bar 3.40 lb/ft; if the printed number is that divided by 2.2046, the unit is kg) and report it once in synopsis.weight_unit with the arithmetic. Never assume lb because the project is in the USA.\n" +
+    "WELDS: fill `welds` from the weld symbols and weld notes on every drawing — the shop's welding hours are worked out from it. " +
+    "Read each symbol fully: fillet/groove/flare-bevel/plug, size, arrow side vs other side (both = both_sides true), the all-around circle, " +
+    "the field-weld flag, intermittent length-pitch, and the tail (a CJP joint designation like TC-U4a). Apply a general note ('ALL WELDS 1/4 FILLET UNO') " +
+    "to the joints it covers and say so in `symbol`. Group identical welds on one drawing into one entry with a count per unit of the component. " +
+    "NEVER invent a length: an all-around weld names its member in around_member (its length is measured from the section), " +
+    "a dimensioned weld gives length_in, and a length you had to scale is marked so with low confidence.\n" +
     "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
     "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
     "strictly against the provided catalog — never invent a spec or form type.\n\n" +
@@ -661,6 +698,8 @@ async function runTakeoff(opts) {
   // The string-instead-of-array quirk applies to every array the model returns, not just rows.
   result.fittings = unwrap(result.fittings, []);
   if (!Array.isArray(result.fittings)) result.fittings = [];
+  result.welds = unwrap(result.welds, []);
+  if (!Array.isArray(result.welds)) result.welds = [];
   const synopsis = includeSynopsis ? unwrap(result.synopsis, null) : null;
 
   // A cut-off response is not an empty one. The rows are kept - they are paid for and
@@ -678,6 +717,7 @@ async function runTakeoff(opts) {
   return {
     rows: result.rows,
     fittings: result.fittings,
+    welds: result.welds,
     notes: notes,
     truncated: truncated,
     synopsis: synopsis,

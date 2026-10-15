@@ -204,7 +204,7 @@ function estimateRow(row, ctx) {
       };
       part('Cutting_Hrs', G.share_cut.value, f.cut, (f.cut_process ? procLabel(f.cut_process).toLowerCase() + ' cut' : 'cut'), f.cut_process, f.cut_missing);
       part('Assy_Hrs', G.share_fit.value, f.fit, 'fit', null, null);
-      part('Weld_Hrs', G.share_weld.value, f.weld, (f.weld_process ? procLabel(f.weld_process).split(' ')[0] + ' weld' : 'weld'), f.weld_process, f.weld_missing);
+      if (!scheduled(c, row)) part('Weld_Hrs', G.share_weld.value, f.weld, (f.weld_process ? procLabel(f.weld_process).split(' ')[0] + ' weld' : 'weld'), f.weld_process, f.weld_missing);
       if (f.substituted.length) out.missing.push({ what: label, reason: 'routed process not in your shop, used ' + f.substituted.join(', ') + ' — check your routing' });
     }
   } else {
@@ -241,6 +241,7 @@ function estimateRow(row, ctx) {
         G.fit_hr_piece.value + ' hr/pc (' + (G.fit_hr_piece.source === 'yours' ? 'yours' : 'Sentry 1997 clip fit-up') + ')' + (fitF !== 1 ? ' × ' + fitF + ' for ' + matLabel : ''),
         'clip fit-up rate applied per plate', true), { material: mat }));
       const leg = Math.min(0.75, Math.max(0.1875, t >= 0.5 ? 0.375 : t));
+      if (!scheduled(c, row)) {
       const weld = resolve({ category: 'Welding', operation: /^Fillet weld intermittent - clips base plates gussets$/,
         size: { 'Weld Size (in)': leg } }, { overrides });
       const wp = pm.weldProcessFor(P, mat, t);
@@ -257,6 +258,7 @@ function estimateRow(row, ctx) {
             weld.row.sourceRef + (Math.abs(factor - 1) > 1e-9 ? '; × ' + pct(factor) + ' (' + mine.basis + ')' : ''),
             'assumes intermittent fillet along the full perimeter — check', true), { process: wp.process, material: mat }));
         }
+      }
       }
     }
   }
@@ -326,6 +328,91 @@ function estimateFitting(f, ctx) {
 // The whole take-off -> hours per component.
 //   takeoff = { rows: [...BOM rows], fittings: [...fitting rows] }
 //   ctx = { overrides, pipeAnchors, memberMethod, plateCutProcess, plateCutOperation }
+// ---- WELDS FROM THE DRAWINGS -----------------------------------------------------------------
+// When the take-off read a drawing's weld symbols, that drawing's welding is priced from them and
+// the assumed welds (a member's weld share, a plate's perimeter fillet) are dropped for its rows —
+// never both. Drawings with no weld schedule keep the assumptions.
+const sheetKey = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const scheduled = (c, row) => !!(c.weldSheets && c.weldSheets.has(sheetKey(row.source_sheet)));
+const liveWeld = (w) => w && !w.deleted && Number(w.count) > 0;
+
+// Length round a member, in inches, from its own section — the deterministic anchor for an
+// all-around weld. Pipe and round bar by OD, tube, angle and flat bar by their sides. null when
+// the size can't be read (rolled shapes are not measured; their weld length must be given).
+function perimeterIn(member) {
+  const m = String(member || '');
+  const low = m.toLowerCase();
+  const pipe = m.match(/(\d+-\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?)"?\s*(SCH\s*\d+|STD|XXS|XS)/i);
+  if (/pipe/.test(low) && pipe) {
+    const sch = /^std$/i.test(pipe[2]) ? 'STD' : /^xxs$/i.test(pipe[2]) ? 'SCH 160' : /^xs$/i.test(pipe[2]) ? 'XS' : pipe[2].toUpperCase().replace(/\s+/g, ' ');
+    const d = pipeDims(pipe[1] + '"', sch);
+    return d ? Math.PI * d.od : null;
+  }
+  const sizePart = m.replace(/^[^0-9]*?(?=L?\s*\d)/i, '');
+  const n = sizeNumbers(sizePart);
+  if (/bar\s*-\s*round|round bar/.test(low) && n.length) return Math.PI * n[0];
+  if (/bar\s*-\s*square|square bar/.test(low) && n.length) return 4 * n[0];
+  if (/tube|hss/.test(low)) {
+    if (/round/.test(low) && n.length) return Math.PI * n[0];
+    if (n.length >= 3) return 2 * (n[0] + n[1]);
+    if (n.length === 2) return 4 * n[0];
+  }
+  if ((/angle/.test(low) || /\bL\s*\d/.test(m)) && n.length >= 2) return 2 * (n[0] + (n.length >= 3 ? n[1] : n[0]));
+  if ((/bar\s*-\s*flat|flat bar/.test(low)) && n.length >= 2) return 2 * (n[0] + n[1]);
+  return null;
+}
+
+const JOINT_OF = { fillet: 'FILLET', flare_bevel: 'FLARE_BEVEL', pjp: 'PJP_BEVEL' };
+function jointKey(w) {
+  const j = String(w.joint || '').toLowerCase();
+  if (j === 'cjp') {
+    const g = String(w.groove || '').toLowerCase();
+    return g === 'double_v' || g === 'double_bevel' ? 'CJP_DV' : g === 'single_v' ? 'CJP_SV' : 'CJP_BEVEL';
+  }
+  return JOINT_OF[j] || null;
+}
+
+// One schedule entry -> { lines, missing }, hours per ONE unit of the component.
+function estimateWeld(w, ctx, matOfSheet) {
+  const P = (ctx && ctx.model) || PM_DEFAULT;
+  const out = { lines: [], missing: [] };
+  const label = [w.symbol || w.joint, w.member_mark].filter(Boolean).join(' — ') + (w.source_sheet ? ' (' + w.source_sheet + ')' : '');
+  if (w.field_weld) { out.missing.push({ what: label, reason: 'field weld — made on site, not shop hours' }); return out; }
+  const joint = jointKey(w);
+  if (!joint) { out.missing.push({ what: label, reason: (w.joint || 'unknown') + ' weld — enter its hours by hand' }); return out; }
+  const size = Number(w.size_in) || 0;
+  if (!(size > 0)) { out.missing.push({ what: label, reason: 'weld size not given — set it on the Welds tab' }); return out; }
+  let len = 0, basis = '';
+  if (w.all_around) {
+    const p = perimeterIn(w.around_member);
+    if (p) { len = p; basis = 'all around ' + w.around_member + ' = ' + p.toFixed(2) + '" measured from the section'; }
+    else if (Number(w.length_in) > 0) { len = Number(w.length_in); basis = 'all around, ' + len + '" from the drawing (section not measured)'; }
+    else { out.missing.push({ what: label, reason: 'all-around weld but "' + (w.around_member || '?') + '" could not be measured — enter a length' }); return out; }
+  } else if (Number(w.length_in) > 0) { len = Number(w.length_in); basis = len + '" per weld'; }
+  else { out.missing.push({ what: label, reason: 'weld length not given — set it on the Welds tab' }); return out; }
+  const lp = String(w.pitch || '').match(/^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*$/);
+  const share = lp && Number(lp[2]) > 0 ? Math.min(1, Number(lp[1]) / Number(lp[2])) : 1;
+  const ft = len / 12 * share * (w.both_sides ? 2 : 1) * (Number(w.count) || 0);
+  const mat = matOfSheet(w) || 'CS';
+  const wp = pm.weldProcessFor(P, mat, size);
+  if (wp.missing) { out.missing.push({ what: label, reason: wp.missing }); return out; }
+  const POS = ['flat', 'horizontal', 'vertical', 'overhead'];
+  const pos = POS.indexOf(String(w.position || '').toLowerCase()) > -1 ? String(w.position).toLowerCase() : 'flat';
+  const r = pm.jointHrPerFt(P, mat, wp.process, joint, size, pos);
+  if (r.missing) { out.missing.push({ what: label, reason: r.missing }); return out; }
+  const sizeTxt = (joint.indexOf('CJP') === 0 ? size + '" plate ' : size + '" ') + pm.JOINTS[joint].label.toLowerCase();
+  const how = basis + (share < 1 ? ', intermittent ' + w.pitch : '') + (w.both_sides ? ', both sides' : '') + ' × ' + w.count + (pos !== 'flat' ? ', ' + pos : '');
+  const low = Number(w.confidence) < 0.5;
+  const common = { process: wp.process, material: mat, from_drawing: true, weld_symbol: w.symbol || '' };
+  out.lines.push(Object.assign(modelLine('Weld_Hrs', r.weld * ft, ft, 'ft of weld', procLabel(wp.process).split(' ')[0] + ' ' + sizeTxt + ' — ' + label,
+    'WELD-' + joint, how, low ? 'from the drawing, low confidence — check on the Welds tab' : 'from the drawing', low), common));
+  if (r.prep > 0) out.lines.push(Object.assign(modelLine('Fab_Hrs', r.prep * ft, ft, 'ft of joint', 'prep (bevel / back-gouge / backing) ' + sizeTxt + ' — ' + label,
+    'PREP-' + joint, 'joint prep ' + r.prep.toFixed(3) + ' hr/ft', null, true), Object.assign({}, common, { labor_type: 'FAB_GRIND' })));
+  if (r.nde > 0) out.lines.push(Object.assign(modelLine('Inspection_Hrs', r.nde * ft, ft, 'ft of joint', 'NDE ' + sizeTxt + ' — ' + label,
+    'NDE-' + joint, 'NDE allowance ' + r.nde.toFixed(3) + ' hr/ft', null, true), Object.assign({}, common, { labor_type: 'NDE' })));
+  return out;
+}
+
 function estimateTakeoff(takeoff, ctx) {
   const components = {};
   const bucketFor = (name) => {
@@ -342,7 +429,21 @@ function estimateTakeoff(takeoff, ctx) {
     for (const l of res.lines) { comp.hours[l.bucket] += l.hours; comp.lines.push(l); }
     comp.missing.push(...res.missing);
   };
-  for (const row of (takeoff && takeoff.rows) || []) add(row.component, estimateRow(row, ctx));
+  const welds = ((takeoff && takeoff.welds) || []).filter(liveWeld);
+  const weldSheets = new Set(welds.map((w) => sheetKey(w.source_sheet)).filter(Boolean));
+  const rctx = Object.assign({}, ctx || {}, { weldSheets });
+  // A weld's material is the main material of the fabricated rows on its drawing and component.
+  const matOfSheet = (w) => {
+    const tally = {};
+    for (const r of (takeoff && takeoff.rows) || []) {
+      if (sheetKey(r.source_sheet) !== sheetKey(w.source_sheet)) continue;
+      if (w.component && r.component && String(r.component).trim().toLowerCase() !== String(w.component).trim().toLowerCase()) continue;
+      const k = pm.materialKey(r.material_type, r.specification); tally[k] = (tally[k] || 0) + (Number(r.quantity) || 0);
+    }
+    return Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || null;
+  };
+  for (const row of (takeoff && takeoff.rows) || []) add(row.component, estimateRow(row, rctx));
+  for (const w of welds) add(w.component, estimateWeld(w, rctx, matOfSheet));
   for (const f of (takeoff && takeoff.fittings) || []) add(f.component, estimateFitting(f, ctx));
 
   let total = 0, missing = 0;
@@ -354,4 +455,4 @@ function estimateTakeoff(takeoff, ctx) {
   return { components, total_hours: Math.round(total * 100) / 100, missing_count: missing, per: 'one unit of each component' };
 }
 
-module.exports = { estimateTakeoff, estimateRow, estimateFitting, memberDepth, rowPounds, WELD_ENDS, DEFAULTS };
+module.exports = { estimateTakeoff, estimateRow, estimateFitting, estimateWeld, perimeterIn, memberDepth, rowPounds, WELD_ENDS, DEFAULTS };
