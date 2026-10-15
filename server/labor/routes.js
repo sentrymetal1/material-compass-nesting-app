@@ -30,7 +30,20 @@ function shopId(req) {
 // What a set of process parameters works out to, for the setup page to show beside each input:
 // a 1/4" fillet per weld process and material, cut speeds at three thicknesses, the factor a
 // frame member in each material carries against carbon steel, and where routing really lands.
-function modelPreview(P) {
+// hr/ft for one process + material + joint at every common size, in all four positions.
+function weldGrid(P, g) {
+  const proc = (g && g.proc) || 'MIG', mat = (g && g.mat) || 'CS', joint = (g && g.joint) || 'FILLET';
+  const rows = pm.WELD_SIZES.map((size) => {
+    const cell = {};
+    for (const p of Object.keys(pm.POSITION)) { const r = pm.jointHrPerFt(P, mat, proc, joint, size, p); cell[p] = r.missing ? null : r.total; }
+    const flat = pm.jointHrPerFt(P, mat, proc, joint, size, 'flat');
+    return { size, cells: cell, prep: flat.missing ? null : flat.prep, nde: flat.missing ? null : flat.nde,
+      lb_per_ft: flat.missing ? null : flat.parts.lb_per_ft, missing: flat.missing || null };
+  });
+  return { proc, mat, joint, rows };
+}
+
+function modelPreview(P, grid) {
   const weld = {}, cut = {}, member = {}, routing = {};
   for (const mat of P.materials) {
     for (const p of pm.PROCESSES.filter((x) => x.family === 'weld')) {
@@ -52,7 +65,7 @@ function modelPreview(P) {
     routing[mat] = { weld_thin: wt.process || null, weld_thick: wk.process || null, plate_thin: ct.process || null, plate_thick: ck.process || null,
       notes: [wt, wk, ct, ck].filter((x) => x.missing || x.substituted).map((x) => x.missing || ('routed ' + x.routed + ' is not in your shop — ' + x.process + ' used')) };
   }
-  return { weld, cut, member, routing };
+  return { weld, cut, member, routing, weld_grid: weldGrid(P, grid) };
 }
 
 function view(profile) {
@@ -114,7 +127,7 @@ function registerLaborRoutes(app) {
   app.post('/api/labor/model-preview', (req, res) => {
     try {
       const P = pm.params(pm.cleanModel((req.body || {}).model || {}));
-      res.json({ ok: true, params: P, preview: modelPreview(P), catalog: catalog((req.body || {}).rates || {}, P, P.materials) });
+      res.json({ ok: true, params: P, preview: modelPreview(P, (req.body || {}).grid), catalog: catalog((req.body || {}).rates || {}, P, P.materials) });
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
 

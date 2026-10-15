@@ -144,6 +144,26 @@ const FORM = {
   CNC_LATHE: { setup_min: 45, per_part_min: 6 },
 };
 
+// Welding position, as a share of flat speed (1962 Estimating Standards 0.1.6 p.14).
+const POSITION = { flat: 1, horizontal: 0.9, vertical: 0.8, overhead: 0.6 };
+
+// Joint shapes: weld metal cross-section (sq in) from the size — the fillet leg, or for a groove the
+// plate thickness (PJP: the effective throat). Square-groove root gaps and 60°/45° preparations as
+// drawn in AWS D1.1 prequalified joints; reinforcement left out, as for the fillet, so every shape is
+// on the same footing. 'bevels' = prepared faces per ft of joint; 'gouge' = back-gouged and rewelded
+// from the second side; 'backing' = steel backing bar fitted and tacked; 'nde' = inspected.
+const JOINTS = {
+  FILLET:      { label: 'Fillet', size: 'leg', area: (t) => t * t / 2, bevels: 0 },
+  CJP_SV:      { label: 'CJP single-V groove, back-gouged', size: 'thickness', area: (t) => 0.577 * t * t + 0.125 * t, bevels: 2, gouge: true, nde: true },
+  CJP_DV:      { label: 'CJP double-V groove, back-gouged', size: 'thickness', area: (t) => 0.289 * t * t + 0.125 * t, bevels: 4, gouge: true, nde: true },
+  CJP_BEVEL:   { label: 'CJP single-bevel on backing bar', size: 'thickness', area: (t) => 0.5 * t * t + 0.25 * t, bevels: 1, backing: true, nde: true },
+  PJP_BEVEL:   { label: 'PJP single-bevel', size: 'throat', area: (t) => 0.5 * t * t, bevels: 1 },
+  FLARE_BEVEL: { label: 'Flare-bevel (pipe or round bar to flat)', size: 'leg', area: (t) => 0.4 * t * t, bevels: 0 },
+};
+// The work around the weld, hr per ft of joint. Bevel prep grows with thickness: a + b·t per face.
+const JOINT_PREP = { bevel_a: 0.03, bevel_b: 0.10, gouge: 0.10, backing: 0.05, nde: 0.05 };
+const WELD_SIZES = [0.1875, 0.25, 0.3125, 0.375, 0.5, 0.625, 0.75, 1];
+
 const GENERAL = {
   fit_hr_piece: 0.22,          // Sentry 1997 "fitting and tacking clips", per plate
   handling_hr_ton: 1.25,       // library handling row, per ton
@@ -229,7 +249,9 @@ function params(model) {
       mine: Object.keys(s).length > 0,
     };
   }
-  return { capabilities: caps, materials: mats, weld, cut, saw, cut_handling_min: cutHandling, saw_setup_min: sawSetup,
+  const position = {}; for (const k of Object.keys(POSITION)) position[k] = val(frac((m.position || {})[k]) || (Number((m.position || {})[k]) > 1 && Number((m.position || {})[k]) <= 1.5 ? Number(m.position[k]) : null), POSITION[k], 'sentry');
+  const jointPrep = {}; for (const k of Object.keys(JOINT_PREP)) jointPrep[k] = val(pos((m.joint_prep || {})[k]), JOINT_PREP[k]);
+  return { position, joint_prep: jointPrep, capabilities: caps, materials: mats, weld, cut, saw, cut_handling_min: cutHandling, saw_setup_min: sawSetup,
     cleanup, fit_factor: fitF, shear_max_t: shearMax, general, form, routing };
 }
 
@@ -288,6 +310,26 @@ function cutRate(P, mat, proc, t) {
   return { hr_per_ft: 12 / ipm / 60, hr_per_pierce: c.pierce_s.value / 3600, ipm, source: srcOf(c.ipm, c.k, c.max_t),
     basis: Math.round(ipm * 10) / 10 + ' in/min at ' + t + '" (' + c.ipm.value + ' in/min at 1/2")' };
 }
+// One ft of any joint, any size, any position, on a process and material: the weld itself (with the
+// material's cleanup) and the work around it — bevelling, back-gouging, backing bar — and NDE.
+// Returns { weld, prep, nde, total, parts } hr per ft, or { missing }.
+function jointHrPerFt(P, mat, proc, joint, size, position) {
+  const j = JOINTS[joint]; if (!j) return { missing: 'unknown joint ' + joint };
+  const w = P.weld[proc + '|' + mat];
+  if (!w) return { missing: (PROC[proc] || { label: proc }).label + ' has no rate for ' + (MAT[mat] || MAT.CS).label.toLowerCase() };
+  const t = toNumber(size); if (!(t > 0)) return { missing: 'weld size needed' };
+  const posF = (P.position[position || 'flat'] || P.position.flat).value;
+  const lb = j.area(t) * 12 * matDensity(mat);
+  const clean = (P.cleanup[mat] || { value: 0 }).value;
+  const weld = lb / w.dep.value / w.of.value / posF * (1 + clean);
+  const jp = P.joint_prep;
+  const bevel = j.bevels ? j.bevels * (jp.bevel_a.value + jp.bevel_b.value * t) : 0;
+  const gouge = j.gouge ? jp.gouge.value : 0, backing = j.backing ? jp.backing.value : 0;
+  const nde = j.nde ? jp.nde.value : 0;
+  return { weld, prep: bevel + gouge + backing, nde, total: weld + bevel + gouge + backing + nde,
+    parts: { lb_per_ft: lb, bevel, gouge, backing } };
+}
+
 const cutHandlingHr = (P, proc) => ((P.cut_handling_min[proc] || { value: 0 }).value) / 60;
 
 // Sawing one cut through a section of `area` sq in; or { missing }.
@@ -331,7 +373,9 @@ function srcOf() {
 function defaults() {
   return { materials: MATERIALS.map((m) => ({ key: m.key, label: m.label })), processes: PROCESSES, weld: WELD, cut: CUT,
     cut_handling_min: CUT_HANDLING_MIN, saw: SAW, saw_setup_min: SAW_SETUP_MIN, shear_min: SHEAR_MIN, shear_max_t: SHEAR_MAX_T,
-    cleanup: CLEANUP, fit_factor: FIT_FACTOR, form: FORM, general: GENERAL, routing: ROUTING, capabilities: DEFAULT_CAPS };
+    cleanup: CLEANUP, fit_factor: FIT_FACTOR, form: FORM, general: GENERAL, routing: ROUTING, capabilities: DEFAULT_CAPS,
+    position: POSITION, joint_prep: JOINT_PREP, weld_sizes: WELD_SIZES,
+    joints: Object.fromEntries(Object.entries(JOINTS).map(([k, j]) => [k, { label: j.label, size: j.size, bevels: j.bevels, gouge: !!j.gouge, backing: !!j.backing, nde: !!j.nde }])) };
 }
 
 // The v2 block from the page, re-checked. Unknown keys dropped, non-numbers dropped (never 0,
@@ -366,6 +410,8 @@ function cleanModel(input) {
   Object.assign(out.general, keyed(g, ['share_cut', 'share_fit', 'share_weld'], frac));
   out.form = {};
   for (const p of Object.keys(FORM)) { const r = keyed((i.form || {})[p], Object.keys(FORM[p]), pos); if (Object.keys(r).length) out.form[p] = r; }
+  out.position = keyed(i.position, Object.keys(POSITION), (v) => { const n = Number(v); return v !== '' && v != null && n > 0 && n <= 1.5 ? n : null; });
+  out.joint_prep = keyed(i.joint_prep, Object.keys(JOINT_PREP), pos);
   out.routing = {};
   for (const k of Object.keys(MAT)) {
     const s = (i.routing || {})[k]; if (!s) continue;
@@ -380,4 +426,4 @@ function cleanModel(input) {
 
 module.exports = { MATERIALS, PROCESSES, MAT, PROC, materialKey, params, defaults, cleanModel,
   weldProcessFor, plateCutProcessFor, memberCutProcessFor, weldHrPerFt, cutRate, cutHandlingHr, sawHrPerCut,
-  memberFactors, filletLbPerFt, matDensity, DEFAULT_CAPS };
+  memberFactors, filletLbPerFt, matDensity, DEFAULT_CAPS, jointHrPerFt, JOINTS, POSITION, WELD_SIZES };

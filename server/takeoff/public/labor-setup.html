@@ -94,7 +94,7 @@
 <script>
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.3 · 2026-10-14";  // bump on every push so you can verify what loaded
+  const VERSION = "v0.4 · 2026-10-14";  // bump on every push so you can verify what loaded
   console.log("Material Compass labor-setup.html " + VERSION);
 
   const MFG = (new URLSearchParams(location.search).get("manufacturer_id") || "").trim();
@@ -220,7 +220,7 @@
   function refresh() { clearTimeout(pvTimer); pvTimer = setTimeout(runPreview, 400); }
   async function runPreview() {
     try {
-      PV = await api("/api/labor/model-preview", { manufacturer_id: MFG, model: payload().model, rates: payload().rates });
+      PV = await api("/api/labor/model-preview", { manufacturer_id: MFG, model: payload().model, rates: payload().rates, grid: GRID });
       updateCalcs();
       // Component starting values follow the welding and cutting numbers; redraw them unless one is being typed in.
       if (!(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.key)) renderComponents();
@@ -229,6 +229,7 @@
   // Only the read-only figures redraw, so a box being typed in keeps its focus.
   function updateCalcs() {
     document.querySelectorAll("[data-calc]").forEach((el) => { el.innerHTML = calcText(el.dataset.calc); });
+    renderGrid();
   }
   function calcText(k) {
     const pv = (PV && PV.preview) || SHOP.model_preview;
@@ -311,7 +312,46 @@
       (ws.length ? '<div class="scroll"><table><thead><tr><th>Process / material</th><th>Deposition, lb/hr</th><th>Arc on, %</th><th class="r">1/4" fillet</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
         : '<p class="warn">No welding process ticked in section 1.</p>') +
       '<div class="fam" style="margin-top:14px">Cleanup after welding, % of weld time</div><p class="note">Grinding, brushing, pickling and passivating. Carbon steel is 0 because Sentry\'s welding rate already includes it.</p>' +
-      '<div class="grid">' + mats().map((m) => '<label class="f">' + esc(matLabel(m)) + inp(["cleanup", m], D().cleanup[m], { pct: true }) + '</label>').join("") + '</div>';
+      '<div class="grid">' + mats().map((m) => '<label class="f">' + esc(matLabel(m)) + inp(["cleanup", m], D().cleanup[m], { pct: true }) + '</label>').join("") + '</div>' +
+      '<div class="fam" style="margin-top:16px">Welding position, % of flat speed</div><p class="note">How much slower out of position. From the 1962 standard; replace with your own.</p>' +
+      '<div class="grid">' + Object.keys(D().position).map((p) => '<label class="f">' + p.charAt(0).toUpperCase() + p.slice(1) + inp(["position", p], D().position[p], { pct: true }) + '</label>').join("") + '</div>' +
+      '<div class="fam" style="margin-top:16px">Work around the weld, hr per ft of joint</div><p class="note">Groove welds need the edge prepared and, for complete penetration, the root back-gouged or a backing bar fitted. ' +
+      'Bevel time is per prepared face and grows with thickness: <b>base + per inch × thickness</b>. NDE is an allowance on complete-penetration joints.</p><div class="grid">' +
+        '<label class="f">Bevel, base' + inp(["joint_prep", "bevel_a"], D().joint_prep.bevel_a, { d: 3 }) + '<span class="h">hr/ft per face</span></label>' +
+        '<label class="f">Bevel, per inch thick' + inp(["joint_prep", "bevel_b"], D().joint_prep.bevel_b, { d: 3 }) + '<span class="h">hr/ft per face per inch</span></label>' +
+        '<label class="f">Back-gouge & reweld root' + inp(["joint_prep", "gouge"], D().joint_prep.gouge, { d: 3 }) + '<span class="h">hr/ft</span></label>' +
+        '<label class="f">Backing bar, fit & tack' + inp(["joint_prep", "backing"], D().joint_prep.backing, { d: 3 }) + '<span class="h">hr/ft</span></label>' +
+        '<label class="f">NDE (UT / MT) allowance' + inp(["joint_prep", "nde"], D().joint_prep.nde, { d: 3 }) + '<span class="h">hr/ft, CJP joints</span></label>' +
+      '</div>' +
+      '<div class="fam" style="margin-top:16px">Hours per foot — every size and position</div>' +
+      '<p class="note">Pick a process, material and joint. Each figure is the full hours for one foot of that weld: the weld itself plus any bevel, back-gouge, backing and NDE.</p>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">' +
+        gsel("proc", procs("weld").filter((p) => has(p.key)).map((p) => [p.key, p.label])) +
+        gsel("mat", mats().map((m) => [m, matLabel(m)])) +
+        gsel("joint", Object.entries(D().joints).map(([k, j]) => [k, j.label])) + '</div>' +
+      '<div id="gridBox"></div>';
+    renderGrid();
+  }
+  // The size x position table. GRID is what is picked; the server works it out with the unsaved numbers.
+  const GRID = { proc: "MIG", mat: "CS", joint: "FILLET" };
+  function gsel(k, opts) {
+    if (opts.length && !opts.some((o) => o[0] === GRID[k])) GRID[k] = opts[0][0];
+    return '<select style="width:auto;min-width:150px" onchange="GRID.' + k + '=this.value;runPreview()">' +
+      opts.map((o) => '<option value="' + esc(o[0]) + '"' + (o[0] === GRID[k] ? " selected" : "") + '>' + esc(o[1]) + '</option>').join("") + '</select>';
+  }
+  function renderGrid() {
+    const box = $("gridBox"); if (!box) return;
+    const g = ((PV && PV.preview) || SHOP.model_preview || {}).weld_grid;
+    if (!g || g.proc !== GRID.proc || g.mat !== GRID.mat || g.joint !== GRID.joint) { box.innerHTML = '<p class="note">Working out…</p>'; if (!PV || !g) runPreview(); return; }
+    const j = D().joints[g.joint] || {}, sizeName = { leg: "Fillet leg", thickness: "Plate thickness", throat: "Effective throat" }[j.size] || "Size";
+    const frac = (x) => ({ 0.1875: '3/16"', 0.25: '1/4"', 0.3125: '5/16"', 0.375: '3/8"', 0.5: '1/2"', 0.625: '5/8"', 0.75: '3/4"', 1: '1"' }[x] || x + '"');
+    const pos = Object.keys(D().position);
+    box.innerHTML = g.rows[0] && g.rows[0].missing ? '<p class="warn">' + esc(g.rows[0].missing) + '</p>' :
+      '<div class="scroll"><table style="max-width:820px"><thead><tr><th>' + sizeName + '</th>' + pos.map((p) => '<th class="r">' + p + '</th>').join("") +
+      '<th class="r">of which prep + NDE</th><th class="r">weld metal, lb/ft</th></tr></thead><tbody>' +
+      g.rows.map((r) => '<tr><td>' + frac(r.size) + '</td>' + pos.map((p) => '<td class="r">' + (r.cells[p] == null ? "—" : fmt(r.cells[p], 3)) + '</td>').join("") +
+        '<td class="r note" style="margin:0">' + (r.prep + r.nde > 0 ? fmt(r.prep + r.nde, 3) : "—") + '</td><td class="r note" style="margin:0">' + fmt(r.lb_per_ft, 3) + '</td></tr>').join("") +
+      '</tbody></table></div><p class="note" style="margin-top:6px">hr per ft of joint.</p>';
   }
 
   // 4. Cutting ---------------------------------------------------------------------
