@@ -189,6 +189,7 @@ async function runBatches(prepared, plan, engineOpts) {
     rows: [].concat.apply([], outs.map(function (o) { return o.rows || []; })),
     fittings: [].concat.apply([], outs.map(function (o) { return o.fittings || []; })),
     welds: [].concat.apply([], outs.map(function (o) { return o.welds || []; })),
+    features: [].concat.apply([], outs.map(function (o) { return o.features || []; })),
     notes: (failed
       ? "⚠ INCOMPLETE: part " + failed.part + " of " + batches.length + " failed (" + outward(failed.error) + "), so these drawings were NOT taken off: " +
         failed.missing.join(", ") + ". Add them from this page with ➕ Add drawings.\n\n" : "") +
@@ -430,6 +431,7 @@ async function takeoffHandler(req, res, deps) {
       fitting_count: fittings.length,
       // The weld schedule read off the drawings — the labour step prices welding from it.
       welds: Array.isArray(out.welds) ? out.welds : [],
+      features: Array.isArray(out.features) ? out.features : [],
       notes: out.notes,
       synopsis: out.synopsis,
       // The model hit the output ceiling and the tail was lost. Carried through so the page can
@@ -538,6 +540,7 @@ async function reviseHandler(req, res, deps) {
       // from the JSON, which is what tells the page to keep the ones it has.
       fittings: out.fittings,
       welds: out.welds,
+      features: out.features,
       notes: out.notes,
       synopsis: out.synopsis,
       // The model hit the output ceiling and the tail was lost. Carried through so the page can

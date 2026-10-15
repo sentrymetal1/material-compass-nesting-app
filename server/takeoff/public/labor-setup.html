@@ -94,7 +94,7 @@
 <script>
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.4 · 2026-10-14";  // bump on every push so you can verify what loaded
+  const VERSION = "v0.5 · 2026-10-14";  // bump on every push so you can verify what loaded
   console.log("Material Compass labor-setup.html " + VERSION);
 
   const MFG = (new URLSearchParams(location.search).get("manufacturer_id") || "").trim();
@@ -189,14 +189,15 @@
       card("weld", "3. Welding", "per process and material", '<div id="weldBox"></div>') +
       card("cut", "4. Cutting", "plate profiles, saws and shears", '<div id="cutBox"></div>') +
       card("fit", "5. Fit-up, handling and frame members", "", '<div id="fitBox"></div>') +
-      card("comp", "6. Standard components", "per foot or per piece, by material", '<div id="compBox"></div>') +
-      card("form", "7. Forming & machining", "for the processes you ticked", '<div id="formBox"></div>') +
-      card("jobs", "8. Reference jobs", "the most important section", jobsBody()) +
-      card("pipe", "9. Pipe butt welds", "only if you do pipe work", pipeBody()) +
+      card("ops", "6. Holes, copes, bending, finishing & job work", "everything besides cut, fit and weld", '<div id="opsBox"></div>') +
+      card("comp", "7. Standard components", "per foot or per piece, by material", '<div id="compBox"></div>') +
+      card("form", "8. Machining centres", "for the machines you ticked", '<div id="formBox"></div>') +
+      card("jobs", "9. Reference jobs", "the most important section", jobsBody()) +
+      card("pipe", "10. Pipe butt welds", "only if you do pipe work", pipeBody()) +
       '<div class="foot"><span id="footState" class="note" style="margin:0"></span><button class="btn" id="saveBtn" onclick="save()">Save setup</button></div>';
     renderAll();
   }
-  function renderAll() { renderRoute(); renderWeld(); renderCut(); renderFit(); renderComponents(); renderForm(); renderJobs(); renderPipe(); }
+  function renderAll() { renderRoute(); renderWeld(); renderCut(); renderFit(); renderOps(); renderComponents(); renderForm(); renderJobs(); renderPipe(); }
 
   // Generic input bound to a path in S.model, e.g. ["weld","MIG|CS","dep"]. Blank deletes it.
   function inp(path, placeholder, opts) {
@@ -213,7 +214,9 @@
     const last = path[path.length - 1], x = num(el.value);
     if (x == null) delete o[last]; else o[last] = el.dataset.pct ? (Number.isFinite(x) ? x / 100 : NaN) : el.value;
     el.classList.toggle("mine", x != null);
-    el.classList.toggle("bad", x != null && (!Number.isFinite(x) || (path[0] === "cleanup" ? x < 0 : !(x > 0)) || (el.dataset.pct && path[0] !== "cleanup" && x > 100)));
+    // !! matters: toggle(name, undefined) flips the class instead of clearing it, so a good one-character
+    // entry used to turn red (and a second keystroke turned it back).
+    el.classList.toggle("bad", !!(x != null && (!Number.isFinite(x) || (path[0] === "cleanup" ? x < 0 : !(x > 0)) || (el.dataset.pct && path[0] !== "cleanup" && x > 100))));
     markDirty(true); refresh();
   }
   let pvTimer = null;
@@ -431,7 +434,36 @@
     markDirty(true);
   }
 
-  // 7. Forming & machining -----------------------------------------------------------------
+  // 6. Every other operation ----------------------------------------------------------------
+  // Grouped as the server groups them (processModel OPS). Holes, copes, notches, mitres, bends,
+  // brake, rolling and bolts are counted off the drawings by the take-off; the rest follow from
+  // the take-off (setup, paperwork, programming, load-out, cranes, straightening, preheat) or are
+  // chosen per job on the take-off's Labor tab (stainless finish, weld code, pressure tests).
+  function renderOps() {
+    const O = D().ops, groups = {};
+    Object.entries(O).forEach(([k, o]) => { (groups[o.group] = groups[o.group] || []).push(k); });
+    const pctField = (f) => f === "pct";
+    let html = '<p class="note">Holes, copes, notches, mitres, bends, press-brake bends, rolled parts and shop bolts are <b>counted off the drawings</b> by the take-off and priced here. ' +
+      'Setup, paperwork, CNC programming, load-out, crane picks, straightening and preheat follow from the take-off itself. Stainless finish, weld code and pressure tests are picked per job on the take-off\'s Labor tab. ' +
+      'Grey = typical starting value. A blank grey box means the item is off until you enter a number.</p>';
+    Object.keys(groups).forEach((g) => {
+      html += '<div class="fam" style="margin-top:12px">' + esc(g) + '</div><div class="scroll"><table><tbody>';
+      groups[g].forEach((k) => {
+        const o = O[k];
+        html += '<tr><td style="width:230px;font-weight:600">' + esc(o.label) + '</td><td><div style="display:flex;flex-wrap:wrap;gap:8px 14px">' +
+          Object.entries(o.fields).map(([f, d]) => '<label class="f" style="font-weight:400;max-width:230px">' + esc(d.help) +
+            inp(["ops", k, f], d.value, pctField(f) ? { pct: true } : { d: 3 }) + '</label>').join("") + '</div></td></tr>';
+      });
+      html += '</tbody></table></div>';
+    });
+    html += '<div class="fam" style="margin-top:14px">How hard each material is to drill, cope, machine and polish, × carbon steel</div><div class="grid">' +
+      mats().map((m) => '<label class="f">' + esc(matLabel(m)) + inp(["machinability", m], D().machinability[m], { d: 2 }) + '</label>').join("") + '</div>' +
+      '<div class="fam" style="margin-top:14px">Weld codes, × the welding hours of a job built to that code</div><div class="grid">' +
+      Object.entries(D().codes).filter(([k]) => k !== "none").map(([k, c]) => '<label class="f">' + esc(c.label) + inp(["codes", k], c.x, { d: 2 }) + '</label>').join("") + '</div>';
+    $("opsBox").innerHTML = html;
+  }
+
+  // 8. Machining centres --------------------------------------------------------------------
   function renderForm() {
     const F = D().form, names = { setup_min: "Setup, min", per_hit_sec: "Per hit, sec", per_ft_min: "Per ft, min", per_hole_min: "Per hole, min", per_part_min: "Per part, min" };
     const list = Object.keys(F).filter((k) => has(k));

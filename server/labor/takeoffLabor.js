@@ -23,7 +23,16 @@ const r2 = (n) => Math.round(n * 100) / 100;
 const unitsOf = (x) => Math.max(1, Math.round(Number(x && x.units) || 1));
 const compKey = (name) => String(name || '').trim() || '(no component)';
 
-// takeoff = { rows, fittings, welds } exactly as the review page holds them.
+// Repeat units: the n-th identical unit takes pct^log2(n) of the first one's time (a learning curve);
+// u units together take the sum. pct = 1 is no learning — u × the first unit, the old rule.
+function learnFactor(u, pct) {
+  if (!(u > 1) || !(pct > 0) || pct >= 1) return u;
+  const b = Math.log(pct) / Math.log(2);
+  let t = 0; for (let i = 1; i <= u; i++) t += Math.pow(i, b);
+  return t;
+}
+
+// takeoff = { rows, fittings, welds, features, extras } exactly as the review page holds them.
 function laborForTakeoff(takeoff, profile, jobType) {
   const live = (r) => r && !r.deleted && Number(r.quantity) > 0;
   const rows = ((takeoff && takeoff.rows) || []).filter(live);
@@ -31,7 +40,10 @@ function laborForTakeoff(takeoff, profile, jobType) {
   // The weld schedule read off the drawings; a weld counts when it has a count, like a row a quantity.
   const welds = ((takeoff && takeoff.welds) || []).filter((w) => w && !w.deleted && Number(w.count) > 0);
   const ctx = shop.estimateContext(profile);
-  const est = estimateTakeoff({ rows, fittings, welds }, ctx);
+  const features = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
+  const extras = (takeoff && takeoff.extras) || {};
+  const est = estimateTakeoff({ rows, fittings, welds, features, extras }, ctx);
+  const learnPct = pm.opv(ctx.model, 'LEARNING', 'pct') || 1;
 
   // Units and weight per component. A component's units are the most any of its rows carries,
   // the same rule the review page uses for its group headers.
@@ -49,16 +61,20 @@ function laborForTakeoff(takeoff, profile, jobType) {
 
   const components = Object.entries(est.components).map(([name, c]) => {
     const units = (meta[name] || {}).units || 1;
+    const lf = learnFactor(units, learnPct);       // hours for all units, in first-unit multiples
     return {
-      name, units,
+      name, units, learning: units > 1 && lf < units ? { pct: learnPct, factor: r2(lf), of: units } : null,
       tons: r2(((meta[name] || {}).lb || 0) * units / 2000),
       items: c.lines.map((l) => ({
         what: l.what, bucket: l.bucket, standard: l.standard, source_ref: l.source_ref,
-        per_unit: r2(l.hours), hours: r2(l.hours * units),
+        // A per-job line (setup, paperwork) is done once, not once per unit.
+        per_unit: r2(l.hours), hours: r2(l.hours * (l.per_job ? 1 : lf)),
         // What the hours were counted from, so the review can show Qty x Hrs each = Total and
         // recompute when either is edited: pieces, ft of cut, ft of weld, tons or joints (job qty).
-        qty: l.units != null ? Math.round(Number(l.units) * units * 1000) / 1000 : null,
-        unit_label: l.unit_label || '', each: l.per_unit != null ? Number(l.per_unit) : null,
+        qty: l.units != null ? Math.round(Number(l.units) * (l.per_job ? 1 : units) * 1000) / 1000 : null,
+        unit_label: l.unit_label || '',
+        // Hrs each so that Qty x Hrs each = Total, the learning curve included.
+        each: l.units > 0 ? (l.hours * (l.per_job ? 1 : lf)) / (Number(l.units) * (l.per_job ? 1 : units)) : (l.per_unit != null ? Number(l.per_unit) : null),
         derived: !!l.derived, note: l.note || null,
         // The detail under the broad bucket (MIG, TIG, plasma, band saw…), laborTypes.js.
         labor_type: typeForLine(l), process: l.process || null, material: l.material || null,

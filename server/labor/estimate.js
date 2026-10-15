@@ -408,9 +408,176 @@ function estimateWeld(w, ctx, matOfSheet) {
     'WELD-' + joint, how, low ? 'from the drawing, low confidence — check on the Welds tab' : 'from the drawing', low), common));
   if (r.prep > 0) out.lines.push(Object.assign(modelLine('Fab_Hrs', r.prep * ft, ft, 'ft of joint', 'prep (bevel / back-gouge / backing) ' + sizeTxt + ' — ' + label,
     'PREP-' + joint, 'joint prep ' + r.prep.toFixed(3) + ' hr/ft', null, true), Object.assign({}, common, { labor_type: 'FAB_GRIND' })));
+  // Preheat: a groove on base metal at or over the shop's thickness, or a fillet big enough that the
+  // parts must be (leg × 2 as the base thickness — an assumption, marked).
+  const tMin = pm.opv(P, 'PREHEAT', 't_min'), phr = pm.opv(P, 'PREHEAT', 'hr_ft');
+  const baseT = joint.indexOf('FILLET') > -1 || joint === 'FLARE_BEVEL' ? size * 2 : size;
+  if (tMin > 0 && phr > 0 && baseT >= tMin) out.lines.push(Object.assign(modelLine('Weld_Hrs', phr * ft, ft, 'ft of joint', 'preheat ' + sizeTxt + ' — ' + label,
+    'PREHEAT', phr + ' hr/ft on joints ' + tMin + '" and thicker' + (baseT !== size ? ' (base taken as 2 × the fillet leg)' : ''), null, true), Object.assign({}, common, { labor_type: 'WELD_HEAT' })));
   if (r.nde > 0) out.lines.push(Object.assign(modelLine('Inspection_Hrs', r.nde * ft, ft, 'ft of joint', 'NDE ' + sizeTxt + ' — ' + label,
     'NDE-' + joint, 'NDE allowance ' + r.nde.toFixed(3) + ' hr/ft', null, true), Object.assign({}, common, { labor_type: 'NDE' })));
   return out;
+}
+
+// ---- FEATURES FROM THE DRAWINGS — holes, copes, notches, mitres, bends, brake, rolling, bolts ----
+// Counted by the take-off, priced from the shop's own operation rates (processModel OPS), harder
+// materials scaled by machinability. Hours per ONE unit of the component.
+const OPLINE = (P, op, hours, units, unitLabel, what, basis, note, derived, extra) => {
+  const d = pm.OPS[op];
+  return Object.assign(modelLine(d.bucket, hours, units, unitLabel, what, op, basis, note, derived), { labor_type: d.type, from_drawing: true }, extra || {});
+};
+const has = (P, k) => P.capabilities.indexOf(k) > -1;
+const mineOp = (P, op) => Object.values(P.ops[op] || {}).some((v) => v && v.source === 'yours');
+// 'Beam - W W12 x 26' -> 12; 'Channel C10 x 15.3' -> 10.
+function depthOf(member) {
+  const m = String(member || '').match(/\b(W|S|HP|M|C|MC|WT|ST|MT)\s*(\d+(?:\.\d+)?)\s*[xX×]/);
+  return m ? Number(m[2]) : null;
+}
+// OD of a pipe, tube or bar, in inches, for bending.
+function odOf(member) {
+  const m = String(member || '');
+  const pipe = m.match(/(\d+-\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?)"?\s*(SCH\s*\d+|STD|XXS|XS)/i);
+  if (/pipe/i.test(m) && pipe) { const d = pipeDims(pipe[1] + '"', /^std$/i.test(pipe[2]) ? 'STD' : /^xs$/i.test(pipe[2]) ? 'XS' : pipe[2].toUpperCase().replace(/\s+/g, ' ')); return d ? d.od : null; }
+  const n = sizeNumbers(m.replace(/^[^0-9]*?(?=\d)/, ''));
+  return n.length ? n[0] : null;
+}
+function estimateFeature(f, ctx, matOfSheet) {
+  const P = (ctx && ctx.model) || PM_DEFAULT;
+  const out = { lines: [], missing: [] };
+  const kind = String(f.feature || '').toLowerCase();
+  const n = Number(f.count) || 0;
+  const label = [f.symbol || kind, f.member_mark || f.member].filter(Boolean).join(' — ') + (f.source_sheet ? ' (' + f.source_sheet + ')' : '');
+  const mat = matOfSheet(f) || 'CS';
+  const mach = (P.machinability[mat] || { value: 1 }).value;
+  const mx = mach !== 1 ? ' × ' + mach + ' for ' + pm.MAT[mat].label.toLowerCase() : '';
+  const low = Number(f.confidence) < 0.5;
+  const note = low ? 'counted from the drawing, low confidence — check on the Welds & features tab' : 'counted from the drawing';
+  const v = (op, k) => pm.opv(P, op, k);
+  if (kind === 'hole') {
+    const dia = Number(f.diameter_in) || 0, t = Number(f.thickness_in) || 0;
+    if (!(dia > 0) || !(t > 0)) { out.missing.push({ what: label, reason: 'hole needs its diameter and the thickness drilled' }); return out; }
+    let op = 'HOLE_DRILL';
+    if (mineOp(P, 'HOLE_CNC')) op = 'HOLE_CNC';
+    else if ((has(P, 'PUNCH') || has(P, 'IRONWORKER')) && t <= Math.min(v('HOLE_PUNCH', 'max_t') || 0, dia) && (mat === 'CS' || mat === 'AL')) op = 'HOLE_PUNCH';
+    else if (!has(P, 'DRILL')) op = 'HOLE_MAG';
+    const min = op === 'HOLE_PUNCH' ? v(op, 'a_min') : (v(op, 'a_min') + v(op, 'b_min') * dia * t) * mach;
+    out.lines.push(OPLINE(P, op, min / 60 * n, n, 'holes', pm.OPS[op].label.toLowerCase() + ' ' + dia + '" hole in ' + t + '" — ' + label,
+      fmtMin(min) + ' per hole' + (op === 'HOLE_PUNCH' ? '' : ' (' + v(op, 'a_min') + ' + ' + v(op, 'b_min') + ' × ' + dia + ' × ' + t + ')' + mx), note, low));
+  } else if (kind === 'cope') {
+    const depth = depthOf(f.member);
+    if (!depth) { out.missing.push({ what: label, reason: 'cope: member depth not read from "' + (f.member || '?') + '"' }); return out; }
+    const min = (v('COPE', 'a_min') + v('COPE', 'b_min') * depth) * (f.double ? v('COPE', 'double') : 1) * mach;
+    out.lines.push(OPLINE(P, 'COPE', min / 60 * n, n, 'copes', (f.double ? 'double ' : '') + 'cope ' + depth + '" deep — ' + label,
+      fmtMin(min) + ' per cope (' + v('COPE', 'a_min') + ' + ' + v('COPE', 'b_min') + ' × ' + depth + '")' + (f.double ? ' × ' + v('COPE', 'double') : '') + mx, note, low));
+  } else if (kind === 'notch') {
+    const min = v('NOTCH', 'a_min') * mach;
+    out.lines.push(OPLINE(P, 'NOTCH', min / 60 * n, n, 'notches', 'notch — ' + label, fmtMin(min) + ' per notch' + mx, note, low));
+  } else if (kind === 'miter') {
+    const lbFt = rolledShapeLbPerFt(String(f.member || '').replace(/^.*?(?=[A-Z]+\s*\d)/, '')) || null;
+    const area = lbFt ? lbFt / (pm.matDensity(mat) * 12) : 1;
+    const cp = pm.memberCutProcessFor(P, mat);
+    const s = cp.missing ? null : pm.sawHrPerCut(P, mat, cp.process, area);
+    if (!s || s.missing) { out.missing.push({ what: label, reason: (cp.missing || (s && s.missing) || 'no saw') }); return out; }
+    const extra = (v('MITER', 'factor') - 1) * s.value;
+    out.lines.push(OPLINE(P, 'MITER', extra * n, n, 'mitres', 'mitre (extra over a square cut) — ' + label, '(' + v('MITER', 'factor') + ' − 1) × ' + fmtMin(s.value * 60) + ' square cut', note, low));
+  } else if (kind === 'bend') {
+    const od = odOf(f.member);
+    if (!od) { out.missing.push({ what: label, reason: 'bend: size not read from "' + (f.member || '?') + '"' }); return out; }
+    const op = mineOp(P, 'BEND_CNC') ? 'BEND_CNC' : 'BEND_PIPE';
+    const min = (v(op, 'a_min') + v(op, 'b_min') * od) * mach;
+    const setup = op === 'BEND_CNC' ? (v(op, 'setup_min') || 0) : 0;
+    out.lines.push(OPLINE(P, op, (min * n + setup) / 60, n, 'bends', 'bend ' + od.toFixed(2) + '" OD — ' + label,
+      fmtMin(min) + ' per bend' + (setup ? ' + ' + setup + ' min setup' : '') + mx, note, low));
+  } else if (kind === 'brake') {
+    const hrs = (v('BRAKE', 'setup_min') + v('BRAKE', 'per_hit_sec') / 60 * n) / 60;
+    out.lines.push(OPLINE(P, 'BRAKE', hrs, n, 'bends', 'press-brake bends — ' + label, v('BRAKE', 'setup_min') + ' min setup + ' + v('BRAKE', 'per_hit_sec') + ' sec per hit', note, low));
+  } else if (kind === 'roll') {
+    const ft = Number(f.length_ft) || 0;
+    if (!(ft > 0)) { out.missing.push({ what: label, reason: 'rolled part needs its length' }); return out; }
+    const hrs = (v('ROLL', 'setup_min') + v('ROLL', 'per_ft_min') * ft * n) / 60;
+    out.lines.push(OPLINE(P, 'ROLL', hrs, ft * n, 'ft rolled', 'roll — ' + label, v('ROLL', 'setup_min') + ' min setup + ' + v('ROLL', 'per_ft_min') + ' min/ft', note, low));
+  } else if (kind === 'bolt') {
+    const min = f.pretension ? v('BOLT', 'tension_min') : v('BOLT', 'snug_min');
+    out.lines.push(OPLINE(P, 'BOLT', min / 60 * n, n, 'bolts', (f.pretension ? 'pretensioned' : 'snug') + ' bolts — ' + label, min + ' min per bolt', note, low));
+  } else {
+    out.missing.push({ what: label, reason: 'unknown feature "' + kind + '"' });
+  }
+  return out;
+}
+const fmtMin = (m) => (Math.round(m * 10) / 10) + ' min';
+
+// ---- WORK THAT FOLLOWS FROM THE TAKE-OFF ITSELF -------------------------------------------------
+// Added to each component after its lines are priced: setup per component, straightening (a share
+// of the welding), the weld-code premium, preheat on thick joints, and the stainless finish chosen
+// for the job. extras = { code, ss_finish: 'none'|'grind'|'polish', tests } from the Labor tab.
+function componentExtras(comp, rowsOfComp, P, extras) {
+  const add = [];
+  const x = extras || {};
+  const v = (op, k) => pm.opv(P, op, k);
+  const weldHrs = comp.lines.filter((l) => l.bucket === 'Weld_Hrs').reduce((a, l) => a + l.hours, 0);
+  if (v('JOB_SETUP', 'hr_component') > 0) add.push(Object.assign(modelLine('Misc_Hrs', v('JOB_SETUP', 'hr_component'), 1, 'component', 'set up & tear down for this component', 'JOB_SETUP',
+    v('JOB_SETUP', 'hr_component') + ' hr per component', null, false), { labor_type: 'SETUP', per_job: true }));
+  if (weldHrs > 0 && v('STRAIGHTEN', 'pct') > 0) add.push(Object.assign(modelLine('Fab_Hrs', weldHrs * v('STRAIGHTEN', 'pct'), weldHrs, 'weld hr', 'straighten after welding', 'STRAIGHTEN',
+    Math.round(v('STRAIGHTEN', 'pct') * 100) + '% of ' + weldHrs.toFixed(1) + ' welding hr', null, true), { labor_type: 'FAB_STRAIGHTEN' }));
+  const code = P.codes[x.code];
+  if (weldHrs > 0 && code && code.value !== 1) add.push(Object.assign(modelLine('Weld_Hrs', weldHrs * (code.value - 1), weldHrs, 'weld hr', 'weld code ' + pm.CODES[x.code].label + ' premium', 'CODE-' + x.code,
+    '× ' + code.value + ' on ' + weldHrs.toFixed(1) + ' welding hr', null, false), { labor_type: 'WELD_MIG' }));
+  // Stainless finish: ft of stainless member and ft of weld on stainless in this component.
+  if (x.ss_finish === 'grind' || x.ss_finish === 'polish') {
+    let memberFt = 0;
+    for (const r of rowsOfComp) {
+      const mk = pm.materialKey(r.material_type, r.specification);
+      if ((mk === 'SS' || mk === 'DSS') && String(r.disposition || 'fabricate').toLowerCase() === 'fabricate') memberFt += (Number(r.length_ft) || 0) * (Number(r.quantity) || 0);
+    }
+    const ssWeldFt = comp.lines.filter((l) => l.bucket === 'Weld_Hrs' && (l.material === 'SS' || l.material === 'DSS') && /ft of weld/.test(l.unit_label || '')).reduce((a, l) => a + (Number(l.units) || 0), 0);
+    if (x.ss_finish === 'grind' && ssWeldFt > 0) add.push(Object.assign(modelLine('Fab_Hrs', ssWeldFt * v('GRIND_FLUSH', 'hr_ft'), ssWeldFt, 'ft of weld', 'grind stainless welds flush', 'GRIND_FLUSH',
+      v('GRIND_FLUSH', 'hr_ft') + ' hr/ft of weld', null, true), { labor_type: 'FAB_GRIND' }));
+    if (x.ss_finish === 'polish') {
+      if (memberFt > 0) add.push(Object.assign(modelLine('Fab_Hrs', memberFt * v('POLISH', 'hr_ft'), memberFt, 'ft', 'polish stainless members', 'POLISH',
+        v('POLISH', 'hr_ft') + ' hr/ft of member', null, true), { labor_type: 'FAB_POLISH' }));
+      if (ssWeldFt > 0) add.push(Object.assign(modelLine('Fab_Hrs', ssWeldFt * v('POLISH', 'hr_weld_ft'), ssWeldFt, 'ft of weld', 'blend & polish stainless welds', 'POLISH',
+        v('POLISH', 'hr_weld_ft') + ' hr/ft of weld', null, true), { labor_type: 'FAB_POLISH' }));
+    }
+  }
+  return add;
+}
+
+// Lines for the whole job, priced once: job setup, QC paperwork, shop drawings, CNC programming,
+// load-out, crane picks, pressure tests. rows carry `units` (how many of their component the job builds).
+function jobLines(rows, P, extras) {
+  const lines = [];
+  const v = (op, k) => pm.opv(P, op, k);
+  const fab = rows.filter((r) => String(r.disposition || 'fabricate').toLowerCase() === 'fabricate' && Number(r.quantity) > 0);
+  const units = (r) => Math.max(1, Math.round(Number(r.units) || 1));
+  const sheets = new Set(fab.map((r) => sheetKey(r.source_sheet)).filter(Boolean)).size;
+  const L = (bucket, hrs, q, unit, what, op, basis, type, derived) => lines.push(Object.assign(modelLine(bucket, hrs, q, unit, what, op, basis, null, !!derived), { labor_type: type, per_job: true }));
+  if (v('JOB_SETUP', 'hr_job') > 0) L('Misc_Hrs', v('JOB_SETUP', 'hr_job'), 1, 'job', 'job setup & teardown', 'JOB_SETUP', v('JOB_SETUP', 'hr_job') + ' hr per job', 'SETUP');
+  if (v('QC_DOCS', 'hr_job') > 0 || v('QC_DOCS', 'hr_sheet') > 0)
+    L('Inspection_Hrs', (v('QC_DOCS', 'hr_job') || 0) + (v('QC_DOCS', 'hr_sheet') || 0) * sheets, sheets, 'drawings', 'QC paperwork & traceability', 'QC_DOCS',
+      (v('QC_DOCS', 'hr_job') || 0) + ' hr + ' + (v('QC_DOCS', 'hr_sheet') || 0) + ' hr × ' + sheets + ' drawings', 'DOCS');
+  if (v('DETAIL', 'hr_sheet') > 0 && sheets) L('Misc_Hrs', v('DETAIL', 'hr_sheet') * sheets, sheets, 'drawings', 'shop drawings / detailing', 'DETAIL', v('DETAIL', 'hr_sheet') + ' hr per drawing', 'DETAIL');
+  // CNC programming: each distinct plate part routed to a CNC cutter.
+  const cnc = new Set();
+  for (const r of fab) {
+    if (libraryForm(r.form_type) !== 'Plate') continue;
+    const mat = pm.materialKey(r.material_type, r.specification), t = toNumber(r.size);
+    const cp = t > 0 ? pm.plateCutProcessFor(P, mat, t) : null;
+    if (cp && cp.process && ['PLASMA', 'OXY', 'LASER', 'WATERJET'].indexOf(cp.process) > -1) cnc.add([r.size, r.length_ft, r.width_ft, r.member_mark].join('|'));
+  }
+  if (cnc.size && v('CNC_PROG', 'hr_part') > 0) L('CNC_Hrs', v('CNC_PROG', 'hr_part') * cnc.size, cnc.size, 'parts', 'CNC programming', 'CNC_PROG', v('CNC_PROG', 'hr_part') + ' hr per distinct part', 'CNC_PROGRAM', true);
+  // Load-out by weight; crane picks for pieces over the shop's limit.
+  let lb = 0, picks = 0;
+  for (const r of fab) {
+    const p = rowPounds(r); if (p == null) continue;
+    lb += p * units(r);
+    const each = p / (Number(r.quantity) || 1);
+    if (v('CRANE', 'lb') > 0 && each > v('CRANE', 'lb')) picks += (Number(r.quantity) || 0) * units(r);
+  }
+  if (lb > 0 && v('LOADOUT', 'hr_ton') > 0) L('Labor_Hrs', v('LOADOUT', 'hr_ton') * lb / 2000, lb / 2000, 'tons', 'load out & crating', 'LOADOUT', v('LOADOUT', 'hr_ton') + ' hr/ton', 'LOADOUT');
+  if (picks > 0) L('Labor_Hrs', picks * v('CRANE', 'hr_pick'), picks, 'picks', 'crane picks (pieces over ' + v('CRANE', 'lb') + ' lb)', 'CRANE', v('CRANE', 'hr_pick') + ' crew-hr per pick', 'CRANE', true);
+  const tests = Number(extras && extras.tests) || 0;
+  if (tests > 0) L('Inspection_Hrs', tests * v('TEST', 'hr_each'), tests, 'tests', 'pressure / leak tests', 'TEST', v('TEST', 'hr_each') + ' hr per test', 'TEST');
+  return lines;
 }
 
 function estimateTakeoff(takeoff, ctx) {
@@ -444,6 +611,19 @@ function estimateTakeoff(takeoff, ctx) {
   };
   for (const row of (takeoff && takeoff.rows) || []) add(row.component, estimateRow(row, rctx));
   for (const w of welds) add(w.component, estimateWeld(w, rctx, matOfSheet));
+  const features = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
+  for (const f of features) add(f.component, estimateFeature(f, rctx, matOfSheet));
+  // Work that follows from each component's own lines (setup, straightening, weld code, stainless
+  // finish), then the whole job once (setup, paperwork, drawings, programming, load-out, cranes, tests).
+  const P = (ctx && ctx.model) || PM_DEFAULT;
+  const extras = (takeoff && takeoff.extras) || {};
+  const allRows = (takeoff && takeoff.rows) || [];
+  for (const [name, comp] of Object.entries(components)) {
+    const mine = allRows.filter((r) => (String(r.component || '').trim() || '(no component)') === name);
+    for (const l of componentExtras(comp, mine, P, extras)) { comp.hours[l.bucket] += l.hours; comp.lines.push(l); }
+  }
+  const jl = jobLines(allRows, P, extras);
+  if (jl.length) { const jc = bucketFor(JOB_COMPONENT); for (const l of jl) { jc.hours[l.bucket] += l.hours; jc.lines.push(l); } }
   for (const f of (takeoff && takeoff.fittings) || []) add(f.component, estimateFitting(f, ctx));
 
   let total = 0, missing = 0;
@@ -455,4 +635,5 @@ function estimateTakeoff(takeoff, ctx) {
   return { components, total_hours: Math.round(total * 100) / 100, missing_count: missing, per: 'one unit of each component' };
 }
 
-module.exports = { estimateTakeoff, estimateRow, estimateFitting, estimateWeld, perimeterIn, memberDepth, rowPounds, WELD_ENDS, DEFAULTS };
+const JOB_COMPONENT = 'Whole job';
+module.exports = { JOB_COMPONENT, estimateFeature, componentExtras, jobLines, estimateTakeoff, estimateRow, estimateFitting, estimateWeld, perimeterIn, memberDepth, rowPounds, WELD_ENDS, DEFAULTS };

@@ -113,6 +113,25 @@ function bucketHours(items) {
   return out;
 }
 
+// The take-off's "Whole job" group (job setup, QC paperwork, shop drawings, CNC programming,
+// load-out, crane picks, tests) is not a component on the project, so it would be skipped and its
+// hours never reach the project. Spread each bucket of it over the real components in proportion to
+// their total hours (all equally if none has hours), so the project total matches the take-off.
+const JOB_NAME = 'whole job';
+function spreadJobHours(comps) {
+  const job = comps.find((c) => norm(c.name) === JOB_NAME);
+  const rest = comps.filter((c) => norm(c.name) !== JOB_NAME);
+  if (!job || !rest.length) return rest.length ? rest : comps;
+  const jobH = bucketHours(job.items);
+  const tot = rest.map((c) => (c.items || []).reduce((a, i) => a + (Number(i.hours) || 0), 0));
+  const sum = tot.reduce((a, x) => a + x, 0);
+  return rest.map((c, k) => {
+    const share = sum > 0 ? tot[k] / sum : 1 / rest.length;
+    const extra = BUCKETS.filter((bk) => jobH[bk] > 0).map((bk) => ({ bucket: bk, hours: jobH[bk] * share, what: 'share of whole-job work' }));
+    return Object.assign({}, c, { items: (c.items || []).concat(extra) });
+  });
+}
+
 function registerLaborCommit(app, deps) {
   const { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages } = deps;
   const crit = (s) => encodeURIComponent(s);
@@ -180,7 +199,7 @@ function registerLaborCommit(app, deps) {
       const mfg = String((req.tenant && req.tenant.kind === 'm' && req.tenant.id) || b.manufacturer_id || '').trim();
       if (!/^\d{6,25}$/.test(projectId)) return res.status(400).json({ ok: false, error: 'project_id required' });
       if (!/^\d{6,25}$/.test(mfg)) return res.status(400).json({ ok: false, error: 'manufacturer_id required for labor rates' });
-      const comps = (Array.isArray(b.components) ? b.components : []).filter((c) => c && c.name);
+      const comps = spreadJobHours((Array.isArray(b.components) ? b.components : []).filter((c) => c && c.name));
 
       const [shopRows, rateRows, compRows, laborRows] = await Promise.all([
         // Labor_Types only arrive if Customer_Entry_Report shows that column; missing = no fold.
@@ -252,4 +271,4 @@ function registerLaborCommit(app, deps) {
   });
 }
 
-module.exports = { registerLaborCommit, buildRecord, pickRates, bucketHours, foldToShopTypes, projectTotals };
+module.exports = { registerLaborCommit, buildRecord, pickRates, bucketHours, foldToShopTypes, projectTotals, spreadJobHours };

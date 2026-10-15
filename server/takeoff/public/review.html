@@ -197,7 +197,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.71 · 2026-10-14";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.72 · 2026-10-14";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -309,7 +309,7 @@
     // synopsis no longer holds, so they can't be rebuilt from it on another machine.
     const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
                 superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[], check:R.check||null, checked_v1:!!R.checked_v1,
-                fittings_written:R.fittings_written||[], welds:R.welds||[] };
+                fittings_written:R.fittings_written||[], welds:R.welds||[], features:R.features||[], labor_extras:R.labor_extras||null };
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
@@ -696,7 +696,7 @@
   function labJob(L){ return arr(L.components).reduce(function(a,c){ return a+labComp(c); },0); }
   function labLive(R){
     const live=function(r){ return r && !r.deleted && Number(r.quantity)>0; };
-    return { rows:arr(R.rows).filter(live), fittings:arr(R.fittings).filter(live), welds:arr(R.welds).filter(function(w){ return w && !w.deleted && Number(w.count)>0; }) };
+    return { rows:arr(R.rows).filter(live), fittings:arr(R.fittings).filter(live), welds:arr(R.welds).filter(function(w){ return w && !w.deleted && Number(w.count)>0; }), features:arr(R.features).filter(function(x){ return x && !x.deleted && Number(x.count)>0; }) };
   }
   // What the labor was worked out from. When the BOM changes afterwards, say so — never
   // silently keep hours for steel that is no longer on the take-off.
@@ -704,12 +704,15 @@
     const t=labLive(R);
     return JSON.stringify(t.rows.map(function(r){ return [r.component,r.form_type,r.size,r.quantity,r.units,r.length_ft,r.width_ft,r.disposition]; })
       .concat(t.fittings.map(function(f){ return [f.component,f.fitting_type,f.size,f.end_type,f.quantity,f.units]; }))
-      .concat(t.welds.map(function(w){ return [w.component,w.source_sheet,w.joint,w.groove,w.size_in,w.length_in,w.all_around,w.around_member,w.count,w.both_sides,w.pitch,w.position,w.field_weld]; })));
+      .concat(t.welds.map(function(w){ return [w.component,w.source_sheet,w.joint,w.groove,w.size_in,w.length_in,w.all_around,w.around_member,w.count,w.both_sides,w.pitch,w.position,w.field_weld]; }))
+      .concat(t.features.map(function(x){ return [x.component,x.source_sheet,x.feature,x.count,x.member,x.diameter_in,x.thickness_in,x.double,x.length_ft,x.pretension]; }))
+      // Job choices count only once set, so a take-off from before them is not shown as changed.
+      .concat(R.labor_extras&&Object.keys(R.labor_extras).length?[["extras",JSON.stringify(R.labor_extras)]]:[]));
   }
   async function labFetch(R, jobType){
     const t=labLive(R);
     const r=await fetch(RAILWAY_URL+"/api/labor/estimate",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({manufacturer_id:params.manufacturer_id||"", job_type:jobType||"", rows:t.rows, fittings:t.fittings, welds:t.welds})});
+      body:JSON.stringify({manufacturer_id:params.manufacturer_id||"", job_type:jobType||"", rows:t.rows, fittings:t.fittings, welds:t.welds, features:t.features, extras:R.labor_extras||{}})});
     const j=await r.json().catch(function(){ return null; });
     if(!r.ok||!j||!j.ok) throw new Error((j&&j.error)||("server said "+r.status));
     return j.labor;
@@ -735,7 +738,7 @@
       const written=arr(R2.labor&&R2.labor.written);
       R2.labor={ job_type:jt, sig:labSig(R2), fetched:new Date().toISOString(), edited:false, server:labSnapshot(x), written:written,
         components:arr(x.components).map(function(c){
-          return { name:c.name, units:c.units, tons:c.tons, held:false, missing:arr(c.missing),
+          return { name:c.name, units:c.units, tons:c.tons, learning:c.learning||null, held:false, missing:arr(c.missing),
             items:arr(c.items).map(function(i){ return Object.assign({},i,{auto:i.hours}); }) };
         }) };
       saveResult(R2);
@@ -873,6 +876,7 @@
       let h='<tr class="grp-comp'+(c.held?' lab-held':'')+'"><td colspan="3">'+
         '<input class="lab-in txt" style="font-weight:700;background:transparent;border-color:transparent;width:auto;min-width:160px" value="'+escAttr(c.name)+'" onchange="laborCompName('+ci+',this.value)">'+
         (c.units>1?' <span class="grp-units">× '+c.units+' units</span>':'')+
+        (c.learning?' <span class="grp-meta" title="Repeat units get faster: '+Math.round(c.learning.pct*100)+'% per doubling (Shop labor setup)">learning: '+labFmt(c.learning.factor,2)+'× one unit</span>':'')+
         (c.tons?' <span class="grp-meta">'+labFmt(c.tons,2)+' t</span>':'')+'</td>'+
         '<td style="text-align:right"><input class="lab-in" value="'+labFmt(tot,1)+'" onchange="laborComp('+ci+',this.value)" title="Change this and the items below scale with it"></td>'+
         '<td style="white-space:nowrap;font-size:12px"><label title="Hold keeps this component fixed when the job total changes"><input type="checkbox"'+(c.held?' checked':'')+' onchange="laborHold('+ci+',this.checked)"> Hold</label></td></tr>';
@@ -928,7 +932,7 @@
         '<div><label>Job type</label><select onchange="laborJobType(this.value)">'+
           Object.keys(types).map(function(k){ return '<option value="'+k+'"'+(k===L.job_type?' selected':'')+'>'+esc(types[k])+'</option>'; }).join("")+'</select></div>'+
         '<div class="lab-ball" style="flex:1;min-width:260px">'+ball+'</div>'+
-      '</div>'+
+      '</div>'+laborExtrasHtml(R)+
       // Hours per bucket across every item on the job — the same 8 buckets the project's labor rows carry.
       (function(){
         const tot={}; Object.keys(LAB_BUCKET).forEach(function(b){ tot[b]=0; });
@@ -1032,12 +1036,98 @@
       '</div></div>';
   }
 
+  // ---- FEATURES — holes, copes, notches, mitres, bends, brake, rolling, bolts --------------------
+  // Counted off the drawings like the welds and priced from the shop's own operation rates.
+  const FEATURE_KINDS=[["hole","Hole"],["cope","Cope"],["notch","Notch"],["miter","Mitre"],["bend","Bend (pipe/tube)"],["brake","Brake bend"],["roll","Rolled"],["bolt","Bolt"]];
+  function featureIssue(x){
+    if(!liveWeldJS(x)) return "";
+    const k=String(x.feature||"");
+    if(!FEATURE_KINDS.some(function(o){ return o[0]===k; })) return "feature type needed";
+    if(k==="hole" && !(Number(x.diameter_in)>0 && Number(x.thickness_in)>0)) return "diameter and thickness needed";
+    if((k==="cope"||k==="bend"||k==="miter") && !x.member) return "member needed";
+    if(k==="roll" && !(Number(x.length_ft)>0)) return "length needed";
+    if(Number(x.confidence)<0.5) return "low confidence — check";
+    return "";
+  }
+  function featureProblems(R){ return arr(R.features).filter(function(x){ return !!featureIssue(x); }); }
+  function featSet(i,k,el){
+    const R=loadResult(); const x=arr(R.features)[i]; if(!x) return;
+    let v=el.type==="checkbox"?el.checked:el.value;
+    if(["diameter_in","thickness_in","count","length_ft"].indexOf(k)>-1){ const n=parseFrac(v); if(v!=="" && n==null){ render(); return; } v=n==null?0:n; }
+    x[k]=v; x.confidence=Math.max(Number(x.confidence)||0,0.9);
+    saveResult(R); render();
+  }
+  function featDel(i){ const R=loadResult(); if(!arr(R.features)[i]) return; R.features.splice(i,1); saveResult(R); render(); }
+  function featAdd(sheet,comp){
+    const R=loadResult(); R.features=arr(R.features);
+    R.features.push({feature:"hole",count:1,diameter_in:0.8125,thickness_in:0.5,member:"",component:comp||"",source_sheet:sheet||"",symbol:"added by hand",confidence:1});
+    saveResult(R); render();
+  }
+  function featuresCardHtml(R){
+    const F=arr(R.features);
+    const head='<div class="card"><h2>🔩 Features <span class="lt">— holes, copes, notches, mitres, bends, rolling and bolts counted off the drawings</span></h2><div class="body">';
+    const sheetsAll=Object.keys(arr(R.rows).reduce(function(a,r){ if(r&&r.source_sheet) a[r.source_sheet]=r.component||""; return a; },{}));
+    if(!F.length) return head+'<div style="color:var(--mut);font-size:13px">No features on this take-off. Take-offs run from now on count holes, copes, bends and the rest off the drawings; '+
+      'you can also add them by hand. <span class="pillbtn" onclick="featAdd(\''+escAttr(sheetsAll[0]||"")+'\',\'\')">+ add a feature</span></div></div></div>';
+    const sheets={}; F.forEach(function(x,i){ const k=String(x.source_sheet||"(no drawing)"); (sheets[k]=sheets[k]||[]).push(i); });
+    const sel='style="font-size:12px;padding:2px 4px;border:1px solid #dfe5ec;border-radius:5px;max-width:130px"';
+    const num=function(i,k,v,wd){ return '<input class="lab-in" style="width:'+(wd||54)+'px" value="'+escAttr(v==null||v===0?"":v)+'" onchange="featSet('+i+',\''+k+'\',this)">'; };
+    const chk=function(i,k,v,t){ return '<label style="font-size:11.5px;white-space:nowrap"><input type="checkbox"'+(v?' checked':'')+' onchange="featSet('+i+',\''+k+'\',this)"> '+esc(t)+'</label>'; };
+    let rows="";
+    Object.keys(sheets).sort().forEach(function(sh){
+      const idx=sheets[sh], comp=F[idx[0]].component||"";
+      rows+='<tr class="grp-comp"><td colspan="7">Drawing '+esc(sh)+(comp?' <span class="grp-meta">'+esc(comp)+'</span>':'')+
+        ' <span class="pillbtn" style="margin-left:8px" onclick="featAdd(\''+escAttr(sh)+'\',\''+escAttr(comp)+'\')">+ add feature</span></td></tr>';
+      idx.forEach(function(i){
+        const x=F[i], k=x.feature, issue=featureIssue(x);
+        const detail = k==="hole" ? 'Ø '+num(i,"diameter_in",x.diameter_in)+' in '+num(i,"thickness_in",x.thickness_in)+' thick'
+          : k==="cope" ? chk(i,"double",x.double,"double")
+          : k==="roll" ? num(i,"length_ft",x.length_ft)+' ft each'
+          : k==="bolt" ? chk(i,"pretension",x.pretension,"pretensioned") : '';
+        rows+='<tr class="lab-item">'+
+          '<td><select '+sel+' onchange="featSet('+i+',\'feature\',this)">'+FEATURE_KINDS.map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===k?' selected':'')+'>'+esc(o[1])+'</option>'; }).join("")+'</select></td>'+
+          '<td>'+num(i,"count",x.count,48)+'</td>'+
+          '<td><input class="lab-in txt" style="width:190px" placeholder="member, e.g. Beam - W W12 x 26" value="'+escAttr(x.member||"")+'" onchange="featSet('+i+',\'member\',this)"></td>'+
+          '<td style="white-space:nowrap">'+detail+'</td>'+
+          '<td style="font-size:11.5px;color:var(--mut);max-width:220px">'+esc(x.symbol||"")+(x.member_mark?' · '+esc(x.member_mark):'')+
+            (issue?'<div style="color:var(--ylw);font-weight:600">'+esc(issue)+'</div>':'')+'</td>'+
+          '<td class="n">'+(x.confidence!=null?Math.round(Number(x.confidence)*100)+'%':'')+'</td>'+
+          '<td><button class="applybtn" style="background:#9aa6b2;padding:1px 7px" title="Remove" onclick="featDel('+i+')">✕</button></td></tr>';
+      });
+    });
+    const probs=featureProblems(R).length;
+    return head+'<div class="src" style="margin:0 0 10px;font-size:12.5px;line-height:1.5">'+F.filter(liveWeldJS).length+' features. Priced from your shop\'s rates (Shop labor setup, section 6), '+
+      'harder materials scaled by machinability. Sizes in inches. '+(probs?'<b style="color:var(--ylw)">'+probs+' to check.</b> ':'')+'After changes, <b>Recalculate</b> on the Labor tab.</div>'+
+      '<div style="overflow-x:auto"><table><thead><tr><th>Feature</th><th>Count</th><th>Member</th><th>Size</th><th>On the drawing</th><th>Conf.</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div></div>';
+  }
+
+  // ---- JOB CHOICES on the Labor tab ----------------------------------------------------------
+  // Weld code, stainless finish and pressure tests: picked per job, priced from the shop's rates.
+  // Kept beside the labour (not in it) so a Recalculate does not throw them away.
+  function laborExtra(k,v){
+    const R=loadResult(); R.labor_extras=Object.assign({},R.labor_extras||{});
+    if(v===""||v==null||v==="none"&&k!=="code") delete R.labor_extras[k]; else R.labor_extras[k]=k==="tests"?Math.max(0,Math.round(Number(v)||0)):v;
+    if(k==="code"&&v==="none") delete R.labor_extras.code;
+    if(!Object.keys(R.labor_extras).length) delete R.labor_extras;
+    saveResult(R); render();
+  }
+  function laborExtrasHtml(R){
+    const x=R.labor_extras||{};
+    const opt=function(list,cur){ return list.map(function(o){ return '<option value="'+o[0]+'"'+(String(cur||"")===o[0]?' selected':'')+'>'+esc(o[1])+'</option>'; }).join(""); };
+    const hasSS=arr(R.rows).some(function(r){ return /stainless/i.test(String(r.material_type||"")); });
+    return '<div class="lab-top" style="margin-top:-4px">'+
+      '<div><label>Weld code</label><select onchange="laborExtra(\'code\',this.value)">'+opt([["none","No code"],["D1_1","AWS D1.1 steel"],["D1_2","AWS D1.2 aluminum"],["D1_6","AWS D1.6 stainless"],["ASME","ASME IX / B31"]],x.code||"none")+'</select></div>'+
+      (hasSS?'<div><label>Stainless finish</label><select onchange="laborExtra(\'ss_finish\',this.value)">'+opt([["","As welded (cleaned)"],["grind","Welds ground flush"],["polish","#4 / satin polish"]],x.ss_finish||"")+'</select></div>':'')+
+      '<div><label>Pressure / leak tests</label><input class="lab-in" style="width:70px" value="'+escAttr(x.tests||"")+'" placeholder="0" onchange="laborExtra(\'tests\',this.value)"></div>'+
+      '<div class="src" style="align-self:end;font-size:12px">Changing these marks the hours out of date — then <b>Recalculate</b>.</div></div>';
+  }
+
   // ---- Tabs ---------------------------------------------------------------------------------
   // The review used to be one long column. Now one area at a time; the header and the dock
   // (chat + Approve) stay. Switching only shows and hides panes — no re-render — so the BOM
   // editor iframe, a half-typed edit and every id other code looks up survive a tab change.
   // The chosen tab is remembered per project for this browser tab.
-  const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["welds","Welds"],["labor","Labor"],["ai","Ask the AI"]];
+  const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["welds","Welds & features"],["labor","Labor"],["ai","Ask the AI"]];
   function tabKey(){ return "mc_review_tab_"+(params.project_id||"sample"); }
   let TAB=(function(){ try{ return sessionStorage.getItem(tabKey())||"overview"; }catch(e){ return "overview"; } })();
   function setTab(t){
@@ -1063,7 +1153,7 @@
       addenda: arr(R.superseded).length?[(R.addenda?'':'warn'),arr(R.superseded).length]:null,
       material: ['',arr(fab).length],
       fittings: arr(R.fittings).length?[fprobs?'bad':'',arr(R.fittings).length]:null,
-      welds: arr(R.welds).filter(liveWeldJS).length?[weldProblems(R).length?'warn':'',arr(R.welds).filter(liveWeldJS).length]:null,
+      welds: (arr(R.welds).filter(liveWeldJS).length+arr(R.features).filter(liveWeldJS).length)?[(weldProblems(R).length+featureProblems(R).length)?'warn':'',arr(R.welds).filter(liveWeldJS).length+arr(R.features).filter(liveWeldJS).length]:null,
       labor: hrs!=null?['',labFmt(hrs,0)+' h']:null,
       ai: chat?['',chat]:null,
     };
@@ -2550,7 +2640,7 @@
       '<div class="tabpane" data-tab="addenda">'+addendaHtml(R)+'</div>'+
 
       // the weld schedule read off the drawings — welding hours come from it
-      '<div class="tabpane" data-tab="welds">'+weldsCardHtml(R)+'</div>'+
+      '<div class="tabpane" data-tab="welds">'+weldsCardHtml(R)+featuresCardHtml(R)+'</div>'+
 
       // shop labor — hours for this take-off, at job / component / item level
       '<div class="tabpane" data-tab="labor">'+laborCardHtml(R)+'</div>'+
@@ -2806,6 +2896,7 @@
     // before, so the fittings on a drawing added later were silently lost (found 2026-10-14).
     out.fittings = arr(cur && cur.fittings).concat(arr(addon && addon.fittings));
     out.welds = arr(cur && cur.welds).concat(arr(addon && addon.welds));
+    out.features = arr(cur && cur.features).concat(arr(addon && addon.features));
     const cs = (cur && cur.synopsis) || {}, as = (addon && addon.synopsis) || {};
     const sw1 = cs.scope_of_work || {}, sw2 = as.scope_of_work || {};
     const proj = cs.project || as.project || {};

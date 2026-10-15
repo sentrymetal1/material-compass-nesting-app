@@ -134,10 +134,6 @@ const SHEAR_MAX_T = { CS: 0.5, SS: 0.375, DSS: 0.25, AL: 0.75, CU: 0.5, NI: 0.25
 // Forming and machining: stored for the shop now, used as soon as the take-off counts bends,
 // holes and machined parts. Minutes.
 const FORM = {
-  BRAKE: { setup_min: 15, per_hit_sec: 20 },
-  ROLL:  { setup_min: 30, per_ft_min: 2 },
-  PUNCH: { setup_min: 10, per_hit_sec: 4 },
-  DRILL: { setup_min: 5, per_hole_min: 1.5 },
   MILL:  { setup_min: 45, per_part_min: 20 },
   LATHE: { setup_min: 30, per_part_min: 15 },
   CNC_MILL: { setup_min: 60, per_part_min: 10 },
@@ -163,6 +159,76 @@ const JOINTS = {
 // The work around the weld, hr per ft of joint. Bevel prep grows with thickness: a + b·t per face.
 const JOINT_PREP = { bevel_a: 0.03, bevel_b: 0.10, gouge: 0.10, backing: 0.05, nde: 0.05 };
 const WELD_SIZES = [0.1875, 0.25, 0.3125, 0.375, 0.5, 0.625, 0.75, 1];
+
+// ---- OPERATIONS BEYOND CUT / FIT / WELD -------------------------------------------------------
+// Everything else a shop spends hours on (Mark 2026-10-14: "why not just do everything?"). Each
+// operation is a few numbers with a typical starting value; a shop types over any of them. Some are
+// counted from the drawings by the take-off (holes, copes, mitres, notches, bends, rolling, bolts —
+// the FEATURE schedule), some follow from the take-off itself (job setup, paperwork, programming,
+// load-out, crane picks, straightening, preheat, repeat units), and some are chosen per job on the
+// Labor tab (stainless finish, weld code, pressure tests, bolt tension).
+//   f: { field: [typical value, what it is] }   bucket / type: where the hours land.
+const OPS = {
+  HOLE_DRILL:  { group: 'Holes', label: 'Drill press / radial drill', bucket: 'Fab_Hrs', type: 'FAB_DRILL',
+    f: { a_min: [1.0, 'min per hole: locate, clamp, move'], b_min: [4, 'min per inch of hole diameter × inch of thickness'] } },
+  HOLE_MAG:    { group: 'Holes', label: 'Mag drill', bucket: 'Fab_Hrs', type: 'FAB_DRILL',
+    f: { a_min: [2.0, 'min per hole: set up the magnet'], b_min: [5, 'min per inch of diameter × inch of thickness'] } },
+  HOLE_PUNCH:  { group: 'Holes', label: 'Punch (ironworker / turret)', bucket: 'Fab_Hrs', type: 'FAB_DRILL',
+    f: { a_min: [0.3, 'min per hole'], max_t: [0.75, 'thickest it punches, in (and never thicker than the hole)'] } },
+  HOLE_CNC:    { group: 'Holes', label: 'CNC beam drill line', bucket: 'CNC_Hrs', type: 'CNC_MACHINE',
+    f: { a_min: [0.3, 'min per hole'], b_min: [1.0, 'min per inch of diameter × inch of thickness'] } },
+  COPE:        { group: 'Member prep', label: 'Cope', bucket: 'Cutting_Hrs', type: 'CUT_COPE',
+    f: { a_min: [15, 'min per cope: layout, torch, grind'], b_min: [2, 'min per inch of member depth'], double: [1.6, '× for a double (top and bottom) cope'] } },
+  NOTCH:       { group: 'Member prep', label: 'Notch / block-out', bucket: 'Cutting_Hrs', type: 'CUT_COPE',
+    f: { a_min: [8, 'min per notch'] } },
+  MITER:       { group: 'Member prep', label: 'Mitre cut', bucket: 'Cutting_Hrs', type: 'CUT_BANDSAW',
+    f: { factor: [1.5, '× the time of a square cut (Sentry 1997: mitre +50%)'] } },
+  BEND_PIPE:   { group: 'Bending & rolling', label: 'Pipe / tube bend, by hand bender', bucket: 'Fab_Hrs', type: 'FAB_FORM',
+    f: { a_min: [5, 'min per bend: mark, load, bend, check'], b_min: [4, 'min per inch of OD'] } },
+  BEND_CNC:    { group: 'Bending & rolling', label: 'Pipe / tube bend, CNC bender', bucket: 'Fab_Hrs', type: 'FAB_FORM',
+    f: { a_min: [2, 'min per bend'], b_min: [1, 'min per inch of OD'], setup_min: [30, 'min setup per bend die / part'] } },
+  BRAKE:       { group: 'Bending & rolling', label: 'Press brake', bucket: 'Fab_Hrs', type: 'FAB_FORM',
+    f: { setup_min: [15, 'min setup per part'], per_hit_sec: [20, 'sec per bend (hit)'] } },
+  ROLL:        { group: 'Bending & rolling', label: 'Plate / angle roll', bucket: 'Fab_Hrs', type: 'FAB_FORM',
+    f: { setup_min: [30, 'min setup per part'], per_ft_min: [2, 'min per ft rolled'] } },
+  GRIND_FLUSH: { group: 'Finishing', label: 'Grind welds flush', bucket: 'Fab_Hrs', type: 'FAB_GRIND',
+    f: { hr_ft: [0.06, 'hr per ft of weld'] } },
+  POLISH:      { group: 'Finishing', label: 'Polish (#4 / satin)', bucket: 'Fab_Hrs', type: 'FAB_POLISH',
+    f: { hr_ft: [0.15, 'hr per ft of rail or member'], hr_weld_ft: [0.10, 'hr per ft of weld blended in'] } },
+  PREHEAT:     { group: 'Heat', label: 'Preheat', bucket: 'Weld_Hrs', type: 'WELD_HEAT',
+    f: { t_min: [1.0, 'applied to joints this thick or more, in'], hr_ft: [0.05, 'hr per ft of joint'] } },
+  STRAIGHTEN:  { group: 'Heat', label: 'Straighten after welding', bucket: 'Fab_Hrs', type: 'FAB_STRAIGHTEN',
+    f: { pct: [0.05, '% of the welding hours'] } },
+  BOLT:        { group: 'Assembly', label: 'Bolting', bucket: 'Assy_Hrs', type: 'FIT_BOLT',
+    f: { snug_min: [3, 'min per bolt, snug tight'], tension_min: [6, 'min per bolt, pretensioned'] } },
+  TEST:        { group: 'Testing & QC', label: 'Pressure / leak test', bucket: 'Inspection_Hrs', type: 'TEST',
+    f: { hr_each: [4, 'hr per test: rig, fill, hold, drain'] } },
+  QC_DOCS:     { group: 'Testing & QC', label: 'QC paperwork & traceability', bucket: 'Inspection_Hrs', type: 'DOCS',
+    f: { hr_job: [2, 'hr per job'], hr_sheet: [0.25, 'hr per drawing'] } },
+  DETAIL:      { group: 'Office', label: 'Shop drawings / detailing', bucket: 'Misc_Hrs', type: 'DETAIL',
+    f: { hr_sheet: [null, 'hr per drawing sheet — leave blank if you do not detail'] } },
+  CNC_PROG:    { group: 'Office', label: 'CNC programming', bucket: 'CNC_Hrs', type: 'CNC_PROGRAM',
+    f: { hr_part: [0.1, 'hr per distinct CNC-cut part'] } },
+  JOB_SETUP:   { group: 'Job', label: 'Job setup & teardown', bucket: 'Misc_Hrs', type: 'SETUP',
+    f: { hr_job: [2, 'hr per job'], hr_component: [0.5, 'hr per component'] } },
+  CRANE:       { group: 'Job', label: 'Crane picks', bucket: 'Labor_Hrs', type: 'CRANE',
+    f: { lb: [2000, 'pieces heavier than this, lb, need a crane pick'], hr_pick: [0.5, 'crew-hr per pick'] } },
+  LOADOUT:     { group: 'Job', label: 'Load out & crating', bucket: 'Labor_Hrs', type: 'LOADOUT',
+    f: { hr_ton: [0.5, 'hr per ton shipped'] } },
+  LEARNING:    { group: 'Job', label: 'Repeat units (learning curve)', bucket: null, type: null,
+    f: { pct: [0.9, '% of the time each doubling of identical units takes (100 = no learning)'] } },
+  PEM:         { group: 'Sheet metal & machining', label: 'Hardware insertion (PEM)', bucket: 'Assy_Hrs', type: 'FIT_BOLT',
+    f: { sec_each: [15, 'sec per insert'] } },
+  MACHINE:     { group: 'Sheet metal & machining', label: 'Machined parts', bucket: 'CNC_Hrs', type: 'CNC_MACHINE',
+    f: { deburr_min: [2, 'min deburr per part'], inspect_min: [3, 'min inspection per part'], first_article_hr: [1, 'hr first-article per part number'],
+         tol_close: [1.3, '× for close tolerance'], tol_precision: [1.7, '× for precision tolerance'] } },
+};
+// Weld codes: × the welding hours of a job built to that code.
+const CODES = { none: { label: 'No code', x: 1 }, D1_1: { label: 'AWS D1.1 steel', x: 1 }, D1_2: { label: 'AWS D1.2 aluminum', x: 1.15 },
+  D1_6: { label: 'AWS D1.6 stainless', x: 1.15 }, ASME: { label: 'ASME IX / B31', x: 1.25 } };
+// How hard each material is to drill, tap, machine and polish, against carbon steel.
+const MACHINABILITY = { CS: 1, SS: 2, DSS: 2.5, AL: 0.5, NI: 3, CU: 0.8, TI: 3 };
+
 
 const GENERAL = {
   fit_hr_piece: 0.22,          // Sentry 1997 "fitting and tacking clips", per plate
@@ -251,7 +317,12 @@ function params(model) {
   }
   const position = {}; for (const k of Object.keys(POSITION)) position[k] = val(frac((m.position || {})[k]) || (Number((m.position || {})[k]) > 1 && Number((m.position || {})[k]) <= 1.5 ? Number(m.position[k]) : null), POSITION[k], 'sentry');
   const jointPrep = {}; for (const k of Object.keys(JOINT_PREP)) jointPrep[k] = val(pos((m.joint_prep || {})[k]), JOINT_PREP[k]);
-  return { position, joint_prep: jointPrep, capabilities: caps, materials: mats, weld, cut, saw, cut_handling_min: cutHandling, saw_setup_min: sawSetup,
+  // Operations: the shop's number, else the typical one (null typical = off until the shop sets it).
+  const ops = {};
+  for (const [op, d] of Object.entries(OPS)) { ops[op] = {}; for (const [f, [dv]] of Object.entries(d.f)) ops[op][f] = val(pos(((m.ops || {})[op] || {})[f]), dv); }
+  const machinability = {}; for (const k of Object.keys(MAT)) machinability[k] = val(pos((m.machinability || {})[k]), MACHINABILITY[k]);
+  const codes = {}; for (const [k, c] of Object.entries(CODES)) codes[k] = val(pos((m.codes || {})[k]), c.x);
+  return { ops, machinability, codes, position, joint_prep: jointPrep, capabilities: caps, materials: mats, weld, cut, saw, cut_handling_min: cutHandling, saw_setup_min: sawSetup,
     cleanup, fit_factor: fitF, shear_max_t: shearMax, general, form, routing };
 }
 
@@ -313,6 +384,9 @@ function cutRate(P, mat, proc, t) {
 // One ft of any joint, any size, any position, on a process and material: the weld itself (with the
 // material's cleanup) and the work around it — bevelling, back-gouging, backing bar — and NDE.
 // Returns { weld, prep, nde, total, parts } hr per ft, or { missing }.
+// One operation number: the shop's or the typical one; null when the operation is off.
+function opv(P, op, field) { const o = P.ops && P.ops[op] && P.ops[op][field]; return o ? o.value : null; }
+
 function jointHrPerFt(P, mat, proc, joint, size, position) {
   const j = JOINTS[joint]; if (!j) return { missing: 'unknown joint ' + joint };
   const w = P.weld[proc + '|' + mat];
@@ -375,6 +449,9 @@ function defaults() {
     cut_handling_min: CUT_HANDLING_MIN, saw: SAW, saw_setup_min: SAW_SETUP_MIN, shear_min: SHEAR_MIN, shear_max_t: SHEAR_MAX_T,
     cleanup: CLEANUP, fit_factor: FIT_FACTOR, form: FORM, general: GENERAL, routing: ROUTING, capabilities: DEFAULT_CAPS,
     position: POSITION, joint_prep: JOINT_PREP, weld_sizes: WELD_SIZES,
+    ops: Object.fromEntries(Object.entries(OPS).map(([k, o]) => [k, { group: o.group, label: o.label, bucket: o.bucket, type: o.type,
+      fields: Object.fromEntries(Object.entries(o.f).map(([f, [v, help]]) => [f, { value: v, help }])) }])),
+    codes: CODES, machinability: MACHINABILITY,
     joints: Object.fromEntries(Object.entries(JOINTS).map(([k, j]) => [k, { label: j.label, size: j.size, bevels: j.bevels, gouge: !!j.gouge, backing: !!j.backing, nde: !!j.nde }])) };
 }
 
@@ -412,6 +489,10 @@ function cleanModel(input) {
   for (const p of Object.keys(FORM)) { const r = keyed((i.form || {})[p], Object.keys(FORM[p]), pos); if (Object.keys(r).length) out.form[p] = r; }
   out.position = keyed(i.position, Object.keys(POSITION), (v) => { const n = Number(v); return v !== '' && v != null && n > 0 && n <= 1.5 ? n : null; });
   out.joint_prep = keyed(i.joint_prep, Object.keys(JOINT_PREP), pos);
+  out.ops = {};
+  for (const op of Object.keys(OPS)) { const r = keyed((i.ops || {})[op], Object.keys(OPS[op].f), pos); if (Object.keys(r).length) out.ops[op] = r; }
+  out.machinability = keyed(i.machinability, Object.keys(MAT), pos);
+  out.codes = keyed(i.codes, Object.keys(CODES), pos);
   out.routing = {};
   for (const k of Object.keys(MAT)) {
     const s = (i.routing || {})[k]; if (!s) continue;
@@ -426,4 +507,4 @@ function cleanModel(input) {
 
 module.exports = { MATERIALS, PROCESSES, MAT, PROC, materialKey, params, defaults, cleanModel,
   weldProcessFor, plateCutProcessFor, memberCutProcessFor, weldHrPerFt, cutRate, cutHandlingHr, sawHrPerCut,
-  memberFactors, filletLbPerFt, matDensity, DEFAULT_CAPS, jointHrPerFt, JOINTS, POSITION, WELD_SIZES };
+  memberFactors, filletLbPerFt, matDensity, DEFAULT_CAPS, jointHrPerFt, JOINTS, POSITION, WELD_SIZES, OPS, CODES, MACHINABILITY, opv };

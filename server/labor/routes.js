@@ -119,7 +119,7 @@ function registerLaborRoutes(app) {
       const b = req.body || {};
       const id = shopId(req);
       const profile = id ? shop.load(id) : null;
-      res.json({ ok: true, labor: laborForTakeoff({ rows: b.rows, fittings: b.fittings, welds: b.welds }, profile, b.job_type) });
+      res.json({ ok: true, labor: laborForTakeoff({ rows: b.rows, fittings: b.fittings, welds: b.welds, features: b.features, extras: b.extras }, profile, b.job_type) });
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
 

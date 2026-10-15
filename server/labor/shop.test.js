@@ -94,7 +94,14 @@ test('take-off labour: job hours = per unit × units, ballpark from the shop\'s 
   const skid = one.components.find((c) => c.name === 'Skid');
   assert.strictEqual(skid.units, 3);
   const assy = skid.items.find((i) => i.bucket === 'Assy_Hrs');
-  assert.ok(Math.abs(assy.hours - assy.per_unit * 3) < 0.02, 'job hours are 3 units of the per-unit hours');
+  // Repeat units follow the shop's learning curve (typical 90% per doubling): 3 units = 1 + 0.9 + 3^log2(0.9).
+  const lf = 1 + 0.9 + Math.pow(3, Math.log(0.9) / Math.log(2));
+  assert.ok(Math.abs(assy.hours - assy.per_unit * lf) < 0.02, 'job hours follow the learning curve: ' + assy.hours + ' vs ' + assy.per_unit * lf);
+  assert.ok(skid.learning && Math.abs(skid.learning.factor - lf) < 0.01, 'the curve is reported on the component');
+  // A shop that sets no learning (100%) gets exactly units × per-unit hours, the old rule.
+  const flat = shop.clean({ model: { ops: { LEARNING: { pct: 1 } } } }, '4111484000000000004');
+  const a3 = laborForTakeoff(takeoff, flat, 'skid_frame').components.find((c) => c.name === 'Skid').items.find((i) => i.bucket === 'Assy_Hrs');
+  assert.ok(Math.abs(a3.hours - a3.per_unit * 3) < 0.02, 'no learning: 3 units = 3 × per unit');
   const tubeLb = 10 * (2 * 0.25 * 8 - 4 * 0.0625) * 0.2836 * 12;   // 4x4x1/4, 10 ft
   assert.ok(Math.abs(one.tons - (4 * 10 * 13 + tubeLb) * 3 / 2000) < 0.01, 'deleted rows carry no weight; tube is weighed: ' + one.tons);
   assert.strictEqual(one.unweighed_rows, 0);

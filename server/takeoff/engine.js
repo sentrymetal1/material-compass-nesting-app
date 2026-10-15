@@ -144,6 +144,31 @@ const WELD_ITEM = {
   required: ["joint", "count", "component", "source_sheet", "confidence", "symbol"],
 };
 
+// FEATURES — the fabrication work on a member besides cutting it to length and welding it: holes,
+// copes, mitres, notches, bends, rolling, bolts. Counted off the drawings like welds, priced from the
+// shop's own rates, reviewed beside the welds. A count the drawing does not make plain is low
+// confidence; sizes come from the member where they can (a cope's depth is the beam's depth).
+const FEATURE_ITEM = {
+  type: "object",
+  properties: {
+    feature:     { type: "string", description: "EXACTLY one of: 'hole' (drilled or punched), 'cope' (end cut to clear a flange), 'notch' (block-out, clip, small cut-out), 'miter' (angled end cut), 'bend' (pipe/tube/bar bent), 'brake' (plate/sheet press-brake bend), 'roll' (plate/angle/pipe rolled to a radius), 'bolt' (a bolt installed in the shop)." },
+    count:       { type: "number", description: "How many in ONE unit of the component (never multiplied by units). Holes: total holes. Copes/notches/mitres: total cuts. Bends: total bends. Brake: total bends (hits). Roll: pieces rolled. Bolts: total bolts." },
+    member:      { type: "string", description: "The member it is on, as form + size the way the BOM writes it, e.g. 'Beam - W W12 x 26', 'Pipe 1-1/2\" SCH 40 (STD)', 'Plate 1/2\"'." },
+    member_mark: { type: "string", description: "Part mark(s), if shown." },
+    diameter_in: { type: "number", description: "Holes: hole diameter in inches (13/16 = 0.8125). Bolts: bolt diameter." },
+    thickness_in:{ type: "number", description: "Holes: thickness of the material drilled, in inches (a flange or plate)." },
+    double:      { type: "boolean", description: "Copes: true for a double cope (top AND bottom flange)." },
+    length_ft:   { type: "number", description: "Roll: length rolled per piece, in feet." },
+    pretension:  { type: "boolean", description: "Bolts: true if slip-critical / pretensioned (turn-of-nut, TC bolts), false for snug tight." },
+    component:   { type: "string", description: "The component/assembly, spelled EXACTLY as in the project's confirmed scope." },
+    source_sheet:{ type: "string", description: "Drawing number it was read from." },
+    symbol:      { type: "string", description: "The callout as printed, short, e.g. '(4) 13/16 DIA HOLES', 'COPE TOP FLG', 'R=36\" ROLLED'." },
+    confidence:  { type: "number", description: "0.0–1.0. Counted off a clear callout = high; inferred from a typical detail = medium; guessed = low." },
+    note:        { type: "string", description: "OPTIONAL one short phrase (≤100 chars)." },
+  },
+  required: ["feature", "count", "component", "source_sheet", "confidence", "symbol"],
+};
+
 const SYNOPSIS_SCHEMA = {
   type: "object",
   description: "Structured project review for the estimator's approval page — the full bid-package analysis.",
@@ -466,6 +491,7 @@ function buildTakeoffTool(includeSynopsis) {
     rows: { type: "array", description: "One row per distinct member size/length/spec combination. STRUCTURAL AND MISC-METAL MEMBERS ONLY — pipe fittings go in `fittings`, never here.", items: ROW_ITEM },
     fittings: { type: "array", description: "Pipe fittings — elbows, tees, flanges, reducers, caps, couplings, unions, nipples and branch outlets, each named as the catalog names it. One entry per distinct type+size+schedule+spec. Empty array if the package has none.", items: FITTING_ITEM },
     welds: { type: "array", description: "The WELD SCHEDULE: every weld the drawings call for, one entry per distinct weld (joint + size + length or all-around member) per drawing, with how many. Read the weld symbols on every view and detail, and the general weld notes ('all welds … unless noted'). Empty array only if the drawings show no welding at all.", items: WELD_ITEM },
+    features: { type: "array", description: "The FEATURE SCHEDULE: holes, copes, notches, mitres, bends, press-brake bends, rolled parts and shop-installed bolts, one entry per distinct feature on one member per drawing, with how many. Empty array if none.", items: FEATURE_ITEM },
     notes: { type: "string", description: "Anything ambiguous/illegible/assumed not captured elsewhere — for the human reviewer." },
   };
   if (includeSynopsis) properties.synopsis = SYNOPSIS_SCHEMA;
@@ -495,6 +521,8 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "to the joints it covers and say so in `symbol`. Group identical welds on one drawing into one entry with a count per unit of the component. " +
     "NEVER invent a length: an all-around weld names its member in around_member (its length is measured from the section), " +
     "a dimensioned weld gives length_in, and a length you had to scale is marked so with low confidence.\n" +
+    "FEATURES: fill `features` the same way — holes (diameter and the thickness drilled), copes (single or double), notches, mitres, pipe/tube bends, " +
+    "press-brake bends, rolled parts, and bolts installed in the shop. Count them off the views and callouts per member per drawing; never pad a count.\n" +
     "You are an expert structural steel & miscellaneous-metals estimator performing a material " +
     "take-off from engineered drawings. Extract EVERY member you can identify and classify each " +
     "strictly against the provided catalog — never invent a spec or form type.\n\n" +
@@ -700,6 +728,8 @@ async function runTakeoff(opts) {
   if (!Array.isArray(result.fittings)) result.fittings = [];
   result.welds = unwrap(result.welds, []);
   if (!Array.isArray(result.welds)) result.welds = [];
+  result.features = unwrap(result.features, []);
+  if (!Array.isArray(result.features)) result.features = [];
   const synopsis = includeSynopsis ? unwrap(result.synopsis, null) : null;
 
   // A cut-off response is not an empty one. The rows are kept - they are paid for and
@@ -718,6 +748,7 @@ async function runTakeoff(opts) {
     rows: result.rows,
     fittings: result.fittings,
     welds: result.welds,
+    features: result.features,
     notes: notes,
     truncated: truncated,
     synopsis: synopsis,
