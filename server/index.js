@@ -71,6 +71,16 @@ app.get('/api/admin/zoho-calls', (req, res) => res.json({ ok: true, today: zohoM
 // What this project's AI work has cost so far (take-off, preview, questions, chat, addenda).
 app.get('/api/takeoff/ai-cost/:project_id', (req, res) => res.json(Object.assign({ ok: true }, require('./costLedger').forProject(req.params.project_id, req.query.days))));
 
+// SIGN-UP RELAY. After the $1 Early Access payment, Zoho Checkout redirects with
+// ?hostedpage_id=… on the URL, and the portal's sign-up page refuses any extra parameter
+// ("Invalid request. An extra parameter with the name hostedpage_id is found.", confirmed
+// 2026-10-27). Checkout points here instead; this drops the query string and forwards to the
+// clean sign-up page. 302, not 301, so browsers don't cache it if the portal address changes.
+app.get('/go/signup', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.redirect(302, 'https://customer.materialcompassportal.com/signup');
+});
+
 app.use(express.static(path.join(__dirname, '..', 'client', 'build')));
 
 // AI TAKE-OFF WIDGET — served from this app so the URL the user sees is Material Compass's own,
