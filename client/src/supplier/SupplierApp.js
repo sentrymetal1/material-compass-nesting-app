@@ -4,12 +4,13 @@ import QuotesView from './QuotesView';
 import ProfileView from './ProfileView';
 import StockView from './StockView';
 import QuoteDetailView from './QuoteDetailView';
+import ManufacturersView, { DecisionButtons } from './ManufacturersView';
 
 // Off-Zoho supplier platform — v1. Embedded in the Zoho portal, which passes the
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-2026-06-28a-unified-quotes';
+const BUILD_TAG = 'supplier-2026-10-29a-manufacturers';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -84,7 +85,42 @@ export default function SupplierApp() {
     }
   }, [email]);
 
+  // Manufacturer matches — loaded once here because three places use them: the nav badge,
+  // the dashboard alert and the Manufacturers tab.
+  const [mfgs, setMfgs] = useState({ status: 'loading', data: null, error: null });
+  const [mfgBusy, setMfgBusy] = useState(null);
+  const [mfgError, setMfgError] = useState(null);
+  const loadMfgs = useCallback(async () => {
+    if (!email) return;
+    setMfgs(s => ({ ...s, status: 'loading' }));
+    try {
+      const r = await fetch('/api/supplier/me/manufacturers?email=' + encodeURIComponent(email));
+      const j = await r.json();
+      if (!r.ok || !j.ok) { setMfgs({ status: 'error', data: null, error: j.error || ('HTTP ' + r.status) }); return; }
+      setMfgs({ status: 'ready', data: j, error: null });
+    } catch (e) {
+      setMfgs({ status: 'error', data: null, error: String(e.message || e) });
+    }
+  }, [email]);
+  const decideMfg = async (m, accept) => {
+    if (!accept && !window.confirm('Decline quote requests from ' + m.company_name + '? You can change this later on the Manufacturers tab.')) return;
+    setMfgBusy(m.id); setMfgError(null);
+    try {
+      const r = await fetch('/api/supplier/me/manufacturers/' + m.id + '/decision?email=' + encodeURIComponent(email), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accept }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) setMfgError((j.error || ('HTTP ' + r.status)) + (j.message ? ' (' + j.message + ')' : ''));
+    } catch (e) {
+      setMfgError(String(e.message || e));
+    }
+    setMfgBusy(null);
+    loadMfgs();
+  };
+  const pendingMfgs = ((mfgs.data && mfgs.data.manufacturers) || []).filter(m => m.status === 'pending');
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadMfgs(); }, [loadMfgs]);
   useEffect(() => { document.title = 'Material Compass · Supplier'; }, []);
 
   const d = state.data;
@@ -112,6 +148,9 @@ export default function SupplierApp() {
         <nav className="sup-nav">
           <button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>Dashboard</button>
           <button className={view === 'quotes' ? 'active' : ''} onClick={() => setView('quotes')}>Quotes</button>
+          <button className={view === 'manufacturers' ? 'active' : ''} onClick={() => setView('manufacturers')}>
+            Manufacturers{pendingMfgs.length > 0 && <span className="nav-badge">{pendingMfgs.length}</span>}
+          </button>
           <button className={view === 'stock' ? 'active' : ''} onClick={() => setView('stock')}>Stock</button>
           <button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')}>Profile</button>
         </nav>
@@ -125,6 +164,9 @@ export default function SupplierApp() {
           email && detailQuote
             ? <QuoteDetailView email={email} quoteId={detailQuote} onBack={() => setView('dashboard')} onGoToQuotes={() => setView('quotes')} />
             : <div className="sup-msg sup-msg-warn">No quote selected.</div>
+        ) : view === 'manufacturers' ? (
+          email ? <ManufacturersView state={mfgs} busy={mfgBusy} error={mfgError} onDecide={decideMfg} onRetry={loadMfgs} />
+            : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
         ) : view === 'stock' ? (
           email ? <StockView email={email} />
             : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
@@ -135,6 +177,32 @@ export default function SupplierApp() {
           email ? <QuotesView email={email} />
             : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
         ) : (<>
+        {pendingMfgs.length > 0 && (
+          <div className="mfg-alert">
+            <div className="mfg-alert-head">
+              <strong>
+                {pendingMfgs.length === 1
+                  ? '1 manufacturer wants to send you quote requests'
+                  : pendingMfgs.length + ' manufacturers want to send you quote requests'}
+              </strong>
+              <button className="btn-link" onClick={() => setView('manufacturers')}>See all manufacturers</button>
+            </div>
+            {mfgError && <div className="sup-msg-error mfg-alert-error">{mfgError}</div>}
+            {pendingMfgs.slice(0, 5).map(m => (
+              <div key={m.id} className="mfg-alert-row">
+                <div>
+                  <div className="mfg-name">{m.company_name}</div>
+                  <div className="mfg-contact">{[m.city, m.email].filter(Boolean).join(' · ')}</div>
+                </div>
+                <DecisionButtons m={m} busy={mfgBusy} onDecide={decideMfg} compact />
+              </div>
+            ))}
+            {pendingMfgs.length > 5 && (
+              <div className="sup-subnote">and {pendingMfgs.length - 5} more on the Manufacturers tab.</div>
+            )}
+          </div>
+        )}
+
         {state.status === 'loading' && <div className="sup-msg">Loading your dashboard…</div>}
 
         {state.status === 'no-email' && (

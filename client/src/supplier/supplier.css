@@ -355,3 +355,41 @@
   box-shadow: 0 0 0 2px rgba(192, 57, 43, .14);
 }
 .q-invalid .q-money-in { border-radius: 6px; }
+
+/* Manufacturers (match requests + contacts) */
+.nav-badge {
+  display: inline-block; min-width: 18px; margin-left: 6px; padding: 1px 6px;
+  border-radius: 999px; background: #C0392B; color: #fff; font-size: 11px; font-weight: 700; line-height: 16px; text-align: center;
+}
+.btn-secondary {
+  background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 7px;
+  padding: 6px 16px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.btn-secondary:hover:not(:disabled) { border-color: #c9ced4; }
+.btn-secondary:disabled { opacity: .45; cursor: not-allowed; }
+.mfg-actions { display: flex; gap: 8px; }
+.mfg-title { font-size: 22px; margin: 0 0 18px; }
+.mfg-section-note { margin: -4px 0 12px; }
+.mfg-card {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px;
+}
+.mfg-name { font-size: 15px; font-weight: 600; color: var(--ink); }
+.mfg-contact { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; font-size: 13px; color: var(--muted); }
+.mfg-contact a { color: var(--blue); text-decoration: none; }
+.mfg-contact a:hover { text-decoration: underline; }
+.mfg-hint { margin-top: 6px; font-size: 12px; color: #1f7a3d; font-weight: 600; }
+.mfg-side { flex-shrink: 0; }
+.mfg-alert {
+  background: #fff8f6; border: 2px solid #C0392B; border-radius: 10px; padding: 14px 18px; margin-bottom: 24px;
+}
+.mfg-alert-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: #8E2A20; font-size: 15px; }
+.mfg-alert-head .btn-link { margin-left: 0; }
+.mfg-alert-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  padding: 10px 0; border-top: 1px solid #f1d6d2;
+}
+.mfg-alert-error { margin-bottom: 6px; font-size: 13px; }
+@media (max-width: 640px) {
+  .mfg-card, .mfg-alert-row { flex-direction: column; align-items: flex-start; }
+}

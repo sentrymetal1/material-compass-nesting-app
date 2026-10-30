@@ -1407,6 +1407,96 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
+  // ---- Manufacturer matches (who may send this supplier RFQs) ----
+  // Junction form Quote_Sent_To_Manufacture_Supplier_Status: one row per MFG↔supplier pair, with a
+  // YES/NO radio for each side. The MFG's Match Hub writes Manufacture_Accept_…; until 2026-10-29
+  // nothing let the supplier write Supplier_Accept_…, so new manufacturers sat unanswered.
+  // MATCH_REPORT must be UNFILTERED (the Match Hub's own report filters to the logged-in MFG) —
+  // ownership is enforced here by SUPPLIER == this supplier.
+  const MATCH_REPORT = process.env.SUPPLIER_MATCH_REPORT || 'All_Supplier_Manufacture_Matches';
+  const ACCEPT_YES = 'YES - ACCEPT QUOTES';
+  // Radio value — must match the Zoho choice exactly or the write is refused.
+  const ACCEPT_NO = process.env.SUPPLIER_MATCH_NO_VALUE || 'NO - DO NOT ACCEPT QUOTES';
+  const decisionOf = v => { const s = String(v || '').trim().toUpperCase(); return s.startsWith('YES') ? 'yes' : (s.startsWith('NO') ? 'no' : ''); };
+  const matchRows = sid => cachedLookup('mfg-matches:' + sid, 60 * 1000, () =>
+    fetchAllZohoPages('/report/' + MATCH_REPORT + '?criteria=(SUPPLIER==' + encodeURIComponent(sid) + ')'));
+
+  function shapeMatch(r) {
+    const mfg = r.MANUFACTURE || {};
+    const addr = r['MANUFACTURE.Address'] || {};
+    const sup = decisionOf(r.Supplier_Accept_Quotes_From_Manufacture);
+    const man = decisionOf(r.Manufacture_Accept_Quotes_From_Supplier);
+    // pending = waiting on THIS supplier; waiting = supplier said yes, MFG hasn't; active = both yes.
+    let status;
+    if (sup === 'no') status = 'declined';
+    else if (man === 'no') status = 'mfg_declined';
+    else if (sup === 'yes') status = man === 'yes' ? 'active' : 'waiting';
+    else status = 'pending';
+    return {
+      id: String(r.ID),
+      manufacture_id: mfg.ID ? String(mfg.ID) : '',
+      company_name: r['MANUFACTURE.Company_Name'] || flatten(mfg),
+      email: r['MANUFACTURE.Email'] || '',
+      phone: r['MANUFACTURE.Phone_Number'] || '',
+      website: flatten(r['MANUFACTURE.Company_Website']),
+      city: [addr.district_city, addr.state_province].filter(Boolean).join(', '),
+      address: addr.zc_display_value || '',
+      supplier_decision: sup,
+      manufacturer_decision: man,
+      status,
+    };
+  }
+
+  async function loadManufacturers(sid) {
+    const rows = await matchRows(sid);
+    // Rows whose manufacturer was deleted keep an empty MANUFACTURE lookup — nothing to show or answer.
+    const shaped = (rows || []).map(shapeMatch).filter(m => m.manufacture_id);
+    // A pair can have more than one junction row; show each manufacturer once, preferring the row
+    // that already carries a supplier decision, so an old blank duplicate can't re-ask a question.
+    const byMfg = new Map();
+    for (const m of shaped) {
+      const prev = byMfg.get(m.manufacture_id);
+      if (!prev || (!prev.supplier_decision && m.supplier_decision)) byMfg.set(m.manufacture_id, m);
+    }
+    return [...byMfg.values()].sort((a, b) => a.company_name.localeCompare(b.company_name));
+  }
+
+  // GET /api/supplier/me/manufacturers — every manufacturer matched to this supplier, by status.
+  app.get('/api/supplier/me/manufacturers', withSupplier, async (req, res) => {
+    try {
+      const list = await loadManufacturers(String(req.supplier.id));
+      const counts = { pending: 0, active: 0, waiting: 0, declined: 0, mfg_declined: 0 };
+      list.forEach(m => { counts[m.status] = (counts[m.status] || 0) + 1; });
+      res.json({ ok: true, manufacturers: list, counts });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // POST /api/supplier/me/manufacturers/:id/decision {accept: true|false}
+  // Writes this supplier's answer onto the junction row. :id must be one of this supplier's rows.
+  app.post('/api/supplier/me/manufacturers/:id/decision', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const rows = await matchRows(sid);
+      if (!(rows || []).some(r => String(r.ID) === String(req.params.id))) {
+        return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+      }
+      const accept = !!(req.body && req.body.accept);
+      const r = await patchRecord(MATCH_REPORT, req.params.id, {
+        Supplier_Accept_Quotes_From_Manufacture: accept ? ACCEPT_YES : ACCEPT_NO,
+        Supplier_New_Entry: false,
+      });
+      bust('mfg-matches:' + sid);
+      if (!r.ok) return res.status(502).json({ ok: false, error: 'Could not save your answer.', message: r.message });
+      res.json({ ok: true });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // Dashboard — the supplier's home. v1 returns fitting matches (live). Structural
   // matches + quote statuses get added here next (Phase 1 continued) so the UI has
   // one call for its home screen.
