@@ -1457,12 +1457,14 @@ function registerSupplierRoutes(app, deps) {
   // blank but whose Supplier_Manufacture_Match_ID still points at the junction row.
   const arr = v => (Array.isArray(v) ? v : []);
   const cleanName = x => flatten(x).replace(/\s+/g, ' ').trim();
+  // Registration names every manufacturer's first location "Headquarters/Main Location" — show "Headquarters".
+  const locName = x => flatten(x).replace(/\s*\/\s*Main Location\s*$/i, '').trim();
   // One rep-match row as the supplier's editor sees it: their side is read-only, ours is editable.
   function shapeAssignment(r) {
     const theirEmails = arr(r['Manufacture_Reps_Allocated_For_Supplier.Email']);
     return {
       id: String(r.ID),
-      their_location: flatten(r.Company_Locations),
+      their_location: locName(r.Company_Locations),
       their_location_id: r.Company_Locations && r.Company_Locations.ID ? String(r.Company_Locations.ID) : '',
       their_reps: arr(r.Manufacture_Reps_Allocated_For_Supplier).map((x, i) => ({ name: cleanName(x), email: theirEmails[i] || '' })).filter(c => c.name),
       your_location: flatten(r.Supplier_Locations),
