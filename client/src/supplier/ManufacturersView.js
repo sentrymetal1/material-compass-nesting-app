@@ -165,7 +165,7 @@ function MfgCard({ m, busy, onDecide, team, editing, onEdit, api, onChanged }) {
                 <strong>{c.name}</strong>
                 {c.email && <a href={'mailto:' + c.email}>{c.email}</a>}
                 <span className="muted">
-                  {[c.their_location, c.your_location && ('works with your ' + c.your_location)].filter(Boolean).join(' · ')}
+                  {[c.their_location, c.your_location && ('your ' + c.your_location)].filter(Boolean).join(' → ')}
                 </span>
               </div>
             ))}
