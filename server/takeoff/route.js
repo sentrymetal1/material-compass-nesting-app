@@ -606,6 +606,7 @@ async function indexHandler(req, res) {
       docs: docs,
       names: Array.isArray(body.names) ? body.names : [],
       knownComponents: Array.isArray(body.components) ? body.components : [],
+      quoteNote: typeof body.quote_note === "string" ? body.quote_note : "",
       modelKey: body.model || "sonnet",
     });
     ledger.record("preview read", out.cost_usd, Object.assign(costMetaOf(body), { detail: (out.batches || 1) + " request(s)" }));

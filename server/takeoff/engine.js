@@ -1018,6 +1018,7 @@ const SHEET_INDEX_TOOL = {
             continued:  { type: "boolean", description: "True if this page is a continuation of the SAME drawing number as the previous page." },
             confidence: { type: "number",  description: "0-1 confidence the number was read correctly (0 when there is no number)." },
             suggested_component: { type: "string", description: "The component / assembly this sheet details, as a SHORT name (2-4 words) taken from the title block, e.g. 'Catwalk Floor', 'Platform Railing', 'Stair Stringers'. Drop the project/product prefix. Sheets detailing the SAME assembly MUST get the IDENTICAL string so they group. Empty for a cover, index or notes page." },
+            in_scope:   { type: "boolean", description: "False ONLY when the estimator's scope note (if one is given) clearly excludes what this sheet details. True otherwise, and always true when no scope note is given." },
           },
           required: ["page", "number"],
         },
@@ -1121,10 +1122,11 @@ function groupPagesIntoSheets(entries) {
     if (!s) {
       byKey[k] = { doc: e.doc, number: e.number, title: e.title || "", pages: [e.page, e.page],
                    page_list: [e.page], confidence: (e.confidence == null ? null : e.confidence),
-                   suggested_component: e.suggested_component || "" };
+                   suggested_component: e.suggested_component || "", in_scope: e.in_scope !== false };
       order.push(k);
     } else {
       if (!s.suggested_component && e.suggested_component) s.suggested_component = e.suggested_component;
+      if (e.in_scope !== false) s.in_scope = true;   // out of scope only when EVERY page of it is
       if (last !== k && split.indexOf(s.number) < 0) split.push(s.number);   // non-adjacent repeat
       s.pages = [Math.min(s.pages[0], e.page), Math.max(s.pages[1], e.page)];
       s.page_list.push(e.page);
@@ -1168,6 +1170,15 @@ async function readSheetIndex(opts) {
       "Only invent a new name when a sheet genuinely fits none of them — do not coin a variant of an " +
       "existing name (no 'Platform Parts' next to an existing 'Platform Assembly')."
     : "";
+  // The estimator's "What to quote" note from the RFQ. Sheets it clearly excludes come back
+  // in_scope=false and the page leaves them out (with "put back" to undo) instead of proposing
+  // components for work the shop isn't quoting.
+  const scopeNote = String(opts.quoteNote || "").trim().slice(0, 1500);
+  const scopeBlock = scopeNote
+    ? "\n\nTHE ESTIMATOR'S SCOPE NOTE — what this shop is quoting:\n\"" + scopeNote + "\"\n" +
+      "Set `in_scope` to false on every page whose assembly this note clearly excludes (e.g. the note says " +
+      "'handrail only' and the sheet details a support structure). When in doubt, leave it true."
+    : "";
 
   // One request per batch. Each request numbers its own attachments 1..k; every page is mapped
   // straight back to its FILE and its page WITHIN that file, so a PDF split across two requests
@@ -1188,7 +1199,7 @@ async function readSheetIndex(opts) {
         (it.pages ? " of " + it.pages + " pages" : "") + ", given below as an excerpt. Return NO page entries " +
         "for it — give it ONE `documents` entry only.";
     })).join("\n");
-    const ask = "Index the attached drawing package PAGE BY PAGE.\n" + manifest + knownBlock +
+    const ask = "Index the attached drawing package PAGE BY PAGE.\n" + manifest + knownBlock + scopeBlock +
       (parts.length
         ? "\n\nReturn EXACTLY " + pagesHere + " page entries — one per page of the PDF documents, in order, including any page with no drawing number." +
           "\nEach PDF is a SEPARATE attached document: set `doc` to its number in the list above and `page` to the page " +
@@ -1277,6 +1288,7 @@ async function readSheetIndex(opts) {
         title: String((p && p.title) == null ? "" : p.title).trim(),
         confidence: (p && typeof p.confidence === "number") ? p.confidence : null,
         suggested_component: String((p && p.suggested_component) == null ? "" : p.suggested_component).trim(),
+        in_scope: !(scopeNote && p && p.in_scope === false),
       });
     });
 

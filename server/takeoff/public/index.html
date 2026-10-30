@@ -599,7 +599,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.74 (2026-10-30)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.75 (2026-10-30)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -2192,6 +2192,8 @@
                                  project_id: params.project_id, manufacturer_id: params.manufacturer_id,   // cost ledger
                                  // so it proposes YOUR components rather than variants of them
                                  components: project.components.map((c) => c.name),
+                                 // "What to quote": sheets it excludes come back in_scope=false
+                                 quote_note: ((document.getElementById("quoteBrief") || {}).value || "").trim(),
                                  model: (document.getElementById("model") || {}).value || "sonnet" }),
         });
         const d = await r.json();
@@ -2217,6 +2219,7 @@
           pageList: Array.isArray(s.page_list) ? s.page_list.map(Number) : null,
           confidence: (s.confidence == null ? null : Number(s.confidence)),
           suggestion: String(s.suggested_component || "").trim(),   // AI's proposed component for this sheet
+          inScope: s.in_scope !== false,                           // false = the "What to quote" note excludes it
           // A file with no title blocks (a BOM, a parts list, a spec) comes back as ONE entry for the
           // file itself, so it can be placed on a component and named to the AI like any drawing.
           kind: s.kind === "document" ? "document" : "drawing",
@@ -2227,6 +2230,11 @@
         })).filter((s) => s.number));
         // Coverage tracks the same objects, so edits and drops in the grid follow through.
         sheets = detected;
+        // Sheets the "What to quote" note excludes start out left out, exactly as if "Not our scope"
+        // had been pressed on each, so no component is proposed for them. "put back" undoes it.
+        const leftOut = detected.filter((s) => s.inScope === false && !isOut(s.number));
+        leftOut.forEach((s) => outScope.push({ number: s.number, title: s.title || "", doc: Number(s.doc) || null,
+          file: s.file || "", reason: "Outside your What to quote note" }));
         saveSheets();
         renderAlloc();
         if (!detected.length) {
@@ -2237,7 +2245,10 @@
         setScopeStatus("Read " + (audit && audit.page_count ? audit.page_count + " page" + (audit.page_count === 1 ? "" : "s") + " → " : "") +
           nDwg + " drawing" + (nDwg === 1 ? "" : "s") +
           (nDoc ? " + " + nDoc + " other document" + (nDoc === 1 ? "" : "s") + " (BOM / parts list / spec)" : "") +
-          (d.cost_usd != null ? " ($" + d.cost_usd + ")" : "") + ". Confirm how they're allocated below.");
+          (d.cost_usd != null ? " ($" + d.cost_usd + ")" : "") + ". Confirm how they're allocated below." +
+          (leftOut.length ? " Left out per your What to quote note: " + leftOut.length + " (" +
+            escHtml(leftOut.slice(0, 4).map((s) => s.number + (s.title ? " " + s.title : "")).join(", ")) +
+            (leftOut.length > 4 ? " …" : "") + ") — use put back if that's wrong." : ""));
       } catch (e) {
         setScopeStatus("Couldn’t read the PDF (" + (e.message || e) + "). Use ↻ to try again, or pick the " +
           "components and drawings yourself below.");
