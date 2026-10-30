@@ -103,7 +103,7 @@ function AddLocation({ m, team, saving, onAdd }) {
 }
 
 // Inline editor under a card: one row per rep assignment, plus "add another of your locations".
-function ContactsEditor({ m, team, api, onChanged, onClose }) {
+function ContactsEditor({ m, team, api, onChanged, onClose, confirm }) {
   const [saving, setSaving] = useState(null);
   const [err, setErr] = useState(null);
   const run = async (key, fn) => {
@@ -112,9 +112,13 @@ function ContactsEditor({ m, team, api, onChanged, onClose }) {
     setSaving(null);
   };
   const save = (a, loc, ids) => run(a.id, () => api('PATCH', '/api/supplier/me/rep-matches/' + a.id, { location_id: loc, rep_ids: ids }));
-  const remove = a => {
-    if (!window.confirm('Remove your ' + (a.your_location || 'location') + ' from ' + m.company_name + '?')) return;
-    run(a.id, () => api('DELETE', '/api/supplier/me/rep-matches/' + a.id));
+  const remove = async a => {
+    const ok = await confirm({
+      title: 'Remove your ' + (a.your_location || 'location') + '?',
+      message: 'Your ' + (a.your_location || 'location') + ' team will no longer be a contact for ' + m.company_name + '. You can add it back any time.',
+      confirmLabel: 'Remove', danger: true,
+    });
+    if (ok) run(a.id, () => api('DELETE', '/api/supplier/me/rep-matches/' + a.id));
   };
   const add = (from, loc, ids) => run('new', () => api('POST', '/api/supplier/me/rep-matches', { from_id: from, location_id: loc, rep_ids: ids }));
 
@@ -141,7 +145,7 @@ function ContactsEditor({ m, team, api, onChanged, onClose }) {
   );
 }
 
-function MfgCard({ m, busy, onDecide, team, editing, onEdit, api, onChanged }) {
+function MfgCard({ m, busy, onDecide, team, editing, onEdit, api, onChanged, confirm }) {
   const canEdit = m.status !== 'declined' && m.assignments && m.assignments.length > 0;
   return (
     <div className="mfg-card-wrap">
@@ -194,12 +198,12 @@ function MfgCard({ m, busy, onDecide, team, editing, onEdit, api, onChanged }) {
         )}
       </div>
     </div>
-    {editing && <ContactsEditor m={m} team={team} api={api} onChanged={onChanged} onClose={() => onEdit(null)} />}
+    {editing && <ContactsEditor m={m} team={team} api={api} onChanged={onChanged} onClose={() => onEdit(null)} confirm={confirm} />}
     </div>
   );
 }
 
-export default function ManufacturersView({ state, busy, error, onDecide, onRetry, api, onChanged }) {
+export default function ManufacturersView({ state, busy, error, onDecide, onRetry, api, onChanged, confirm }) {
   const [showDeclined, setShowDeclined] = useState(false);
   const [editingId, setEditingId] = useState(null);
   // Your locations + reps, loaded the first time an editor opens (the Profile endpoint has both).
@@ -251,7 +255,7 @@ export default function ManufacturersView({ state, busy, error, onDecide, onRetr
               <div className="match-list">
                 {rows.map(m => (
                   <MfgCard key={m.id} m={m} busy={busy} onDecide={onDecide} team={team}
-                    editing={editingId === m.id} onEdit={openEditor} api={api} onChanged={onChanged} />
+                    editing={editingId === m.id} onEdit={openEditor} api={api} onChanged={onChanged} confirm={confirm} />
                 ))}
               </div>
             </>}

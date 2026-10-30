@@ -417,3 +417,23 @@
 .mfg-edit-rep { font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .mfg-edit > .btn-link { margin: 10px 0 0; }
 @media (max-width: 640px) { .mfg-side { align-items: flex-start; } }
+
+/* In-app confirm dialog (replaces the browser's confirm box, which shows the railway.app address) */
+.mc-dialog-backdrop {
+  position: fixed; inset: 0; z-index: 1000; background: rgba(17, 24, 39, .45);
+  display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px;
+}
+.mc-dialog {
+  background: #fff; border-radius: 12px; box-shadow: 0 18px 50px rgba(0, 0, 0, .25);
+  width: 100%; max-width: 440px; padding: 18px 22px 16px; border-top: 4px solid var(--blue);
+}
+.mc-dialog-brand { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .3px; }
+.mc-dialog-brand .sup-logo { font-size: 13px; }
+.mc-dialog-title { font-size: 17px; margin: 10px 0 6px; color: var(--ink); }
+.mc-dialog-msg { margin: 0 0 16px; font-size: 14px; line-height: 1.45; color: #374151; }
+.mc-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.btn-danger {
+  background: #C0392B; color: #fff; border: none; border-radius: 7px;
+  padding: 6px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.btn-danger:hover { background: #A93226; }

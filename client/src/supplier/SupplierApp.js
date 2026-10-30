@@ -5,12 +5,13 @@ import ProfileView from './ProfileView';
 import StockView from './StockView';
 import QuoteDetailView from './QuoteDetailView';
 import ManufacturersView, { DecisionButtons } from './ManufacturersView';
+import { useConfirm } from './ConfirmDialog';
 
 // Off-Zoho supplier platform — v1. Embedded in the Zoho portal, which passes the
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-2026-10-30-mfg-edit';
+const BUILD_TAG = 'supplier-2026-10-30b-mc-dialog';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -90,6 +91,7 @@ export default function SupplierApp() {
   const [mfgs, setMfgs] = useState({ status: 'loading', data: null, error: null });
   const [mfgBusy, setMfgBusy] = useState(null);
   const [mfgError, setMfgError] = useState(null);
+  const [confirmDialog, confirm] = useConfirm();
   const loadMfgs = useCallback(async () => {
     if (!email) return;
     setMfgs(s => ({ ...s, status: 'loading' }));
@@ -103,7 +105,19 @@ export default function SupplierApp() {
     }
   }, [email]);
   const decideMfg = async (m, accept) => {
-    if (!accept && !window.confirm('Decline quote requests from ' + m.company_name + '? You can change this later on the Manufacturers tab.')) return;
+    if (!accept) {
+      const stopping = m.status === 'active' || m.status === 'waiting';
+      const ok = await confirm(stopping ? {
+        title: 'Stop receiving quotes from ' + m.company_name + '?',
+        message: 'You won’t get their quote requests anymore. You can turn this back on any time from the Manufacturers tab.',
+        confirmLabel: 'Stop receiving', cancelLabel: 'Keep receiving', danger: true,
+      } : {
+        title: 'Decline ' + m.company_name + '?',
+        message: 'They won’t be able to send you quote requests. You can accept them later from the Manufacturers tab.',
+        confirmLabel: 'Decline', danger: true,
+      });
+      if (!ok) return;
+    }
     setMfgBusy(m.id); setMfgError(null);
     try {
       const r = await fetch('/api/supplier/me/manufacturers/' + m.id + '/decision?email=' + encodeURIComponent(email), {
@@ -174,7 +188,7 @@ export default function SupplierApp() {
             ? <QuoteDetailView email={email} quoteId={detailQuote} onBack={() => setView('dashboard')} onGoToQuotes={() => setView('quotes')} />
             : <div className="sup-msg sup-msg-warn">No quote selected.</div>
         ) : view === 'manufacturers' ? (
-          email ? <ManufacturersView state={mfgs} busy={mfgBusy} error={mfgError} onDecide={decideMfg} onRetry={loadMfgs} api={mfgApi} onChanged={loadMfgs} />
+          email ? <ManufacturersView state={mfgs} busy={mfgBusy} error={mfgError} onDecide={decideMfg} onRetry={loadMfgs} api={mfgApi} onChanged={loadMfgs} confirm={confirm} />
             : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
         ) : view === 'stock' ? (
           email ? <StockView email={email} />
@@ -313,6 +327,7 @@ export default function SupplierApp() {
       </main>
 
       <footer className="sup-footer">{BUILD_TAG}</footer>
+      {confirmDialog}
     </div>
   );
 }
