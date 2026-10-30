@@ -599,7 +599,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.75 (2026-10-30)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.76 (2026-10-30)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -2923,14 +2923,25 @@
       if (t.value) suggestTarget[i] = t.value; else delete suggestTarget[i];
       renderSuggestions();
     });
+    let suggestBusy = false;
     document.getElementById("suggest").addEventListener("click", async (e) => {
       const el = e.target.closest("[data-k]"); if (!el) return;
       const k = el.getAttribute("data-k");
       if (k === "sgno") { e.preventDefault(); suggestDismissed = true; renderSuggestions(); return; }
-      if (k === "sgtake") { await takeSuggestion(Number(el.getAttribute("data-i"))); return; }
+      // One take at a time: a double-click, or Use all while a single take is still writing, ran two
+      // loops side by side — both saw no "Handrail" yet, and the project got two of them.
+      if ((k === "sgtake" || k === "sgall") && suggestBusy) return;
+      if (k === "sgtake") {
+        suggestBusy = true;
+        try { await takeSuggestion(Number(el.getAttribute("data-i"))); } finally { suggestBusy = false; }
+        return;
+      }
       if (k === "sgall") {
-        const n = suggestionGroups().length;
-        for (let i = 0; i < n; i++) await takeSuggestion(0, true);   // list shrinks as each is taken
+        suggestBusy = true;
+        try {
+          const n = suggestionGroups().length;
+          for (let i = 0; i < n; i++) await takeSuggestion(0, true);   // list shrinks as each is taken
+        } finally { suggestBusy = false; }
         setScopeStatus("Took the suggested breakdown. Review it below — it's all editable.");
       }
     });

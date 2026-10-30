@@ -353,20 +353,28 @@ async function takeoffHandler(req, res, deps) {
       const u = Math.max(1, Math.round(Number(n && (n.units != null ? n.units : n.quantity)) || 1));
       if (nm) unitsOf[nm] = u;
     });
-    let multiplied = 0;
+    // A component can also be several DIFFERENT drawings (one "Handrail" component over items
+    // 8065..8080), each stating its own "QTY 2 REQ'D". Then one unit of the component is one of every
+    // drawing at its own quantity, so a row multiplies by its sheet's quantity instead. Only when the
+    // estimator left the component at x1: a component set to xN already carries the count, and using
+    // both would double it.
+    const sheetQtyOf = function (r) { return Math.max(1, Math.round(Number(r && r.sheet_qty) || 1)); };
+    let multiplied = 0, bySheet = 0;
     rows.forEach(function (r) {
-      const u = unitsOf[String(r.component || "").trim().toLowerCase()] || 1;
+      const cu = unitsOf[String(r.component || "").trim().toLowerCase()] || 1;
+      const u = cu > 1 ? cu : sheetQtyOf(r);
       const per = Number(r.quantity) || 0;
       r.units = u;
       r.qty_per_unit = per;
       r.quantity_total = per * u;
-      if (u > 1 && per > 0) multiplied++;
+      if (u > 1 && per > 0) { multiplied++; if (cu === 1) bySheet++; }
     });
-    if (multiplied) console.log("[takeoff] multiplied " + multiplied + " rows up by their component's unit count");
+    if (multiplied) console.log("[takeoff] multiplied " + multiplied + " rows up (" + bySheet + " by their drawing's own QTY REQ'D)");
     // Fittings are counted per unit too, so they get the same treatment — four skids means four
     // sets of elbows.
     fittings.forEach(function (f) {
-      const u = unitsOf[String(f.component || "").trim().toLowerCase()] || 1;
+      const cu = unitsOf[String(f.component || "").trim().toLowerCase()] || 1;
+      const u = cu > 1 ? cu : sheetQtyOf(f);
       const per = Number(f.quantity) || 0;
       f.units = u; f.qty_per_unit = per; f.quantity_total = per * u;
     });
