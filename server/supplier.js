@@ -1449,7 +1449,7 @@ function registerSupplierRoutes(app, deps) {
 
   // Rep assignments (form Manufacture_Supplier_Representative_Matching): which MFG reps work with
   // which of this supplier's locations. Report is unfiltered; scoped here by Supplier_Entry_Form.
-  const REP_MATCH_REPORT = process.env.SUPPLIER_REP_MATCH_REPORT || 'Manufacture_Supplier_Representative_Match_Report';
+  const REP_MATCH_REPORT = process.env.SUPPLIER_REP_MATCH_REPORT || 'All_Rep_Matches_Admin';
   const repMatchRows = sid => cachedLookup('mfg-rep-matches:' + sid, 60 * 1000, () =>
     fetchAllZohoPages('/report/' + REP_MATCH_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'));
 
