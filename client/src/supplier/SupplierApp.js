@@ -10,7 +10,7 @@ import ManufacturersView, { DecisionButtons } from './ManufacturersView';
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-2026-10-29a-manufacturers';
+const BUILD_TAG = 'supplier-2026-10-29b-mfg-contacts';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);

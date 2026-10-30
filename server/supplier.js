@@ -1447,8 +1447,39 @@ function registerSupplierRoutes(app, deps) {
     };
   }
 
+  // Rep assignments (form Manufacture_Supplier_Representative_Matching): which MFG reps work with
+  // which of this supplier's locations. Report is unfiltered; scoped here by Supplier_Entry_Form.
+  const REP_MATCH_REPORT = process.env.SUPPLIER_REP_MATCH_REPORT || 'Manufacture_Supplier_Representative_Match_Report';
+  const repMatchRows = sid => cachedLookup('mfg-rep-matches:' + sid, 60 * 1000, () =>
+    fetchAllZohoPages('/report/' + REP_MATCH_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'));
+
+  // contacts keyed by manufacturer id, and by junction id for older rows whose Manufacture lookup is
+  // blank but whose Supplier_Manufacture_Match_ID still points at the junction row.
+  function contactsIndex(rows) {
+    const byMfg = new Map(), byMatch = new Map();
+    for (const r of rows || []) {
+      const reps = Array.isArray(r.Manufacture_Reps_Allocated_For_Supplier) ? r.Manufacture_Reps_Allocated_For_Supplier : [];
+      const emails = Array.isArray(r['Manufacture_Reps_Allocated_For_Supplier.Email']) ? r['Manufacture_Reps_Allocated_For_Supplier.Email'] : [];
+      const mine = (Array.isArray(r.Supplier_Reps_Allocated_For_Manufacture) ? r.Supplier_Reps_Allocated_For_Manufacture : []).map(x => flatten(x).trim()).filter(Boolean);
+      const contacts = reps.map((x, i) => ({
+        name: flatten(x).replace(/\s+/g, ' ').trim(),
+        email: emails[i] || '',
+        their_location: flatten(r.Company_Locations),
+        your_location: flatten(r.Supplier_Locations),
+        your_reps: mine,
+      })).filter(c => c.name);
+      if (!contacts.length) continue;
+      const mid = r.Manufacture && r.Manufacture.ID ? String(r.Manufacture.ID) : '';
+      const jid = r.Supplier_Manufacture_Match_ID ? String(r.Supplier_Manufacture_Match_ID) : '';
+      if (mid) byMfg.set(mid, (byMfg.get(mid) || []).concat(contacts));
+      if (jid) byMatch.set(jid, (byMatch.get(jid) || []).concat(contacts));
+    }
+    return { byMfg, byMatch };
+  }
+
   async function loadManufacturers(sid) {
-    const rows = await matchRows(sid);
+    const [rows, repRows] = await Promise.all([matchRows(sid), repMatchRows(sid).catch(() => [])]);
+    const idx = contactsIndex(repRows);
     // Rows whose manufacturer was deleted keep an empty MANUFACTURE lookup — nothing to show or answer.
     const shaped = (rows || []).map(shapeMatch).filter(m => m.manufacture_id);
     // A pair can have more than one junction row; show each manufacturer once, preferring the row
@@ -1457,6 +1488,14 @@ function registerSupplierRoutes(app, deps) {
     for (const m of shaped) {
       const prev = byMfg.get(m.manufacture_id);
       if (!prev || (!prev.supplier_decision && m.supplier_decision)) byMfg.set(m.manufacture_id, m);
+    }
+    const seen = new Set();
+    for (const m of byMfg.values()) {
+      const raw = idx.byMfg.get(m.manufacture_id) || idx.byMatch.get(m.id) || [];
+      m.contacts = raw.filter(c => {
+        const k = m.manufacture_id + '|' + c.name.toLowerCase() + '|' + c.your_location;
+        if (seen.has(k)) return false; seen.add(k); return true;
+      });
     }
     return [...byMfg.values()].sort((a, b) => a.company_name.localeCompare(b.company_name));
   }

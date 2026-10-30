@@ -39,6 +39,20 @@ function MfgCard({ m, busy, onDecide }) {
         {m.status === 'pending' && m.manufacturer_decision === 'yes' && (
           <div className="mfg-hint">They have already accepted you.</div>
         )}
+        {m.contacts && m.contacts.length > 0 && (
+          <div className="mfg-reps">
+            <div className="mfg-reps-label">Your contacts there</div>
+            {m.contacts.map((c, i) => (
+              <div key={i} className="mfg-rep">
+                <strong>{c.name}</strong>
+                {c.email && <a href={'mailto:' + c.email}>{c.email}</a>}
+                <span className="muted">
+                  {[c.their_location, c.your_location && ('works with your ' + c.your_location)].filter(Boolean).join(' · ')}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="mfg-side">
         {m.status === 'pending' && <DecisionButtons m={m} busy={busy} onDecide={onDecide} />}
