@@ -599,7 +599,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.73 (2026-10-11)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.74 (2026-10-30)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -2750,7 +2750,20 @@
       const words = String(title || "").split(/\s+/).filter(Boolean);
       const cut = words.slice(commonPrefixWords()).filter((w) => !/^\d+$/.test(w));
       const pick = (cut.length ? cut : words).slice(0, 3);
-      return pick.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+      return familyName(pick.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" "));
+    }
+    // A component is a TYPE of work, not one piece: "Handrail Item 8065" and "Handrail Item 8066" are
+    // both "Handrail". Drops item / mark / drawing numbers and the filler words that go with them, so a
+    // 44-sheet handrail package proposes one component instead of 44. Falls back to the name as given
+    // when nothing would be left.
+    const FAMILY_FILLER = /^(item|items|mark|mk|no|nos|number|#|dwg|drawing|sheet|sht|detail|det|piece|pc|type|typ|rev)\.?$/i;
+    function familyName(name) {
+      const raw = String(name || "").trim();
+      const kept = raw.split(/[\s\-–—_:#,]+/).filter((w) => w && !/\d/.test(w) && !FAMILY_FILLER.test(w));
+      return kept.length ? kept.join(" ") : raw;
+    }
+    function suggestionFor(s) {
+      return familyName(String(s.suggestion || "").trim()) || suggestComponent(s.title);
     }
 
     function scopeDrawIndex() {
@@ -2820,17 +2833,17 @@
     // to the project until a button is pressed.
     function suggestionGroups() {
       const named = {};
-      project.components.forEach((c) => { named[_norm(c.name)] = c; });
+      project.components.forEach((c) => { named[_norm(c.name).replace(/S$/, "")] = c; });
       const inScope = {};
       scopeDrawIndex().forEach((x) => { inScope[_norm(x.number)] = 1; });
 
 
       const byName = {}, order = [];
       sheets.forEach((s) => {
-        const name = String(s.suggestion || "").trim() || suggestComponent(s.title);
+        const name = suggestionFor(s);
         if (!name || !s.number) return;
         if (isOut(s.number)) return;      // left out as not our scope: never suggest a component for it
-        const k = _norm(name);
+        const k = _norm(name).replace(/S$/, "");   // "Handrails" and "Handrail" are one group
         if (!byName[k]) { byName[k] = { name: name, sheets: [], exists: named[k] || null }; order.push(k); }
         byName[k].sheets.push(s);
       });
@@ -3038,7 +3051,7 @@
           ? "p." + it.s.pages[0] + (it.s.pages[1] && it.s.pages[1] !== it.s.pages[0] ? "–" + it.s.pages[1] : "") : "";
         // Prefer the AI's own proposal for this sheet; the title heuristic is only the fallback,
         // so this row and the suggested breakdown never offer two different names for one sheet.
-        const sug = String(it.s.suggestion || "").trim() || suggestComponent(it.s.title);
+        const sug = suggestionFor(it.s);
         if (it.state === "near") {
           return '<div class="covrow"><div class="covhd"><b>' + escHtml(it.s.number) + "</b> " +
             '<span class="apg">' + pg + "</span></div>" +

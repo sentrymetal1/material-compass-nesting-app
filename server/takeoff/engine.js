@@ -1058,7 +1058,10 @@ const SHEET_SYSTEM =
   "title block — this is a SUGGESTION the estimator will accept, rename or ignore, so make it the name a " +
   "fabricator would use: short (2-4 words), no project or product prefix, no sheet numbers. Sheets that " +
   "detail the SAME assembly must carry the IDENTICAL string so they group under one component; a sheet " +
-  "family sharing a number stem (…-10A-2A, …-10A-2B, …-10A-3) is usually one assembly. Leave it empty for " +
+  "family sharing a number stem (…-10A-2A, …-10A-2B, …-10A-3) is usually one assembly. Name the TYPE of " +
+  "work, not the individual piece: a package of 'Handrail Item 8065', 'Handrail Item 8066', … is ONE " +
+  "component 'Handrail' — never put an item, mark or drawing number in the name. Aim for a FEW components " +
+  "per package (typically 1-6), the way an estimator would break the job into scopes. Leave it empty for " +
   "cover, index and notes pages. Do NOT invent an assembly the title block doesn't support.\n" +
   "(7) ALSO return `documents` — ONE entry for EVERY attached document, in order, including documents that " +
   "are NOT drawings (a bill of material / parts list / cut list, a spec section, a vendor cut sheet). Say " +
