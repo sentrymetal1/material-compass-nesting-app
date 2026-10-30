@@ -123,7 +123,7 @@ export default function SupplierApp() {
       method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined,
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    if (!r.ok || !j.ok) throw new Error((j.error || ('HTTP ' + r.status)) + (j.message ? ' (' + j.message + ')' : ''));
     return j;
   };
   const pendingMfgs = ((mfgs.data && mfgs.data.manufacturers) || []).filter(m => m.status === 'pending');
