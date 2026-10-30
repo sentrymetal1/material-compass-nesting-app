@@ -10,7 +10,7 @@ import ManufacturersView, { DecisionButtons } from './ManufacturersView';
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-2026-10-29b-mfg-contacts';
+const BUILD_TAG = 'supplier-2026-10-30-mfg-edit';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -117,6 +117,15 @@ export default function SupplierApp() {
     setMfgBusy(null);
     loadMfgs();
   };
+  // JSON call for the Manufacturers editor; throws the server's own message on failure.
+  const mfgApi = async (method, path, body) => {
+    const r = await fetch(path + (path.includes('?') ? '&' : '?') + 'email=' + encodeURIComponent(email), {
+      method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  };
   const pendingMfgs = ((mfgs.data && mfgs.data.manufacturers) || []).filter(m => m.status === 'pending');
 
   useEffect(() => { load(); }, [load]);
@@ -165,7 +174,7 @@ export default function SupplierApp() {
             ? <QuoteDetailView email={email} quoteId={detailQuote} onBack={() => setView('dashboard')} onGoToQuotes={() => setView('quotes')} />
             : <div className="sup-msg sup-msg-warn">No quote selected.</div>
         ) : view === 'manufacturers' ? (
-          email ? <ManufacturersView state={mfgs} busy={mfgBusy} error={mfgError} onDecide={decideMfg} onRetry={loadMfgs} />
+          email ? <ManufacturersView state={mfgs} busy={mfgBusy} error={mfgError} onDecide={decideMfg} onRetry={loadMfgs} api={mfgApi} onChanged={loadMfgs} />
             : <div className="sup-msg sup-msg-warn">No login detected. This page expects <code>?email=</code> from the portal.</div>
         ) : view === 'stock' ? (
           email ? <StockView email={email} />

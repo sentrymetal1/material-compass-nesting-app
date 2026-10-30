@@ -1455,24 +1455,36 @@ function registerSupplierRoutes(app, deps) {
 
   // contacts keyed by manufacturer id, and by junction id for older rows whose Manufacture lookup is
   // blank but whose Supplier_Manufacture_Match_ID still points at the junction row.
+  const arr = v => (Array.isArray(v) ? v : []);
+  const cleanName = x => flatten(x).replace(/\s+/g, ' ').trim();
+  // One rep-match row as the supplier's editor sees it: their side is read-only, ours is editable.
+  function shapeAssignment(r) {
+    const theirEmails = arr(r['Manufacture_Reps_Allocated_For_Supplier.Email']);
+    return {
+      id: String(r.ID),
+      their_location: flatten(r.Company_Locations),
+      their_location_id: r.Company_Locations && r.Company_Locations.ID ? String(r.Company_Locations.ID) : '',
+      their_reps: arr(r.Manufacture_Reps_Allocated_For_Supplier).map((x, i) => ({ name: cleanName(x), email: theirEmails[i] || '' })).filter(c => c.name),
+      your_location: flatten(r.Supplier_Locations),
+      your_location_id: r.Supplier_Locations && r.Supplier_Locations.ID ? String(r.Supplier_Locations.ID) : '',
+      your_rep_ids: arr(r.Supplier_Reps_Allocated_For_Manufacture).map(x => String(x.ID)).filter(Boolean),
+      your_reps: arr(r.Supplier_Reps_Allocated_For_Manufacture).map(cleanName).filter(Boolean),
+    };
+  }
+  const repRowMfgKey = r => (r.Manufacture && r.Manufacture.ID ? 'm:' + r.Manufacture.ID : 'j:' + (r.Supplier_Manufacture_Match_ID || ''));
+
   function contactsIndex(rows) {
     const byMfg = new Map(), byMatch = new Map();
+    const add = (map, k, a) => { const e = map.get(k) || { contacts: [], assignments: [] }; e.assignments.push(a); map.set(k, e); return e; };
     for (const r of rows || []) {
-      const reps = Array.isArray(r.Manufacture_Reps_Allocated_For_Supplier) ? r.Manufacture_Reps_Allocated_For_Supplier : [];
-      const emails = Array.isArray(r['Manufacture_Reps_Allocated_For_Supplier.Email']) ? r['Manufacture_Reps_Allocated_For_Supplier.Email'] : [];
-      const mine = (Array.isArray(r.Supplier_Reps_Allocated_For_Manufacture) ? r.Supplier_Reps_Allocated_For_Manufacture : []).map(x => flatten(x).trim()).filter(Boolean);
-      const contacts = reps.map((x, i) => ({
-        name: flatten(x).replace(/\s+/g, ' ').trim(),
-        email: emails[i] || '',
-        their_location: flatten(r.Company_Locations),
-        your_location: flatten(r.Supplier_Locations),
-        your_reps: mine,
-      })).filter(c => c.name);
-      if (!contacts.length) continue;
+      const a = shapeAssignment(r);
+      const contacts = a.their_reps.map(c => ({
+        name: c.name, email: c.email, their_location: a.their_location, your_location: a.your_location, your_reps: a.your_reps,
+      }));
       const mid = r.Manufacture && r.Manufacture.ID ? String(r.Manufacture.ID) : '';
       const jid = r.Supplier_Manufacture_Match_ID ? String(r.Supplier_Manufacture_Match_ID) : '';
-      if (mid) byMfg.set(mid, (byMfg.get(mid) || []).concat(contacts));
-      if (jid) byMatch.set(jid, (byMatch.get(jid) || []).concat(contacts));
+      if (mid) add(byMfg, mid, a).contacts.push(...contacts);
+      if (jid) add(byMatch, jid, a).contacts.push(...contacts);
     }
     return { byMfg, byMatch };
   }
@@ -1491,8 +1503,9 @@ function registerSupplierRoutes(app, deps) {
     }
     const seen = new Set();
     for (const m of byMfg.values()) {
-      const raw = idx.byMfg.get(m.manufacture_id) || idx.byMatch.get(m.id) || [];
-      m.contacts = raw.filter(c => {
+      const e = idx.byMfg.get(m.manufacture_id) || idx.byMatch.get(m.id) || { contacts: [], assignments: [] };
+      m.assignments = e.assignments;
+      m.contacts = e.contacts.filter(c => {
         const k = m.manufacture_id + '|' + c.name.toLowerCase() + '|' + c.your_location;
         if (seen.has(k)) return false; seen.add(k); return true;
       });
@@ -1529,6 +1542,123 @@ function registerSupplierRoutes(app, deps) {
       });
       bust('mfg-matches:' + sid);
       if (!r.ok) return res.status(502).json({ ok: false, error: 'Could not save your answer.', message: r.message });
+      res.json({ ok: true });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // ---- Supplier edits its side of the rep assignments ----
+  // The manufacturer's side (their location + reps) is read-only here; the supplier picks which of
+  // its own locations and reps pair with it. Writes go to the same Manufacture_Supplier_Representative_
+  // Matching rows the Zoho form edits, so both sides stay in step.
+  const REP_MATCH_FORM = process.env.SUPPLIER_REP_MATCH_FORM || 'Manufacture_Supplier_Representative_Matching';
+
+  // Checks a {location_id, rep_ids} choice against this supplier's own locations and reps.
+  // Reps are stored per location (the same person can have a record at each), so every rep must
+  // belong to the chosen location, or have no location at all.
+  async function checkMySide(sid, body) {
+    const location_id = String((body && body.location_id) || '');
+    const rep_ids = [...new Set(arr(body && body.rep_ids).map(String))];
+    if (!location_id) return { error: 'Pick one of your locations.' };
+    if (!rep_ids.length) return { error: 'Pick at least one of your reps.' };
+    const [locs, reps] = await Promise.all([
+      fetchAllZohoPages('/report/All_Supplier_Locations?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
+      fetchAllZohoPages('/report/All_Supplier_Representatives?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
+    ]);
+    if (!(locs || []).some(l => String(l.ID) === location_id)) return { error: 'That location is not one of yours.' };
+    const repLoc = new Map((reps || []).map(r => [String(r.ID), r.Supplier_Locations && r.Supplier_Locations.ID ? String(r.Supplier_Locations.ID) : '']));
+    const bad = rep_ids.filter(id => !repLoc.has(id) || (repLoc.get(id) && repLoc.get(id) !== location_id));
+    if (bad.length) return { error: 'Some of the reps picked do not work at that location.' };
+    return { location_id, rep_ids };
+  }
+
+  // Another row for the same manufacturer already pairs these two locations → edit that one instead.
+  function duplicatePair(rows, src, location_id, their_location_id, exceptId) {
+    const key = repRowMfgKey(src);
+    return (rows || []).find(r => String(r.ID) !== String(exceptId) && repRowMfgKey(r) === key
+      && r.Supplier_Locations && String(r.Supplier_Locations.ID) === location_id
+      && r.Company_Locations && String(r.Company_Locations.ID) === their_location_id);
+  }
+
+  // PATCH /api/supplier/me/rep-matches/:id {location_id, rep_ids[]}
+  app.patch('/api/supplier/me/rep-matches/:id', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const rows = await repMatchRows(sid);
+      const row = (rows || []).find(r => String(r.ID) === String(req.params.id));
+      if (!row) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+      const mine = await checkMySide(sid, req.body);
+      if (mine.error) return res.status(400).json({ ok: false, error: mine.error });
+      const theirLoc = row.Company_Locations && row.Company_Locations.ID ? String(row.Company_Locations.ID) : '';
+      if (duplicatePair(rows, row, mine.location_id, theirLoc, row.ID)) {
+        return res.status(409).json({ ok: false, error: 'You already have contacts set for that location with this manufacturer. Edit that one instead.' });
+      }
+      const r = await patchRecord(REP_MATCH_REPORT, row.ID, {
+        Supplier_Locations: mine.location_id,
+        Supplier_Reps_Allocated_For_Manufacture: mine.rep_ids,
+      });
+      bust('mfg-rep-matches:' + sid);
+      if (!r.ok) return res.status(502).json({ ok: false, error: 'Could not save your contacts.', message: r.message });
+      res.json({ ok: true });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // POST /api/supplier/me/rep-matches {from_id, location_id, rep_ids[]}
+  // Adds another of the supplier's locations to a manufacturer, pairing it with the same MFG location
+  // and reps as the existing row from_id (the supplier can't pick the manufacturer's people).
+  app.post('/api/supplier/me/rep-matches', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const rows = await repMatchRows(sid);
+      const src = (rows || []).find(r => String(r.ID) === String(req.body && req.body.from_id));
+      if (!src) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+      const mine = await checkMySide(sid, req.body);
+      if (mine.error) return res.status(400).json({ ok: false, error: mine.error });
+      const theirLoc = src.Company_Locations && src.Company_Locations.ID ? String(src.Company_Locations.ID) : '';
+      if (duplicatePair(rows, src, mine.location_id, theirLoc, null)) {
+        return res.status(409).json({ ok: false, error: 'You already have contacts set for that location with this manufacturer. Edit that one instead.' });
+      }
+      const data = {
+        Supplier_Entry_Form: sid,
+        Supplier_Locations: mine.location_id,
+        Supplier_Reps_Allocated_For_Manufacture: mine.rep_ids,
+        Company_Locations: theirLoc,
+        Manufacture_Reps_Allocated_For_Supplier: arr(src.Manufacture_Reps_Allocated_For_Supplier).map(x => String(x.ID)).filter(Boolean),
+        Supplier_Manufacture_Match_ID: src.Supplier_Manufacture_Match_ID || '',
+        Manufacture_Location_ID: src.Manufacture_Location_ID || theirLoc,
+        Manufacture_Rep_Account_User_Email: src.Manufacture_Rep_Account_User_Email || '',
+      };
+      if (src.Manufacture && src.Manufacture.ID) data.Manufacture = String(src.Manufacture.ID);
+      const r = await addRecord(REP_MATCH_FORM, data);
+      bust('mfg-rep-matches:' + sid);
+      if (!r.ok) return res.status(502).json({ ok: false, error: 'Could not add the location.', message: r.message });
+      res.json({ ok: true, id: r.id });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // DELETE /api/supplier/me/rep-matches/:id — drop one of the supplier's locations from a manufacturer.
+  // The last row for a manufacturer can't go: it's the only record of who their contacts are.
+  app.delete('/api/supplier/me/rep-matches/:id', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const rows = await repMatchRows(sid);
+      const row = (rows || []).find(r => String(r.ID) === String(req.params.id));
+      if (!row) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+      const key = repRowMfgKey(row);
+      if ((rows || []).filter(r => repRowMfgKey(r) === key).length < 2) {
+        return res.status(400).json({ ok: false, error: 'This is your only location set up with this manufacturer. Change it instead of removing it.' });
+      }
+      const r = await deleteRecord(REP_MATCH_REPORT, row.ID);
+      bust('mfg-rep-matches:' + sid);
+      if (!r.ok) return res.status(502).json({ ok: false, error: 'Could not remove the location.', message: r.message });
       res.json({ ok: true });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);

@@ -379,7 +379,10 @@
 .mfg-contact a { color: var(--blue); text-decoration: none; }
 .mfg-contact a:hover { text-decoration: underline; }
 .mfg-hint { margin-top: 6px; font-size: 12px; color: #1f7a3d; font-weight: 600; }
-.mfg-side { flex-shrink: 0; }
+.mfg-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.mfg-side .btn-link { margin-left: 0; font-size: 12px; }
+.mfg-stop { color: #8E2A20; }
+.mfg-no-contacts { margin-top: 8px; font-size: 12px; }
 .mfg-alert {
   background: #fff8f6; border: 2px solid #C0392B; border-radius: 10px; padding: 14px 18px; margin-bottom: 24px;
 }
@@ -397,3 +400,20 @@
 .mfg-reps-label { font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
 .mfg-rep { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; padding: 2px 0; }
 .mfg-rep a { color: var(--blue); text-decoration: none; }
+.mfg-edit {
+  background: #f7f9fc; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px;
+  padding: 12px 18px 14px; margin-top: -6px;
+}
+.mfg-edit-head { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+.mfg-edit-head .btn-link { margin-left: 0; }
+.mfg-edit-row { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 10px; display: grid; gap: 8px; }
+.mfg-edit-new { border-style: dashed; }
+.mfg-edit-theirs { font-size: 13px; }
+.mfg-edit-label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); }
+.mfg-edit-theirs .mfg-edit-label { display: inline; margin-right: 6px; }
+.mfg-edit-label select { display: block; margin-top: 4px; font-size: 13px; padding: 5px 8px; min-width: 220px; max-width: 100%; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--ink); }
+.mfg-edit-mine { display: grid; gap: 6px; }
+.mfg-edit-reps { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.mfg-edit-rep { font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.mfg-edit > .btn-link { margin: 10px 0 0; }
+@media (max-width: 640px) { .mfg-side { align-items: flex-start; } }
