@@ -452,3 +452,8 @@
 .mq-st-wait { background: #fff4e5; color: #9a5b00; }
 .mq-st-done { background: #e7f6ec; color: #1a7f37; }
 .mq-reload { text-align: right; margin-top: 6px; }
+
+/* Manufacturer: send material to suppliers (MfgRfqApp) */
+.mq-req-on { cursor: pointer; border: 1px solid var(--blue); background: #eef4fb; color: #1f5fb0; font-weight: 600; }
+.mq-req-off { cursor: pointer; border: 1px dashed var(--line); background: #fff; color: var(--muted); }
+.mq-sup:disabled { opacity: .55; cursor: not-allowed; }
