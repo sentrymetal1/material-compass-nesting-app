@@ -7,7 +7,7 @@ import { QuoteCard, mergeQuotes } from './QuotesView';
 // the same Supplier_Verify_Form record a supplier's submit creates — allocation and the
 // close-out read it the same way. Opened from Zoho with
 //   /mfg-quote-entry?manufacturer_id=<Customer_Entry ID>&t=<token>[&quote_id=…][&supplier_id=…]
-const BUILD_TAG = 'mfg-quote-entry-2026-10-31b';
+const BUILD_TAG = 'mfg-quote-entry-2026-10-31c';
 const BASE = '/api/mfg/supplier-quotes/';
 
 function params() {
@@ -69,6 +69,10 @@ export default function MfgQuoteEntryApp() {
 
   const quote = list.quotes.find(q => String(q.quote_id) === String(quoteId));
   const supplier = quote && quote.suppliers.find(s => String(s.supplier_id) === String(supplierId));
+  // Only one supplier on the quote: nothing to choose, so open their lines straight away.
+  useEffect(() => {
+    if (quote && !supplierId && quote.suppliers.length === 1) setSupplierId(quote.suppliers[0].supplier_id);
+  }, [quote, supplierId]);
 
   return (
     <div className="sup-app">
@@ -122,7 +126,10 @@ export default function MfgQuoteEntryApp() {
               )}
             </section>
 
-            {card.status === 'loading' && <div className="sup-msg">Loading {supplier ? supplier.name + '’s' : 'the'} lines…</div>}
+            {quote && !supplierId && quote.suppliers.length > 1 && (
+              <div className="sup-msg">Click the supplier whose quote you’re entering. Their lines will open here, ready to price.</div>
+            )}
+            {card.status === 'loading' &&<div className="sup-msg">Loading {supplier ? supplier.name + '’s' : 'the'} lines…</div>}
             {card.status === 'error' && <div className="sup-msg sup-msg-error">Couldn’t load the lines: {card.error}</div>}
             {card.status === 'empty' && <div className="sup-msg sup-msg-warn">No open lines for this supplier on this quote.</div>}
             {card.status === 'ready' && (
