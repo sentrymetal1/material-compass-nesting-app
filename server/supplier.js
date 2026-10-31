@@ -347,6 +347,9 @@ function registerSupplierRoutes(app, deps) {
       // Skip RFQ lines from superseded MFG quote revisions (the revision workflow
       // flags them MFG_Revision_Cancel_Entry=true) so the supplier only sees current ones.
       if (r.MFG_Revision_Cancel_Entry === true || r.MFG_Revision_Cancel_Entry === 'true') continue;
+      // Lines whose quote was deleted (a failed test setup left 27 of them) have no quote,
+      // number, description or weight — nothing a supplier can price. Don't show them.
+      if (!lkid(r.Quote_LU) && !lkid(r.Quote_LU_ID) && !r.Quote_Number) continue;
       const qid = lkid(r.Quote_LU) || lkid(r.Quote_LU_ID) || ('q' + (r.Quote_Number || ''));
       if (!byQuote.has(qid)) {
         byQuote.set(qid, {
