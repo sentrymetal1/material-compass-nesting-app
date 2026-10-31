@@ -7,7 +7,7 @@ import { QuoteCard, mergeQuotes } from './QuotesView';
 // the same Supplier_Verify_Form record a supplier's submit creates — allocation and the
 // close-out read it the same way. Opened from Zoho with
 //   /mfg-quote-entry?manufacturer_id=<Customer_Entry ID>&t=<token>[&quote_id=…][&supplier_id=…]
-const BUILD_TAG = 'mfg-quote-entry-2026-10-31a';
+const BUILD_TAG = 'mfg-quote-entry-2026-10-31b';
 const BASE = '/api/mfg/supplier-quotes/';
 
 function params() {
@@ -95,9 +95,18 @@ export default function MfgQuoteEntryApp() {
                   {list.quotes.map(q => (
                     <option key={q.quote_id} value={q.quote_id}>{q.quote_number}{q.quote_description ? ' — ' + q.quote_description : ''}</option>
                   ))}
+                  {/* Opened from Zoho on a quote that's no longer open (e.g. closed out): keep it selectable. */}
+                  {quoteId && !quote && card.status === 'ready' && (
+                    <option value={quoteId}>{card.quote.quote_number}{card.quote.quote_description ? ' — ' + card.quote.quote_description : ''} (closed)</option>
+                  )}
                 </select>
               </label>
-              {quoteId && !quote && <div className="sup-msg sup-msg-warn">That quote isn't open, or no RFQs were sent for it.</div>}
+              {quoteId && !quote && card.status === 'ready' && (
+                <div className="sup-msg sup-msg-warn">This quote is already closed{card.quote.status ? ' (' + card.quote.status + ')' : ''}. You can still view this supplier's quote, but saving would create a new revision after close-out.</div>
+              )}
+              {quoteId && !quote && (card.status === 'empty' || card.status === 'error') && (
+                <div className="sup-msg sup-msg-warn">That quote isn't open, or no RFQs were sent for it.</div>
+              )}
               {quote && (
                 <div className="mq-suppliers">
                   <span className="mq-sub">Supplier</span>
