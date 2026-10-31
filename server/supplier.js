@@ -126,12 +126,16 @@ function registerSupplierRoutes(app, deps) {
 
   // Resolve a login email → supplier record. Cached (the supplier list is small
   // and changes rarely); short TTL so a newly-registered supplier resolves soon.
+  const supplierDirectory = () => cachedLookup('supplier-directory', 5 * 60 * 1000, async () =>
+    fetchAllZohoPages('/report/' + SUPPLIER_REPORT));
+
   async function resolveSupplier(email) {
     if (!email) return null;
-    const rows = await cachedLookup('supplier-directory', 5 * 60 * 1000, async () => {
-      return fetchAllZohoPages('/report/' + SUPPLIER_REPORT);
-    });
-    const rec = rows.find(r => emailMatches(r.Account_User_Email, email));
+    const rows = await supplierDirectory();
+    return shapeSupplier(rows.find(r => emailMatches(r.Account_User_Email, email)));
+  }
+
+  function shapeSupplier(rec) {
     if (!rec) return null;
     return {
       id: String(rec.ID),
@@ -166,6 +170,35 @@ function registerSupplierRoutes(app, deps) {
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
     }
   }
+
+  // Manufacturer entering a quote a supplier sent them off-platform (email, PDF, phone).
+  // The MFG works the SAME quote card the supplier uses, acting for one supplier, so the
+  // record that lands in Zoho is identical to a supplier's own submit. req.onBehalfOf
+  // holds the MFG id, and every handler below that sees it narrows to that MFG's RFQ
+  // lines: a supplier's other customers never show, and can't be written.
+  async function withMfgOnBehalf(req, res, next) {
+    try {
+      const mfg = String(req.query.manufacturer_id || '').trim();
+      const sid = String(req.query.supplier_id || '').trim();
+      if (!/^\d+$/.test(mfg)) return res.status(400).json({ ok: false, error: 'Please reopen this page from Material Compass.' });
+      // A valid token for another shop is refused outright, even in warn mode.
+      if (req.tenant && req.tenant.kind === 'm' && String(req.tenant.id) !== mfg) {
+        return res.status(403).json({ ok: false, error: 'Please reopen this page from Material Compass.' });
+      }
+      if (!/^\d+$/.test(sid)) return res.status(400).json({ ok: false, error: 'Choose a supplier first.' });
+      const supplier = shapeSupplier((await supplierDirectory()).find(r => String(r.ID) === sid));
+      if (!supplier) return res.status(404).json({ ok: false, error: 'Supplier not found.' });
+      req.supplier = supplier;
+      req.onBehalfOf = mfg;
+      next();
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  }
+  // '' on the supplier's own path; the MFG id on the on-behalf path.
+  const scopeOf = req => (req.onBehalfOf ? String(req.onBehalfOf) : '');
+  const inScope = (req, mfgId) => !scopeOf(req) || String(mfgId || '') === scopeOf(req);
 
   // Who am I? — lets the UI greet the supplier + confirm the seam works.
   app.get('/api/supplier/me', withSupplier, (req, res) => {
@@ -321,6 +354,7 @@ function registerSupplierRoutes(app, deps) {
           quote_number: r.Quote_Reference_Number || r.Quote_Number || '',
           internal_quote_number: r.Quote_Number || '',
           quote_description: r.Quote_Description || '',
+          manufacturer_id: lkid(r.Customer_LU),   // scopes the manufacturer-on-behalf path
           manufacturer: r['Customer_LU.Company_Name'] || flatten(r.Manufacturer) || '',
           status: r['Quote_LU.Status'] || '',
           quote_date: r.Quote_Date || r.RFQSent_Timestamp || '',
@@ -432,6 +466,7 @@ function registerSupplierRoutes(app, deps) {
           quote_number: r.Quote_Reference_Number || r.Quote_Number || '',
           internal_quote_number: r.Quote_Number || '',
           quote_description: r.Quote_Description || '',
+          manufacturer_id: lkid(r.Customer_LU),
           manufacturer: r['Customer_LU.Company_Name'] || r.Customer_Name || '',
           quote_date: r.Quote_Date || r.Quote_Timestamp || '',
           status: r.RFQ_Fitting_Sent_Status || '',
@@ -479,9 +514,9 @@ function registerSupplierRoutes(app, deps) {
   // GET /api/supplier/me/sent-fitting-rfqs — fitting RFQs the MFG sent this supplier,
   // grouped into quotes with per-line response state. (Distinct from the PULL matcher
   // at /api/supplier/:id/fitting-rfqs, which scores stock vs all open demand.)
-  app.get('/api/supplier/me/sent-fitting-rfqs', withSupplier, async (req, res) => {
+  const sentFittingRfqsHandler = async (req, res) => {
     try {
-      const quotes = await fetchSentFittingRfqs(req.supplier.id);
+      const quotes = (await fetchSentFittingRfqs(req.supplier.id)).filter(q => inScope(req, q.manufacturer_id));
       const lineCount = quotes.reduce((n, q) => n + q.lines.length, 0);
       const respondedCount = quotes.reduce((n, q) => n + q.lines.filter(l => l.quote_option).length, 0);
       res.json({ ok: true, supplier: req.supplier, quote_count: quotes.length, line_count: lineCount, responded_count: respondedCount, quotes });
@@ -489,14 +524,16 @@ function registerSupplierRoutes(app, deps) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
     }
-  });
+  };
+  app.get('/api/supplier/me/sent-fitting-rfqs', withSupplier, sentFittingRfqsHandler);
+  app.get('/api/mfg/supplier-quotes/sent-fitting-rfqs', withMfgOnBehalf, sentFittingRfqsHandler);
 
   // POST /api/supplier/me/sent-fitting-rfqs/submit — price fitting RFQ lines. Writes the
   // response directly onto each RFQs_Sent_Fittings bridge row (the "bridge = response"
   // model, no Supplier_Alter_Form). Per-each pricing: total = unit × qty (server is
   // authoritative on qty, read from the bridge row). Ownership is verified against the
   // supplier's own cached bridge rows before any write.
-  app.post('/api/supplier/me/sent-fitting-rfqs/submit', withSupplier, async (req, res) => {
+  const fittingSubmitHandler = async (req, res) => {
     try {
       const sid = String(req.supplier.id);
       const lines = (req.body && req.body.lines) || [];
@@ -509,7 +546,7 @@ function registerSupplierRoutes(app, deps) {
       if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ ok: false, error: 'no lines to submit' });
 
       // Index the supplier's own bridge rows for ownership + qty (no extra API call).
-      const quotes = await fetchSentFittingRfqs(sid);
+      const quotes = (await fetchSentFittingRfqs(sid)).filter(q => inScope(req, q.manufacturer_id));
       const mine = new Map();
       quotes.forEach(q => q.lines.forEach(l => mine.set(String(l.rfq_row_id), l)));
 
@@ -546,6 +583,7 @@ function registerSupplierRoutes(app, deps) {
         results.push({ rfq_row_id: id, ok: r.ok, code: r.code, message: r.ok ? undefined : r.message, unit_price: unit, total_price: total });
       }
       bust('fit-rfqs:' + sid);
+      if (scopeOf(req)) bust('mfg-sent-fit:' + scopeOf(req));
       const saved = results.filter(r => r.ok).length;
       const failed = results.filter(r => !r.ok);
       res.json({ ok: failed.length === 0, saved, failed: failed.length, results });
@@ -553,7 +591,9 @@ function registerSupplierRoutes(app, deps) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
     }
-  });
+  };
+  app.post('/api/supplier/me/sent-fitting-rfqs/submit', withSupplier, fittingSubmitHandler);
+  app.post('/api/mfg/supplier-quotes/sent-fitting-rfqs/submit', withMfgOnBehalf, fittingSubmitHandler);
 
   // Supplier-level dropdown data for the quote-submit form (locations, reps, choices).
   async function fetchSupplierLookups(supplierId) {
@@ -578,13 +618,14 @@ function registerSupplierRoutes(app, deps) {
   }
 
   // GET /api/supplier/me/rfqs — the supplier's sent RFQs grouped into quotes + tiles.
-  app.get('/api/supplier/me/rfqs', withSupplier, async (req, res) => {
+  const rfqsHandler = async (req, res) => {
     try {
       const [sent, lookups] = await Promise.all([
         fetchSentRfqs(req.supplier.id),
         fetchSupplierLookups(req.supplier.id),
       ]);
-      const { quotes, alteration_catalog } = sent;
+      const { alteration_catalog } = sent;
+      const quotes = sent.quotes.filter(q => inScope(req, q.manufacturer_id));
       // Map the full Quote_Form.Status pipeline into the 4 supplier tiles.
       const tile = s => {
         if (/^Open|Quote Revised/i.test(s)) return 'open';            // not submitted / past due / revised
@@ -600,15 +641,22 @@ function registerSupplierRoutes(app, deps) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
     }
-  });
+  };
+  app.get('/api/supplier/me/rfqs', withSupplier, rfqsHandler);
+  app.get('/api/mfg/supplier-quotes/rfqs', withMfgOnBehalf, rfqsHandler);
 
   // GET /api/supplier/me/quote-file — stream a manufacturer reference file (Quote_Form.File_upload)
   // from Zoho using the server's token, so the supplier can download it without Zoho auth.
-  app.get('/api/supplier/me/quote-file', withSupplier, async (req, res) => {
+  const quoteFileHandler = async (req, res) => {
     try {
       const record = String(req.query.record || '').replace(/[^0-9]/g, '');
       const filepath = String(req.query.filepath || '');
       if (!record || !filepath) return res.status(400).send('record and filepath required');
+      // On-behalf: only a quote of this MFG's that went to this supplier.
+      if (scopeOf(req)) {
+        const { quotes } = await fetchSentRfqs(req.supplier.id);
+        if (!quotes.some(q => q.quote_id === record && inScope(req, q.manufacturer_id))) return res.status(404).send('file not found');
+      }
       const token = await getAccessToken();
       const url = creatorApiBase() + '/report/All_Quotes/' + record + '/File_upload/download?filepath=' + encodeURIComponent(filepath);
       const zr = await axios.get(url, { headers: zohoHeaders(token), responseType: 'stream' });
@@ -619,7 +667,9 @@ function registerSupplierRoutes(app, deps) {
     } catch (err) {
       res.status(502).send('file fetch failed: ' + String((err.response && err.response.status) || '') + ' ' + String((err && err.message) || err));
     }
-  });
+  };
+  app.get('/api/supplier/me/quote-file', withSupplier, quoteFileHandler);
+  app.get('/api/mfg/supplier-quotes/quote-file', withMfgOnBehalf, quoteFileHandler);
 
   // Load this supplier's RFQ rows raw + the catalogs, for the alteration paths. The rows
   // are the authority: an alteration is always applied to the SERVER's copy of the line,
@@ -642,14 +692,14 @@ function registerSupplierRoutes(app, deps) {
   // POST /api/supplier/me/line-preview — recompute ONE altered line without writing.
   // The revise UI calls this as the supplier edits, so the description/weight it shows
   // come from the same code that will run at submit. The client never does this math.
-  app.post('/api/supplier/me/line-preview', withSupplier, async (req, res) => {
+  const linePreviewHandler = async (req, res) => {
     try {
       const { rfqs_sent_id, length_ft, length_inch, quantity, spec_id } = req.body || {};
       if (!rfqs_sent_id) return res.status(400).json({ ok: false, error: 'rfqs_sent_id required' });
       const { rowById, catalogs } = await loadAlterationContext(String(req.supplier.id));
       const row = rowById.get(String(rfqs_sent_id));
       // Scoped to THIS supplier's rows, so an unknown id is either stale or not theirs.
-      if (!row) return res.status(404).json({ ok: false, error: 'Line not found for this supplier' });
+      if (!row || !inScope(req, lkid(row.Customer_LU))) return res.status(404).json({ ok: false, error: 'Line not found for this supplier' });
       try {
         const out = computeAlteredLine(row, { length_ft, length_inch, quantity, spec_id }, catalogs);
         res.json({ ok: true, preview: out });
@@ -658,7 +708,9 @@ function registerSupplierRoutes(app, deps) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
     }
-  });
+  };
+  app.post('/api/supplier/me/line-preview', withSupplier, linePreviewHandler);
+  app.post('/api/mfg/supplier-quotes/line-preview', withMfgOnBehalf, linePreviewHandler);
 
   // POST /api/supplier/me/quote-submit — submit a priced quote (off-Zoho path).
   // Creates ONE Supplier_Verify_Form record with its Supplier_Verify_Detail rows passed
@@ -666,7 +718,7 @@ function registerSupplierRoutes(app, deps) {
   // (a standalone Deluge function can't build that subform; the addRecord API can). The
   // SV form's own "Successful form submission" workflow then fires and does the RFQs_Sent
   // write-back, the MFG email, and the dashboard status — same path as a human submit.
-  app.post('/api/supplier/me/quote-submit', withSupplier, async (req, res) => {
+  const quoteSubmitHandler = async (req, res) => {
     try {
       const { quote_id, header = {}, lines = [] } = req.body || {};
       const supplierId = String(req.supplier.id);
@@ -680,7 +732,12 @@ function registerSupplierRoutes(app, deps) {
       // Pull the authoritative RFQs_Sent rows for this supplier and index by ID — we build
       // the subform from these (not from client-sent data) so lookups/weights are correct.
       // Catalogs come along for any altered lines; both are cached.
-      const { rowById, catalogs } = await loadAlterationContext(supplierId);
+      const ctx = await loadAlterationContext(supplierId);
+      const { catalogs } = ctx;
+      // On-behalf: only this MFG's lines of THIS quote exist as far as the submit is concerned.
+      const rowById = scopeOf(req)
+        ? new Map([...ctx.rowById].filter(([, r]) => inScope(req, lkid(r.Customer_LU)) && lkid(r.Quote_LU) === String(quote_id)))
+        : ctx.rowById;
       const rawRows = [...rowById.values()];
 
       // money/format helpers for the PDF snapshot strings the reference doc reads
@@ -907,7 +964,13 @@ function registerSupplierRoutes(app, deps) {
       }
       const code = addResp.data && addResp.data.code;
       if (code !== 3000) {
-        return res.status(502).json({ ok: false, error: 'addRecord rejected', code, message: addResp.data && addResp.data.message, detail: addResp.data });
+        // Zoho's per-field reasons ({Field: "Select a value for …"}) or workflow alerts, in words.
+        const e = addResp.data && addResp.data.error;
+        const reasons = Array.isArray(e)
+          ? e.map(x => [].concat(x.alert_message || []).join(' ')).filter(Boolean)
+          : (e && typeof e === 'object' ? Object.values(e).map(String) : []);
+        return res.status(502).json({ ok: false, error: 'addRecord rejected', code,
+          message: (addResp.data && addResp.data.message) || reasons.join(' ') || undefined, detail: addResp.data });
       }
       const svFormId = (addResp.data.data && addResp.data.data.ID) || '';
 
@@ -919,6 +982,10 @@ function registerSupplierRoutes(app, deps) {
           superseded++;
         } catch (e) { /* non-fatal */ }
       }
+      // The next load should show what was just saved, not a 3-minute-old copy.
+      bust('sent-rfqs:' + supplierId);
+      bust('sent-rfqs-raw:' + supplierId);
+      if (scopeOf(req)) bust('mfg-sent-rfqs:' + scopeOf(req));
 
       res.json({
         ok: true,
@@ -931,6 +998,67 @@ function registerSupplierRoutes(app, deps) {
           + (alteredCount ? ', ' + alteredCount + ' altered' : '')
           + (superseded ? ', superseded ' + superseded + ' prior' : '') + '). The SV workflow handles email + write-back.',
       });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  };
+  app.post('/api/supplier/me/quote-submit', withSupplier, quoteSubmitHandler);
+  app.post('/api/mfg/supplier-quotes/quote-submit', withMfgOnBehalf, quoteSubmitHandler);
+
+  // GET /api/mfg/supplier-quotes/list?manufacturer_id= — the picker for the MFG's
+  // "enter a supplier's quote" screen: every current quote this MFG sent out, with the
+  // suppliers it went to and whether each has answered yet.
+  app.get('/api/mfg/supplier-quotes/list', async (req, res) => {
+    try {
+      const mfg = String(req.query.manufacturer_id || '').trim();
+      if (!/^\d+$/.test(mfg) || (req.tenant && req.tenant.kind === 'm' && String(req.tenant.id) !== mfg)) {
+        return res.status(400).json({ ok: false, error: 'Please reopen this page from Material Compass.' });
+      }
+      const [rows, fitRows, dir] = await Promise.all([
+        cachedLookup('mfg-sent-rfqs:' + mfg, 2 * 60 * 1000, async () =>
+          fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + encodeURIComponent('(Customer_LU==' + mfg + ' && Latest_Item_for_Supplier==true)'))),
+        // Fittings are best-effort: an outage there must not hide the structural quotes.
+        cachedLookup('mfg-sent-fit:' + mfg, 2 * 60 * 1000, async () =>
+          fetchAllZohoPages('/report/' + FIT_RFQ_REPORT + '?criteria=' + encodeURIComponent('(Customer_LU==' + mfg + ')'))).catch(() => []),
+        supplierDirectory(),
+      ]);
+      const nameOf = new Map(dir.map(r => [String(r.ID), r.Company_Name || '']));
+      const byQuote = new Map();
+      const add = (r, kind) => {
+        const qid = lkid(r.Quote_LU);
+        const sid = lkid(r.Supplier_LU);
+        if (!qid || !sid) return;
+        if (!byQuote.has(qid)) {
+          byQuote.set(qid, {
+            quote_id: qid,
+            quote_number: r.Quote_Reference_Number || r.Quote_Number || '',
+            quote_description: r.Quote_Description || '',
+            status: r['Quote_LU.Status'] || '',
+            quote_date: r.Quote_Date || r.RFQSent_Timestamp || '',
+            suppliers: new Map(),
+          });
+        }
+        const q = byQuote.get(qid);
+        if (!q.status && r['Quote_LU.Status']) q.status = r['Quote_LU.Status'];
+        if (!q.suppliers.has(sid)) q.suppliers.set(sid, { supplier_id: sid, name: nameOf.get(sid) || flatten(r.Supplier_Name) || 'Supplier', structural: 0, fitting: 0, answered: 0 });
+        const s = q.suppliers.get(sid);
+        s[kind]++;
+        if (String(r.Item_Verification_Status || '').trim()) s.answered++;
+      };
+      rows.forEach(r => {
+        if (r.MFG_Revision_Cancel_Entry === true || r.MFG_Revision_Cancel_Entry === 'true') return;
+        add(r, 'structural');
+      });
+      fitRows.forEach(r => {
+        if (r.Latest_Item_for_Supplier === false || r.Latest_Item_for_Supplier === 'false') return;
+        add(r, 'fitting');
+      });
+      const quotes = [...byQuote.values()]
+        .filter(q => !/^Closed|Cancel/i.test(q.status))
+        .map(q => ({ ...q, suppliers: [...q.suppliers.values()].sort((a, b) => a.name.localeCompare(b.name)) }))
+        .sort((a, b) => Number(b.quote_id) - Number(a.quote_id));   // newest record first
+      res.json({ ok: true, quotes });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });

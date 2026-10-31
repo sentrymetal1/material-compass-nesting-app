@@ -65,7 +65,7 @@ function alterationBody(draft, kind) {
 // The inline editor shown when a line's quote option is "Alter …". Every value the
 // supplier types is priced by the SERVER (/line-preview) — the client never computes a
 // weight or a description, so what's previewed here is exactly what submit will write.
-function AlterEditor({ line, draft, kind, specOptions, email, onChange }) {
+function AlterEditor({ line, draft, kind, specOptions, ep, onChange }) {
   const meta = line.alteration || {};
   const seq = React.useRef(0);
   const body = alterationBody(draft, kind);
@@ -77,7 +77,7 @@ function AlterEditor({ line, draft, kind, specOptions, email, onChange }) {
     onChange({ previewing: true });
     const t = setTimeout(async () => {
       try {
-        const r = await fetch('/api/supplier/me/line-preview?email=' + encodeURIComponent(email), {
+        const r = await fetch(ep('line-preview'), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ rfqs_sent_id: line.rfqs_sent_id, ...body }),
         });
@@ -93,7 +93,7 @@ function AlterEditor({ line, draft, kind, specOptions, email, onChange }) {
     return () => clearTimeout(t);
     // Keyed on bodyKey (the serialized values), NOT `body`/`onChange` — those are new
     // objects every render and would re-fire the fetch forever.
-  }, [bodyKey, line.rfqs_sent_id, email]);   // eslint-disable-line
+  }, [bodyKey, line.rfqs_sent_id]);   // eslint-disable-line
 
   // Length on a line with no per-foot weight can't be repriced — say why rather than
   // silently disable. (Some rows carry a good Unit_Weight with blank inputs.)
@@ -176,7 +176,7 @@ function effLine(line, draft) {
 const fmtMoney2 = v => { const n = parseFloat(v); return isNaN(n) ? '' : n.toFixed(2); };
 
 // Merge the two pipelines into one quote list keyed by quote_id (= Quote_LU).
-function mergeQuotes(structuralQuotes, fittingQuotes) {
+export function mergeQuotes(structuralQuotes, fittingQuotes) {
   const m = new Map();
   const ensure = q => {
     if (!m.has(q.quote_id)) {
@@ -218,7 +218,7 @@ function mergeQuotes(structuralQuotes, fittingQuotes) {
 
 // One structural line — supplier edits EITHER Line Total OR Price/lb (each recalcs the
 // other via line weight); unit price stays derived (total ÷ qty).
-function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptions, email }) {
+function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptions, ep }) {
   const kind = ALTER_KIND[draft.quote_option] || null;
   // An altered line prices against its NEW qty/weight — effLine folds the server's
   // preview over the original so the row, the pricing math and the quote totals can
@@ -251,7 +251,7 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
           ? <><span className="q-desc-was">{line.description}</span><div className="q-desc-now">{eff.description}</div></>
           : line.description}
         {line.mfg_note && <div className="q-mfgnote"><span className="q-mfgnote-lbl">MFG note:</span> {line.mfg_note}</div>}
-        {kind && <AlterEditor line={line} draft={draft} kind={kind} specOptions={specOptions} email={email} onChange={onChange} />}
+        {kind && <AlterEditor line={line} draft={draft} kind={kind} specOptions={specOptions} ep={ep} onChange={onChange} />}
         <div className="q-ireq-lbl">Item requirements <span className="muted">(MFG — editable)</span></div>
         <ItemReqEditor value={draft.item_requirements} options={itemReqChoices} onChange={reqs => onChange({ item_requirements: reqs })} />
       </td>
@@ -314,10 +314,13 @@ function FittingLineRow({ line, draft, onChange, leadChoices }) {
 
 // NOTE: `revise` here = re-pricing a SUBMITTED quote as a new revision (quote-level).
 // That's unrelated to per-line alteration (`alterationCatalog` / the "Alter …" options).
-function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
+// `ep(name)` builds the URL for one endpoint: the supplier's own (/api/supplier/me/…) or
+// the manufacturer's on-behalf twin (/api/mfg/supplier-quotes/…). `mfg` switches the
+// wording to a manufacturer entering a quote a supplier sent them.
+export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, defaultOpen, onSubmitted }) {
   const hasStruct = quote.structural_lines.length > 0;
   const hasFit = quote.fitting_lines.length > 0;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!defaultOpen);
   const [submitState, setSubmitState] = useState(null); // {status, structResult, fitResult, error}
   // Set by a failed submit so the missing controls light up. A sentence next to the
   // button ("Please complete all required fields: Meets MFG requirements") left the
@@ -418,7 +421,7 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
   const REQUIRED_FIELDS = [
     ['location', 'Supplier location'],
     ['rep', 'Supplier representative'],
-    ['supplier_quote_number', 'Your quote #'],
+    ['supplier_quote_number', mfg ? "Supplier's quote #" : 'Your quote #'],
     ['meets_requirements', 'Meets MFG requirements'],
     ['valid_days', 'Quote valid (business days)'],
     ['valid_until', 'Valid until'],
@@ -429,8 +432,11 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
   // Fittings-only quotes are exempt on purpose: the whole quote-summary block below is
   // rendered under `hasStruct`, and the fittings endpoint takes lines only -- no header.
   // Requiring these there would block a submit on controls that do not exist.
+  // A manufacturer entering a quote can't be blocked on a supplier who never set up
+  // locations or reps — there is nothing to pick. A supplier on their own screen still must.
+  const notApplicable = k => mfg && ((k === 'location' && !locations.length) || (k === 'rep' && !reps.length));
   const missingKeys = new Set(hasStruct
-    ? REQUIRED_FIELDS.filter(([k]) => String(hdr[k] == null ? '' : hdr[k]).trim() === '').map(([k]) => k)
+    ? REQUIRED_FIELDS.filter(([k]) => !notApplicable(k) && String(hdr[k] == null ? '' : hdr[k]).trim() === '').map(([k]) => k)
     : []);
   const missingFields = REQUIRED_FIELDS.filter(([k]) => missingKeys.has(k)).map(([, lbl]) => lbl);
   // Class hook for a required control that is still empty AFTER a failed submit.
@@ -491,7 +497,7 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
           };
         });
         const sv_form_id = (quote.structural_lines.find(l => l.sv_form_id) || {}).sv_form_id || '';
-        const r = await fetch('/api/supplier/me/quote-submit?email=' + encodeURIComponent(email), {
+        const r = await fetch(ep('quote-submit'), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           // fittings_total rides along on the structural submit: the fittings write is a
           // separate endpoint that never sees the SV header, so this is the only point at
@@ -519,13 +525,14 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
         // subform. structResult is the response from the POST directly above.
         // Blank on a fittings-only quote: no structural lines, so no SV record exists.
         const sv_form_id = (structResult && structResult.sv_form_id) || '';
-        const r = await fetch('/api/supplier/me/sent-fitting-rfqs/submit?email=' + encodeURIComponent(email), {
+        const r = await fetch(ep('sent-fitting-rfqs/submit'), {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines, sv_form_id }),
         });
         fitResult = await r.json();
       }
 
       setSubmitState({ status: 'done', structResult, fitResult });
+      if (onSubmitted && (!structResult || structResult.ok) && (!fitResult || fitResult.ok)) onSubmitted();
     } catch (e) {
       setSubmitState({ status: 'error', error: String(e.message || e) });
     }
@@ -547,7 +554,7 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
           ? ' — ' + sr.line_errors.map(e => 'line ' + e.line + ': ' + e.error).join('; ')
           : '')));
     if (fr) parts.push(fr.ok ? `${fr.saved != null ? fr.saved : quote.fitting_lines.length} fitting` : `fitting failed (${fr.saved || 0}/${(fr.saved || 0) + (fr.failed || 0)})`);
-    resultNode = <span className={'q-result ' + (ok ? 'q-result-ok' : 'q-result-warn')}>{(ok ? 'Quote submitted — ' : 'Partial submit — ') + parts.join(', ') + ' line' + (parts.length ? 's' : '') + '.'}</span>;
+    resultNode = <span className={'q-result ' + (ok ? 'q-result-ok' : 'q-result-warn')}>{(ok ? (mfg ? 'Supplier quote saved — ' : 'Quote submitted — ') : 'Partial submit — ') + parts.join(', ') + ' line' + (parts.length ? 's' : '') + '.'}</span>;
   } else if (submitState && submitState.status === 'error') {
     resultNode = <span className="q-result q-result-warn">Error: {submitState.error}</span>;
   }
@@ -571,12 +578,12 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
         <div className="q-body">
           {quote.files && quote.files.length > 0 && (
             <div className="q-files">
-              <span className="q-files-lbl">📎 Manufacturer reference files:</span>
+              <span className="q-files-lbl">📎 {mfg ? 'Your reference files:' : 'Manufacturer reference files:'}</span>
               {quote.files.map((f, i) => (
                 <a key={i} className="q-file" target="_blank" rel="noreferrer"
-                  href={'/api/supplier/me/quote-file?record=' + encodeURIComponent(quote.quote_id) + '&filepath=' + encodeURIComponent(f.filepath) + '&email=' + encodeURIComponent(email)}>{f.name}</a>
+                  href={ep('quote-file') + '&record=' + encodeURIComponent(quote.quote_id) + '&filepath=' + encodeURIComponent(f.filepath)}>{f.name}</a>
               ))}
-              <span className="q-files-note">review all files before quoting</span>
+              {!mfg && <span className="q-files-note">review all files before quoting</span>}
             </div>
           )}
           {hasStruct && (
@@ -598,7 +605,7 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
                 </thead>
                 <tbody>
                   {quote.structural_lines.map(l => (
-                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} email={email} specOptions={specOptionsFor(l)} />
+                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} ep={ep} specOptions={specOptionsFor(l)} />
                   ))}
                 </tbody>
                 <tfoot>
@@ -634,9 +641,9 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
               <div className="q-req-row">
                 <div className="q-req-panel">
                   <div className="q-req-panel-top">
-                    <span className="q-req-panel-head">MFG REQUIREMENTS <span className="q-req-note">— set by the manufacturer</span></span>
+                    <span className="q-req-panel-head">MFG REQUIREMENTS <span className="q-req-note">— {mfg ? 'set on your quote' : 'set by the manufacturer'}</span></span>
                     <div className={'q-req-panel-meets' + inv('meets_requirements')} data-field="meets_requirements">
-                      <span className="q-meets-lbl">Does your quote meet these?<span className="req-star">*</span></span>
+                      <span className="q-meets-lbl">{mfg ? "Does the supplier's quote meet these?" : 'Does your quote meet these?'}<span className="req-star">*</span></span>
                       <div className="q-seg">
                         <button type="button"
                           className={'q-seg-btn' + (hdr.meets_requirements === 'YES - Meets All MFG Requirements' ? ' q-seg-on q-seg-yes' : '')}
@@ -658,26 +665,26 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
                   </div>
                 </div>
                 <label className="q-attach">
-                  <span className="q-attach-lbl">Internal quote (attachment)</span>
+                  <span className="q-attach-lbl">{mfg ? "Supplier's quote (PDF)" : 'Internal quote (attachment)'}</span>
                   <input type="file" onChange={e => setH({ attachment_name: e.target.files && e.target.files[0] ? e.target.files[0].name : '' })} />
                 </label>
               </div>
 
               <div className="q-grid q-grid-8">
-                <label className={'q-sum-field' + inv('location')} data-field="location">Supplier location<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('location')} data-field="location">Supplier location{!notApplicable('location') && <span className="req-star">*</span>}
                   <select value={hdr.location} onChange={e => setH({ location: e.target.value })}>
-                    <option value="">— select —</option>
+                    <option value="">{notApplicable('location') ? '— none on file —' : '— select —'}</option>
                     {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </select>
                 </label>
-                <label className={'q-sum-field' + inv('rep')} data-field="rep">Supplier representative<span className="req-star">*</span>
+                <label className={'q-sum-field' + inv('rep')} data-field="rep">Supplier representative{!notApplicable('rep') && <span className="req-star">*</span>}
                   <select value={hdr.rep} onChange={e => setH({ rep: e.target.value })}>
-                    <option value="">— select —</option>
+                    <option value="">{notApplicable('rep') ? '— none on file —' : '— select —'}</option>
                     {reps.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
                 </label>
-                <label className={'q-sum-field' + inv('supplier_quote_number')} data-field="supplier_quote_number">Your quote #<span className="req-star">*</span>
-                  <input value={hdr.supplier_quote_number} onChange={e => setH({ supplier_quote_number: e.target.value })} placeholder="Internal quote number" />
+                <label className={'q-sum-field' + inv('supplier_quote_number')} data-field="supplier_quote_number">{mfg ? "Supplier's quote #" : 'Your quote #'}<span className="req-star">*</span>
+                  <input value={hdr.supplier_quote_number} onChange={e => setH({ supplier_quote_number: e.target.value })} placeholder={mfg ? 'From their quote' : 'Internal quote number'} />
                 </label>
                 <label className={'q-sum-field' + inv('valid_days')} data-field="valid_days">Quote valid (business days)<span className="req-star">*</span>
                   <select value={hdr.valid_days} onChange={e => onValidDays(e.target.value)}>
@@ -709,8 +716,8 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
                 </label>
               </div>
 
-              <label className="q-notes">Notes to buyer
-                <textarea rows="2" value={hdr.notes} onChange={e => setH({ notes: e.target.value })} placeholder="Optional notes for the manufacturer" />
+              <label className="q-notes">{mfg ? 'Supplier notes' : 'Notes to buyer'}
+                <textarea rows="2" value={hdr.notes} onChange={e => setH({ notes: e.target.value })} placeholder={mfg ? 'Optional: terms or notes from their quote' : 'Optional notes for the manufacturer'} />
               </label>
 
               <div className="q-totals">
@@ -730,7 +737,9 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
           )}
 
           {revise && (
-            <div className="q-revise-note">Re-pricing creates a new revision — your current quote will be marked <strong>Revised</strong> and replaced by this one.</div>
+            <div className="q-revise-note">{mfg
+              ? <>This supplier already has a quote on file. Saving creates a new revision: the current one is marked <strong>Revised</strong> and replaced by this one.</>
+              : <>Re-pricing creates a new revision — your current quote will be marked <strong>Revised</strong> and replaced by this one.</>}</div>
           )}
           <div className="q-actions">
             {hasStruct && (
@@ -740,7 +749,9 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
               </label>
             )}
             <button className="btn-quote" disabled={submitState && submitState.status === 'saving'} onClick={onSubmit}>
-              {submitState && submitState.status === 'saving' ? 'Submitting…' : (revise ? 'Submit revision' : 'Submit quote')}
+              {submitState && submitState.status === 'saving' ? 'Submitting…'
+                : mfg ? (revise ? "Save supplier's revision" : "Save supplier's quote")
+                : (revise ? 'Submit revision' : 'Submit quote')}
             </button>
             {resultNode}
             {hasStruct && missingFields.length > 0 && !resultNode && (
@@ -756,13 +767,14 @@ function QuoteCard({ quote, lookups, email, revise, alterationCatalog }) {
 export default function QuotesView({ email }) {
   const [state, setState] = useState({ status: 'loading', quotes: [], lookups: {}, error: null });
   const [tab, setTab] = useState('open');
+  const ep = useCallback(name => '/api/supplier/me/' + name + '?email=' + encodeURIComponent(email), [email]);
 
   const load = useCallback(async () => {
     setState(s => ({ ...s, status: 'loading' }));
     try {
       const [rfqsR, fitR] = await Promise.all([
-        fetch('/api/supplier/me/rfqs?email=' + encodeURIComponent(email)).then(r => r.json()).catch(e => ({ ok: false, error: String(e.message || e) })),
-        fetch('/api/supplier/me/sent-fitting-rfqs?email=' + encodeURIComponent(email)).then(r => r.json()).catch(() => ({ ok: false })),
+        fetch(ep('rfqs')).then(r => r.json()).catch(e => ({ ok: false, error: String(e.message || e) })),
+        fetch(ep('sent-fitting-rfqs')).then(r => r.json()).catch(() => ({ ok: false })),
       ]);
       // Structural is primary; fittings degrades gracefully (a fittings outage shouldn't blank the page).
       if (!rfqsR || !rfqsR.ok) {
@@ -778,7 +790,7 @@ export default function QuotesView({ email }) {
     } catch (e) {
       setState({ status: 'error', quotes: [], lookups: {}, error: String(e.message || e) });
     }
-  }, [email]);
+  }, [ep]);
   useEffect(() => { load(); }, [load]);
 
   if (state.status === 'loading') return <div className="sup-msg">Loading your RFQs…</div>;
@@ -836,7 +848,7 @@ export default function QuotesView({ email }) {
                 </div>
               </div>
             )
-            : <QuoteCard key={q.quote_id} quote={q} lookups={state.lookups || {}} email={email} revise={tab === 'submitted'} alterationCatalog={state.alteration_catalog} />)}
+            : <QuoteCard key={q.quote_id} quote={q} lookups={state.lookups || {}} ep={ep} revise={tab === 'submitted'} alterationCatalog={state.alteration_catalog} />)}
       </section>
     </>
   );

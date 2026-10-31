@@ -437,3 +437,18 @@
   padding: 6px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .btn-danger:hover { background: #A93226; }
+
+/* Manufacturer: enter a supplier's quote (MfgQuoteEntryApp) */
+.mq-pick { display: flex; flex-direction: column; gap: 12px; }
+.mq-lead { margin: 0; color: var(--muted); font-size: 14px; }
+.mq-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: var(--ink); max-width: 640px; }
+.mq-field select { font: inherit; font-weight: 400; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+.mq-suppliers { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mq-sub { font-size: 13px; font-weight: 600; color: var(--ink); margin-right: 4px; }
+.mq-sup { font: inherit; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; background: #fff; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; color: var(--ink); }
+.mq-sup:hover { border-color: var(--blue); }
+.mq-sup-on { border-color: var(--blue); background: #eef4fb; box-shadow: 0 0 0 1px var(--blue) inset; }
+.mq-sup-st { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; }
+.mq-st-wait { background: #fff4e5; color: #9a5b00; }
+.mq-st-done { background: #e7f6ec; color: #1a7f37; }
+.mq-reload { text-align: right; margin-top: 6px; }

@@ -96,7 +96,7 @@ const TENANT_ROUTES = [
   /^\/api\/triage\//, /^\/triage\/opportunity\//, /^\/api\/files\//, /^\/connect\/outlook\/start$/,
   /^\/api\/takeoff$/, /^\/api\/takeoff\/(revise|chat|index|ask|commit|commit-fittings|save|saved\/|attach-drawings|learn|project-scope|bom-preview|account\/|project-types|fitting-resolve|fitting-add)/,
   /^\/api\/project\//, /^\/api\/standalone\//, /^\/api\/bom-lookups\/(components|drawings)$/,
-  /^\/api\/match-suggestions$/, /^\/api\/fittings\/resolve-row$/, /^\/api\/supplier\/me/,
+  /^\/api\/match-suggestions$/, /^\/api\/fittings\/resolve-row$/, /^\/api\/supplier\/me/, /^\/api\/mfg\/supplier-quotes\//,
   /^\/api\/labor\/(shop|weld-time|estimate)$/, /^\/api\/intel\//,
 ];
 
