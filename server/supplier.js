@@ -1316,11 +1316,13 @@ function registerSupplierRoutes(app, deps) {
       const sid = String(req.supplier.id);
       let [struct, fit] = await Promise.all([structStock(sid), fitStock(sid)]);
       // One fill at a time per supplier: a double-loaded tab must not add the set twice.
-      if (!seeding.has(sid)) {
+      // DISABLED 2026-11-01: rows written to TestRecords don't come back through this report
+      // for a new supplier, so every load re-added the full set. Off until that's understood.
+      if (process.env.STOCK_SEED === 'on' && !seeding.has(sid)) {
         seeding.set(sid, fillMissingStructural(sid, struct || []).finally(() => seeding.delete(sid)));
         const added = await seeding.get(sid);
         if (added) { bust('struct-stock:' + sid); struct = await structStock(sid); }
-      } else {
+      } else if (seeding.has(sid)) {
         await seeding.get(sid);
         bust('struct-stock:' + sid); struct = await structStock(sid);
       }
