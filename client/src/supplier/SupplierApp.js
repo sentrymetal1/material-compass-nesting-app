@@ -6,12 +6,13 @@ import StockView from './StockView';
 import QuoteDetailView from './QuoteDetailView';
 import ManufacturersView, { DecisionButtons } from './ManufacturersView';
 import { useConfirm } from './ConfirmDialog';
+import SetupGuide from './SetupGuide';
 
 // Off-Zoho supplier platform — v1. Embedded in the Zoho portal, which passes the
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-2026-10-31a-shared-quote-card';
+const BUILD_TAG = 'supplier-2026-11-01a-setup-guide';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -264,6 +265,8 @@ export default function SupplierApp() {
                 </div>
               </div>
             </div>
+
+            <SetupGuide email={email} counts={d.counts} manufacturers={mfgs.data} onGo={setView} />
 
             <section className="sup-section">
               <h2>RFQ matches <span className="muted">— quote requests for fittings you stock</span></h2>
