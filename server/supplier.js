@@ -1274,11 +1274,56 @@ function registerSupplierRoutes(app, deps) {
   const fitStock = sid => cachedLookup('fit-stock-all:' + sid, 60 * 1000, () =>
     fetchAllZohoPages('/report/' + FIT_STOCK_REPORT + '?criteria=(Supplier_ID==' + encodeURIComponent(sid) + ')'));
 
+  // A supplier's structural stock list is one row per catalog spec (Material_Form_Detail),
+  // each with a Stocked checkbox they tick. Zoho used to create that set when a supplier
+  // registered; registrations since no longer do, which left new suppliers with nothing to
+  // tick. So the Stock tab fills in any spec a supplier has no row for — unticked — from
+  // the catalog. Also picks up specs added to the catalog later. Form = TestRecords.
+  const seeding = new Map();
+  async function fillMissingStructural(sid, rows) {
+    const { specById } = await fetchCatalogs({ fetchAllZohoPages, cachedLookup });
+    const have = new Set(rows.map(r => lkid(r.Type_Detail_LU)).filter(Boolean));
+    const missing = Object.keys(specById).filter(id => !have.has(id) && specById[id].formTypeId && specById[id].matTypeId);
+    if (!missing.length) return 0;
+    const token = await getAccessToken();
+    const now = zohoNow();
+    let added = 0;
+    for (let i = 0; i < missing.length; i += 200) {
+      const data = missing.slice(i, i + 200).map(id => ({
+        Supplier_ID: sid,
+        Form_Type: specById[id].formTypeId,
+        Material_Type: specById[id].matTypeId,
+        Type_Detail_LU: id,
+        Type_Detail: specById[id].typeDetail,
+        Timestamp: now,
+      }));
+      try {
+        const r = await axios.post(creatorApiBase() + '/form/TestRecords', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+        const results = (r.data && r.data.result) || [];
+        added += results.filter(x => x && x.code === 3000).length;
+        const bad = results.filter(x => x && x.code !== 3000);
+        if (bad.length) console.error('[stock seed] ' + bad.length + ' rows refused for supplier ' + sid + ': ' + JSON.stringify(bad[0]).slice(0, 300));
+      } catch (e) {
+        console.error('[stock seed] batch failed for supplier ' + sid + ':', (e.response && JSON.stringify(e.response.data)) || e.message);
+      }
+    }
+    return added;
+  }
+
   // GET /api/supplier/me/stock — structural + fittings stock lists for the Stock tab.
   app.get('/api/supplier/me/stock', withSupplier, async (req, res) => {
     try {
       const sid = String(req.supplier.id);
-      const [struct, fit] = await Promise.all([structStock(sid), fitStock(sid)]);
+      let [struct, fit] = await Promise.all([structStock(sid), fitStock(sid)]);
+      // One fill at a time per supplier: a double-loaded tab must not add the set twice.
+      if (!seeding.has(sid)) {
+        seeding.set(sid, fillMissingStructural(sid, struct || []).finally(() => seeding.delete(sid)));
+        const added = await seeding.get(sid);
+        if (added) { bust('struct-stock:' + sid); struct = await structStock(sid); }
+      } else {
+        await seeding.get(sid);
+        bust('struct-stock:' + sid); struct = await structStock(sid);
+      }
       res.json({
         ok: true,
         structural: (struct || []).map(r => ({

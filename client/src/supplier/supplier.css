@@ -478,3 +478,6 @@
 .setup-why { font-size: 13px; color: var(--muted); margin-top: 2px; }
 .setup-mini { font-size: 13px; color: var(--muted); margin: 0 0 16px; display: flex; gap: 10px; align-items: center; }
 @media (max-width: 640px) { .setup-step { flex-wrap: wrap; } .setup-step .btn-quote, .setup-step .btn-link { margin-left: 38px; } }
+
+/* Stock tab counts: readable on both the white and the blue (active) tab */
+.stock-tab-count { color: inherit; opacity: .85; font-weight: 400; }

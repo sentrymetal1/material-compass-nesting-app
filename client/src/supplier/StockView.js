@@ -104,8 +104,8 @@ export default function StockView({ email }) {
   return (
     <div className="stock">
       <div className="stock-tabs">
-        <button className={tab === 'structural' ? 'active' : ''} onClick={() => setTab('structural')}>Structural <span className="muted">({stockedCount} stocked)</span></button>
-        <button className={tab === 'fittings' ? 'active' : ''} onClick={() => setTab('fittings')}>Fittings <span className="muted">({fitStocked.length} stocked)</span></button>
+        <button className={tab === 'structural' ? 'active' : ''} onClick={() => setTab('structural')}>Structural <span className="stock-tab-count">({stockedCount} stocked)</span></button>
+        <button className={tab === 'fittings' ? 'active' : ''} onClick={() => setTab('fittings')}>Fittings <span className="stock-tab-count">({fitStocked.length} stocked)</span></button>
       </div>
 
       {tab === 'structural' ? (
