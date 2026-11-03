@@ -282,6 +282,14 @@
     .preflight .pfx { color:#3d6ea8; font-weight:700; }
     .preflight .pflist { margin:0; padding-left:18px; font-size:12px; color:#445; }
     .preflight .pflist li { margin:2px 0; }
+    .preflight .pfqty { font-size:11px; color:#3d6ea8; background:#eef4fb; border:1px solid #d7e5f5;
+      border-radius:10px; padding:0 6px; white-space:nowrap; }
+    .preflight .pfqty input { width:38px; border:0; background:transparent; font-size:12px; font-weight:700; color:#2b3340; text-align:right; }
+    .preflight .pfqty input:focus { outline:1px solid var(--blue); border-radius:3px; background:#fff; }
+    .preflight .pfunits { display:block; margin-top:9px; background:#fff7ed; border:1px solid #fcd9a8; border-radius:6px;
+      padding:7px 10px; font-size:12px; color:#5c3a0c; cursor:pointer; }
+    .preflight .pfunits span { display:block; color:#8a6a3f; font-size:11.5px; margin:2px 0 0 22px; }
+    .preflight .go:disabled { opacity:.45; cursor:not-allowed; }
     .preflight .pfalt { margin-top:7px; text-align:center; font-size:11.5px; }
     .preflight .pfalt a { color:#8893a0; }
     .planlist { margin:6px 0 2px; padding-left:18px; }
@@ -599,7 +607,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.76 (2026-10-30)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.77 (2026-11-03)";
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -1726,30 +1734,40 @@
       if (el) { el.focus(); if (el.select) el.select(); }
     }
 
+    // A component's unit count, saved to its record. Shared by the "× N ea" box on the card and the
+    // count boxes in the pre-flight. Returns false (and puts the old value back) if the save fails.
+    async function saveCompQty(ci, q) {
+      const c = scope[ci];
+      if (!c || !c.cid) return false;
+      if (q === Number(c.qty)) return true;
+      const was = c.qty;
+      c.qty = q;
+      const rec = compById(c.cid); if (rec) rec.qty = q;
+      renderSummary();
+      try {
+        await scopeApi("update", { kind: "component", id: c.cid, quantity: q });
+        // The card's box shows the count already; redraw it only when the edit came from elsewhere.
+        const box = document.querySelector('#scopeList input[data-k="cqty"][data-ci="' + ci + '"]');
+        if (box && Number(box.value) !== q) box.value = q;
+        setScopeStatus("“" + escHtml(c.name) + "” is now <b>" + q + " unit" + (q === 1 ? "" : "s") +
+          "</b> on the project. The take-off reads one unit and multiplies the BOM up by " + q + ".");
+        return true;
+      } catch (err) {
+        c.qty = was; if (rec) rec.qty = was; renderScope();
+        setScopeStatus("Could not save the unit count: " + escHtml(err.message || err));
+        return false;
+      }
+    }
+
     // ---- scope edits (all of these hit the project) -------------------------
     document.getElementById("scope").addEventListener("change", async (e) => {
       const t = e.target;
       // The unit count writes straight to the component record — same as a rename. Everything
       // downstream (the prompt, the multiply-up, the BOM totals) reads it from the project.
       if (t.getAttribute && t.getAttribute("data-k") === "cqty") {
-        const ci = Number(t.getAttribute("data-ci"));
-        const c = scope[ci];
-        if (!c || !c.cid) return;
         const q = Math.max(1, Math.round(Number(t.value) || 1));
         t.value = q;
-        if (q === Number(c.qty)) return;
-        const was = c.qty;
-        c.qty = q;
-        const rec = compById(c.cid); if (rec) rec.qty = q;
-        renderSummary();
-        try {
-          await scopeApi("update", { kind: "component", id: c.cid, quantity: q });
-          setScopeStatus("“" + escHtml(c.name) + "” is now <b>" + q + " unit" + (q === 1 ? "" : "s") +
-            "</b> on the project. The take-off reads one unit and multiplies the BOM up by " + q + ".");
-        } catch (err) {
-          c.qty = was; if (rec) rec.qty = was; renderScope();
-          setScopeStatus("Could not save the unit count: " + escHtml(err.message || err));
-        }
+        await saveCompQty(Number(t.getAttribute("data-ci")), q);
         return;
       }
       if (t.tagName !== "SELECT") return;
@@ -3434,6 +3452,7 @@
     // is handed. So "Run" doesn't run: it lays out exactly what is about to be sent — the drawings
     // read from the PDF against the components and drawings selected — and waits for a second,
     // deliberate click. Everything stays on this screen so anything wrong can be fixed in place.
+    let unitsAsk = false;   // the pre-flight is waiting on "yes, one of each" before Start unlocks
     function preflightHtml() {
       const tree = buildScopeTree();
       const pages = docs.reduce((s, d) => s + (d.pages || 0), 0);
@@ -3460,11 +3479,22 @@
         (empties.length > 5 ? " and others" : "") + " have no drawings selected");
       if (!tree.length) warn.push("<b>No components are selected</b> — the AI will have nothing to tag its rows to.");
 
-      const list = tree.slice(0, 12).map((c) => "<li><b>" + escHtml(c.component) + "</b>" +
-        (c.units > 1 ? ' <span class="pfx">× ' + c.units + " units</span>" : "") + " — " +
-        (c.drawings.length ? escHtml(c.drawings.slice(0, 6).join(", ")) + (c.drawings.length > 6 ? " …" : "") : "no drawings")
-        + "</li>").join("");
+      // Each component with its unit count, editable right here. Every BOM row is multiplied by it,
+      // and a count left at 1 by mistake prices the whole job as a single unit, so it is asked
+      // about, not assumed.
+      const named = scope.map((c, ci) => ({ c, ci })).filter((x) => String(x.c.name || "").trim());
+      const list = named.slice(0, 12).map(({ c, ci }) => {
+        const n = Math.max(1, Number(c.qty) || 1);
+        const dw = (c.drawings || []).map((d) => String((d && d.number) || "").trim()).filter(Boolean);
+        return "<li><b>" + escHtml(String(c.name).trim()) + "</b> " +
+          (c.cid
+            ? '<span class="pfqty">×<input type="number" min="1" step="1" data-k="pfqty" data-ci="' + ci + '" value="' + n + '" />ea</span>'
+            : "") + " — " +
+          (dw.length ? escHtml(dw.slice(0, 6).join(", ")) + (dw.length > 6 ? " …" : "") : "no drawings") + "</li>";
+      }).join("");
       const multi = tree.filter((c) => c.units > 1);
+      const atOne = tree.filter((c) => c.units === 1);
+      unitsAsk = atOne.length > 0 && !blockers.length;
 
       return '<div class="preflight">' +
         '<div class="pfhd">' + (blockers.length ? "Not ready yet" : "Ready to run") +
@@ -3494,9 +3524,18 @@
               (d.kind === "bom" ? "parts list" : d.kind === "spec" ? "spec" : "document") +
               (d.component ? " → " + escHtml(d.component) : ", not on a component") + ")").join(" · ") + "</div>" : "";
         })() +
+        (unitsAsk
+          ? '<label class="pfunits"><input type="checkbox" id="pfUnitsOk" /> ' +
+              (atOne.length === tree.length
+                ? "This job builds <b>one</b> of each component"
+                : "This job builds <b>one</b> of " + escHtml(atOne.map((c) => c.component).join(", "))) +
+              ". <span>If the job builds more, change the count above. The BOM, labor and per-unit " +
+              "prices are all figured from it.</span></label>"
+          : "") +
         (blockers.length
           ? '<div class="pfalt"><a href="#" id="goCancel">close and resolve them above</a></div>'
-          : '<button type="button" class="go" id="goConfirm" style="margin-top:10px">▶ Start the full take-off</button>' +
+          : '<button type="button" class="go" id="goConfirm" style="margin-top:10px"' + (unitsAsk ? " disabled" : "") +
+              ">▶ Start the full take-off</button>" +
             '<div class="pfalt"><a href="#" id="goCancel">cancel — keep editing</a></div>') +
       "</div>";
     }
@@ -3512,8 +3551,19 @@
       const el = document.getElementById("preflight");
       if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
     });
+    document.getElementById("preflight").addEventListener("change", async (e) => {
+      const t = e.target;
+      if (t.id === "pfUnitsOk") { const b = document.getElementById("goConfirm"); if (b) b.disabled = !t.checked; return; }
+      if (t.getAttribute("data-k") !== "pfqty") return;
+      const q = Math.max(1, Math.round(Number(t.value) || 1));
+      t.value = q;
+      await saveCompQty(Number(t.getAttribute("data-ci")), q);
+      document.getElementById("preflight").innerHTML = preflightHtml();   // re-ask with the new counts
+    });
     document.getElementById("preflight").addEventListener("click", (e) => {
-      if (e.target.closest("#goConfirm")) { document.getElementById("preflight").innerHTML = ""; runTakeoff(); return; }
+      const goBtn = e.target.closest("#goConfirm");
+      if (goBtn && goBtn.disabled) return;
+      if (goBtn) { document.getElementById("preflight").innerHTML = ""; runTakeoff(); return; }
       if (e.target.closest("#goCancel")) { e.preventDefault(); document.getElementById("preflight").innerHTML = ""; }
     });
 
