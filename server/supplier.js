@@ -1068,11 +1068,44 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
+  // Starter location + rep from the registration record. Once per supplier per server start,
+  // and only when the supplier has neither, so it never stacks up copies. Returns the rows in
+  // the report's shape so the Profile tab shows them on this same load.
+  const starterMade = new Set();
+  async function makeStarterLocationAndRep(sid, rec) {
+    const out = {};
+    const a = (rec.Address && typeof rec.Address === 'object') ? rec.Address : {};
+    if (!(a.address_line_1 || a.district_city || a.postal_code)) return out;
+    const address = {};
+    ['address_line_1', 'address_line_2', 'district_city', 'state_province', 'postal_code'].forEach(k => { if (a[k]) address[k] = a[k]; });
+    address.country = a.country || 'United States';
+    const locName = a.district_city || rec.Company_Name || 'Main location';
+    const loc = await addRecord('Supplier_Locations', {
+      Supplier_Entry_Form: sid, Name_of_Location: locName, Phone_Number: rec.Phone_Number || '', Address: address, Timestamp: zohoNow(),
+    });
+    if (!loc.ok) { console.error('[starter] location refused for supplier ' + sid + ': ' + loc.message); return out; }
+    out.location = { ID: loc.id, Name_of_Location: locName, Phone_Number: rec.Phone_Number || '', Address: address };
+    const nm = rec.Main_Contact_Name || {};
+    if (!rec.Email || !(nm.first_name || nm.last_name)) return out;
+    const repData = {
+      Supplier_Entry_Form: sid, Supplier_Company_Name: rec.Company_Name || '',
+      Name: { first_name: nm.first_name || '', last_name: nm.last_name || '' },
+      Email: rec.Email, Phone_Number: rec.Phone_Number || '', Supplier_Locations: loc.id, Timestamp: zohoNow(),
+    };
+    const shownName = { ...repData.Name, zc_display_value: [nm.first_name, nm.last_name].filter(Boolean).join(' ') };
+    let rep = await addRecord('Supplier_Representatives', repData);
+    // A phone in a format the rep form won't take shouldn't cost them the rep.
+    if (!rep.ok && repData.Phone_Number) { repData.Phone_Number = ''; rep = await addRecord('Supplier_Representatives', repData); }
+    if (!rep.ok) { console.error('[starter] rep refused for supplier ' + sid + ': ' + rep.message); return out; }
+    out.rep = { ...repData, ID: rep.id, Name: shownName, Supplier_Locations: { ID: loc.id, zc_display_value: locName } };
+    return out;
+  }
+
   // GET /api/supplier/me/profile — company profile + locations + reps for the Profile tab.
   app.get('/api/supplier/me/profile', withSupplier, async (req, res) => {
     try {
       const sid = String(req.supplier.id);
-      const [supRows, locs, reps] = await Promise.all([
+      let [supRows, locs, reps] = await Promise.all([
         cachedLookup('supplier-directory', 5 * 60 * 1000, async () => fetchAllZohoPages('/report/' + SUPPLIER_REPORT)),
         fetchAllZohoPages('/report/All_Supplier_Locations?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
         fetchAllZohoPages('/report/All_Supplier_Representatives?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
@@ -1080,6 +1113,14 @@ function registerSupplierRoutes(app, deps) {
       const rec = supRows.find(r => String(r.ID) === sid) || {};
       const nm = rec.Main_Contact_Name || {};
       const addr = a => (a && typeof a === 'object') ? a : {};
+      // A new registration has no locations or reps yet, though registration already gave us
+      // the company address and main contact. Turn those into the first location and rep.
+      if (!(locs || []).length && !(reps || []).length && !starterMade.has(sid)) {
+        starterMade.add(sid);
+        const made = await makeStarterLocationAndRep(sid, rec);
+        if (made.location) locs = [made.location];
+        if (made.rep) reps = [made.rep];
+      }
       res.json({
         ok: true,
         profile: {
