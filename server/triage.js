@@ -123,6 +123,10 @@ const EXTRACT_SYSTEM =
   "- material_scope = ONLY the steel-relevant trades/scope; omit unrelated divisions (concrete, electrical, painting, etc.).\n" +
   "- notification_type = 'addendum' if this is an addendum to an existing bid, 'new' for a first invitation, else 'other'.\n" +
   "- confidence = 0..1 that this is a genuine steel-relevant opportunity.\n" +
+  "- unit_counts = HOW MANY of an assembly or unit the request asks for, ONLY where the text states a number " +
+  "('10 frame supports', '(4) skids', 'QTY 2 stairs', 'two identical platforms'). One entry per item: item = the " +
+  "assembly as written, count = the whole number, evidence = the exact words it came from. Never infer a count from " +
+  "context and never count line items or drawings. Empty array when no count is stated.\n" +
   "- IMPORTANT: if a field cannot be determined from the email content, return an EMPTY STRING (\"\") " +
   "for it — never 'UNKNOWN', 'N/A', 'TBD', or a guess. Bid-platform notification emails are often sparse " +
   "(details behind a paid link); leaving fields blank is correct and expected.\n" +
@@ -143,6 +147,19 @@ const EXTRACT_TOOL = {
       location:          { type: 'string',  description: 'project location (city, state) or address' },
       material_scope:    { type: 'string',  description: 'steel-relevant scope only' },
       summary:           { type: 'string',  description: '2-3 sentence triage summary' },
+      unit_counts:       {
+        type: 'array',
+        description: 'how many of each assembly/unit the request states it wants; empty if none stated',
+        items: {
+          type: 'object',
+          properties: {
+            item:     { type: 'string', description: 'the assembly as the request names it' },
+            count:    { type: 'integer', minimum: 1 },
+            evidence: { type: 'string', description: 'the exact words the count was read from' },
+          },
+          required: ['item', 'count', 'evidence'],
+        },
+      },
     },
     required: ['is_rfq', 'confidence', 'summary'],
   },
@@ -967,7 +984,10 @@ function registerTriageRoutes(app, deps) {
     if (!key) return res.status(400).json({ ok: false, error: 'project_id or opportunity_id required' });
     const notes = readNotes();
     const note = String(b.note || '').trim().slice(0, 4000);
-    if (note) notes[key] = { note: note, at: new Date().toISOString() }; else delete notes[key];
+    const keep = notes[key] && Array.isArray(notes[key].unit_counts) ? { unit_counts: notes[key].unit_counts } : null;
+    if (note) notes[key] = { ...(keep || {}), note: note, at: new Date().toISOString() };
+    else if (keep) notes[key] = { ...keep, note: '' };
+    else delete notes[key];
     try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
     res.json({ ok: true, note: note });
   });
@@ -994,11 +1014,29 @@ function registerTriageRoutes(app, deps) {
         notes['p:' + projectId] = { note: quoteNote, at: new Date().toISOString(), from_opportunity: String(opp.ID) };
         try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { /* the note still goes back this time */ }
       }
+      // Unit counts the RFQ stated ("10 frame supports"), read at triage. The take-off shows them
+      // beside its unit-count check. Looked up once per project and kept with the note, so later
+      // opens cost no Zoho call; a project with no RFQ stores an empty list.
+      const pk = 'p:' + projectId;
+      let unitCounts = notes[pk] && Array.isArray(notes[pk].unit_counts) ? notes[pk].unit_counts : null;
+      if (!unitCounts) {
+        if (!opp) { try { opp = await opportunityForProject(projectId); } catch (e) { if (isQuotaError(e)) throw e; } }
+        unitCounts = [];
+        try {
+          const x = opp && opp.Extracted_JSON ? JSON.parse(opp.Extracted_JSON) : null;
+          unitCounts = (x && Array.isArray(x.unit_counts) ? x.unit_counts : [])
+            .filter(u => u && u.item && Number(u.count) >= 1)
+            .map(u => ({ item: String(u.item).slice(0, 120), count: Math.round(Number(u.count)), evidence: String(u.evidence || '').slice(0, 200) }));
+        } catch (e) { /* older RFQs predate unit_counts */ }
+        notes[pk] = { ...(notes[pk] || { note: '' }), unit_counts: unitCounts };
+        try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { /* still returned this time */ }
+      }
       res.json({
         ok: true, project_id: projectId, files,
         durable: filestore.isDurable(),
         opportunity: opp ? { id: opp.ID, project: opp.Project || '', summary: opp.Summary || '' } : null,
         quote_note: quoteNote,
+        unit_counts: unitCounts,
       });
     } catch (err) {
       if (isQuotaError(err)) return res.json({ ok: true, project_id: projectId, files: [], quota: true });

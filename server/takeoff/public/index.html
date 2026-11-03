@@ -789,6 +789,9 @@
       rfqOff({}); sourceFilesDone = false; loadSourceFiles();
     });
 
+    // Counts the RFQ itself stated ("10 frame supports"), read at triage. Shown beside the unit
+    // counts in the pre-flight; the estimator decides which component each belongs to.
+    let rfqUnits = [];
     async function loadSourceFiles() {
       if (sourceFilesDone || !params.project_id) return;
       sourceFilesDone = true;
@@ -799,6 +802,7 @@
         const r = await fetch(RAILWAY_URL + "/api/triage/source-files/" + encodeURIComponent(params.project_id));
         d = await r.json();
       } catch (e) { return; }
+      rfqUnits = (d && Array.isArray(d.unit_counts)) ? d.unit_counts : [];
       // The "what to quote" note written on the RFQ at Create Project (or here, earlier).
       const qb = document.getElementById("quoteBrief");
       if (qb && !qb.value.trim() && d && d.quote_note) {
@@ -3524,6 +3528,13 @@
               (d.kind === "bom" ? "parts list" : d.kind === "spec" ? "spec" : "document") +
               (d.component ? " → " + escHtml(d.component) : ", not on a component") + ")").join(" · ") + "</div>" : "";
         })() +
+        (rfqUnits.length
+          ? '<div class="pfwarn">📋 The RFQ asks for: ' + rfqUnits.map((u) =>
+              "<b>" + u.count + " × " + escHtml(u.item) + "</b>" +
+              (u.evidence ? ' <span title="' + escHtml(u.evidence).replace(/"/g, "&quot;") + '" style="opacity:.75">(“' +
+                escHtml(String(u.evidence).slice(0, 60)) + (String(u.evidence).length > 60 ? "…" : "") + "”)</span>" : "")
+            ).join(" · ") + ". Check the counts above match.</div>"
+          : "") +
         (unitsAsk
           ? '<label class="pfunits"><input type="checkbox" id="pfUnitsOk" /> ' +
               (atOne.length === tree.length
