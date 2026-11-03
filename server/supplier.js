@@ -7,7 +7,7 @@
 // change; no route or screen does.
 
 const { matchFittingsForSupplier } = require('./fittingMatch');
-const { matchStructuralForSupplier } = require('./structuralMatch');
+const { matchStructuralForSupplier, SUPPLY_REPORT: STRUCT_STOCK_REPORT } = require('./structuralMatch');
 const { fetchCatalogs, computeAlteredLine, LineCalcError } = require('./lineCalc');
 
 const SUPPLIER_REPORT = 'Supplier_Entry_Report';
@@ -1266,7 +1266,7 @@ function registerSupplierRoutes(app, deps) {
   });
 
   // ---- Stock (Structural + Fittings) ----
-  const STRUCT_REPORT = 'Stocked_Material_List';
+  const STRUCT_REPORT = STRUCT_STOCK_REPORT;
   const FIT_STOCK_REPORT = process.env.FITTING_STOCK_REPORT || 'Supplier_Fitting_Stock_All';
   const isStocked = v => Array.isArray(v) ? v.includes('Stocked') : (v === 'Stocked' || v === true || v === 'true');
   const structStock = sid => cachedLookup('struct-stock:' + sid, 60 * 1000, () =>
@@ -1280,7 +1280,16 @@ function registerSupplierRoutes(app, deps) {
   // tick. So the Stock tab fills in any spec a supplier has no row for — unticked — from
   // the catalog. Also picks up specs added to the catalog later. Form = TestRecords.
   const seeding = new Map();
+  // One fill per supplier per server start. On 2026-11-01 the stock report couldn't see the
+  // rows it had just written, so every Stock open re-added the full set; this caps any repeat
+  // of that to a single set until the next deploy.
+  const filledOnce = new Set();
   async function fillMissingStructural(sid, rows) {
+    // Without the spec column every row looks "missing" and we'd add a whole duplicate set.
+    if (rows.length && !rows.some(r => lkid(r.Type_Detail_LU))) {
+      console.error('[stock seed] ' + STRUCT_REPORT + ' has no Type_Detail_LU column; skipping fill for supplier ' + sid);
+      return 0;
+    }
     const { specById } = await fetchCatalogs({ fetchAllZohoPages, cachedLookup });
     const have = new Set(rows.map(r => lkid(r.Type_Detail_LU)).filter(Boolean));
     const missing = Object.keys(specById).filter(id => !have.has(id) && specById[id].formTypeId && specById[id].matTypeId);
@@ -1316,9 +1325,9 @@ function registerSupplierRoutes(app, deps) {
       const sid = String(req.supplier.id);
       let [struct, fit] = await Promise.all([structStock(sid), fitStock(sid)]);
       // One fill at a time per supplier: a double-loaded tab must not add the set twice.
-      // DISABLED 2026-11-01: rows written to TestRecords don't come back through this report
-      // for a new supplier, so every load re-added the full set. Off until that's understood.
-      if (process.env.STOCK_SEED === 'on' && !seeding.has(sid)) {
+      // STOCK_SEED=off is the kill switch.
+      if (process.env.STOCK_SEED !== 'off' && !seeding.has(sid) && !filledOnce.has(sid)) {
+        filledOnce.add(sid);
         seeding.set(sid, fillMissingStructural(sid, struct || []).finally(() => seeding.delete(sid)));
         const added = await seeding.get(sid);
         if (added) { bust('struct-stock:' + sid); struct = await structStock(sid); }

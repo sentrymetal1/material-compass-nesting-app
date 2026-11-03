@@ -10,6 +10,7 @@ const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pr
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
 const filestore = require('./filestore');        // the project's own copy of the drawings
 const nestStore = require('./nestStore');        // a saved nesting run's stock pieces + cuts, one file per run
+const { SUPPLY_REPORT: STRUCT_STOCK_REPORT } = require('./structuralMatch');   // unfiltered structural stock report
 
 const app = express();
 app.use(cors());
@@ -3508,7 +3509,7 @@ app.get('/api/match-suggestions', async (req, res) => {
       // → 0% stock match in both modes. fetchAllZohoPages pages at 200 correctly.
       const stockReport = mode === 'fittings'
         ? `Supplier_Fitting_Stock_All?criteria=(Supplier_ID==${sup.ID})`
-        : `Stocked_Material_List?criteria=(Supplier_ID==${sup.ID})`;
+        : `${STRUCT_STOCK_REPORT}?criteria=(Supplier_ID==${sup.ID})`;
       const [supplierStock, capResp] = await Promise.all([
         fetchAllZohoPages(`/report/${stockReport}`).catch(() => []),
         axios.get(

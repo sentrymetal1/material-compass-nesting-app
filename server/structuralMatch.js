@@ -11,7 +11,10 @@
 // suppliers. The dashboard gates these by open-project status, like fittings.
 
 const DEMAND_REPORT = 'All_RFQs_Sent_Report';
-const SUPPLY_REPORT = 'Stocked_Material_List';
+// Stocked_Material_List is filtered to the logged-in user's email, so through the API it only
+// shows rows stamped with the account owner's email — every newer supplier came back empty.
+// TestRecords_Report is the same form unfiltered. Shared with supplier.js and the Match Hub.
+const SUPPLY_REPORT = process.env.STRUCT_STOCK_REPORT || 'TestRecords_Report';
 
 const TIERS = [
   { level: 'exact',  score: 100, keys: ['form', 'mat', 'spec'] },
@@ -80,4 +83,4 @@ async function matchStructuralForSupplier(supplierId, deps) {
   return { ok: true, supplier_id: supplierId, stock_count: stock.length, demand_count: (demand || []).length, match_count: matches.length, matches };
 }
 
-module.exports = { matchStructuralForSupplier };
+module.exports = { matchStructuralForSupplier, SUPPLY_REPORT };
