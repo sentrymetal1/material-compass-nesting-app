@@ -1423,6 +1423,76 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
+  // Set one field on many records. Tries Zoho's multi-record update (criteria in the body,
+  // one call per 50 ids); if Zoho doesn't confirm every record, re-applies that chunk one
+  // record at a time (setting the same value twice is harmless). Stops on quota (4000).
+  async function patchMany(report, ids, data) {
+    let done = 0, failed = [], bulkCalls = 0, singleCalls = 0;
+    for (let i = 0; i < ids.length; i += 50) {
+      const chunk = ids.slice(i, i + 50);
+      let confirmed = false;
+      try {
+        const token = await getAccessToken();
+        bulkCalls++;
+        const r = await axios.patch(creatorApiBase() + '/report/' + report,
+          { criteria: '(' + chunk.map(id => 'ID == ' + id).join(' || ') + ')', data, process_until_limit: true },
+          { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+        const b = r.data || {};
+        if (b.code === 4000) return { done, failed: failed.concat(ids.slice(i)), quota: true, bulkCalls, singleCalls };
+        const res = Array.isArray(b.result) ? b.result : null;
+        if (res && res.length > chunk.length) console.error('[patchMany] ' + report + ': Zoho updated ' + res.length + ' records for ' + chunk.length + ' ids — check criteria handling');
+        confirmed = res ? res.length === chunk.length && res.every(x => x.code === 3000) : false;
+      } catch (e) {
+        if (e.response && e.response.data && e.response.data.code === 4000) return { done, failed: failed.concat(ids.slice(i)), quota: true, bulkCalls, singleCalls };
+      }
+      if (confirmed) { done += chunk.length; continue; }
+      for (let j = 0; j < chunk.length; j++) {
+        singleCalls++;
+        const one = await patchRecord(report, chunk[j], data);
+        if (one.ok) done++;
+        else if (one.code === 4000) return { done, failed: failed.concat(chunk.slice(j), ids.slice(i + 50)), quota: true, bulkCalls, singleCalls };
+        else failed.push(chunk[j]);
+      }
+    }
+    return { done, failed, quota: false, bulkCalls, singleCalls };
+  }
+
+  // POST /api/supplier/me/stock/structural/save — the Stock tab's Save button.
+  // body { stocked: [ids], unstocked: [ids] }. ~2 Zoho calls for any number of ticks,
+  // instead of one call per box. Only ids on this supplier's own list are written.
+  app.post('/api/supplier/me/stock/structural/save', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const rows = await structStock(sid);
+      const mine = new Map(rows.map(r => [String(r.ID), r]));
+      const pick = k => [...new Set(((req.body && req.body[k]) || []).map(String))].filter(id => /^\d+$/.test(id) && mine.has(id));
+      const on = pick('stocked'), off = pick('unstocked').filter(id => !on.includes(id));
+      const out = { saved: [], failed: [], quota: false };
+      for (const [ids, val] of [[on, ['Stocked']], [off, []]]) {
+        if (!ids.length || out.quota) { if (out.quota) out.failed.push(...ids); continue; }
+        const r = await patchMany(STRUCT_REPORT, ids, { Material_Stocked: val });
+        console.log('[stock save] supplier ' + sid + ' ' + (val.length ? 'stock' : 'unstock') + ' ' + ids.length +
+          ' → ' + r.done + ' ok, ' + r.failed.length + ' failed (' + r.bulkCalls + ' bulk + ' + r.singleCalls + ' single calls)');
+        const bad = new Set(r.failed.map(String));
+        for (const id of ids) {
+          if (bad.has(id)) continue;
+          mine.get(id).Material_Stocked = val;   // keep the cached list current — no re-read
+          out.saved.push(id);
+        }
+        out.failed.push(...r.failed.map(String));
+        if (r.quota) out.quota = true;
+      }
+      res.status(out.failed.length ? (out.quota ? 429 : 502) : 200).json({
+        ok: !out.failed.length, ...out,
+        error: out.quota ? 'Daily data limit reached — ' + out.saved.length + ' saved, ' + out.failed.length + ' not. Try again after it resets overnight.'
+             : out.failed.length ? out.failed.length + ' item(s) could not be saved.' : undefined,
+      });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // GET /api/supplier/me/fitting-catalog — the 5 cascade tables (global, cached 1h).
   // End/Connection carry a type_id (filter by Fitting Type); Spec carries make_id.
   const lkId = (r, key) => (r[key] && r[key].ID) || r[key + '.ID'] || '';

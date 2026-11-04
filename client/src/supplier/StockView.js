@@ -12,7 +12,6 @@ export default function StockView({ email }) {
   const [q, setQ] = useState('');
   const [stockedOnly, setStockedOnly] = useState(false);
   const [openGroups, setOpenGroups] = useState({});
-  const [saving, setSaving] = useState({});
   // fittings
   const [catalog, setCatalog] = useState(null);
   const [addPick, setAddPick] = useState({ type_id: '', make_id: '', end_id: '' });
@@ -38,14 +37,37 @@ export default function StockView({ email }) {
     })();
   }, [tab, catalog, email]);
 
-  const structural = (state.data && state.data.structural) || [];
+  // Structural ticks are held here until Save: id -> wanted stocked value. One Save writes
+  // them all in ~2 Zoho calls; saving per click spent a call per box and ran the account's
+  // daily allowance out (2026-11-03). Kept in sessionStorage so switching to another tab
+  // and back doesn't lose them.
+  const pendKey = 'mc_stock_pending_' + email;
+  const [pending, setPending] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(pendKey) || '{}') || {}; } catch (e) { return {}; }
+  });
+  const [savingAll, setSavingAll] = useState(false);
+  useEffect(() => {
+    try { sessionStorage.setItem(pendKey, JSON.stringify(pending)); } catch (e) {}
+  }, [pending, pendKey]);
+  const pendingCount = Object.keys(pending).length;
+  useEffect(() => {
+    if (!pendingCount) return;
+    const warn = e => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [pendingCount]);
+
+  const rawStructural = useMemo(() => (state.data && state.data.structural) || [], [state.data]);
+  // What the screen shows: the saved value, overridden by any unsaved tick.
+  const structural = useMemo(() => rawStructural.map(it =>
+    Object.prototype.hasOwnProperty.call(pending, it.id) ? { ...it, stocked: pending[it.id], dirty: true } : it), [rawStructural, pending]);
   const fittings = (state.data && state.data.fittings) || [];
 
   const groups = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const g = {};
     for (const it of structural) {
-      if (stockedOnly && !it.stocked) continue;
+      if (stockedOnly && !it.stocked && !it.dirty) continue;
       if (needle && !(it.form_type + ' ' + it.material_type + ' ' + it.spec).toLowerCase().includes(needle)) continue;
       (g[it.form_type || '—'] = g[it.form_type || '—'] || []).push(it);
     }
@@ -54,18 +76,39 @@ export default function StockView({ email }) {
   const groupNames = Object.keys(groups).sort();
   const stockedCount = structural.filter(s => s.stocked).length;
 
-  const toggle = async (it) => {
-    const next = !it.stocked;
-    setSaving(s => ({ ...s, [it.id]: true }));
-    setState(s => ({ ...s, data: { ...s.data, structural: s.data.structural.map(x => x.id === it.id ? { ...x, stocked: next } : x) } }));
+  // Set wanted values for a list of rows. A tick that lands back on the saved value is no
+  // longer a change, so it drops out of pending.
+  const setWanted = (items, value) => {
+    const saved = new Map(rawStructural.map(x => [x.id, x.stocked]));
+    setPending(p => {
+      const n = { ...p };
+      for (const it of items) {
+        const v = typeof value === 'function' ? value(it) : value;
+        if (saved.get(it.id) === v) delete n[it.id]; else n[it.id] = v;
+      }
+      return n;
+    });
+  };
+  const toggle = it => setWanted([it], x => !x.stocked);
+
+  const saveAll = async () => {
+    const ids = Object.keys(pending);
+    if (!ids.length) return;
+    setSavingAll(true);
     try {
-      const r = await fetch('/api/supplier/me/stock/structural/' + it.id + '?email=' + encodeURIComponent(email), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stocked: next }) });
-      const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j.message || j.error || ('HTTP ' + r.status));
+      const body = { stocked: ids.filter(id => pending[id]), unstocked: ids.filter(id => !pending[id]) };
+      const r = await fetch('/api/supplier/me/stock/structural/save?email=' + encodeURIComponent(email), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => ({}));
+      const savedIds = new Set((j.saved || []).map(String));
+      // Fold what saved into the loaded list; anything that failed stays ticked and pending.
+      setState(s => ({ ...s, data: { ...s.data, structural: s.data.structural.map(x => savedIds.has(x.id) ? { ...x, stocked: pending[x.id] } : x) } }));
+      setPending(p => { const n = { ...p }; savedIds.forEach(id => delete n[id]); return n; });
+      if (!r.ok || !j.ok) mcAlert(j.error || j.message || ('Could not save (HTTP ' + r.status + '). Your ticks are still here — try Save again.'));
     } catch (e) {
-      setState(s => ({ ...s, data: { ...s.data, structural: s.data.structural.map(x => x.id === it.id ? { ...x, stocked: it.stocked } : x) } }));
-      mcAlert('Could not save: ' + (e.message || e));
-    } finally { setSaving(s => { const n = { ...s }; delete n[it.id]; return n; }); }
+      mcAlert('Could not save: ' + (e.message || e) + '\nYour ticks are still here — try Save again.');
+    } finally { setSavingAll(false); }
   };
 
   // existing fitting groups, keyed type|make|end, collecting the stocked conn/spec ids
@@ -114,6 +157,13 @@ export default function StockView({ email }) {
             <input className="stock-search" value={q} onChange={e => setQ(e.target.value)} placeholder="Search form, material, spec…" />
             <label className="stock-only"><input type="checkbox" checked={stockedOnly} onChange={e => setStockedOnly(e.target.checked)} /> Stocked only</label>
           </div>
+          {pendingCount > 0 && (
+            <div className="stock-savebar">
+              <span><strong>{pendingCount}</strong> unsaved change{pendingCount === 1 ? '' : 's'}</span>
+              <button className="btn-quote" disabled={savingAll} onClick={saveAll}>{savingAll ? 'Saving…' : 'Save'}</button>
+              <button className="btn-link" disabled={savingAll} onClick={() => setPending({})}>Discard</button>
+            </div>
+          )}
           {groupNames.length === 0 ? <div className="sup-empty">No matching items.</div> : groupNames.map(name => {
             const rows = groups[name]; const open = openGroups[name]; const onCount = rows.filter(r => r.stocked).length;
             return (
@@ -123,9 +173,13 @@ export default function StockView({ email }) {
                 </button>
                 {open && (
                   <div className="stock-rows">
+                    <div className="stock-group-acts">
+                      <button className="btn-link" disabled={savingAll} onClick={() => setWanted(rows, true)}>Select all</button>
+                      <button className="btn-link" disabled={savingAll} onClick={() => setWanted(rows, false)}>Clear all</button>
+                    </div>
                     {rows.map(it => (
-                      <label key={it.id} className={'stock-row' + (it.stocked ? ' stock-on' : '')}>
-                        <input type="checkbox" checked={it.stocked} disabled={!!saving[it.id]} onChange={() => toggle(it)} />
+                      <label key={it.id} className={'stock-row' + (it.stocked ? ' stock-on' : '') + (it.dirty ? ' stock-dirty' : '')}>
+                        <input type="checkbox" checked={it.stocked} disabled={savingAll} onChange={() => toggle(it)} />
                         <span className="stock-mat">{it.material_type}</span><span className="stock-spec">{it.spec}</span>
                       </label>
                     ))}
