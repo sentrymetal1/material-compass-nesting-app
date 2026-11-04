@@ -1435,7 +1435,9 @@ function registerSupplierRoutes(app, deps) {
         const token = await getAccessToken();
         bulkCalls++;
         const r = await axios.patch(creatorApiBase() + '/report/' + report,
-          { criteria: '(' + chunk.map(id => 'ID == ' + id).join(' || ') + ')', data, process_until_limit: true },
+          // Only criteria + data: an extra key (process_until_limit) is refused with 2945.
+          // Verified 2026-11-04: updates exactly the listed ids, result[] has one entry each.
+          { criteria: '(' + chunk.map(id => 'ID == ' + id).join(' || ') + ')', data },
           { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
         const b = r.data || {};
         if (b.code === 4000) return { done, failed: failed.concat(ids.slice(i)), quota: true, bulkCalls, singleCalls };
