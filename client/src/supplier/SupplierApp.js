@@ -12,7 +12,7 @@ import SetupGuide from './SetupGuide';
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-2026-11-04b-phone-fmt';
+const BUILD_TAG = 'supplier-2026-11-04c-rep-pairing';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
