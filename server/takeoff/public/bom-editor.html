@@ -616,7 +616,7 @@
 </div>
 
 <script>
-const BUILD_TAG = "v2.28.1 (2026-11-03)";
+const BUILD_TAG = "v2.28.2 (2026-11-03)";
 console.log('[BOM Editor] build:', BUILD_TAG);
 // The footer used to carry its own hardcoded version and drifted two releases
 // behind BUILD_TAG, which reads as "the deploy didn't work". Drive it from the
@@ -2363,7 +2363,10 @@ document.getElementById('back').addEventListener('click', async () => {
   // form-embed reads description / client_id / manufacture from the URL, so
   // omitting them blanks Client + Project Description on arrival.
   const parts = [`project_id=${projectId}`];
-  if (projectDescription) parts.push('description=' + encodeURIComponent(projectDescription));
+  // Not encodeURIComponent: the hand-off to Zoho encodes it again, and the page
+  // header then showed "Tube%20Supports". Plain text, minus the characters that
+  // would split the hash into extra params.
+  if (projectDescription) parts.push('description=' + projectDescription.replace(/&/g, 'and').replace(/[#?=%]/g, ' '));
   if (clientId)           parts.push('client_id=' + clientId);
   if (manufactureId)      parts.push('manufacture=' + manufactureId);
   const hash = `#Page:Project_Dashboard?${parts.join('&')}`;
