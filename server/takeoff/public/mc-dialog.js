@@ -73,6 +73,16 @@
     var ok = el.querySelector(".mcd-ok"), cancel = el.querySelector(".mcd-cancel");
     el.querySelector(".mcd-title").textContent = job.opts.title || "";
     el.querySelector(".mcd-body").textContent = String(job.message == null ? "" : job.message);   // text, never HTML
+    // mcChoose: extra answer buttons between Cancel and the main one. Removed again on close.
+    var extras = [];
+    (job.choices || []).slice(1).forEach(function (c) {
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "mcd-btn mcd-cancel mcd-extra"; b.textContent = c.label;
+      b.onclick = function () { done(c.value); };
+      ok.parentNode.insertBefore(b, ok);
+      extras.push(b);
+    });
+    if (job.choices) job.opts = Object.assign({}, job.opts, { okText: job.choices[0].label });
     ok.textContent = job.opts.okText || "OK";
     ok.className = "mcd-btn mcd-ok" + (job.opts.danger ? " danger" : "");
     cancel.textContent = job.opts.cancelText || "Cancel";
@@ -81,6 +91,8 @@
 
     function done(result) {
       el.classList.remove("show");
+      extras.forEach(function (b) { b.remove(); });
+      if (job.choices) result = result === true ? job.choices[0].value : result === false ? null : result;
       ok.onclick = cancel.onclick = null;
       document.removeEventListener("keydown", onKey, true);
       el.onclick = null;
@@ -104,9 +116,9 @@
     setTimeout(function () { (job.confirm && job.opts.danger ? cancel : ok).focus(); }, 0);
   }
 
-  function enqueue(confirm, message, opts) {
+  function enqueue(confirm, message, opts, choices) {
     return new Promise(function (resolve) {
-      queue.push({ confirm: confirm, message: message, opts: opts || {}, resolve: resolve });
+      queue.push({ confirm: confirm, message: message, opts: opts || {}, choices: choices, resolve: resolve });
       if (document.body) next();
       else document.addEventListener("DOMContentLoaded", next, { once: true });
     });
@@ -114,4 +126,8 @@
 
   window.mcAlert = function (message, opts) { return enqueue(false, message, opts); };
   window.mcConfirm = function (message, opts) { return enqueue(true, message, opts); };
+  // More than yes/no. choices = [{label, value}, ...]; the FIRST is the main (blue) button.
+  // Resolves to the chosen value, or null for Cancel / Escape / a backdrop click.
+  //   const v = await mcChoose("…", [{label:"Multiply", value:"mul"}, {label:"Keep totals", value:"keep"}]);
+  window.mcChoose = function (message, choices, opts) { return enqueue(true, message, opts, choices); };
 })();

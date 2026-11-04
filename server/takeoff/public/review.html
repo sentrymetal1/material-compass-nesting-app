@@ -197,7 +197,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.73 · 2026-11-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.74 · 2026-11-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -2514,7 +2514,7 @@
         // run is fixed without re-running: every row of the component is re-multiplied.
         (/^—/.test(cN) ? (cU>1?' <span class="grp-units">× '+cU+' units</span>':'') :
           ' <span class="grp-units" title="How many of this component the job builds. The drawings detail one; every row below is multiplied by this.">× '+
-          '<input type="number" min="1" step="1" value="'+cCount+'" data-comp="'+escAttr(cN)+'" onchange="editCompUnits(this.getAttribute(\'data-comp\'),this.value)" '+
+          '<input type="number" min="1" step="1" value="'+cCount+'" data-comp="'+escAttr(cN)+'" onchange="askCompUnits(this.getAttribute(\'data-comp\'),this.value)" '+
           'style="width:44px;padding:1px 4px;border:1px solid #b9c7da;border-radius:4px;font-size:12px;font-weight:700;color:#1f3a5f;text-align:right;"> '+
           (cCount===1?'unit':'units')+'</span>')+
         ' <span class="grp-meta">'+cIds.length+' line'+(cIds.length===1?'':'s')+' · '+
@@ -2557,6 +2557,7 @@
       tabStripHtml(R, fab, gaps, conflicts)+
 
       '<div class="tabpane" data-tab="overview">'+
+      componentsCardHtml(R)+
       // scope — view or edit (add/edit/remove the write-ups)
       ((streams.length||SCOPE_EDIT)?'<div class="card"><h2>▸ Scope of Work'+
         ' <span class="pillbtn" onclick="toggleScopeEdit()">'+(SCOPE_EDIT?'done':'edit')+'</span></h2><div class="body">'+
@@ -3359,18 +3360,101 @@
   // Change how many of a component the job builds, after the run. Same rule as the server: above 1
   // the count sets every row's units; at 1 each row goes back to its drawing's own quantity. Also
   // saved on the component record, which the project uses to split totals into per-unit prices.
-  async function editCompUnits(name, val){
+  // A unit count typed anywhere on the review (Overview card, Material group header) comes here
+  // first: the same new number means two different things, so the estimator says which.
+  async function askCompUnits(name, val){
     const n=Math.max(1,Math.round(Number(val)||1));
     const key=String(name||"").trim().toLowerCase();
     const R=loadResult();
-    let hit=0;
+    const mine=arr(R.rows).concat(arr(R.fittings)).filter(function(r){ return String(r.component||"").trim().toLowerCase()===key; });
+    const was=compCountOf(mine);
+    if(!mine.length || n===was){ render(); return; }
+    const x=n/was, xs=(Math.round(x*100)/100);
+    const v=await mcChoose(
+      name+": "+was+" → "+n+" unit"+(n===1?"":"s")+".\n\n"+
+      "MULTIPLY — the take-off is for "+(was===1?"ONE unit":was+" units")+". Material, fittings and labor hours are "+
+      (x>1?"multiplied":"scaled")+" ×"+xs+" to cover "+n+".\n\n"+
+      "KEEP TOTALS — the take-off already covers the whole job. Quantities and hours stay as they are; "+
+      "only the count changes, so the per-unit price is split across "+n+".",
+      [{label:"Multiply ×"+xs, value:"multiply"}, {label:"Keep totals", value:"keep"}],
+      {title:"Unit count"});
+    if(!v){ render(); return; }   // cancelled — put the box back to the old count
+    await editCompUnits(name, n, v);
+  }
+  // The components this take-off covers, each with how many the job builds — on the Overview so
+  // the count is the first thing checked, not something found on the Material tab.
+  function componentsCardHtml(R){
+    const by={}, order=[];
     arr(R.rows).concat(arr(R.fittings)).forEach(function(r){
-      if(String(r.component||"").trim().toLowerCase()!==key) return;
-      const u=n>1?n:sheetQtyOf(r), per=Number(r.quantity)||0;
-      r.units=u; r.qty_per_unit=per; r.quantity_total=per*u; hit++;
+      if(!r || r.deleted) return;
+      const nm=String(r.component||"").trim(); if(!nm) return;
+      const k=nm.toLowerCase();
+      if(!by[k]){ by[k]={name:nm, rows:[], lines:0, fit:0}; order.push(k); }
+      by[k].rows.push(r);
+      if(r.fitting_type!=null) by[k].fit++; else by[k].lines++;
     });
-    if(!hit) return;
+    if(!order.length) return "";
+    const L=R.labor;
+    const body=order.map(function(k){
+      const c=by[k], n=compCountOf(c.rows);
+      const lc=L&&arr(L.components).find(function(x){ return String(x.name||"").trim().toLowerCase()===k; });
+      const w=sumWtRows(c.rows.filter(function(r){ return r.fitting_type==null; }));
+      return '<tr><td><b>'+esc(c.name)+'</b></td>'+
+        '<td><input type="number" min="1" step="1" value="'+n+'" data-comp="'+escAttr(c.name)+'" '+
+          'onchange="askCompUnits(this.getAttribute(\'data-comp\'),this.value)" '+
+          'style="width:56px;padding:3px 6px;border:1px solid #b9c7da;border-radius:5px;font-size:13px;font-weight:700;text-align:right"></td>'+
+        '<td class="src">'+c.lines+' material line'+(c.lines===1?'':'s')+(c.fit?' · '+c.fit+' fitting'+(c.fit===1?'':'s'):'')+'</td>'+
+        '<td class="num">'+(w?fmtLb(w)+' lb':'<span class="src">—</span>')+'</td>'+
+        '<td class="num">'+(lc?labFmt(labComp(lc),1)+' h':'<span class="src">—</span>')+'</td></tr>';
+    }).join("");
+    return '<div class="card"><h2>▸ Components <span class="lt">— how many of each the job builds</span></h2><div class="body">'+
+      '<table><thead><tr><th>Component</th><th>Units</th><th>Take-off</th><th class="num">Total weight</th><th class="num">Labor</th></tr></thead>'+
+      '<tbody>'+body+'</tbody></table>'+
+      '<div class="src" style="margin-top:6px">Change a count and you’ll be asked whether to multiply the material, fittings and hours, '+
+      'or keep the totals and only change the count. The project’s component QTY is updated to match.</div></div></div>';
+  }
+  function sumWtRows(list){ let lb=0; list.forEach(function(r){ const w=rowWeight(r); if(w) lb+=w.total; }); return lb; }
+  // mode "multiply": the per-unit amounts stay and everything is built N times (material, fittings,
+  // labor hours). mode "keep": the job totals stay and are split across N units — for when the
+  // take-off already covered the whole job and only the count was wrong.
+  async function editCompUnits(name, val, mode){
+    mode=mode||"multiply";
+    const n=Math.max(1,Math.round(Number(val)||1));
+    const key=String(name||"").trim().toLowerCase();
+    const R=loadResult();
+    const mine=arr(R.rows).concat(arr(R.fittings)).filter(function(r){ return String(r.component||"").trim().toLowerCase()===key; });
+    if(!mine.length) return;
+    const was=compCountOf(mine);
+    mine.forEach(function(r){
+      const u=n>1?n:sheetQtyOf(r);
+      if(mode==="keep"){
+        const total=orderQtyOf(r);
+        r.quantity=Math.round((total/u)*10000)/10000;
+      }
+      const per=Number(r.quantity)||0;
+      r.units=u; r.qty_per_unit=per; r.quantity_total=per*u;
+    });
+    const hit=mine.length;
+    // Labor. Untouched hours are recalculated from the standards (they already work per unit, with
+    // the shop's learning curve). Hours the estimator edited are scaled by hand so their edits survive.
+    // Keeping totals leaves the hours alone; either way the labor is marked current, not stale.
+    let laborNote="";
+    const LC=R.labor&&arr(R.labor.components).find(function(c){ return String(c.name||"").trim().toLowerCase()===key; });
+    let recalc=false;
+    if(R.labor){
+      if(mode==="multiply" && !R.labor.edited) recalc=true;
+      else {
+        if(LC && mode==="multiply" && was>0){
+          const f=n/was;
+          arr(LC.items).forEach(function(i){ i.hours=Math.round((Number(i.hours)||0)*f*100)/100; });
+          laborNote=" Labor hours scaled ×"+(Math.round(f*100)/100)+".";
+        }
+        if(LC) LC.units=n;
+        R.labor.sig=labSig(R);
+      }
+    }
     recomputeCsv(R); saveResult(R); render();
+    if(recalc){ laborNote=" Labor recalculated for "+n+" unit"+(n===1?"":"s")+"."; await laborCalc(false); }
     const comp=arr(PROJECT_SCOPE&&PROJECT_SCOPE.components).find(function(c){ return String(c.name||"").trim().toLowerCase()===key; });
     if(!comp){
       setBusy('Updated the take-off to '+n+' unit'+(n===1?'':'s')+'. “'+esc(name)+'” isn’t on the project yet, so set its QTY there when it’s added.','err');
@@ -3381,8 +3465,8 @@
         body:JSON.stringify({kind:"component",id:comp.id,quantity:n})});
       const d=await r.json();
       if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
-      setBusy('✓ “'+esc(name)+'” builds <b>'+n+'</b> — '+hit+' line'+(hit===1?'':'s')+' re-multiplied and the project’s QTY updated.'+
-        (R.labor?' Recalculate labor on the Labor tab.':''),"ok");
+      setBusy('✓ “'+esc(name)+'” builds <b>'+n+'</b> — '+hit+' line'+(hit===1?'':'s')+
+        (mode==="keep"?' split across '+n+' units, totals unchanged':' re-multiplied')+', and the project’s QTY updated.'+esc(laborNote),"ok");
       clearBusy(5000);
     }catch(e){
       setBusy('⚠ The take-off is updated, but the project’s QTY wasn’t: '+esc(e.message||e)+'. Set it on the Components tab.',"err");
