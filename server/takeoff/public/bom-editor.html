@@ -616,7 +616,7 @@
 </div>
 
 <script>
-const BUILD_TAG = "v2.28.0 (2026-10-12)";
+const BUILD_TAG = "v2.28.1 (2026-11-03)";
 console.log('[BOM Editor] build:', BUILD_TAG);
 // The footer used to carry its own hardcoded version and drifted two releases
 // behind BUILD_TAG, which reads as "the deploy didn't work". Drive it from the
@@ -2367,24 +2367,37 @@ document.getElementById('back').addEventListener('click', async () => {
   if (clientId)           parts.push('client_id=' + clientId);
   if (manufactureId)      parts.push('manufacture=' + manufactureId);
   const hash = `#Page:Project_Dashboard?${parts.join('&')}`;
-  const url  = `${PORTAL_BASE}/${hash}`;
-  // Primary: navigate the top Creator frame directly. The widget is served
-  // same-origin when embedded, so this works (and works standalone too).
-  // navigateParentURL is tried only if direct nav is blocked, because when it
-  // exists but silently no-ops the old code never reached the fallback.
+  // Go back to the page the editor was opened from (the portal, or the Creator
+  // app for an admin). Browsers often pass only the site without its path, and
+  // the Creator app needs the path, so anything less falls back to the portal.
+  let url = `${PORTAL_BASE}/${hash}`;
   try {
-    if (window.top && window.top.location) {
-      window.top.location.href = url;
-      return;
-    }
-  } catch (e) {
-    console.warn('[BOM Editor] top-frame nav blocked, falling back to SDK', e);
-  }
+    const ref = document.referrer ? new URL(document.referrer) : null;
+    if (ref && /(^|\.)(materialcompassportal\.com|zoho\.com|zohocreator\.com|zohocreatorportal\.com)$/i.test(ref.hostname) &&
+        ref.pathname.length > 1) url = ref.origin + ref.pathname + hash;
+  } catch (e) { /* keep the portal */ }
+
+  // The widget is served from GitHub Pages inside Zoho's frame, so it is NOT
+  // same-origin and Zoho may sandbox it: a direct top-frame navigation can be
+  // blocked without throwing, and the button then does nothing. So: ask Zoho to
+  // navigate (the SDK's documented call takes a config object; the old code
+  // passed a bare hash, which it ignored), then try the top frame, and if the
+  // page is still here a moment later, offer a plain link to click.
   if (window.ZOHO?.CREATOR?.UTIL?.navigateParentURL) {
-    ZOHO.CREATOR.UTIL.navigateParentURL(hash);
-  } else {
-    window.location.href = url;
+    try { ZOHO.CREATOR.UTIL.navigateParentURL({ action: 'open', url: url, window: 'same' }); }
+    catch (e) { console.warn('[BOM Editor] navigateParentURL failed', e); }
   }
+  try { window.top.location.href = url; }
+  catch (e) { console.warn('[BOM Editor] top-frame nav blocked', e); }
+  setTimeout(() => {
+    if (document.getElementById('back-link')) return;
+    const a = document.createElement('a');
+    a.id = 'back-link'; a.href = url; a.target = '_top'; a.rel = 'noopener';
+    a.textContent = 'Open the project →';
+    a.style.cssText = 'margin-left:8px;font-weight:600;color:#2563eb;';
+    document.getElementById('back').after(a);
+    showToast('Zoho blocked the automatic return. Click “Open the project →” next to the Back button.', 'error');
+  }, 1500);
 });
 
 document.getElementById('add-row').addEventListener('click', addNewBomRow);
