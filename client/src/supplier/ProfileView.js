@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { mcAlert } from '../mcDialog';
+import fmtPhone from './fmtPhone';
 
 // Supplier Profile tab — editable company details, plus full CRUD for locations
 // and representatives (reps nested under their location).
@@ -7,14 +8,6 @@ function fmtAddr(a) {
   if (!a || typeof a !== 'object') return '';
   const parts = [a.address_line_1 || a.address_line1, a.district_city, a.state_province, a.postal_code, a.country];
   return parts.filter(Boolean).join(', ');
-}
-// US numbers show as 716-545-6465 (Zoho keeps +17165456465; the server converts back on save).
-// Anything that isn't a 10-digit US number is shown as stored.
-function fmtPhone(v) {
-  const s = String(v || '').trim();
-  const d = s.replace(/\D/g, '');
-  const ten = d.length === 11 && d[0] === '1' ? d.slice(1) : d.length === 10 ? d : '';
-  return ten ? ten.slice(0, 3) + '-' + ten.slice(3, 6) + '-' + ten.slice(6) : s;
 }
 function contactStr(r) {
   return [r.email, fmtPhone(r.phone) + (r.ext ? ' x' + r.ext : '')].filter(s => s && s.trim()).join('  ·  ');

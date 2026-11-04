@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import fmtPhone from './fmtPhone';
 
 // Manufacturers matched to this supplier (junction Quote_Sent_To_Manufacture_Supplier_Status).
 // SupplierApp owns the data (it also drives the nav badge and the dashboard alert); this view
@@ -154,7 +155,7 @@ function MfgCard({ m, busy, onDecide, team, editing, onEdit, api, onChanged, con
         <div className="mfg-name">{m.company_name}</div>
         <div className="mfg-contact">
           {m.city && <span>{m.city}</span>}
-          {m.phone && <a href={'tel:' + m.phone}>{m.phone}</a>}
+          {m.phone && <a href={'tel:' + m.phone}>{fmtPhone(m.phone)}</a>}
           {m.email && <a href={'mailto:' + m.email}>{m.email}</a>}
           {m.website && <a href={/^https?:/i.test(m.website) ? m.website : 'http://' + m.website} target="_blank" rel="noopener noreferrer">{m.website}</a>}
         </div>
