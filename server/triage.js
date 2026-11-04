@@ -956,9 +956,18 @@ function registerTriageRoutes(app, deps) {
   // project, so reopening a project always reported no source RFQ. Resolving it
   // here from Linked_Project needs no Zoho field, no workflow and no Deluge.
   // MUST be registered above /triage/opportunity/:id or that route swallows it.
+  // Called by the project page's "View Open Source RFQ" button with ?t=<mcToken(manufacture)>.
+  // A project id alone must never show another shop's RFQ, so the shop token is required here
+  // even while the rest of the app's token check only warns, and the RFQ must be that shop's.
   app.get('/triage/opportunity/by-project/:projectId', async (req, res) => {
+    const tk = req.tenant;
+    if (!tk || tk.kind !== 'm') {
+      return res.status(401).send('<p style="font-family:system-ui;padding:40px">Please reopen this from the project page in Material Compass.</p>');
+    }
     try {
-      const row = await opportunityForProject(req.params.projectId);
+      let row = await opportunityForProject(req.params.projectId);
+      const owner = row && row.Manufacture ? String(row.Manufacture.ID || row.Manufacture) : '';
+      if (row && owner !== String(tk.id)) row = null;   // no owner on record = not shown either
       res.status(row ? 200 : 404).send(renderOpportunityDetail(row, row ? keptFiles(row.ID) : []));
     } catch (err) {
       if (isQuotaError(err)) return res.status(503).send(QUOTA_PAGE);

@@ -34,7 +34,6 @@ const ADMIN_ROUTES = [
   /^\/api\/takeoff\/(mine|learning-check|catalog-check|catalog-check-text|fittings-catalog-check|fitting-index-check|fitting-additions)$/,
   /^\/api\/triage\/debug$/,
   /^\/connect\/outlook\/status$/,
-  /^\/triage\/opportunity\/by-project\//,
   /^\/api\/supplier\/(?!me\/)[^/]+\/fitting-rfqs$/,
   /^\/api\/admin\//,
 ];
