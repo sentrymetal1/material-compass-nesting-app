@@ -11,6 +11,12 @@ const { matchStructuralForSupplier, SUPPLY_REPORT: STRUCT_STOCK_REPORT } = requi
 const { fetchCatalogs, computeAlteredLine, LineCalcError } = require('./lineCalc');
 
 const SUPPLIER_REPORT = 'Supplier_Entry_Report';
+// Unfiltered reports for a supplier's locations and reps. All_Supplier_Locations /
+// All_Supplier_Representatives carry a portal-user filter that hides other users' rows from
+// these API reads, so every supplier looked like it had none (2026-11-04) — even though
+// registration had created a "Headquarters/Main Location" and the main contact as a rep.
+const LOC_REPORT = 'API_Supplier_Locations';
+const REP_REPORT = 'API_Supplier_Representatives';
 
 // Lead-time choices — must mirror the Zoho Lead_Time_For_Ship_Complete (header) dropdown
 // EXACTLY (a choice field blanks any non-matching value). "1 Day", then "N Days".
@@ -603,8 +609,8 @@ function registerSupplierRoutes(app, deps) {
     // Locations/reps change rarely — cache 10 min to spare the API budget.
     return cachedLookup('supplier-lookups:' + supplierId, 10 * 60 * 1000, async () => {
       const [loc, rep] = await Promise.all([
-        fetchAllZohoPages('/report/All_Supplier_Locations?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
-        fetchAllZohoPages('/report/All_Supplier_Representatives?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
+        fetchAllZohoPages('/report/' + LOC_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
+        fetchAllZohoPages('/report/' + REP_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(supplierId) + ')'),
       ]);
       return {
         locations: loc.map(l => ({ id: String(l.ID), name: l.Name_of_Location || '' })),
@@ -1068,9 +1074,10 @@ function registerSupplierRoutes(app, deps) {
     }
   });
 
-  // Starter location + rep from the registration record. Once per supplier per server start,
-  // and only when the supplier has neither, so it never stacks up copies. Returns the rows in
-  // the report's shape so the Profile tab shows them on this same load.
+  // Starter location + rep from the registration record — a FALLBACK only. Registration
+  // normally creates both; this ran on 2026-11-02/03 only because the filtered report hid
+  // them, and made duplicates. Once per supplier per server start, and only when the
+  // supplier has neither. Returns the rows in the report's shape for this same load.
   const starterMade = new Set();
   async function makeStarterLocationAndRep(sid, rec) {
     const out = {};
@@ -1107,8 +1114,8 @@ function registerSupplierRoutes(app, deps) {
       const sid = String(req.supplier.id);
       let [supRows, locs, reps] = await Promise.all([
         cachedLookup('supplier-directory', 5 * 60 * 1000, async () => fetchAllZohoPages('/report/' + SUPPLIER_REPORT)),
-        fetchAllZohoPages('/report/All_Supplier_Locations?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
-        fetchAllZohoPages('/report/All_Supplier_Representatives?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
+        fetchAllZohoPages('/report/' + LOC_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
+        fetchAllZohoPages('/report/' + REP_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
       ]);
       const rec = supRows.find(r => String(r.ID) === sid) || {};
       const nm = rec.Main_Contact_Name || {};
@@ -1263,18 +1270,18 @@ function registerSupplierRoutes(app, deps) {
     res.json({ ok: true, id: r.id });
   });
   app.patch('/api/supplier/me/locations/:id', withSupplier, async (req, res) => {
-    if (!(await supplierOwns('All_Supplier_Locations', req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+    if (!(await supplierOwns(LOC_REPORT, req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
     const b = req.body || {}; const data = {};
     if (b.name != null) data.Name_of_Location = b.name;
     if (b.phone != null) data.Phone_Number = b.phone;
     if (b.street != null || b.city != null || b.state != null || b.zip != null || b.country != null) data.Address = addrObj(b);
-    const r = await patchRecord('All_Supplier_Locations', req.params.id, data);
+    const r = await patchRecord(LOC_REPORT, req.params.id, data);
     if (!r.ok) return res.status(502).json({ ok: false, error: 'update failed', message: r.message });
     res.json({ ok: true });
   });
   app.delete('/api/supplier/me/locations/:id', withSupplier, async (req, res) => {
-    if (!(await supplierOwns('All_Supplier_Locations', req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
-    const r = await deleteRecord('All_Supplier_Locations', req.params.id);
+    if (!(await supplierOwns(LOC_REPORT, req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+    const r = await deleteRecord(LOC_REPORT, req.params.id);
     if (!r.ok) return res.status(502).json({ ok: false, error: 'delete failed', message: r.message });
     res.json({ ok: true });
   });
@@ -1293,7 +1300,7 @@ function registerSupplierRoutes(app, deps) {
     res.json({ ok: true, id: r.id });
   });
   app.patch('/api/supplier/me/reps/:id', withSupplier, async (req, res) => {
-    if (!(await supplierOwns('All_Supplier_Representatives', req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+    if (!(await supplierOwns(REP_REPORT, req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
     const b = req.body || {}; const data = {};
     if (b.first != null || b.last != null) data.Name = { first_name: b.first || '', last_name: b.last || '' };
     if (b.position != null) data.Position = b.position;
@@ -1301,13 +1308,13 @@ function registerSupplierRoutes(app, deps) {
     if (b.phone != null) data.Phone_Number = b.phone;
     if (b.ext != null) data.Extension = b.ext;
     if (b.location_id != null) data.Supplier_Locations = b.location_id;
-    const r = await patchRecord('All_Supplier_Representatives', req.params.id, data);
+    const r = await patchRecord(REP_REPORT, req.params.id, data);
     if (!r.ok) return res.status(502).json({ ok: false, error: 'update failed', message: r.message });
     res.json({ ok: true });
   });
   app.delete('/api/supplier/me/reps/:id', withSupplier, async (req, res) => {
-    if (!(await supplierOwns('All_Supplier_Representatives', req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
-    const r = await deleteRecord('All_Supplier_Representatives', req.params.id);
+    if (!(await supplierOwns(REP_REPORT, req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
+    const r = await deleteRecord(REP_REPORT, req.params.id);
     if (!r.ok) return res.status(502).json({ ok: false, error: 'delete failed', message: r.message });
     res.json({ ok: true });
   });
@@ -1877,8 +1884,8 @@ function registerSupplierRoutes(app, deps) {
     if (!location_id) return { error: 'Pick one of your locations.' };
     if (!rep_ids.length) return { error: 'Pick at least one of your reps.' };
     const [locs, reps] = await Promise.all([
-      fetchAllZohoPages('/report/All_Supplier_Locations?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
-      fetchAllZohoPages('/report/All_Supplier_Representatives?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
+      fetchAllZohoPages('/report/' + LOC_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
+      fetchAllZohoPages('/report/' + REP_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
     ]);
     if (!(locs || []).some(l => String(l.ID) === location_id)) return { error: 'That location is not one of yours.' };
     const repLoc = new Map((reps || []).map(r => [String(r.ID), r.Supplier_Locations && r.Supplier_Locations.ID ? String(r.Supplier_Locations.ID) : '']));
