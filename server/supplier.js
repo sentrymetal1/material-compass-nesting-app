@@ -1819,8 +1819,39 @@ function registerSupplierRoutes(app, deps) {
     return { byMfg, byMatch };
   }
 
+  // A manufacturer's registration pairs it with every existing supplier, but a supplier's
+  // registration stopped pairing it with existing manufacturers (Supplier1, 2026-11-01, got
+  // none — same break that left new suppliers with no stock list). So on the Manufacturers tab,
+  // add a pending pair for each live manufacturer this supplier has no row with. "Live" =
+  // Supplier_Matches_Populated true, i.e. it went through matching setup (skips test shops).
+  // Once per supplier per server start; one batched insert.
+  const MATCH_FORM = process.env.SUPPLIER_MATCH_FORM || 'Quote_Sent_To_Manufacture_Supplier_Status';
+  const pairsFilled = new Set();
+  async function fillMissingPairs(sid, rows) {
+    if (pairsFilled.has(sid) || process.env.MATCH_SEED === 'off') return false;
+    pairsFilled.add(sid);
+    const mfgs = await cachedLookup('mfg-directory-live', 10 * 60 * 1000, async () =>
+      (await fetchAllZohoPages('/report/Customer_Entry_Report'))
+        .filter(m => String(m.Supplier_Matches_Populated) === 'true' && String(m.Registered || '').toUpperCase() === 'YES')
+        .map(m => ({ ID: String(m.ID), Company_Name: m.Company_Name })));
+    const have = new Set((rows || []).map(r => r.MANUFACTURE && String(r.MANUFACTURE.ID)).filter(Boolean));
+    const add = mfgs.filter(m => !have.has(m.ID)).map(m => ({
+      SUPPLIER: sid, MANUFACTURE: m.ID,
+      Supplier_New_Entry: 'true', Manufacture_New_Entry: 'true', Hide_Supplier_From_Matching: 'false',
+    }));
+    if (!add.length) return false;
+    const r = await bulkAdd(MATCH_FORM, add);
+    console.log('[match fill] supplier ' + sid + ': added ' + r.added + ' of ' + add.length + ' pending manufacturer pairs' +
+      (r.errors.length ? ' — ' + r.errors[0] : ''));
+    return r.added > 0;
+  }
+
   async function loadManufacturers(sid) {
-    const [rows, repRows] = await Promise.all([matchRows(sid), repMatchRows(sid).catch(() => [])]);
+    let [rows, repRows] = await Promise.all([matchRows(sid), repMatchRows(sid).catch(() => [])]);
+    if (await fillMissingPairs(sid, rows).catch(e => { console.error('[match fill] ' + sid + ': ' + e.message); return false; })) {
+      bust('mfg-matches:' + sid);
+      rows = await matchRows(sid);
+    }
     const idx = contactsIndex(repRows);
     // Rows whose manufacturer was deleted keep an empty MANUFACTURE lookup — nothing to show or answer.
     const shaped = (rows || []).map(shapeMatch).filter(m => m.manufacture_id);
