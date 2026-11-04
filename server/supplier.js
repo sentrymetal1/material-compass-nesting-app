@@ -1164,7 +1164,13 @@ function registerSupplierRoutes(app, deps) {
       if (b.email != null) data.Email = b.email;
       if (b.phone != null) data.Phone_Number = b.phone;
       if (b.fax != null) data.Fax = b.fax;
-      if (b.website != null) data.Company_Website = b.website;
+      // A URL field refuses a plain "" (3001 "Invalid column value"), which sank the whole
+      // save. It takes {value, url}; {value:'', url:''} clears it (verified 2026-11-04).
+      if (b.website != null) {
+        let site = String(b.website).trim();
+        if (/^https?:\/\/$/i.test(site)) site = '';
+        data.Company_Website = site ? { value: site, url: /^https?:\/\//i.test(site) ? site : 'https://' + site } : { value: '', url: '' };
+      }
       if (b.contact_first != null || b.contact_last != null) {
         data.Main_Contact_Name = { first_name: b.contact_first || '', last_name: b.contact_last || '' };
       }
