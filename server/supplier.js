@@ -18,6 +18,16 @@ const SUPPLIER_REPORT = 'Supplier_Entry_Report';
 const LOC_REPORT = 'API_Supplier_Locations';
 const REP_REPORT = 'API_Supplier_Representatives';
 
+// The Profile shows phones as 716-545-6465; Zoho stores them as +17165456465 (what
+// registration writes). Turn a typed US number back into that; leave anything else as typed.
+function phoneForZoho(v) {
+  const s = String(v == null ? '' : v).trim();
+  const d = s.replace(/\D/g, '');
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d[0] === '1') return '+' + d;
+  return s;
+}
+
 // Lead-time choices — must mirror the Zoho Lead_Time_For_Ship_Complete (header) dropdown
 // EXACTLY (a choice field blanks any non-matching value). "1 Day", then "N Days".
 // (Per-line SVD_Lead_Time is a separate NUMERIC "in weeks" field, handled below.)
@@ -1169,8 +1179,8 @@ function registerSupplierRoutes(app, deps) {
       const data = {};
       if (b.company_name != null) data.Company_Name = b.company_name;
       if (b.email != null) data.Email = b.email;
-      if (b.phone != null) data.Phone_Number = b.phone;
-      if (b.fax != null) data.Fax = b.fax;
+      if (b.phone != null) data.Phone_Number = phoneForZoho(b.phone);
+      if (b.fax != null) data.Fax = phoneForZoho(b.fax);
       // A URL field refuses a plain "" (3001 "Invalid column value"), which sank the whole
       // save. It takes {value, url}; {value:'', url:''} clears it (verified 2026-11-04).
       if (b.website != null) {
@@ -1264,7 +1274,7 @@ function registerSupplierRoutes(app, deps) {
   app.post('/api/supplier/me/locations', withSupplier, async (req, res) => {
     const b = req.body || {};
     const r = await addRecord('Supplier_Locations', {
-      Supplier_Entry_Form: req.supplier.id, Name_of_Location: b.name || '', Phone_Number: b.phone || '', Address: addrObj(b), Timestamp: zohoNow(),
+      Supplier_Entry_Form: req.supplier.id, Name_of_Location: b.name || '', Phone_Number: phoneForZoho(b.phone), Address: addrObj(b), Timestamp: zohoNow(),
     });
     if (!r.ok) return res.status(502).json({ ok: false, error: 'add failed', message: r.message });
     res.json({ ok: true, id: r.id });
@@ -1273,7 +1283,7 @@ function registerSupplierRoutes(app, deps) {
     if (!(await supplierOwns(LOC_REPORT, req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
     const b = req.body || {}; const data = {};
     if (b.name != null) data.Name_of_Location = b.name;
-    if (b.phone != null) data.Phone_Number = b.phone;
+    if (b.phone != null) data.Phone_Number = phoneForZoho(b.phone);
     if (b.street != null || b.city != null || b.state != null || b.zip != null || b.country != null) data.Address = addrObj(b);
     const r = await patchRecord(LOC_REPORT, req.params.id, data);
     if (!r.ok) return res.status(502).json({ ok: false, error: 'update failed', message: r.message });
@@ -1292,7 +1302,7 @@ function registerSupplierRoutes(app, deps) {
     const data = {
       Supplier_Entry_Form: req.supplier.id, Supplier_Company_Name: req.supplier.company_name || '',
       Name: { first_name: b.first || '', last_name: b.last || '' },
-      Position: b.position || '', Email: b.email || '', Phone_Number: b.phone || '', Extension: b.ext || '', Timestamp: zohoNow(),
+      Position: b.position || '', Email: b.email || '', Phone_Number: phoneForZoho(b.phone), Extension: b.ext || '', Timestamp: zohoNow(),
     };
     if (b.location_id) data.Supplier_Locations = b.location_id;
     const r = await addRecord('Supplier_Representatives', data);
@@ -1305,7 +1315,7 @@ function registerSupplierRoutes(app, deps) {
     if (b.first != null || b.last != null) data.Name = { first_name: b.first || '', last_name: b.last || '' };
     if (b.position != null) data.Position = b.position;
     if (b.email != null) data.Email = b.email;
-    if (b.phone != null) data.Phone_Number = b.phone;
+    if (b.phone != null) data.Phone_Number = phoneForZoho(b.phone);
     if (b.ext != null) data.Extension = b.ext;
     if (b.location_id != null) data.Supplier_Locations = b.location_id;
     const r = await patchRecord(REP_REPORT, req.params.id, data);

@@ -8,8 +8,16 @@ function fmtAddr(a) {
   const parts = [a.address_line_1 || a.address_line1, a.district_city, a.state_province, a.postal_code, a.country];
   return parts.filter(Boolean).join(', ');
 }
+// US numbers show as 716-545-6465 (Zoho keeps +17165456465; the server converts back on save).
+// Anything that isn't a 10-digit US number is shown as stored.
+function fmtPhone(v) {
+  const s = String(v || '').trim();
+  const d = s.replace(/\D/g, '');
+  const ten = d.length === 11 && d[0] === '1' ? d.slice(1) : d.length === 10 ? d : '';
+  return ten ? ten.slice(0, 3) + '-' + ten.slice(3, 6) + '-' + ten.slice(6) : s;
+}
 function contactStr(r) {
-  return [r.email, (r.phone || '') + (r.ext ? ' x' + r.ext : '')].filter(s => s && s.trim()).join('  ·  ');
+  return [r.email, fmtPhone(r.phone) + (r.ext ? ' x' + r.ext : '')].filter(s => s && s.trim()).join('  ·  ');
 }
 
 const EDITABLE = ['company_name', 'contact_first', 'contact_last', 'email', 'phone', 'fax', 'website'];
@@ -30,7 +38,7 @@ export default function ProfileView({ email }) {
       const j = await r.json();
       if (!r.ok || !j.ok) { setState({ status: 'error', data: null, error: j.error || ('HTTP ' + r.status) }); return; }
       setState({ status: 'ready', data: j, error: null });
-      setForm(EDITABLE.reduce((o, k) => { o[k] = j.profile[k] || ''; return o; }, {}));
+      setForm(EDITABLE.reduce((o, k) => { o[k] = (k === 'phone' || k === 'fax') ? fmtPhone(j.profile[k]) : (j.profile[k] || ''); return o; }, {}));
     } catch (e) { setState({ status: 'error', data: null, error: String(e.message || e) }); }
   }, [email]);
   useEffect(() => { load(); }, [load]);
@@ -128,7 +136,7 @@ export default function ProfileView({ email }) {
                 <div className="prof-loc-head">
                   <div className="prof-row-main"><strong>{l.name || '—'}</strong><span className="muted">{fmtAddr(l.address)}</span></div>
                   <div className="prof-actions">
-                    {l.phone && <span className="muted">{l.phone}</span>}
+                    {l.phone && <span className="muted">{fmtPhone(l.phone)}</span>}
                     <button className="btn-link" onClick={() => { setEdit({ kind: 'loc', id: l.id }); setAdd(null); }}>Edit</button>
                     <button className="btn-link btn-danger" onClick={() => removeIt('loc', l.id, 'location', here.length ? (here.length + ' representative' + (here.length > 1 ? 's' : '') + ' will become Unassigned.') : '')}>Delete</button>
                   </div>
@@ -194,7 +202,7 @@ export default function ProfileView({ email }) {
 function LocForm({ initial, onSave, onCancel, busy }) {
   const a = (initial && initial.address) || {};
   const [f, setF] = useState({
-    name: (initial && initial.name) || '', phone: (initial && initial.phone) || '',
+    name: (initial && initial.name) || '', phone: fmtPhone(initial && initial.phone),
     street: a.address_line_1 || a.address_line1 || '', city: a.district_city || '',
     state: a.state_province || '', zip: a.postal_code || '', country: a.country || 'United States',
   });
@@ -222,7 +230,7 @@ function RepForm({ initial, locations, defaultLoc, onSave, onCancel, busy }) {
   const [f, setF] = useState({
     first: (initial && initial.first) || '', last: (initial && initial.last) || '',
     position: (initial && initial.position) || '', email: (initial && initial.email) || '',
-    phone: (initial && initial.phone) || '', ext: (initial && initial.ext) || '',
+    phone: fmtPhone(initial && initial.phone), ext: (initial && initial.ext) || '',
     location_id: (initial && initial.location_id) || defaultLoc || '',
   });
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
