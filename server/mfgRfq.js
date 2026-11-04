@@ -32,6 +32,14 @@ const lkid = v => (v && typeof v === 'object' ? String(v.ID || '') : (v != null 
 const disp = v => (v && typeof v === 'object' ? String(v.zc_display_value != null ? v.zc_display_value : (v.Description || '')) : (v != null ? String(v) : ''));
 const num = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const truthy = v => v === true || v === 'true';
+// A multi-select lookup as IDs. The project reports don't return the *_Multi_Select fields,
+// so fall back to the single lookup, the same way the PO populate workflows fill them.
+const multi = (v, single) => {
+  const ids = (Array.isArray(v) ? v : (v ? [v] : [])).map(lkid).filter(Boolean);
+  if (ids.length) return ids;
+  const one = lkid(single);
+  return one ? [one] : [];
+};
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const p2 = n => String(n).padStart(2, '0');
 function toZohoDate(iso) {
@@ -78,10 +86,10 @@ function jeffCalcsRow(s, n, ctx) {
     Total_Plate_Width: s.Total_Plate_Width,
     Full_Item_Description_String: s.Item_Description,   // card 1 sets it twice; the last write wins
     Length_FT: s.Feet_Length,
-    Form_Type_Multi_Select: s.Form_Type_Multi_Select,
-    Material_Type_Multi_Select: s.Material_Type_Multi_Select,
-    Specification_Multi_Select: s.Specification_Multi_Select,
-    Material_Multi_Select: s.Material_Multi_Select,
+    Form_Type_Multi_Select: multi(s.Form_Type_Multi_Select, s.Form_Type),
+    Material_Type_Multi_Select: multi(s.Material_Type_Multi_Select, s.Material_Type),
+    Specification_Multi_Select: multi(s.Specification_Multi_Select, s.Specification),
+    Material_Multi_Select: multi(s.Material_Multi_Select, s.Material),
     Length_INCH_Result: s.Length_INCH_Result,
     Quantity: s.QTY,
     Area: s.Area,
@@ -111,11 +119,11 @@ function fittingRow(f, n, ctx) {
     MCP_Customer_Project_Form: ctx.projectId,
     Fitting: f.Fitting,
     Fitting_Type: lkid(f.Fitting_Type),
-    Fitting_Type_Multi_Select: f.Fitting_Type_Multi_Select,
-    Fitting_Make_Multi_Select: f.Fitting_Make_Multi_Select,
-    Fitting_Specification_Multi_Select: f.Fitting_Specification_Multi_Select,
-    End_Type_Multi_Select: f.End_Type_Multi_Select,
-    Connection_Type_Multi_Select: f.Connection_Type_Multi_Select,
+    Fitting_Type_Multi_Select: multi(f.Fitting_Type_Multi_Select, f.Fitting_Type),
+    Fitting_Make_Multi_Select: multi(f.Fitting_Make_Multi_Select, f.Fitting_Make),
+    Fitting_Specification_Multi_Select: multi(f.Fitting_Specification_Multi_Select, f.Fitting_Specification),
+    End_Type_Multi_Select: multi(f.End_Type_Multi_Select, f.End_Type),
+    Connection_Type_Multi_Select: multi(f.Connection_Type_Multi_Select, f.Connection_Type),
     Project_Allocate_Quote_Form: String(f.ID),
     Fitting_Type_Original: lkid(f.Fitting_Type_Original) || undefined,
     Fitting_Make_Original: lkid(f.Fitting_Make_Original) || undefined,
