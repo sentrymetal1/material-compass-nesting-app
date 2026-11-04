@@ -1310,7 +1310,8 @@ function registerSupplierRoutes(app, deps) {
   const STRUCT_REPORT = STRUCT_STOCK_REPORT;
   const FIT_STOCK_REPORT = process.env.FITTING_STOCK_REPORT || 'Supplier_Fitting_Stock_All';
   const isStocked = v => Array.isArray(v) ? v.includes('Stocked') : (v === 'Stocked' || v === true || v === 'true');
-  const structStock = sid => cachedLookup('struct-stock:' + sid, 60 * 1000, () =>
+  // 10 min: the tick route keeps the cached rows current, so a short life only re-buys the list.
+  const structStock = sid => cachedLookup('struct-stock:' + sid, 10 * 60 * 1000, () =>
     fetchAllZohoPages('/report/' + STRUCT_REPORT + '?criteria=(Supplier_ID==' + encodeURIComponent(sid) + ')'));
   const fitStock = sid => cachedLookup('fit-stock-all:' + sid, 60 * 1000, () =>
     fetchAllZohoPages('/report/' + FIT_STOCK_REPORT + '?criteria=(Supplier_ID==' + encodeURIComponent(sid) + ')'));
@@ -1410,7 +1411,11 @@ function registerSupplierRoutes(app, deps) {
       const stocked = !!(req.body && req.body.stocked);
       const r = await patchRecord(STRUCT_REPORT, req.params.id, { Material_Stocked: stocked ? ['Stocked'] : [] });
       if (!r.ok) return res.status(502).json({ ok: false, error: 'update failed', message: r.message });
-      bust('struct-stock:' + sid);
+      // Update the cached row instead of busting it. Busting made the NEXT tick re-read the
+      // whole list (~500 rows = 3 calls), so each box cost ~4 Zoho calls and one supplier
+      // ticking their list ran the daily allowance out on 2026-11-03.
+      const row = rows.find(x => String(x.ID) === String(req.params.id));
+      if (row) row.Material_Stocked = stocked ? ['Stocked'] : [];
       res.json({ ok: true });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
