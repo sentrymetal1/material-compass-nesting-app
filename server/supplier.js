@@ -1949,7 +1949,9 @@ function registerSupplierRoutes(app, deps) {
       locations: (locs || []).map(l => ({ id: String(l.ID), name: locName(l.Location_Name || l), city: [l.Address && l.Address.district_city, l.Address && l.Address.state_province].filter(Boolean).join(', ') })),
       reps: (reps || []).filter(r => String(r.ACTIVE || 'YES').toUpperCase() !== 'NO').map(r => ({
         id: String(r.ID), name: cleanName(r.Name), position: r.Position || '', email: r.Email || '',
-        phone: r.Direct_Phone_Number || '', location_id: r.Location && r.Location.ID ? String(r.Location.ID) : '',
+        // Location is a multi-select (a rep can cover several locations); [] = not set → offered everywhere.
+        phone: r.Direct_Phone_Number || '',
+        location_ids: (Array.isArray(r.Location) ? r.Location : r.Location ? [r.Location] : []).map(x => String(x.ID || '')).filter(Boolean),
       })),
     };
   });
@@ -1960,7 +1962,7 @@ function registerSupplierRoutes(app, deps) {
     if (!their_rep_ids.length) return { error: 'Pick at least one of their reps.' };
     const team = await theirTeam(mfgId);
     if (!team.locations.some(l => l.id === their_location_id)) return { error: 'That location is not one of theirs.' };
-    const bad = their_rep_ids.filter(id => { const r = team.reps.find(x => x.id === id); return !r || (r.location_id && r.location_id !== their_location_id); });
+    const bad = their_rep_ids.filter(id => { const r = team.reps.find(x => x.id === id); return !r || (r.location_ids.length && !r.location_ids.includes(their_location_id)); });
     if (bad.length) return { error: 'Some of their reps picked do not work at that location.' };
     return { their_location_id, their_rep_ids };
   }

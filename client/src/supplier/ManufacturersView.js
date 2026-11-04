@@ -27,7 +27,11 @@ export function DecisionButtons({ m, busy, onDecide, compact }) {
   );
 }
 
-const repsAt = (team, loc) => team.reps.filter(r => !r.location_id || r.location_id === loc);
+// Your reps carry one location_id; a manufacturer's reps carry location_ids (they can cover
+// several). No location set = offered at every location.
+const repsAt = (team, loc) => team.reps.filter(r => r.location_ids
+  ? (!r.location_ids.length || r.location_ids.includes(loc))
+  : (!r.location_id || r.location_id === loc));
 
 // One side of a pairing: a location, then which of that side's reps at it. Reps are stored per
 // location, so switching location drops any picked rep who doesn't work there.
