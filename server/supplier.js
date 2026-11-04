@@ -1831,6 +1831,10 @@ function registerSupplierRoutes(app, deps) {
   async function fillMissingPairs(sid, rows) {
     if (pairsFilled.has(sid) || process.env.MATCH_SEED === 'off') return false;
     pairsFilled.add(sid);
+    // Only real, registered suppliers. "Material Compass ADMIN" has a supplier record (Register
+    // blank) for viewing the portal; opening it on 2026-11-04 put it in every MFG's New Matches.
+    const me = ((await supplierDirectory()) || []).find(r => String(r.ID) === sid);
+    if (!me || String(me.Register || '').trim().toLowerCase() !== 'yes') return false;
     const mfgs = await cachedLookup('mfg-directory-live', 10 * 60 * 1000, async () =>
       (await fetchAllZohoPages('/report/Customer_Entry_Report'))
         .filter(m => String(m.Supplier_Matches_Populated) === 'true' && String(m.Registered || '').toUpperCase() === 'YES')
