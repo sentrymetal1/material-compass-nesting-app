@@ -275,10 +275,11 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
     if (Number.isFinite(n) && n === Number(line.qty)) onChange({ ...patch, quote_option: 'Quote As Is', alt_quantity: '', preview: null, preview_error: '' });
     else onChange({ ...patch, quote_option: 'Alter Quantity', alt_quantity: v });
   };
-  const lastQty = useRef(qty);
+  // Reprice when qty OR weight moves (a spec swap changes weight with the qty unchanged).
+  const lastQty = useRef(qty + '|' + totalWeight);
   useEffect(() => {
-    if (lastQty.current === qty) return;
-    lastQty.current = qty;
+    if (lastQty.current === qty + '|' + totalWeight) return;
+    lastQty.current = qty + '|' + totalWeight;
     const b = draft.basis;
     if (!b || noQuote || !(qty > 0)) return;
     const a = line.alteration || {};
@@ -466,6 +467,8 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
           const d = { ...next[id], quote_option: v.quote_option || next[id].quote_option, basis: v.basis || null, alt_quantity: '', preview: null, preview_error: '' };
           // The supplier quoted a different piece count: the card carries THEIR qty.
           if (v.alt_quantity) d.alt_quantity = String(v.alt_quantity);
+          // ...or a different catalog spec: recorded as Alter Material on this line.
+          d.alt_spec_id = v.alt_spec_id || '';
           if (v.quote_option === 'No Quote') { d.total_price = ''; d.price_per_lb = ''; }
           else if (v.total_price) { d.total_price = v.total_price; d.price_per_lb = v.price_per_lb || ''; }
           if (v.lead_time) d.lead_time = v.lead_time;
@@ -738,6 +741,15 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                   {pdfTotal != null && (
                     <div className={off ? 'q-af-warn-txt' : 'q-af-ok-txt'}>
                       Total on the quote {money(pdfTotal)} · total here {money(totalAmount)}{off ? ' — they don’t match yet. Check the highlighted lines, shipping and misc.' : ' ✓'}
+                    </div>
+                  )}
+                  {(afRes.substitutions || []).length > 0 && (
+                    <div className="q-af-subs">
+                      <strong>⚠ Spec substitution{afRes.substitutions.length === 1 ? '' : 's'} — the supplier quoted a different material than you asked for:</strong>
+                      {afRes.substitutions.map((s, i) => (
+                        <div key={i}>Line {s.line}: {s.from} → <strong>{s.to}</strong>{s.recorded ? ' (set to Alter Material)' : ' (noted in Comments)'}</div>
+                      ))}
+                      <div className="q-af-subs-note">Confirm each is acceptable before you save. Your request is unchanged; only the supplier's offer records the substitute.</div>
                     </div>
                   )}
                   {(afRes.header_flags || []).map((f, i) => <div key={i} className="q-af-flag">⚠ {f}</div>)}

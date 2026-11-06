@@ -690,7 +690,7 @@ function registerSupplierRoutes(app, deps) {
       const out = await require('./quoteAutofill').autofillQuote({
         b64: String(file_b64 || '').replace(/^data:[^,]*,/, ''),
         mediaType: media_type, name: file_name, quote,
-        leadChoices: LEAD_TIME_CHOICES, validChoices: QUOTE_VALID_CHOICES,
+        catalog: sent.alteration_catalog, leadChoices: LEAD_TIME_CHOICES, validChoices: QUOTE_VALID_CHOICES,
       });
       res.json(out);
     } catch (err) {

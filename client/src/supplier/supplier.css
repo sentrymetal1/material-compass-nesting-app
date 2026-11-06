@@ -512,3 +512,5 @@ tr.q-af-skip .q-af-flag { color: #6b7280; }
 .q-af-muted-txt { color: #6b7280; }
 .q-qty-in { width: 64px; text-align: right; font-size: 13px; padding: 4px 6px; border: 1px solid #cfddf0; border-radius: 6px; font-family: inherit; }
 .q-qty-was { font-size: 10px; color: var(--muted); text-decoration: line-through; }
+.q-af-subs { margin-top: 4px; padding: 8px 12px; background: #fff4e0; border: 1px solid #f0c060; border-left: 4px solid #e08a00; border-radius: 6px; color: #6b4300; display: grid; gap: 2px; }
+.q-af-subs-note { font-size: 11px; color: #8a5a00; margin-top: 2px; }

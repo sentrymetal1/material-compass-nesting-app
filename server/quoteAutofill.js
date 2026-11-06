@@ -65,6 +65,7 @@ const TOOL = {
             pdf_qty: { type: ['number', 'null'], description: 'Quantity on the quote row, as printed.' },
             pdf_length: { type: 'string', description: 'Length on the quote row as printed (e.g. "20\'", "240 in"), if any.' },
             lead_time_days: { type: ['number', 'null'], description: 'Line lead time in days, if this row states one. Stock = 1. Weeks x 5.' },
+            offered_spec: { type: 'string', description: 'Only when the quote row\'s grade/spec DIFFERS from the RFQ line\'s: the entry from that line\'s "spec options" list that matches what was quoted, copied exactly (e.g. quote says "A-500 GR B" -> "A500 Gr B"). If it differs but no option fits, "OTHER: " + the spec as printed. Empty when the spec is the same or not stated.' },
             note: { type: 'string', description: 'Anything the supplier changed or qualified on this row: substitute grade/size, different length, cut charge included, partial qty. Empty if nothing.' },
             match: { type: 'string', enum: ['high', 'medium', 'low'], description: 'How sure you are the quote row is this RFQ line.' },
           },
@@ -92,14 +93,19 @@ const SYSTEM =
   'for every RFQ line.';
 
 // Our lines as the model sees them. The ref is the only key it returns; ids stay server-side.
-function lineList(structural, fittings) {
+// The catalog specs a line may be altered to (same form + material), from the alteration catalog.
+const specOptionsOf = (l, catalog) => (((catalog || {}).specs || {})[(l.alteration || {}).spec_key] || []);
+
+function lineList(structural, fittings, catalog) {
   const rows = [];
   structural.forEach((l, i) => {
     const a = l.alteration || {};
     const len = (a.length_ft || a.length_inch) ? ' | length ' + (a.length_ft || 0) + "' " + (a.length_inch || 0) + '"' : '';
     const wt = (Number(l.qty) || 0) * (Number(l.unit_weight) || 0);
+    const opts = specOptionsOf(l, catalog);
     rows.push('S' + (i + 1) + ' | line ' + (l.line || i + 1) + ' | qty ' + (l.qty == null ? '?' : l.qty) + ' | ' +
-      l.description + len + (wt > 0 ? ' | total weight ' + round(wt, 1) + ' lb' : ''));
+      l.description + len + (wt > 0 ? ' | total weight ' + round(wt, 1) + ' lb' : '') +
+      (opts.length > 1 ? ' | spec options: ' + opts.map(o => o.label).join('; ') : ''));
   });
   fittings.forEach((l, i) => {
     rows.push('F' + (i + 1) + ' | fitting line ' + (l.line || i + 1) + ' | qty ' + (l.qty == null ? '?' : l.qty) + ' | ' + l.description);
@@ -116,7 +122,7 @@ function docBlock(b64, mediaType) {
 }
 
 async function extract(client, args, attempt) {
-  const { b64, mediaType, name, quote, structural, fittings } = args;
+  const { b64, mediaType, name, quote, structural, fittings, catalog } = args;
   // Newer models refuse a forced tool_choice, so the tool is offered and the prompt
   // requires it; a reply without the call gets one retry.
   const resp = await client.messages.create({
@@ -132,7 +138,7 @@ async function extract(client, args, attempt) {
         { type: 'text', text:
           'Supplier quote file: ' + (name || 'quote') + '\n' +
           'Our RFQ ' + (quote.quote_number || '') + (quote.quote_description ? ' — ' + quote.quote_description : '') + '\n\n' +
-          'RFQ LINES (ref | our line | qty | item):\n' + lineList(structural, fittings) },
+          'RFQ LINES (ref | our line | qty | item):\n' + lineList(structural, fittings, catalog) },
       ],
     }],
   });
@@ -226,8 +232,28 @@ function shapeFitting(line, x) {
   return { unit_price: unit != null ? String(round(unit, 3)) : '', flags };
 }
 
+// What the model said the supplier quoted, checked against the line's own catalog list.
+// 'catalog' only when the pick is really one of this line's options AND differs from ours;
+// a label the model made up never becomes a spec id.
+const normSpec = s => String(s || '').toUpperCase().replace(/ASTM|GRADE|\bGR\b|[\s\-.]/g, '');
+function resolveSpec(line, offered, catalog) {
+  const raw = String(offered || '').trim();
+  if (!raw) return { kind: 'none' };
+  const opts = specOptionsOf(line, catalog);
+  const cur = opts.find(o => o.id === (line.alteration || {}).spec_id);
+  const from = cur ? cur.label : 'the requested spec';
+  const other = raw.replace(/^OTHER:\s*/i, '');
+  if (cur && normSpec(other) === normSpec(cur.label)) return { kind: 'none' };
+  if (!/^OTHER:/i.test(raw)) {
+    const hit = opts.find(o => o.label === raw) || opts.find(o => normSpec(o.label) === normSpec(raw));
+    if (hit && (!cur || hit.id !== cur.id)) return { kind: 'catalog', id: hit.id, from, to: hit.label };
+    if (hit) return { kind: 'none' };
+  }
+  return { kind: 'other', from, to: other };
+}
+
 // quote = one merged quote ({ structural_lines, fitting_lines, ... }) from OUR data.
-async function autofillQuote({ b64, mediaType, name, quote, leadChoices, validChoices, client }) {
+async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices, validChoices, client }) {
   if (!b64) throw Object.assign(new Error('No file was sent.'), { status: 400 });
   if (b64.length * 0.75 > MAX_BYTES) throw Object.assign(new Error('That file is too large (25 MB max).'), { status: 413 });
   const structural = quote.structural_lines || [];
@@ -235,7 +261,7 @@ async function autofillQuote({ b64, mediaType, name, quote, leadChoices, validCh
   if (!structural.length && !fittings.length) throw Object.assign(new Error('This quote has no lines to fill.'), { status: 400 });
 
   const ai = client || new Anthropic(); // ANTHROPIC_API_KEY from env
-  const { out, usage } = await extract(ai, { b64, mediaType, name, quote, structural, fittings });
+  const { out, usage } = await extract(ai, { b64, mediaType, name, quote, structural, fittings, catalog });
   const cost = ((usage.input_tokens || 0) * RATE_IN + (usage.output_tokens || 0) * RATE_OUT) / 1e6;
   try { require('./costLedger').record('supplier quote autofill', cost, { quote: quote.quote_number || quote.quote_id }); } catch (e) { /* never block on bookkeeping */ }
   if (!out) throw Object.assign(new Error('The quote could not be read. Try a clearer PDF, or enter it by hand.'), { status: 422 });
@@ -252,7 +278,7 @@ async function autofillQuote({ b64, mediaType, name, quote, leadChoices, validCh
     return { lead_time: lt.value, comments: String(x.note || '').trim(), pdf_text: String(x.pdf_text || '').trim(), match: x.match || 'high', flags };
   };
 
-  const struct = {};
+  const struct = {}, substitutions = [];
   // A line the supplier didn't quote is recorded as No Quote, not dropped: the MFG compare
   // needs to see this supplier left it uncovered. The user can switch it back.
   const NOT_ON_QUOTE = { found: false, quote_option: 'No Quote', flags: ['Not on the supplier\'s quote — set to No Quote. Change the option if they do supply it.'] };
@@ -261,10 +287,34 @@ async function autofillQuote({ b64, mediaType, name, quote, leadChoices, validCh
     if (!x || x.status === 'not_found') { struct[l.rfqs_sent_id] = { ...NOT_ON_QUOTE }; return; }
     if (x.status === 'no_quote') { struct[l.rfqs_sent_id] = { found: true, quote_option: 'No Quote', ...lineResult(x, { flags: [] }) }; return; }
     const shaped = shapeStructural(l, x);
+    const spec = resolveSpec(l, x.offered_spec, catalog);
+    // One alteration per line (Item_Verification_Status is a single choice). A qty change
+    // wins because the total was priced on it; the spec then rides in Comments + a flag.
+    let altSpecId = null;
+    if (spec.kind === 'catalog') {
+      if (shaped.alt_quantity) {
+        shaped.flags.unshift('SPEC SUBSTITUTION: supplier offered ' + spec.to + ' instead of ' + spec.from +
+          '. Only one change per line can be recorded and the qty already differs, so the spec is noted in Comments — confirm it is acceptable.');
+      } else {
+        altSpecId = spec.id;
+        shaped.flags.unshift('SPEC SUBSTITUTION: supplier offered ' + spec.to + ' instead of ' + spec.from +
+          '. Set to Alter Material — confirm the substitute is acceptable.');
+      }
+      substitutions.push({ line: l.line, from: spec.from, to: spec.to, recorded: !!altSpecId });
+    } else if (spec.kind === 'other') {
+      shaped.flags.unshift('SPEC SUBSTITUTION: supplier quoted ' + spec.to + ' instead of ' + spec.from +
+        ', which isn\'t in the catalog for this item — noted in Comments. Confirm it is acceptable.');
+      substitutions.push({ line: l.line, from: spec.from, to: spec.to, recorded: false });
+    }
+    const r = lineResult(x, shaped);
+    if (spec.kind !== 'none' && !altSpecId && !/substitut|offered|grade|spec/i.test(r.comments)) {
+      r.comments = ('Supplier spec: ' + spec.to + '. ' + r.comments).trim();
+    }
     struct[l.rfqs_sent_id] = {
-      found: true, quote_option: shaped.alt_quantity ? 'Alter Quantity' : 'Quote As Is',
+      found: true,
+      quote_option: shaped.alt_quantity ? 'Alter Quantity' : altSpecId ? 'Alter Material or Form Detail' : 'Quote As Is',
       total_price: shaped.total_price, price_per_lb: shaped.price_per_lb,
-      alt_quantity: shaped.alt_quantity, basis: shaped.basis, ...lineResult(x, shaped),
+      alt_quantity: shaped.alt_quantity, alt_spec_id: altSpecId, basis: shaped.basis, ...r,
     };
   });
   const fit = {};
@@ -299,6 +349,7 @@ async function autofillQuote({ b64, mediaType, name, quote, leadChoices, validCh
     file_name: name || '',
     header,
     header_flags: headerFlags,
+    substitutions,
     structural: struct,
     fittings: fit,
     unmatched_pdf_lines: (Array.isArray(out.unmatched_pdf_lines) ? out.unmatched_pdf_lines : [])
@@ -309,4 +360,4 @@ async function autofillQuote({ b64, mediaType, name, quote, leadChoices, validCh
   };
 }
 
-module.exports = { autofillQuote, _test: { shapeStructural, shapeFitting, leadChoice, lineList } };
+module.exports = { autofillQuote, _test: { shapeStructural, shapeFitting, leadChoice, lineList, resolveSpec } };
