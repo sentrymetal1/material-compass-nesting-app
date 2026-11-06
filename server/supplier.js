@@ -1031,6 +1031,13 @@ function registerSupplierRoutes(app, deps) {
         Quote_LU: String(quote_id),          // native workflow keys the assignment link-back + report dot-walks off this
         Lead_Time_For_Ship_Complete: headerLead,
         MANUFACTURER: mfgId,
+        // The three fields a Zoho-side submit fills and reports/filters read. Off-Zoho saves
+        // left them blank from Aug 2026 (every such SV showed no manufacturer).
+        ...(mfgId ? {
+          SV_Customer_Entry_Form: mfgId,
+          Manufacture_ID: mfgId,
+          Manufacture_Name: String(firstRow['Customer_LU.Company_Name'] || ''),
+        } : {}),
         MFG_Representative: mfgRep,
         SV_TimeStamp: zohoNow(),
         Supplier_Locations: header.location ? String(header.location) : '',
