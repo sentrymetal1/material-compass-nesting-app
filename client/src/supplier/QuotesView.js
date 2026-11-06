@@ -214,7 +214,9 @@ export function mergeQuotes(structuralQuotes, fittingQuotes) {
 // What auto-fill did to one line: the quote row it was read from, and anything that needs a
 // person to look (not on the quote, a total that doesn't reconcile, an unsure match).
 function AutofillMark({ mark }) {
-  if (!mark) return null;
+  // A supplier reading their own quote gets the changes listed once above the lines, not a
+  // note under every row (mark.quiet). The row colour still shows which lines changed.
+  if (!mark || mark.quiet) return null;
   return (
     <div className="q-af-mark">
       {mark.found && mark.pdf_text && <div className="q-af-src" title="Read from the supplier's quote">📄 {mark.pdf_text}</div>}
@@ -550,7 +552,37 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     }
   };
   const afRes = af.status === 'done' ? af.result : null;
-  const markOf = (kind, id) => (afRes && afRes[kind] ? afRes[kind][id] : null);
+  const markOf = (kind, id) => {
+    const m = afRes && afRes[kind] ? afRes[kind][id] : null;
+    return m && !mfg ? { ...m, quiet: true } : m;
+  };
+  // The supplier's own upload: they already reviewed their quote, so they get a short list of
+  // where it differs from what the manufacturer asked for, and nothing else.
+  const supplierChanges = () => {
+    if (!afRes) return [];
+    const out = [], noQuote = [], noPrice = [];
+    const subs = new Map((afRes.substitutions || []).map(s => [String(s.line), s]));
+    quote.structural_lines.forEach(l => {
+      const m = (afRes.structural || {})[l.rfqs_sent_id];
+      if (!m) return;
+      if (m.combined) { out.push('Line ' + l.line + ': combined with line ' + m.combined_with_line); return; }
+      if (!m.found || m.quote_option === 'No Quote') { noQuote.push(l.line); return; }
+      if (m.alt_quantity) out.push('Line ' + l.line + ': qty ' + m.alt_quantity + ' (requested ' + l.qty + ')');
+      const s = subs.get(String(l.line));
+      if (s) out.push('Line ' + l.line + ': ' + s.to + ' instead of ' + s.from);
+      if (!m.total_price) noPrice.push(l.line);
+    });
+    quote.fitting_lines.forEach(l => {
+      const m = (afRes.fittings || {})[l.rfq_row_id];
+      if (!m) return;
+      if (!m.found || m.quote_option === 'No Quote') { noQuote.push('F' + l.line); return; }
+      if (!m.unit_price) noPrice.push('F' + l.line);
+    });
+    if (noQuote.length) out.push('Not quoted (No Quote): line' + (noQuote.length === 1 ? ' ' : 's ') + noQuote.join(', '));
+    if (noPrice.length) out.push('No price read, enter it: line' + (noPrice.length === 1 ? ' ' : 's ') + noPrice.join(', '));
+    (afRes.unmatched_pdf_lines || []).forEach(u => out.push('Not requested: ' + u.pdf_text + (u.amount != null ? ' (' + money(u.amount) + ')' : '')));
+    return out;
+  };
   // After auto-fill, show lines in the SUPPLIER's order so the card reads beside their PDF:
   // quoted rows by their quote line, a line they combined right after its partner, then
   // everything they didn't quote. Returns [line, isFirstNotQuoted].
@@ -786,17 +818,35 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
           )}
           <div className="q-af">
             <div className="q-af-row">
-              <span className="q-af-lbl">✨ {mfg ? "Have the supplier's quote as a PDF?" : 'Have your quote as a PDF?'}</span>
+              <span className="q-af-lbl">✨ {mfg ? "Have the supplier's quote as a PDF?" : 'Upload your quote'}</span>
               <input type="file" accept="application/pdf,image/png,image/jpeg,image/webp"
                 onChange={e => { const f = e.target.files && e.target.files[0]; setAf({ status: 'idle', file: f || null, result: null, error: '' }); }} />
               <button type="button" className="q-batch-btn" disabled={!af.file || af.status === 'reading'} onClick={runAutofill}>
-                {af.status === 'reading' ? 'Reading…' : 'Auto-fill lines'}
+                {af.status === 'reading' ? 'Reading…' : mfg ? 'Auto-fill lines' : 'Fill from my quote'}
               </button>
             </div>
-            {af.status === 'idle' && !af.file && <div className="q-af-hint">Upload it and every line it prices is filled in for you to check. Nothing is saved until you submit.</div>}
-            {af.status === 'reading' && <div className="q-af-hint">Reading {af.file && af.file.name} against your {quote.structural_lines.length + quote.fitting_lines.length} lines — this takes up to a minute.</div>}
+            {mfg && af.status === 'idle' && !af.file && <div className="q-af-hint">Upload it and every line it prices is filled in for you to check. Nothing is saved until you submit.</div>}
+            {af.status === 'reading' && <div className="q-af-hint">Reading {af.file && af.file.name}{mfg ? ' against your ' + (quote.structural_lines.length + quote.fitting_lines.length) + ' lines' : ''} — this takes up to a minute.</div>}
             {af.status === 'error' && <div className="q-af-err">{af.error}</div>}
-            {afRes && (() => {
+            {afRes && !mfg && (() => {
+              const changes = supplierChanges();
+              const pdfTotal = afRes.pdf_grand_total;
+              const off = pdfTotal != null && Math.abs(pdfTotal - totalAmount) > 1;
+              return (
+                <div className="q-af-sum">
+                  {changes.length === 0
+                    ? <div className="q-af-ok-txt">✓ Your quote matches the request.</div>
+                    : (
+                      <>
+                        <div><strong>Changes from the request:</strong></div>
+                        {changes.map((c, i) => <div key={i} className="q-af-flag">⚠ {c}</div>)}
+                      </>
+                    )}
+                  {off && <div className="q-af-warn-txt">Your quote total {money(pdfTotal)} · total here {money(totalAmount)}</div>}
+                </div>
+              );
+            })()}
+            {afRes && mfg && (() => {
               const all = [...Object.values(afRes.structural || {}), ...Object.values(afRes.fittings || {})];
               const filled = all.filter(m => m.found).length;
               const look = all.filter(m => m.found && m.flags && m.flags.length).length;
