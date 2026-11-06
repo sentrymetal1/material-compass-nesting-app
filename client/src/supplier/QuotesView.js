@@ -315,7 +315,7 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
           : <input type="number" min="1" step="1" className="q-qty-in" title="Change to quote a different quantity"
               value={kind === 'quantity' ? (draft.alt_quantity ?? '') : String(line.qty ?? '')}
               placeholder={String(line.qty ?? '')} onChange={e => onQty(e.target.value)} />}
-        {eff.altered && <div className="q-qty-was">was {num(line.qty, 0)}</div>}
+        {kind === 'quantity' && eff.altered && Number(eff.qty) !== Number(line.qty) && <div className="q-qty-was">was {num(line.qty, 0)}</div>}
       </td>
       <td className={eff.altered ? 'q-num q-altered' : 'q-num'}>{num(totalWeight, 1)} lb</td>
       <td className="q-opt">
