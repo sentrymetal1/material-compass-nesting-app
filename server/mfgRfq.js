@@ -148,6 +148,35 @@ function fittingRow(f, n, ctx) {
   });
 }
 
+// A quote in one of these states is finished; it can't be revised.
+const NOT_REVISABLE = /^(Closed|Cancelled|Purchase Order Pending|Quote Revised)/i;
+
+// How the next revision of `current` (the project's newest quote) is filed. It mirrors the
+// Zoho Quote Form's Revise: Original_Quote_Revised = the chain's first quote (which points
+// at itself), Quote_To_Be_Revised = the revision being replaced, Revision_Number = next in
+// the chain, description prefixed "Rev # n - ". Zoho's success engine reads those fields
+// to void the earlier supplier requests and send the new ones.
+function revisionPlan(current, quotes) {
+  const rootId = lkid(current.Original_Quote_Revised) || String(current.ID);
+  const chain = (quotes || []).filter(q => String(q.ID) === rootId || lkid(q.Original_Quote_Revised) === rootId);
+  if (!chain.some(q => String(q.ID) === String(current.ID))) chain.push(current);
+  const root = chain.find(q => String(q.ID) === rootId) || current;
+  const number = Math.max(0, ...chain.map(q => num(q.Revision_Number))) + 1;
+  const baseRef = String(root.Reference_Number || current.Reference_Number || '').replace(/\s*\|\s*Rev\s*#.*$/i, '').trim();
+  const baseDesc = String(current.Quote_Description || '').replace(/^Rev\s*#\s*\d+\s*-\s*/i, '').trim();
+  const status = String(current.Status || '');
+  return {
+    root_id: rootId,
+    replaces_id: String(current.ID),
+    replaces_number: current.Reference_Number || '',
+    number,
+    reference: baseRef,
+    base_description: baseDesc,
+    allowed: !NOT_REVISABLE.test(status),
+    status,
+  };
+}
+
 function registerMfgRfqRoutes(app, deps) {
   const { fetchAllZohoPages, cachedLookup, cacheBust, sendZohoAwareError, getAccessToken, creatorApiBase, zohoHeaders, axios } = deps;
   const enc = s => encodeURIComponent(s);
@@ -174,6 +203,7 @@ function registerMfgRfqRoutes(app, deps) {
 
   // A project's quote, if it has one. The Quote Form allows ONE quote per project, ever;
   // changes go through Revise. (Same rule "Assign Quote Number" enforces at submit.)
+  // The map holds the NEWEST record, i.e. the live revision.
   const quoteByProject = quotes => {
     const m = new Map();
     // Newest record wins, so a revised quote reports its current revision, not the original.
@@ -223,6 +253,7 @@ function registerMfgRfqRoutes(app, deps) {
     const project = projects.find(p => String(p.ID) === String(projectId));
     if (!project) return null;
     const existing = quoteByProject(quotes).get(String(projectId)) || null;
+    const revision = existing ? revisionPlan(existing, quotes) : null;
     const missingColumns = purchase.length
       ? REQUIRED_PURCHASE_COLUMNS.filter(c => !purchase.some(r => Object.prototype.hasOwnProperty.call(r, c)))
       : [];
@@ -239,7 +270,7 @@ function registerMfgRfqRoutes(app, deps) {
       already_quoted: truthy(s.Material_Used_For_Original_Material_Quote),
     }));
     return {
-      project, existing, missingColumns, lines,
+      project, existing, revision, missingColumns, lines,
       fittings: fittings.slice().sort((a, b) => num(a.Line_Item_Fitting) - num(b.Line_Item_Fitting)),
       matches, reps,
       accountType: (shop[0] && shop[0].Type_Of_Material_Needs) || '',
@@ -262,7 +293,10 @@ function registerMfgRfqRoutes(app, deps) {
           client: disp(pr.MFG_Client_Form), client_id: lkid(pr.MFG_Client_Form),
           status: pr.Project_Quote_Status || '', rep_id: lkid(pr.Manufacture_Representative),
         },
-        existing_quote: p.existing ? { id: String(p.existing.ID), number: p.existing.Reference_Number || '', status: p.existing.Status || '' } : null,
+        existing_quote: p.existing ? {
+          id: String(p.existing.ID), number: p.existing.Reference_Number || '', status: p.existing.Status || '',
+          revision: p.revision.number, can_revise: p.revision.allowed, description: p.revision.base_description,
+        } : null,
         missing_columns: p.missingColumns,
         lines: p.lines.map(({ raw, ...l }) => l),
         fittings: p.fittings.map(f => ({
@@ -299,8 +333,18 @@ function registerMfgRfqRoutes(app, deps) {
     try {
       const p = await loadProject(mfg, projectId);
       if (!p) return res.status(404).json({ ok: false, error: 'Project not found for this shop.' });
-      if (p.existing) {
-        return res.status(409).json({ ok: false, error: 'This project already has quote ' + (p.existing.Reference_Number || '') + '. Use Revise on that quote instead.' });
+      // A revise names the quote it replaces, so a stale screen can't revise the wrong one.
+      const reviseId = String(b.revise_quote_id || '').trim();
+      const rev = reviseId ? p.revision : null;
+      if (reviseId) {
+        if (!p.existing || String(p.existing.ID) !== reviseId) {
+          return res.status(409).json({ ok: false, error: 'This quote was changed since the page opened. Reload the page and try again. Nothing was sent.' });
+        }
+        if (!rev.allowed) {
+          return res.status(409).json({ ok: false, error: 'Quote ' + (p.existing.Reference_Number || '') + ' is ' + rev.status + ', so it can\'t be revised. Nothing was sent.' });
+        }
+      } else if (p.existing) {
+        return res.status(409).json({ ok: false, error: 'This project already has quote ' + (p.existing.Reference_Number || '') + '. Revise that quote instead.' });
       }
       if (p.missingColumns.length) {
         return res.status(409).json({ ok: false, error: 'The project material report is missing column(s): ' + p.missingColumns.join(', ') + '. Without them On Hand material could be sent out, so nothing was sent.' });
@@ -311,7 +355,10 @@ function registerMfgRfqRoutes(app, deps) {
       if (bad.length) return res.status(400).json({ ok: false, error: 'One or more suppliers are not matched to your shop.' });
 
       const ctx = { mfg, projectId, accountType: p.accountType, now: zohoNow() };
-      const quotable = p.lines.filter(l => !l.on_hand && !l.already_quoted);
+      // A revision replaces the whole quote, so it re-sends every purchase line, including
+      // the ones the earlier revision flagged as quoted. Fittings always come straight from
+      // the project's fitting rows, so a revision can't lose them.
+      const quotable = p.lines.filter(l => !l.on_hand && (rev || !l.already_quoted));
       const jc = quotable.map((l, i) => jeffCalcsRow(l.raw, i + 1, ctx));
       const fit = p.fittings.map((f, i) => fittingRow(f, i + 1, ctx));
       if (!jc.length && !fit.length) return res.status(400).json({ ok: false, error: 'This project has no material or fittings to quote.' });
@@ -321,20 +368,28 @@ function registerMfgRfqRoutes(app, deps) {
       const pr = p.project;
       const contact = String(b.contact_id || '').trim() || lkid(pr.Manufacture_Representative);
       const reqs = Array.isArray(b.requirements) ? b.requirements.filter(r => QUOTE_REQUIREMENTS.includes(r)) : [];
+      const desc = String(b.description || pr.Project_Description || '').trim().replace(/^Rev\s*#\s*\d+\s*-\s*/i, '');
       const data = clean({
         Customer_Entry_Form: mfg,
         MFG_Customer: lkid(pr.MFG_Client_Form),
         Project_Number: projectId,
         Contact_Name: /^\d+$/.test(contact) ? contact : '',
-        Quote_Description: String(b.description || pr.Project_Description || '').trim(),
+        Quote_Description: rev ? 'Rev # ' + rev.number + ' - ' + desc : desc,
         Date_field: zohoToday(),
         Requested_Responses_Due: toZohoDate(b.due_date),
         TimeStamp: zohoNow(),
         // "Assign Quote Number" (Created validation) issues the real MMQ- number for this
         // choice; Reference_Number is mandatory, so it needs a placeholder to get that far.
+        // A revision keeps the chain's number (the validation skips numbering when Revise).
         Auto_Number_or_Enter_Quote_Number: 'Use Auto Number System for Quote Number',
-        Reference_Number: 'MMQ-PENDING',
-        Revise: false,
+        Reference_Number: rev ? (rev.reference || 'MMQ-PENDING') : 'MMQ-PENDING',
+        Revise: !!rev,
+        // The fields the Zoho Revise flow sets through its load and user-input workflows,
+        // which never fire on an API add.
+        Original_Quote_Revised: rev ? rev.root_id : '',
+        Quote_To_Be_Revised: rev ? rev.replaces_id : '',
+        Quote_Number_in_Revised_Lookup: rev ? rev.replaces_id : '',
+        Revision_Number: rev ? rev.number : '',
         Structural_Match_Choices: matchIds,
         Quote_Requirements: reqs,
         Manufacture_Account_Type: p.accountType,
@@ -366,7 +421,10 @@ function registerMfgRfqRoutes(app, deps) {
         const back = await fetchAllZohoPages('/report/All_Quotes?criteria=' + enc('(ID==' + quoteId + ')'));
         number = (back[0] && back[0].Reference_Number) || '';
       } catch (e) { /* the send already happened */ }
-      res.json({ ok: true, quote_id: quoteId, quote_number: number, lines: jc.length, fittings: fit.length, suppliers: matchIds.length });
+      res.json({
+        ok: true, quote_id: quoteId, quote_number: number, lines: jc.length, fittings: fit.length, suppliers: matchIds.length,
+        revision: rev ? rev.number : 0, replaced: rev ? rev.replaces_number : '',
+      });
     } catch (err) { fail(res, err); }
   });
 
@@ -381,4 +439,4 @@ function registerMfgRfqRoutes(app, deps) {
   }
 }
 
-module.exports = { registerMfgRfqRoutes, jeffCalcsRow, fittingRow };
+module.exports = { registerMfgRfqRoutes, jeffCalcsRow, fittingRow, revisionPlan };

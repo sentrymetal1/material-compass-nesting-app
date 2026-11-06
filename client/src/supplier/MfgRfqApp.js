@@ -6,7 +6,7 @@ import { useConfirm } from './ConfirmDialog';
 // Quote Form's screens; the send creates the same Quote_Form record, so Zoho numbers it,
 // matches each line to supplier stock, creates the supplier RFQ lines and sends the emails.
 // Opened with /mfg-rfq?manufacturer_id=<Customer_Entry ID>&t=<token>[&project_id=…]
-const BUILD_TAG = 'mfg-rfq-2026-10-31a';
+const BUILD_TAG = 'mfg-rfq-2026-11-06a-revise';
 const BASE = '/api/mfg/rfq/';
 
 function params() {
@@ -50,13 +50,18 @@ export default function MfgRfqApp() {
       if (!live) return;
       if (!j.ok) { setProj({ status: 'error', error: j.error || 'Could not load the project' }); return; }
       setProj({ status: 'ready', ...j });
-      setForm(f => ({ ...f, contact_id: j.project.rep_id || (j.contacts[0] && j.contacts[0].id) || '', description: j.project.description || '' }));
+      const eq = j.existing_quote;
+      setForm(f => ({ ...f, contact_id: j.project.rep_id || (j.contacts[0] && j.contacts[0].id) || '', description: (eq && eq.description) || j.project.description || '' }));
     }).catch(e => { if (live) setProj({ status: 'error', error: String(e.message || e) }); });
     return () => { live = false; };
   }, [projectId, auth]);
 
-  const quotable = proj.status === 'ready' ? proj.lines.filter(l => !l.on_hand && !l.already_quoted) : [];
-  const blocked = proj.status === 'ready' && (proj.existing_quote || (proj.missing_columns && proj.missing_columns.length));
+  // A project with a quote can only be revised. A revision re-sends every purchase line and
+  // every fitting, and replaces what the suppliers were sent before.
+  const eq = proj.status === 'ready' ? proj.existing_quote : null;
+  const revising = !!(eq && eq.can_revise);
+  const quotable = proj.status === 'ready' ? proj.lines.filter(l => !l.on_hand && (revising || !l.already_quoted)) : [];
+  const blocked = proj.status === 'ready' && ((eq && !eq.can_revise) || (proj.missing_columns && proj.missing_columns.length));
   const nothing = proj.status === 'ready' && !quotable.length && !proj.fittings.length;
   const canSend = proj.status === 'ready' && !blocked && !nothing && picked.length > 0 && form.due_date && !(send && (send.status === 'sending' || send.status === 'done'));
   const togglePick = id => setPicked(p => (p.includes(id) ? p.filter(x => x !== id) : [...p, id]));
@@ -64,11 +69,16 @@ export default function MfgRfqApp() {
 
   const onSend = async () => {
     const names = proj.suppliers.filter(s => picked.includes(s.match_id)).map(s => s.name);
-    const ok = await confirm({
+    const what = quotable.length + ' material line' + (quotable.length === 1 ? '' : 's')
+      + (proj.fittings.length ? ' and ' + proj.fittings.length + ' fitting' + (proj.fittings.length === 1 ? '' : 's') : '');
+    const ok = await confirm(revising ? {
+      title: 'Send Rev # ' + eq.revision + ' of ' + eq.number + '?',
+      message: 'Everything sent for ' + eq.number + ' before is voided, including any supplier quotes already received. '
+        + names.join(', ') + ' will be emailed now with the lines they stock, out of ' + what + '.',
+      confirmLabel: 'Send revision',
+    } : {
       title: 'Send to ' + names.length + ' supplier' + (names.length === 1 ? '' : 's') + '?',
-      message: names.join(', ') + ' will be emailed now with the lines they stock: '
-        + quotable.length + ' material line' + (quotable.length === 1 ? '' : 's')
-        + (proj.fittings.length ? ' and ' + proj.fittings.length + ' fitting' + (proj.fittings.length === 1 ? '' : 's') : '') + '.',
+      message: names.join(', ') + ' will be emailed now with the lines they stock: ' + what + '.',
       confirmLabel: 'Send',
     });
     if (!ok) return;
@@ -76,7 +86,7 @@ export default function MfgRfqApp() {
     try {
       const r = await fetch(BASE + 'send?' + auth, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId, supplier_match_ids: picked, ...form }),
+        body: JSON.stringify({ project_id: projectId, supplier_match_ids: picked, ...form, ...(revising ? { revise_quote_id: eq.id } : {}) }),
       });
       const j = await r.json();
       if (!j.ok) { setSend({ status: 'error', error: j.error || 'Send failed', reasons: j.reasons || [] }); return; }
@@ -118,8 +128,11 @@ export default function MfgRfqApp() {
 
               {proj.status === 'ready' && (
                 <>
-                  {proj.existing_quote && (
-                    <div className="sup-msg sup-msg-warn">This project already has quote <strong>{proj.existing_quote.number}</strong> ({proj.existing_quote.status}). A project gets one quote; to change it, use Revise on that quote.</div>
+                  {eq && revising && (
+                    <div className="sup-msg sup-msg-warn">This project already has quote <strong>{eq.number}</strong> ({eq.status}). Sending now makes <strong>Rev # {eq.revision}</strong>: every purchase line and fitting below goes out again, and what suppliers were sent before is voided.</div>
+                  )}
+                  {eq && !revising && (
+                    <div className="sup-msg sup-msg-warn">Quote <strong>{eq.number}</strong> is {eq.status}, so it can’t be revised.</div>
                   )}
                   {proj.missing_columns && proj.missing_columns.length > 0 && (
                     <div className="sup-msg sup-msg-error">Can’t send yet: the project material report doesn’t show {proj.missing_columns.join(', ')}, so On Hand material can’t be told apart. Add that column to Project_Material_Allocated_Detail_Form_Report.</div>
@@ -132,7 +145,7 @@ export default function MfgRfqApp() {
                         <thead><tr><th>#</th><th>Item</th><th>Qty</th><th>Weight</th><th></th></tr></thead>
                         <tbody>
                           {proj.lines.map(l => {
-                            const skip = l.on_hand || l.already_quoted;
+                            const skip = l.on_hand || (!revising && l.already_quoted);
                             return (
                               <tr key={l.id} className={skip ? 'q-line q-noquote' : 'q-line'}>
                                 <td className="q-ln-cell"><span className="q-ln">{l.line}</span></td>
@@ -140,7 +153,7 @@ export default function MfgRfqApp() {
                                 <td className="q-num">{num(l.qty)}</td>
                                 <td className="q-num">{num(l.weight, 1)} lb</td>
                                 <td>{l.on_hand ? <span className="mq-sup-st mq-st-wait">On Hand — not sent</span>
-                                  : l.already_quoted ? <span className="mq-sup-st mq-st-wait">Already quoted</span>
+                                  : skip ? <span className="mq-sup-st mq-st-wait">Already quoted</span>
                                   : <span className="mq-sup-st mq-st-done">Quote</span>}</td>
                               </tr>
                             );
@@ -212,12 +225,12 @@ export default function MfgRfqApp() {
 
                   <div className="q-actions">
                     <button className="btn-quote" disabled={!canSend} onClick={onSend}>
-                      {send && send.status === 'sending' ? 'Sending…' : 'Send to suppliers'}
+                      {send && send.status === 'sending' ? 'Sending…' : revising ? 'Send Rev # ' + eq.revision + ' to suppliers' : 'Send to suppliers'}
                     </button>
                     {!blocked && !nothing && picked.length === 0 && <span className="q-missing">Choose at least one supplier.</span>}
                     {nothing && !blocked && <span className="q-missing">Nothing on this project to quote.</span>}
                     {send && send.status === 'done' && (
-                      <span className="q-result q-result-ok">Sent{send.quote_number ? ' as ' + send.quote_number : ''} — {send.lines} line{send.lines === 1 ? '' : 's'}{send.fittings ? ', ' + send.fittings + ' fitting' + (send.fittings === 1 ? '' : 's') : ''} to {send.suppliers} supplier{send.suppliers === 1 ? '' : 's'}.</span>
+                      <span className="q-result q-result-ok">Sent{send.revision ? ' Rev # ' + send.revision : ''}{send.quote_number ? ' as ' + send.quote_number : ''} —{send.lines} line{send.lines === 1 ? '' : 's'}{send.fittings ? ', ' + send.fittings + ' fitting' + (send.fittings === 1 ? '' : 's') : ''} to {send.suppliers} supplier{send.suppliers === 1 ? '' : 's'}.</span>
                     )}
                     {send && send.status === 'error' && (
                       <span className="q-result q-result-warn">{send.error}{send.reasons && send.reasons.length ? ' ' + send.reasons.join(' ') : ''}</span>
