@@ -56,6 +56,7 @@ app.use((req, res, next) => {
 app.use('/api/takeoff', express.json({ limit: '200mb' }));
 app.use('/api/triage/manual', express.json({ limit: '40mb' })); // manual intake carries base64 photos/PDFs; same reason, same placement
 app.use('/api/files', express.json({ limit: '60mb' })); // drawings saved to the project store are base64 PDFs; same reason, same placement
+app.use(['/api/supplier/me/autofill', '/api/mfg/supplier-quotes/autofill'], express.json({ limit: '40mb' })); // a supplier's quote PDF, base64; same reason, same placement
 app.use(express.json({ limit: '10mb' }));
 
 // ── TENANT TOKEN (step 1, WARN-ONLY) ──────────────────────────────────────────────────────────

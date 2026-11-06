@@ -216,9 +216,32 @@ export function mergeQuotes(structuralQuotes, fittingQuotes) {
   return [...m.values()];
 }
 
+// What auto-fill did to one line: the quote row it was read from, and anything that needs a
+// person to look (not on the quote, a total that doesn't reconcile, an unsure match).
+function AutofillMark({ mark }) {
+  if (!mark) return null;
+  return (
+    <div className="q-af-mark">
+      {mark.found && mark.pdf_text && <div className="q-af-src" title="Read from the supplier's quote">📄 {mark.pdf_text}</div>}
+      {(mark.flags || []).map((f, i) => <div key={i} className="q-af-flag">⚠ {f}</div>)}
+    </div>
+  );
+}
+const afRowClass = mark => (!mark ? '' : (mark.flags && mark.flags.length ? ' q-af-warn' : ' q-af-ok'));
+
+// Read a chosen file as bare base64 (no data: prefix).
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || '').replace(/^data:[^,]*,/, ''));
+    r.onerror = () => reject(new Error('Could not read that file.'));
+    r.readAsDataURL(file);
+  });
+}
+
 // One structural line — supplier edits EITHER Line Total OR Price/lb (each recalcs the
 // other via line weight); unit price stays derived (total ÷ qty).
-function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptions, ep }) {
+function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptions, ep, mark }) {
   const kind = ALTER_KIND[draft.quote_option] || null;
   // An altered line prices against its NEW qty/weight — effLine folds the server's
   // preview over the original so the row, the pricing math and the quote totals can
@@ -242,7 +265,7 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
   };
 
   return (
-    <tr className={noQuote ? 'q-line q-noquote' : 'q-line'}>
+    <tr className={(noQuote ? 'q-line q-noquote' : 'q-line') + afRowClass(mark)}>
       <td className="q-ln-cell"><span className="q-ln">{line.line}</span></td>
       <td className="q-desc">
         {/* When altered, show what the MFG asked for struck through above the new line, so
@@ -251,6 +274,7 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
           ? <><span className="q-desc-was">{line.description}</span><div className="q-desc-now">{eff.description}</div></>
           : line.description}
         {line.mfg_note && <div className="q-mfgnote"><span className="q-mfgnote-lbl">MFG note:</span> {line.mfg_note}</div>}
+        <AutofillMark mark={mark} />
         {kind && <AlterEditor line={line} draft={draft} kind={kind} specOptions={specOptions} ep={ep} onChange={onChange} />}
         <div className="q-ireq-lbl">Item requirements <span className="muted">(MFG — editable)</span></div>
         <ItemReqEditor value={draft.item_requirements} options={itemReqChoices} onChange={reqs => onChange({ item_requirements: reqs })} />
@@ -283,15 +307,15 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
 }
 
 // One fitting line — priced PER-EACH (total = unit × qty).
-function FittingLineRow({ line, draft, onChange, leadChoices }) {
+function FittingLineRow({ line, draft, onChange, leadChoices, mark }) {
   const qty = Number(line.qty) || 0;
   const noQuote = draft.quote_option === 'No Quote';
   const unit = !noQuote ? (parseFloat(draft.unit_price) || 0) : 0;
   const total = unit * qty;
   return (
-    <tr className={noQuote ? 'q-line q-noquote' : 'q-line'}>
+    <tr className={(noQuote ? 'q-line q-noquote' : 'q-line') + afRowClass(mark)}>
       <td className="q-ln-cell"><span className="q-ln">{line.line}</span></td>
-      <td className="q-desc">{line.description}</td>
+      <td className="q-desc">{line.description}<AutofillMark mark={mark} /></td>
       <td className="q-num">{num(qty, 0)}</td>
       <td className="q-opt">
         <select value={draft.quote_option || 'Quote As Is'} onChange={e => onChange({ quote_option: e.target.value })}>
@@ -383,6 +407,68 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     }
     setH({ valid_days: v, valid_until: until });
   };
+  // Auto-fill from the supplier's quote PDF/photo. The server reads it against THIS quote's
+  // lines and returns values; they land in the same drafts a person types into, and nothing
+  // is sent until the user presses Submit.
+  const [af, setAf] = useState({ status: 'idle', file: null, result: null, error: '' });
+  const runAutofill = async () => {
+    const file = af.file;
+    if (!file) return;
+    setAf(s => ({ ...s, status: 'reading', error: '' }));
+    try {
+      const b64 = await fileToBase64(file);
+      const r = await fetch(ep('autofill'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quote_id: quote.quote_id, file_b64: b64, media_type: file.type || 'application/pdf', file_name: file.name }),
+      });
+      const j = await r.json().catch(() => ({ ok: false, error: 'The server did not answer (' + r.status + ').' }));
+      if (!r.ok || !j.ok) throw new Error(j.error || 'The quote could not be read.');
+      setDrafts(prev => {
+        const next = { ...prev };
+        Object.entries(j.structural || {}).forEach(([id, v]) => {
+          if (!next[id] || !v.found) return;
+          const d = { ...next[id], quote_option: v.quote_option || next[id].quote_option };
+          if (v.quote_option === 'No Quote') { d.total_price = ''; d.price_per_lb = ''; }
+          else if (v.total_price) { d.total_price = v.total_price; d.price_per_lb = v.price_per_lb || ''; }
+          if (v.lead_time) d.lead_time = v.lead_time;
+          if (v.comments) d.comments = v.comments;
+          next[id] = d;
+        });
+        return next;
+      });
+      setFitDrafts(prev => {
+        const next = { ...prev };
+        Object.entries(j.fittings || {}).forEach(([id, v]) => {
+          if (!next[id] || !v.found) return;
+          const d = { ...next[id], quote_option: v.quote_option || next[id].quote_option };
+          if (v.quote_option === 'No Quote') d.unit_price = '';
+          else if (v.unit_price) d.unit_price = v.unit_price;
+          if (v.lead_time) d.lead_time = v.lead_time;
+          if (v.comments) d.comments = v.comments;
+          next[id] = d;
+        });
+        return next;
+      });
+      const h = j.header || {};
+      setHdr(p => ({
+        ...p, ...h,
+        // Valid-until follows valid-days unless the quote printed its own date.
+        valid_until: h.valid_until || (h.valid_days ? (() => {
+          const dt = new Date(); dt.setDate(dt.getDate() + parseInt(h.valid_days, 10));
+          while (dt.getDay() === 0 || dt.getDay() === 6) dt.setDate(dt.getDate() + 1);
+          return dt.toISOString().slice(0, 10);
+        })() : p.valid_until),
+        attachment_name: file.name,
+      }));
+      setAf(s => ({ ...s, status: 'done', result: j }));
+      setSubmitState(null);
+    } catch (e) {
+      setAf(s => ({ ...s, status: 'error', error: String(e.message || e) }));
+    }
+  };
+  const afRes = af.status === 'done' ? af.result : null;
+  const markOf = (kind, id) => (afRes && afRes[kind] ? afRes[kind][id] : null);
+
   const locations = (lookups && lookups.locations) || [];
   const reps = (lookups && lookups.reps) || [];
   // Only show the requirements the MFG actually requested for THIS quote (not the full
@@ -586,6 +672,41 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
               {!mfg && <span className="q-files-note">review all files before quoting</span>}
             </div>
           )}
+          <div className="q-af">
+            <div className="q-af-row">
+              <span className="q-af-lbl">✨ {mfg ? "Have the supplier's quote as a PDF?" : 'Have your quote as a PDF?'}</span>
+              <input type="file" accept="application/pdf,image/png,image/jpeg,image/webp"
+                onChange={e => { const f = e.target.files && e.target.files[0]; setAf({ status: 'idle', file: f || null, result: null, error: '' }); }} />
+              <button type="button" className="q-batch-btn" disabled={!af.file || af.status === 'reading'} onClick={runAutofill}>
+                {af.status === 'reading' ? 'Reading…' : 'Auto-fill lines'}
+              </button>
+            </div>
+            {af.status === 'idle' && !af.file && <div className="q-af-hint">Upload it and every line it prices is filled in for you to check. Nothing is saved until you submit.</div>}
+            {af.status === 'reading' && <div className="q-af-hint">Reading {af.file && af.file.name} against your {quote.structural_lines.length + quote.fitting_lines.length} lines — this takes up to a minute.</div>}
+            {af.status === 'error' && <div className="q-af-err">{af.error}</div>}
+            {afRes && (() => {
+              const all = [...Object.values(afRes.structural || {}), ...Object.values(afRes.fittings || {})];
+              const filled = all.filter(m => m.found).length;
+              const look = all.filter(m => m.flags && m.flags.length).length;
+              const pdfTotal = afRes.pdf_grand_total;
+              const off = pdfTotal != null && Math.abs(pdfTotal - totalAmount) > 1;
+              return (
+                <div className="q-af-sum">
+                  <div><strong>Filled {filled} of {all.length} lines</strong> from {afRes.file_name}.{' '}
+                    {look ? <span className="q-af-warn-txt">{look} need{look === 1 ? 's' : ''} a look — highlighted in amber below.</span> : 'Check the prices, then fill anything still blank.'}</div>
+                  {pdfTotal != null && (
+                    <div className={off ? 'q-af-warn-txt' : 'q-af-ok-txt'}>
+                      Total on the quote {money(pdfTotal)} · total here {money(totalAmount)}{off ? ' — they don’t match yet. Check the highlighted lines, shipping and misc.' : ' ✓'}
+                    </div>
+                  )}
+                  {(afRes.header_flags || []).map((f, i) => <div key={i} className="q-af-flag">⚠ {f}</div>)}
+                  {(afRes.unmatched_pdf_lines || []).length > 0 && (
+                    <div className="q-af-flag">⚠ On the quote but not on your RFQ: {afRes.unmatched_pdf_lines.map(u => u.pdf_text + (u.amount != null ? ' (' + money(u.amount) + ')' : '')).join('; ')}</div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
           {hasStruct && (
             <>
               {hasFit && <div className="q-section-label">Structural / Pipe</div>}
@@ -605,7 +726,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                 </thead>
                 <tbody>
                   {quote.structural_lines.map(l => (
-                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} ep={ep} specOptions={specOptionsFor(l)} />
+                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} ep={ep} specOptions={specOptionsFor(l)} mark={markOf('structural', l.rfqs_sent_id)} />
                   ))}
                 </tbody>
                 <tfoot>
@@ -624,7 +745,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                 </thead>
                 <tbody>
                   {quote.fitting_lines.map(l => (
-                    <FittingLineRow key={l.rfq_row_id} line={l} draft={fitDrafts[l.rfq_row_id]} onChange={p => setFit(l.rfq_row_id, p)} leadChoices={leadChoices} />
+                    <FittingLineRow key={l.rfq_row_id} line={l} draft={fitDrafts[l.rfq_row_id]} onChange={p => setFit(l.rfq_row_id, p)} leadChoices={leadChoices} mark={markOf('fittings', l.rfq_row_id)} />
                   ))}
                 </tbody>
                 <tfoot>

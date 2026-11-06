@@ -664,6 +664,44 @@ function registerSupplierRoutes(app, deps) {
   app.get('/api/supplier/me/rfqs', withSupplier, rfqsHandler);
   app.get('/api/mfg/supplier-quotes/rfqs', withMfgOnBehalf, rfqsHandler);
 
+  // POST /api/…/autofill { quote_id, file_b64, media_type, file_name } — read the supplier's
+  // quote PDF/photo and return values to PRE-FILL the card (see quoteAutofill.js). The lines
+  // are re-read here from our own data, scoped like every other handler, so a client can
+  // only ever fill lines it could already see. Nothing is written to Zoho.
+  const autofillHandler = async (req, res) => {
+    try {
+      const { quote_id, file_b64, media_type, file_name } = req.body || {};
+      const qid = String(quote_id || '');
+      if (!qid) return res.status(400).json({ ok: false, error: 'No quote chosen.' });
+      const [sent, fitQuotes] = await Promise.all([
+        fetchSentRfqs(req.supplier.id),
+        fetchSentFittingRfqs(req.supplier.id).catch(() => []),
+      ]);
+      const sq = sent.quotes.find(q => String(q.quote_id) === qid && inScope(req, q.manufacturer_id));
+      const fq = fitQuotes.find(q => String(q.quote_id) === qid && inScope(req, q.manufacturer_id));
+      if (!sq && !fq) return res.status(404).json({ ok: false, error: 'That quote isn\'t open for this supplier.' });
+      const quote = {
+        quote_id: qid,
+        quote_number: (sq || fq).quote_number,
+        quote_description: (sq || fq).quote_description,
+        structural_lines: sq ? sq.lines : [],
+        fitting_lines: fq ? fq.lines : [],
+      };
+      const out = await require('./quoteAutofill').autofillQuote({
+        b64: String(file_b64 || '').replace(/^data:[^,]*,/, ''),
+        mediaType: media_type, name: file_name, quote,
+        leadChoices: LEAD_TIME_CHOICES, validChoices: QUOTE_VALID_CHOICES,
+      });
+      res.json(out);
+    } catch (err) {
+      if (err && err.status) return res.status(err.status).json({ ok: false, error: err.message });
+      console.error('[autofill]', (err && err.message) || err);
+      res.status(500).json({ ok: false, error: 'The quote could not be read: ' + String((err && err.message) || err) });
+    }
+  };
+  app.post('/api/supplier/me/autofill', withSupplier, autofillHandler);
+  app.post('/api/mfg/supplier-quotes/autofill', withMfgOnBehalf, autofillHandler);
+
   // GET /api/supplier/me/quote-file — stream a manufacturer reference file (Quote_Form.File_upload)
   // from Zoho using the server's token, so the supplier can download it without Zoho auth.
   const quoteFileHandler = async (req, res) => {

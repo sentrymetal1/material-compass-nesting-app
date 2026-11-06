@@ -490,3 +490,20 @@
 
 /* Stock tab counts: readable on both the white and the blue (active) tab */
 .stock-tab-count { color: inherit; opacity: .85; font-weight: 400; }
+/* Auto-fill from the supplier's quote PDF: the upload bar, the run summary, and per-line marks. */
+.q-af { margin: 10px 12px 0; padding: 10px 14px; background: #f3f0ff; border: 1px solid #d9d0fb; border-radius: 8px; font-size: 12px; }
+.q-af-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.q-af-lbl { font-weight: 700; color: #4b3a99; }
+.q-af-row input[type=file] { font-size: 12px; }
+.q-af-row .q-batch-btn:disabled { opacity: .5; cursor: default; }
+.q-af-hint { margin-top: 6px; color: #5b5675; }
+.q-af-err { margin-top: 6px; color: #b00020; font-weight: 600; }
+.q-af-sum { margin-top: 8px; display: grid; gap: 4px; color: #2b2840; }
+.q-af-warn-txt { color: #9a6a12; font-weight: 600; }
+.q-af-ok-txt { color: #1d7a45; font-weight: 600; }
+.q-af-mark { margin-top: 4px; display: grid; gap: 2px; }
+.q-af-src { font-size: 11px; color: #4b3a99; }
+.q-af-flag { font-size: 11px; color: #8a5a00; }
+tr.q-af-warn > td { background: #fffaf0; }
+tr.q-af-warn > td:first-child { box-shadow: inset 3px 0 0 #e0a526; }
+tr.q-af-ok > td:first-child { box-shadow: inset 3px 0 0 #7b6be0; }
