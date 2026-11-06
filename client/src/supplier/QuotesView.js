@@ -217,12 +217,28 @@ function AutofillMark({ mark }) {
   if (!mark) return null;
   return (
     <div className="q-af-mark">
+      {mark.pdf_line != null && <span className="q-af-qline">Quote line {mark.pdf_line}</span>}
       {mark.found && mark.pdf_text && <div className="q-af-src" title="Read from the supplier's quote">📄 {mark.pdf_text}</div>}
       {(mark.flags || []).map((f, i) => <div key={i} className="q-af-flag">⚠ {f}</div>)}
     </div>
   );
 }
 const afRowClass = mark => (!mark ? '' : !mark.found ? ' q-af-skip' : (mark.flags && mark.flags.length ? ' q-af-warn' : ' q-af-ok'));
+
+// A money/rate box that reads "4,946.06" at rest and edits as the plain number. The draft
+// always holds the bare number (commas stripped), so every calculation is unchanged.
+function NumInput({ value, onChange, minDp, maxDp, disabled, placeholder }) {
+  const [focus, setFocus] = useState(false);
+  const n = parseFloat(value);
+  const shown = focus || value == null || value === '' || isNaN(n)
+    ? (value ?? '')
+    : n.toLocaleString('en-US', { minimumFractionDigits: minDp, maximumFractionDigits: maxDp });
+  return (
+    <input type="text" inputMode="decimal" value={shown} disabled={disabled} placeholder={placeholder}
+      onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+      onChange={e => onChange(e.target.value.replace(/[,$\s]/g, ''))} />
+  );
+}
 
 // Read a chosen file as bare base64 (no data: prefix).
 function fileToBase64(file) {
@@ -325,15 +341,11 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
       </td>
       <td className="q-price">
         <span className="q-dollar">$</span>
-        <input type="number" step="0.01" min="0" inputMode="decimal"
-          value={draft.total_price} disabled={noQuote} placeholder="0.00"
-          onChange={e => onTotal(e.target.value)} />
+        <NumInput value={draft.total_price} minDp={2} maxDp={2} disabled={noQuote} placeholder="0.00" onChange={onTotal} />
       </td>
       <td className="q-price">
         <span className="q-dollar">$</span>
-        <input type="number" step="0.00001" min="0" inputMode="decimal"
-          value={draft.price_per_lb} disabled={noQuote} placeholder="0.00000"
-          onChange={e => onPpl(e.target.value)} />
+        <NumInput value={draft.price_per_lb} minDp={2} maxDp={5} disabled={noQuote} placeholder="0.00000" onChange={onPpl} />
         <span className="q-perlb">/lb</span>
       </td>
       <td className="q-num q-calc">{noQuote || lineTotal <= 0 ? '—' : money(unitPrice) + '/ea'}</td>
@@ -361,9 +373,8 @@ function FittingLineRow({ line, draft, onChange, leadChoices, mark }) {
       </td>
       <td className="q-price">
         <span className="q-dollar">$</span>
-        <input type="number" step="0.001" min="0" inputMode="decimal"
-          value={draft.unit_price} disabled={noQuote} placeholder="0.000"
-          onChange={e => onChange({ unit_price: e.target.value })} />
+        <NumInput value={draft.unit_price} minDp={2} maxDp={3} disabled={noQuote} placeholder="0.000"
+          onChange={v => onChange({ unit_price: v })} />
         <span className="q-perlb">/ea</span>
       </td>
       <td className="q-num q-calc">{noQuote || unit <= 0 ? '—' : money(total)}</td>
@@ -515,6 +526,22 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
   };
   const afRes = af.status === 'done' ? af.result : null;
   const markOf = (kind, id) => (afRes && afRes[kind] ? afRes[kind][id] : null);
+  // After auto-fill, show lines in the SUPPLIER's order so the card reads beside their PDF:
+  // quoted rows by their quote line, a line they combined right after its partner, then
+  // everything they didn't quote. Returns [line, isFirstNotQuoted].
+  const orderLines = (lines, kind, idKey) => {
+    if (!afRes || !afRes[kind]) return lines.map(l => [l, false]);
+    const rank = (l, i) => {
+      const m = afRes[kind][l[idKey]] || {};
+      if (m.found && m.pdf_line != null) return m.pdf_line;
+      if (m.combined && m.pdf_line != null) return m.pdf_line + 0.5;
+      if (m.found || m.combined) return 5000 + i;
+      return 10000 + i;
+    };
+    const sorted = lines.map((l, i) => [rank(l, i), i, l]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const firstOff = sorted.findIndex(x => x[0] >= 10000);
+    return sorted.map((x, k) => [x[2], k === firstOff && k > 0]);
+  };
 
   const locations = (lookups && lookups.locations) || [];
   const reps = (lookups && lookups.reps) || [];
@@ -735,7 +762,8 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
               const all = [...Object.values(afRes.structural || {}), ...Object.values(afRes.fittings || {})];
               const filled = all.filter(m => m.found).length;
               const look = all.filter(m => m.found && m.flags && m.flags.length).length;
-              const missing = all.length - filled;
+              const combined = all.filter(m => m.combined).length;
+              const missing = all.length - filled - combined;
               const pdfTotal = afRes.pdf_grand_total;
               const off = pdfTotal != null && Math.abs(pdfTotal - totalAmount) > 1;
               return (
@@ -743,7 +771,8 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                   <div><strong>Filled {filled} of {all.length} lines</strong> from {afRes.file_name}.{' '}
                     {look > 0 && <span className="q-af-warn-txt">{look} filled line{look === 1 ? '' : 's'} need{look === 1 ? 's' : ''} a check. </span>}
                     {missing > 0 && <span className="q-af-muted-txt">{missing} line{missing === 1 ? ' isn’t' : 's aren’t'} on the quote, so {missing === 1 ? 'it’s' : 'they’re'} set to No Quote (greyed out). </span>}
-                    {!look && !missing && 'Check the prices before you save.'}</div>
+                    {combined > 0 && <span className="q-af-muted-txt">{combined} line{combined === 1 ? ' was' : 's were'} combined by the supplier into another line. </span>}
+                    {!look && !missing && !combined && 'Check the prices before you save.'}</div>
                   {pdfTotal != null && (
                     <div className={off ? 'q-af-warn-txt' : 'q-af-ok-txt'}>
                       Total on the quote {money(pdfTotal)} · total here {money(totalAmount)}{off ? ' — they don’t match yet. Check the highlighted lines, shipping and misc.' : ' ✓'}
@@ -784,8 +813,11 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                   <tr><th>#</th><th>Item</th><th>Qty</th><th>Weight</th><th>Quote option</th><th>Line total</th><th>Price / lb</th><th>Unit price</th><th>Lead time</th><th>Comments</th></tr>
                 </thead>
                 <tbody>
-                  {quote.structural_lines.map(l => (
-                    <LineRow key={l.rfqs_sent_id} line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} ep={ep} specOptions={specOptionsFor(l)} mark={markOf('structural', l.rfqs_sent_id)} />
+                  {orderLines(quote.structural_lines, 'structural', 'rfqs_sent_id').map(([l, divider]) => (
+                    <React.Fragment key={l.rfqs_sent_id}>
+                    {divider && <tr className="q-af-divider"><td colSpan="10">Not on {mfg ? "the supplier's" : 'your'} quote — set to No Quote</td></tr>}
+                    <LineRow line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} ep={ep} specOptions={specOptionsFor(l)} mark={markOf('structural', l.rfqs_sent_id)} />
+                    </React.Fragment>
                   ))}
                 </tbody>
                 <tfoot>
@@ -803,8 +835,11 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                   <tr><th>#</th><th>Fitting</th><th>Qty</th><th>Option</th><th>Unit Price</th><th>Line Total</th><th>Lead Time</th><th>Comments</th></tr>
                 </thead>
                 <tbody>
-                  {quote.fitting_lines.map(l => (
-                    <FittingLineRow key={l.rfq_row_id} line={l} draft={fitDrafts[l.rfq_row_id]} onChange={p => setFit(l.rfq_row_id, p)} leadChoices={leadChoices} mark={markOf('fittings', l.rfq_row_id)} />
+                  {orderLines(quote.fitting_lines, 'fittings', 'rfq_row_id').map(([l, divider]) => (
+                    <React.Fragment key={l.rfq_row_id}>
+                    {divider && <tr className="q-af-divider"><td colSpan="8">Not on {mfg ? "the supplier's" : 'your'} quote — set to No Quote</td></tr>}
+                    <FittingLineRow line={l} draft={fitDrafts[l.rfq_row_id]} onChange={p => setFit(l.rfq_row_id, p)} leadChoices={leadChoices} mark={markOf('fittings', l.rfq_row_id)} />
+                    </React.Fragment>
                   ))}
                 </tbody>
                 <tfoot>

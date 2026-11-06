@@ -57,7 +57,9 @@ const TOOL = {
           type: 'object',
           properties: {
             ref: { type: 'string', description: 'The ref of the RFQ line (e.g. S3, F1).' },
-            status: { type: 'string', enum: ['priced', 'no_quote', 'not_found'], description: 'priced = a price for this item is on the quote. no_quote = the supplier explicitly declined it / cannot supply. not_found = not on the quote.' },
+            status: { type: 'string', enum: ['priced', 'no_quote', 'combined', 'not_found'], description: 'priced = a price for this item is on the quote. no_quote = the supplier explicitly declined it / cannot supply. combined = the supplier merged this item into the quote row that prices ANOTHER RFQ line (identical parts, quantities added together); set combined_into. not_found = not on the quote.' },
+            combined_into: { type: 'string', description: 'For status combined: the ref of the RFQ line whose quote row also covers this one.' },
+            pdf_line: { type: ['number', 'null'], description: 'The line number printed on the supplier\'s quote for the matching row (its position from the top if rows are unnumbered).' },
             pdf_text: { type: 'string', description: 'The matching row on the quote, copied as printed (short).' },
             price: { type: ['number', 'null'], description: 'The unit price exactly as printed, in price_basis units.' },
             price_basis: { type: 'string', enum: ['per_lb', 'per_cwt', 'per_ft', 'each', 'line_total', 'unknown'], description: 'What the printed price is per. per_cwt = per 100 lb. A price per piece/bar/length/plate = each. Use line_total if only an extended amount is printed.' },
@@ -89,7 +91,9 @@ const SYSTEM =
   'not on the document: use null. Suppliers describe items their own way (e.g. "W8X31 A992 40\'" for ' +
   '"W 8 x 31 Wide Flange A992 40 ft", "HR PL 1/2 x 48 x 96" for a 1/2" plate, "PIPE 4 SCH40 A53B" for 4" sch 40 ' +
   'pipe); match on shape, size, grade and length. If two RFQ lines could match one quote row, choose the ' +
-  'closest and set match to medium or low. Do not assign one quote row to two RFQ lines. Return one entry ' +
+  'closest and set match to medium or low. Do not price one quote row on two RFQ lines: when a supplier ' +
+  'combines identical parts from several RFQ lines into one row (quantities added together), price it on ONE ' +
+  'line and mark the others status combined with combined_into. Return one entry ' +
   'for every RFQ line.';
 
 // Our lines as the model sees them. The ref is the only key it returns; ids stay server-side.
@@ -300,7 +304,22 @@ async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices
     const flags = shaped.flags.slice();
     if (lt.flag) flags.push(lt.flag);
     if (x.match === 'low' || x.match === 'medium') flags.unshift((x.match === 'low' ? 'Unsure' : 'Fairly sure') + ' this is the right row on the quote — check the item.');
-    return { lead_time: lt.value, comments: String(x.note || '').trim(), pdf_text: String(x.pdf_text || '').trim(), match: x.match || 'high', flags };
+    return { lead_time: lt.value, comments: String(x.note || '').trim(), pdf_text: String(x.pdf_text || '').trim(), match: x.match || 'high', pdf_line: num(x.pdf_line), flags };
+  };
+  // A line the supplier folded into another line's row: priced there, so it carries No Quote
+  // here, but it is shown beside its partner and labelled, not as "not on the quote".
+  const combinedInto = (list, prefix, x) => {
+    const m = /^([SF])(\d+)$/i.exec(String(x.combined_into || '').trim());
+    const partner = m && m[1].toUpperCase() === prefix ? list[Number(m[2]) - 1] : null;
+    const px = partner ? byRef.get(prefix + m[2]) : null;
+    if (!partner || !px || px.status !== 'priced') return null;
+    const pl = num(px.pdf_line);
+    return {
+      found: false, combined: true, quote_option: 'No Quote',
+      combined_with_line: partner.line, pdf_line: pl,
+      flags: ['Combined by the supplier with line ' + partner.line + (pl != null ? ' on their quote line ' + pl : '') +
+        ' — priced there, so this line is No Quote. Check that line\'s qty covers both.'],
+    };
   };
 
   const struct = {}, substitutions = [], newSpecs = [];
@@ -310,6 +329,7 @@ async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices
   for (let i = 0; i < structural.length; i++) {
     const l = structural[i];
     const x = byRef.get('S' + (i + 1));
+    if (x && x.status === 'combined') { struct[l.rfqs_sent_id] = combinedInto(structural, 'S', x) || { ...NOT_ON_QUOTE }; continue; }
     if (!x || x.status === 'not_found') { struct[l.rfqs_sent_id] = { ...NOT_ON_QUOTE }; continue; }
     if (x.status === 'no_quote') { struct[l.rfqs_sent_id] = { found: true, quote_option: 'No Quote', ...lineResult(x, { flags: [] }) }; continue; }
     const shaped = shapeStructural(l, x);
@@ -364,6 +384,7 @@ async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices
   const fit = {};
   fittings.forEach((l, i) => {
     const x = byRef.get('F' + (i + 1));
+    if (x && x.status === 'combined') { fit[l.rfq_row_id] = combinedInto(fittings, 'F', x) || { ...NOT_ON_QUOTE }; return; }
     if (!x || x.status === 'not_found') { fit[l.rfq_row_id] = { ...NOT_ON_QUOTE }; return; }
     if (x.status === 'no_quote') { fit[l.rfq_row_id] = { found: true, quote_option: 'No Quote', ...lineResult(x, { flags: [] }) }; return; }
     const shaped = shapeFitting(l, x);

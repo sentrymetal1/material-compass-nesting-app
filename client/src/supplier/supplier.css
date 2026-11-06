@@ -514,3 +514,5 @@ tr.q-af-skip .q-af-flag { color: #6b7280; }
 .q-qty-was { font-size: 10px; color: var(--muted); text-decoration: line-through; }
 .q-af-subs { margin-top: 4px; padding: 8px 12px; background: #fff4e0; border: 1px solid #f0c060; border-left: 4px solid #e08a00; border-radius: 6px; color: #6b4300; display: grid; gap: 2px; }
 .q-af-subs-note { font-size: 11px; color: #8a5a00; margin-top: 2px; }
+.q-af-qline { display: inline-block; font-size: 10px; font-weight: 700; color: #fff; background: #7b6be0; border-radius: 3px; padding: 1px 6px; margin-right: 4px; }
+tr.q-af-divider td { background: #eef0f4; color: #4b5563; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 6px 14px; }
