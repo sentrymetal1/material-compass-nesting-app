@@ -1048,6 +1048,9 @@ function registerSupplierRoutes(app, deps) {
         Quote_Is_Valid_For: validDays ? (validDays + (validDays === 1 ? ' Day' : ' Days')) : '',
         Valid_Until_Date: toZohoDate(nextBusinessDayIso(header.valid_until)),
         SV_Radio_For_Submit: header.ready ? 'Ready for submission' : 'Not ready for submit',
+        // Email choices from the card; omitted by older clients -> the form defaults (checked) apply.
+        ...(typeof header.email_mfg === 'boolean' ? { Email_Manufacturer: header.email_mfg } : {}),
+        ...(typeof header.email_supplier === 'boolean' ? { Email_Supplier: header.email_supplier } : {}),
         Shipping_Amount: header.shipping != null ? String(header.shipping) : '0',
         Miscellaneous_Charges: header.misc != null ? String(header.misc) : '0',
         Supplier_Notes_To_Buyer: header.notes || '',

@@ -520,3 +520,7 @@ tr.q-af-divider td { background: #eef0f4; color: #4b5563; font-size: 11px; font-
 .q-ln-none { background: #c9ced6; }
 .q-ln-rfq { margin-top: 3px; font-size: 9px; font-weight: 700; color: var(--muted); white-space: nowrap; letter-spacing: .02em; }
 .q-attach-now { display: block; margin-top: 6px; font-size: 12px; color: #4b3a99; font-weight: 600; }
+.q-email { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 6px 0 4px; font-size: 12px; color: #374151; }
+.q-email-lbl { font-weight: 700; color: #1F4E79; }
+.q-email-opt { display: inline-flex; align-items: center; gap: 8px; }
+.q-seg-sm .q-seg-btn { padding: 3px 12px; font-size: 12px; }

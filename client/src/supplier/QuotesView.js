@@ -462,6 +462,10 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     supplier_quote_number: '', meets_requirements: '', shipping: '', misc: '',
     valid_days: '', valid_until: '', lead_time: '', notes: '', ready: false,
     location: '', rep: '',
+    // Who gets the 'quote received' email (Supplier_Verify_Form Email_Manufacturer / Email_Supplier).
+    // A manufacturer keying in a quote a supplier sent them needs neither; a supplier's own
+    // submit tells the manufacturer and keeps a copy.
+    email_mfg: !mfg, email_supplier: !mfg,
     // Prepopulate the supplier's requirements from the MFG's quote requirements (they're
     // confirming the manufacturer's requirements). Backend supplies quote.mfg_requirements.
     requirements: Array.isArray(quote.mfg_requirements) ? quote.mfg_requirements : [],
@@ -990,6 +994,19 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
             <div className="q-revise-note">{mfg
               ? <>This supplier already has a quote on file. Saving creates a new revision: the current one is marked <strong>Revised</strong> and replaced by this one.</>
               : <>Re-pricing creates a new revision — your current quote will be marked <strong>Revised</strong> and replaced by this one.</>}</div>
+          )}
+          {hasStruct && (
+            <div className="q-email">
+              <span className="q-email-lbl">Email on save:</span>
+              {[['email_mfg', mfg ? 'Email me (manufacturer)' : 'Email the manufacturer'], ['email_supplier', mfg ? 'Email the supplier a copy' : 'Email me a copy']].map(([k, lbl]) => (
+                <span key={k} className="q-email-opt">{lbl}
+                  <span className="q-seg q-seg-sm">
+                    <button type="button" className={'q-seg-btn' + (hdr[k] ? ' q-seg-on q-seg-yes' : '')} onClick={() => setH({ [k]: true })}>Yes</button>
+                    <button type="button" className={'q-seg-btn' + (!hdr[k] ? ' q-seg-on q-seg-no' : '')} onClick={() => setH({ [k]: false })}>No</button>
+                  </span>
+                </span>
+              ))}
+            </div>
           )}
           <div className="q-actions">
             {hasStruct && (
