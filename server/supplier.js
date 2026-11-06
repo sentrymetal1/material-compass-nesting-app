@@ -691,6 +691,12 @@ function registerSupplierRoutes(app, deps) {
         b64: String(file_b64 || '').replace(/^data:[^,]*,/, ''),
         mediaType: media_type, name: file_name, quote,
         catalog: sent.alteration_catalog, leadChoices: LEAD_TIME_CHOICES, validChoices: QUOTE_VALID_CHOICES,
+        // A spec the supplier quoted that the catalog lacks is added (guarded in quoteAutofill).
+        addSpec: async (specKey, label) => {
+          const [ft, mt] = String(specKey).split('|');
+          const catalogs = await fetchCatalogs({ fetchAllZohoPages, cachedLookup });
+          return addCatalogSpec(ft, mt, label, catalogs);
+        },
       });
       res.json(out);
     } catch (err) {
@@ -731,13 +737,55 @@ function registerSupplierRoutes(app, deps) {
   // Load this supplier's RFQ rows raw + the catalogs, for the alteration paths. The rows
   // are the authority: an alteration is always applied to the SERVER's copy of the line,
   // never to client-sent geometry.
-  async function loadAlterationContext(supplierId) {
+  async function loadAlterationContext(supplierId, specIds) {
     const [rawRows, catalogs] = await Promise.all([
       cachedLookup('sent-rfqs-raw:' + supplierId, 30 * 1000, async () =>
         fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')')),
       fetchCatalogs({ fetchAllZohoPages, cachedLookup }),
     ]);
+    await ensureSpecs(catalogs, specIds);
     return { rowById: new Map(rawRows.map(r => [String(r.ID), r])), catalogs };
+  }
+
+  // ── Specs added from a supplier's quote ─────────────────────────────────────────────
+  // A spec row is only a label (Type_Detail) under a Form × Material pair: weight comes from
+  // the size, never the spec, so a new one changes no number anywhere downstream.
+  // Railway runs several instances, each holding the catalog for an hour, so a spec added on
+  // one is unknown to the others. Rather than fail "Unknown Specification", an instance that
+  // meets an id it hasn't seen reads that one row and keeps it.
+  async function ensureSpecs(catalogs, specIds) {
+    const missing = [...new Set((specIds || []).filter(Boolean).map(String))].filter(id => /^\d+$/.test(id) && !catalogs.specById[id]);
+    for (const id of missing) {
+      try {
+        const rows = await fetchAllZohoPages('/report/Material_Form_Detail_Report?criteria=' + encodeURIComponent('(ID==' + id + ')'));
+        const r = rows[0];
+        if (r) catalogs.specById[id] = { typeDetail: r.Type_Detail || '', formTypeId: lkid(r.Form_Type), matTypeId: lkid(r.Material_Type) };
+      } catch (e) { /* leave it unknown; computeAlteredLine reports it */ }
+    }
+  }
+
+  // Add a spec to the shared catalog, or return the one already there. Checked against LIVE
+  // rows for the pair (not the cache), normalised, so "A-252 GR 3" never duplicates "A252 Gr 3".
+  const normSpecLabel = s => String(s || '').toUpperCase().replace(/ASTM|GRADE|\bGR\b|[\s\-.]/g, '');
+  async function addCatalogSpec(formTypeId, matTypeId, label, catalogs) {
+    const crit = encodeURIComponent('(Form_Type==' + formTypeId + ' && Material_Type==' + matTypeId + ')');
+    const rows = await fetchAllZohoPages('/report/Material_Form_Detail_Report?criteria=' + crit);
+    const have = rows.find(r => normSpecLabel(r.Type_Detail) === normSpecLabel(label));
+    let id, created = false;
+    if (have) id = String(have.ID);
+    else {
+      const token = await getAccessToken();
+      const resp = await axios.post(creatorApiBase() + '/form/Material_Form_Detail',
+        { data: { Form_Type: formTypeId, Material_Type: matTypeId, Type_Detail: label } },
+        { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      id = resp.data && resp.data.data && String(resp.data.data.ID || '');
+      if (!resp.data || resp.data.code !== 3000 || !id) throw new Error('Zoho refused the new spec: ' + JSON.stringify(resp.data).slice(0, 200));
+      created = true;
+      console.log('[autofill] added spec "' + label + '" (' + id + ') to Form ' + formTypeId + ' / Material ' + matTypeId);
+    }
+    if (catalogs) catalogs.specById[id] = { typeDetail: have ? have.Type_Detail : label, formTypeId: String(formTypeId), matTypeId: String(matTypeId) };
+    bust('line-calc:catalogs'); bust('takeoff:spec-groups');
+    return { id, label: have ? have.Type_Detail : label, created };
   }
 
   // Turn a LineCalcError into a 422 the UI can show verbatim. Anything else is a real fault.
@@ -753,7 +801,7 @@ function registerSupplierRoutes(app, deps) {
     try {
       const { rfqs_sent_id, length_ft, length_inch, quantity, spec_id } = req.body || {};
       if (!rfqs_sent_id) return res.status(400).json({ ok: false, error: 'rfqs_sent_id required' });
-      const { rowById, catalogs } = await loadAlterationContext(String(req.supplier.id));
+      const { rowById, catalogs } = await loadAlterationContext(String(req.supplier.id), [spec_id]);
       const row = rowById.get(String(rfqs_sent_id));
       // Scoped to THIS supplier's rows, so an unknown id is either stale or not theirs.
       if (!row || !inScope(req, lkid(row.Customer_LU))) return res.status(404).json({ ok: false, error: 'Line not found for this supplier' });
@@ -789,7 +837,7 @@ function registerSupplierRoutes(app, deps) {
       // Pull the authoritative RFQs_Sent rows for this supplier and index by ID — we build
       // the subform from these (not from client-sent data) so lookups/weights are correct.
       // Catalogs come along for any altered lines; both are cached.
-      const ctx = await loadAlterationContext(supplierId);
+      const ctx = await loadAlterationContext(supplierId, lines.map(l => l && l.alteration && l.alteration.spec_id));
       const { catalogs } = ctx;
       // On-behalf: only this MFG's lines of THIS quote exist as far as the submit is concerned.
       const rowById = scopeOf(req)

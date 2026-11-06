@@ -390,7 +390,13 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
   const cardRef = useRef(null);
   // Selectable specs for a line, from the shared catalog (hoisted out of the per-line
   // payload — see alterationMeta on the server).
-  const specOptionsFor = l => ((alterationCatalog || {}).specs || {})[(l.alteration || {}).spec_key] || [];
+  // Plus any spec auto-fill just added to the catalog for this form/material.
+  const specOptionsFor = l => {
+    const key = (l.alteration || {}).spec_key;
+    const base = ((alterationCatalog || {}).specs || {})[key] || [];
+    const added = ((afRes && afRes.new_specs) || []).filter(s => s.spec_key === key && !base.some(o => o.id === s.id));
+    return added.length ? base.concat(added.map(s => ({ id: s.id, label: s.label }))) : base;
+  };
 
   // structural drafts keyed by rfqs_sent_id
   const [drafts, setDrafts] = useState(() => {
@@ -747,7 +753,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                     <div className="q-af-subs">
                       <strong>⚠ Spec substitution{afRes.substitutions.length === 1 ? '' : 's'} — the supplier quoted a different material than you asked for:</strong>
                       {afRes.substitutions.map((s, i) => (
-                        <div key={i}>Line {s.line}: {s.from} → <strong>{s.to}</strong>{s.recorded ? ' (set to Alter Material)' : ' (noted in Comments)'}</div>
+                        <div key={i}>Line {s.line}: {s.from} → <strong>{s.to}</strong>{s.added ? ' — new spec, added to the catalog' : ''}{s.recorded ? ' (set to Alter Material)' : ' (noted in Comments)'}</div>
                       ))}
                       <div className="q-af-subs-note">Confirm each is acceptable before you save. Your request is unchanged; only the supplier's offer records the substitute.</div>
                     </div>

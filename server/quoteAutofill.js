@@ -65,7 +65,7 @@ const TOOL = {
             pdf_qty: { type: ['number', 'null'], description: 'Quantity on the quote row, as printed.' },
             pdf_length: { type: 'string', description: 'Length on the quote row as printed (e.g. "20\'", "240 in"), if any.' },
             lead_time_days: { type: ['number', 'null'], description: 'Line lead time in days, if this row states one. Stock = 1. Weeks x 5.' },
-            offered_spec: { type: 'string', description: 'Only when the quote row\'s grade/spec DIFFERS from the RFQ line\'s: the entry from that line\'s "spec options" list that matches what was quoted, copied exactly (e.g. quote says "A-500 GR B" -> "A500 Gr B"). If it differs but no option fits, "OTHER: " + the spec as printed. Empty when the spec is the same or not stated.' },
+            offered_spec: { type: 'string', description: 'Only when the quote row\'s grade/spec DIFFERS from the RFQ line\'s: the entry from that line\'s "spec options" list that matches what was quoted, copied exactly (e.g. quote says "A-500 GR B" -> "A500 Gr B"). If it differs but no option fits, "OTHER: " + the spec designation only, written catalog-style (e.g. "OTHER: A252 Gr 3", "OTHER: 6061-T6"); never add words like "domestic" or "or equal". Empty when the spec is the same or not stated.' },
             note: { type: 'string', description: 'Anything the supplier changed or qualified on this row: substitute grade/size, different length, cut charge included, partial qty. Empty if nothing.' },
             match: { type: 'string', enum: ['high', 'medium', 'low'], description: 'How sure you are the quote row is this RFQ line.' },
           },
@@ -252,8 +252,33 @@ function resolveSpec(line, offered, catalog) {
   return { kind: 'other', from, to: other };
 }
 
+// Is this text a real material specification, worth a catalog row? Standards designations
+// (ASTM/ASME/API, AISI/SAE/UNS), aluminium tempers and common stainless/alloy grades only.
+// Anything else ("domestic", "per customer spec", "or equal") stays a Comments note.
+const SPEC_PATTERNS = [
+  /^(SA|SB|A|B)\s?-?\d{2,4}[A-Z]?(\s?(\/|GR|GRADE|TYPE|TP|CL|CLASS)\s?-?[A-Z0-9.]{1,6})*(\s(SEAMLESS|ERW|SMLS|TYPE [A-Z]))?$/i,
+  /^API\s?5L(\s?(GR|X)?\s?[A-Z0-9]{1,4})*$/i,
+  /^(AISI|SAE|UNS)\s?[A-Z]?\d{3,5}[A-Z]?$/i,
+  /^\d{4}(-[TOH]\d{1,4})?$/,                 // 6061-T6, 5052-H32, 1018
+  /^(30[1-9]|31[0-9]|32[01]|347|410|416|420|430|440C?|2205|17-4)\s?(L|H|PH)?$/i,
+];
+const BAD_WORDS = /\b(PER|EQUAL|SIMILAR|DOMESTIC|IMPORT|CUSTOMER|SPEC|OR|ANY|COMMERCIAL|MILL|STD)\b/i;
+function looksLikeSpec(s) {
+  const t = String(s || '').trim();
+  if (t.length < 3 || t.length > 30 || BAD_WORDS.test(t)) return false;
+  return SPEC_PATTERNS.some(re => re.test(t));
+}
+// Catalog style: "A-252 GR 3" -> "A252 Gr 3", "a500 grade c" -> "A500 Gr C".
+function canonicalSpec(s) {
+  return String(s || '').trim().replace(/\s+/g, ' ')
+    .replace(/^(SA|SB|A|B)\s?-\s?(\d)/i, (m, p, d) => p.toUpperCase() + d)
+    .replace(/\b(grade|gr)\.?\s*/ig, 'Gr ')
+    .replace(/\bGr ([a-z])\b/g, (m, c) => 'Gr ' + c.toUpperCase())
+    .replace(/^([a-z]+)/, m => m.toUpperCase());
+}
+
 // quote = one merged quote ({ structural_lines, fitting_lines, ... }) from OUR data.
-async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices, validChoices, client }) {
+async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices, validChoices, client, addSpec }) {
   if (!b64) throw Object.assign(new Error('No file was sent.'), { status: 400 });
   if (b64.length * 0.75 > MAX_BYTES) throw Object.assign(new Error('That file is too large (25 MB max).'), { status: 413 });
   const structural = quote.structural_lines || [];
@@ -278,16 +303,34 @@ async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices
     return { lead_time: lt.value, comments: String(x.note || '').trim(), pdf_text: String(x.pdf_text || '').trim(), match: x.match || 'high', flags };
   };
 
-  const struct = {}, substitutions = [];
+  const struct = {}, substitutions = [], newSpecs = [];
   // A line the supplier didn't quote is recorded as No Quote, not dropped: the MFG compare
   // needs to see this supplier left it uncovered. The user can switch it back.
   const NOT_ON_QUOTE = { found: false, quote_option: 'No Quote', flags: ['Not on the supplier\'s quote — set to No Quote. Change the option if they do supply it.'] };
-  structural.forEach((l, i) => {
+  for (let i = 0; i < structural.length; i++) {
+    const l = structural[i];
     const x = byRef.get('S' + (i + 1));
-    if (!x || x.status === 'not_found') { struct[l.rfqs_sent_id] = { ...NOT_ON_QUOTE }; return; }
-    if (x.status === 'no_quote') { struct[l.rfqs_sent_id] = { found: true, quote_option: 'No Quote', ...lineResult(x, { flags: [] }) }; return; }
+    if (!x || x.status === 'not_found') { struct[l.rfqs_sent_id] = { ...NOT_ON_QUOTE }; continue; }
+    if (x.status === 'no_quote') { struct[l.rfqs_sent_id] = { found: true, quote_option: 'No Quote', ...lineResult(x, { flags: [] }) }; continue; }
     const shaped = shapeStructural(l, x);
-    const spec = resolveSpec(l, x.offered_spec, catalog);
+    let spec = resolveSpec(l, x.offered_spec, catalog);
+    // Not in the catalog yet: add it when the row match is certain and the text is a real
+    // spec designation, as the take-off does for fittings. Otherwise it stays a note.
+    let added = false;
+    if (spec.kind === 'other' && addSpec && x.match === 'high' && looksLikeSpec(spec.to) && (l.alteration || {}).spec_key) {
+      try {
+        const made = await addSpec(l.alteration.spec_key, canonicalSpec(spec.to));
+        if (made && made.id) {
+          added = made.created;
+          spec = { kind: 'catalog', id: made.id, from: spec.from, to: made.label };
+          const opts = (catalog.specs = catalog.specs || {})[l.alteration.spec_key] = specOptionsOf(l, catalog).slice();
+          if (!opts.some(o => o.id === made.id)) opts.push({ id: made.id, label: made.label });
+          newSpecs.push({ line: l.line, spec_key: l.alteration.spec_key, id: made.id, label: made.label, created: made.created });
+        }
+      } catch (e) {
+        console.error('[autofill] could not add spec "' + spec.to + '":', e.message);
+      }
+    }
     // One alteration per line (Item_Verification_Status is a single choice). A qty change
     // wins because the total was priced on it; the spec then rides in Comments + a flag.
     let altSpecId = null;
@@ -300,7 +343,8 @@ async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices
         shaped.flags.unshift('SPEC SUBSTITUTION: supplier offered ' + spec.to + ' instead of ' + spec.from +
           '. Set to Alter Material — confirm the substitute is acceptable.');
       }
-      substitutions.push({ line: l.line, from: spec.from, to: spec.to, recorded: !!altSpecId });
+      if (added) shaped.flags.unshift('NEW SPEC: ' + spec.to + ' was not in the catalog for this item and has been added.');
+      substitutions.push({ line: l.line, from: spec.from, to: spec.to, recorded: !!altSpecId, added });
     } else if (spec.kind === 'other') {
       shaped.flags.unshift('SPEC SUBSTITUTION: supplier quoted ' + spec.to + ' instead of ' + spec.from +
         ', which isn\'t in the catalog for this item — noted in Comments. Confirm it is acceptable.');
@@ -316,7 +360,7 @@ async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices
       total_price: shaped.total_price, price_per_lb: shaped.price_per_lb,
       alt_quantity: shaped.alt_quantity, alt_spec_id: altSpecId, basis: shaped.basis, ...r,
     };
-  });
+  }
   const fit = {};
   fittings.forEach((l, i) => {
     const x = byRef.get('F' + (i + 1));
@@ -350,6 +394,7 @@ async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices
     header,
     header_flags: headerFlags,
     substitutions,
+    new_specs: newSpecs,
     structural: struct,
     fittings: fit,
     unmatched_pdf_lines: (Array.isArray(out.unmatched_pdf_lines) ? out.unmatched_pdf_lines : [])
@@ -360,4 +405,4 @@ async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices
   };
 }
 
-module.exports = { autofillQuote, _test: { shapeStructural, shapeFitting, leadChoice, lineList, resolveSpec } };
+module.exports = { autofillQuote, _test: { shapeStructural, shapeFitting, leadChoice, lineList, resolveSpec, looksLikeSpec, canonicalSpec } };
