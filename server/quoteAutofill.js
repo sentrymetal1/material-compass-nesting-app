@@ -41,8 +41,9 @@ const TOOL = {
           valid_days: { type: ['number', 'null'], description: 'Days the quote is valid, only if stated as a number of days.' },
           valid_until: { type: 'string', description: 'YYYY-MM-DD expiry date if printed (or computable from a stated date + days). Empty otherwise.' },
           lead_time_days: { type: ['number', 'null'], description: 'Quote-level lead time in days if stated. "Stock"/"in stock"/"ex-stock" = 1. Weeks x 5 (business days). Null if not stated.' },
-          shipping: { type: ['number', 'null'], description: 'Freight/delivery/shipping charge as printed. 0 only if the quote says free/included/no charge. Null if not mentioned.' },
-          misc: { type: ['number', 'null'], description: 'Sum of other non-material charges (cutting, handling, fuel surcharge, cert fees...). Null if none printed. Never tax.' },
+          shipping: { type: ['number', 'null'], description: 'SUM of everything tied to getting the material delivered: freight/delivery/shipping charge PLUS fuel surcharge and any other shipping adders (delivery fee, hazmat, liftgate, minimum-freight). 0 only if the quote says free/included/no charge and has no surcharge. Null if none of these is printed.' },
+          shipping_label: { type: 'string', description: 'What makes up the shipping amount, as printed (e.g. "Fuel Surcharge", "Freight + Fuel Surcharge").' },
+          misc: { type: ['number', 'null'], description: 'Sum of every OTHER non-material charge that is not part of a line price: cert/MTR fees, handling, packaging, small-order or setup charges, and any charge you are unsure where to put. Never fuel surcharge or freight (those are shipping). Never tax. Null if none printed.' },
           misc_label: { type: 'string', description: 'What the misc charges are, as printed.' },
           material_subtotal: { type: ['number', 'null'], description: 'Material subtotal as printed, if any.' },
           grand_total: { type: ['number', 'null'], description: 'Quote total as printed (before tax if tax is shown separately).' },
@@ -406,7 +407,9 @@ async function autofillQuote({ b64, mediaType, name, quote, catalog, leadChoices
   if (num(h.shipping) != null && num(h.shipping) >= 0) header.shipping = round(num(h.shipping), 2).toFixed(2);
   else headerFlags.push('No shipping charge on the quote — enter 0 if delivery is included.');
   if (num(h.misc) != null && num(h.misc) >= 0) header.misc = round(num(h.misc), 2).toFixed(2);
-  const notes = [String(h.notes || '').trim(), h.misc_label && num(h.misc) ? 'Misc = ' + String(h.misc_label).trim() : ''].filter(Boolean).join(' · ');
+  const notes = [String(h.notes || '').trim(),
+    h.shipping_label && num(h.shipping) ? 'Shipping = ' + String(h.shipping_label).trim() : '',
+    h.misc_label && num(h.misc) ? 'Misc = ' + String(h.misc_label).trim() : ''].filter(Boolean).join(' · ');
   if (notes) header.notes = notes;
 
   return {
