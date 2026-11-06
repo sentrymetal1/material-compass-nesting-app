@@ -115,13 +115,16 @@ function docBlock(b64, mediaType) {
   return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } };
 }
 
-async function extract(client, { b64, mediaType, name, quote, structural, fittings }) {
+async function extract(client, args, attempt) {
+  const { b64, mediaType, name, quote, structural, fittings } = args;
+  // Newer models refuse a forced tool_choice, so the tool is offered and the prompt
+  // requires it; a reply without the call gets one retry.
   const resp = await client.messages.create({
     model: MODEL,
     max_tokens: 8000,
-    system: SYSTEM,
+    system: SYSTEM + ' Answer only by calling ' + TOOL.name + '.',
     tools: [TOOL],
-    tool_choice: { type: 'tool', name: TOOL.name },
+    tool_choice: { type: 'auto' },
     messages: [{
       role: 'user',
       content: [
@@ -134,7 +137,12 @@ async function extract(client, { b64, mediaType, name, quote, structural, fittin
     }],
   });
   const tu = resp.content.find(b => b.type === 'tool_use');
-  return { out: tu ? tu.input : null, usage: resp.usage || {} };
+  const usage = resp.usage || {};
+  if (!tu && !attempt) {
+    const again = await extract(client, args, 1);
+    return { out: again.out, usage: { input_tokens: (usage.input_tokens || 0) + (again.usage.input_tokens || 0), output_tokens: (usage.output_tokens || 0) + (again.usage.output_tokens || 0) } };
+  }
+  return { out: tu ? tu.input : null, usage };
 }
 
 function leadChoice(days, choices) {
