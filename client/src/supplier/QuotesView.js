@@ -217,10 +217,23 @@ function AutofillMark({ mark }) {
   if (!mark) return null;
   return (
     <div className="q-af-mark">
-      {mark.pdf_line != null && <span className="q-af-qline">Quote line {mark.pdf_line}</span>}
       {mark.found && mark.pdf_text && <div className="q-af-src" title="Read from the supplier's quote">📄 {mark.pdf_text}</div>}
       {(mark.flags || []).map((f, i) => <div key={i} className="q-af-flag">⚠ {f}</div>)}
     </div>
+  );
+}
+// The row number. After auto-fill it is the SUPPLIER's quote line, so the card reads beside
+// their PDF; a line they didn't quote gets none. Our RFQ line stays underneath: it is the
+// key RFQs_Sent, allocation and the PO join on, and it never changes. The supplier's number
+// is display only, since it differs per supplier and can change in a revised quote.
+function LineNoCell({ line, mark }) {
+  if (!mark) return <td className="q-ln-cell"><span className="q-ln">{line.line}</span></td>;
+  const sup = mark.found && mark.pdf_line != null ? mark.pdf_line : null;
+  return (
+    <td className="q-ln-cell">
+      {sup != null ? <span className="q-ln q-ln-sup" title="Supplier's quote line">{sup}</span> : <span className="q-ln q-ln-none" title="Not priced on its own line of the supplier's quote">–</span>}
+      <div className="q-ln-rfq" title="Your RFQ line — used for allocation">RFQ {line.line}</div>
+    </td>
   );
 }
 const afRowClass = mark => (!mark ? '' : !mark.found ? ' q-af-skip' : (mark.flags && mark.flags.length ? ' q-af-warn' : ' q-af-ok'));
@@ -312,11 +325,11 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
 
   return (
     <tr className={(noQuote ? 'q-line q-noquote' : 'q-line') + afRowClass(mark)}>
-      <td className="q-ln-cell"><span className="q-ln">{line.line}</span></td>
+      <LineNoCell line={line} mark={mark} />
       <td className="q-desc">
         {/* When altered, show what the MFG asked for struck through above the new line, so
             the supplier can see exactly what they're changing before they send it. */}
-        {eff.altered
+        {eff.altered && eff.description !== line.description
           ? <><span className="q-desc-was">{line.description}</span><div className="q-desc-now">{eff.description}</div></>
           : line.description}
         {line.mfg_note && <div className="q-mfgnote"><span className="q-mfgnote-lbl">MFG note:</span> {line.mfg_note}</div>}
@@ -363,7 +376,7 @@ function FittingLineRow({ line, draft, onChange, leadChoices, mark }) {
   const total = unit * qty;
   return (
     <tr className={(noQuote ? 'q-line q-noquote' : 'q-line') + afRowClass(mark)}>
-      <td className="q-ln-cell"><span className="q-ln">{line.line}</span></td>
+      <LineNoCell line={line} mark={mark} />
       <td className="q-desc">{line.description}<AutofillMark mark={mark} /></td>
       <td className="q-num">{num(qty, 0)}</td>
       <td className="q-opt">
