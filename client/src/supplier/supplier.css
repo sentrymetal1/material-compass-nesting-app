@@ -507,3 +507,8 @@
 tr.q-af-warn > td { background: #fffaf0; }
 tr.q-af-warn > td:first-child { box-shadow: inset 3px 0 0 #e0a526; }
 tr.q-af-ok > td:first-child { box-shadow: inset 3px 0 0 #7b6be0; }
+tr.q-af-skip > td:first-child { box-shadow: inset 3px 0 0 #b8bfca; }
+tr.q-af-skip .q-af-flag { color: #6b7280; }
+.q-af-muted-txt { color: #6b7280; }
+.q-qty-in { width: 64px; text-align: right; font-size: 13px; padding: 4px 6px; border: 1px solid #cfddf0; border-radius: 6px; font-family: inherit; }
+.q-qty-was { font-size: 10px; color: var(--muted); text-decoration: line-through; }

@@ -118,12 +118,7 @@ function AlterEditor({ line, draft, kind, specOptions, ep, onChange }) {
           <span className="q-alter-u">in</span>
         </label>
       )}
-      {kind === 'quantity' && (
-        <label className="q-alter-f">New quantity
-          <input type="number" min="1" step="1" className="q-alter-n" placeholder={String(line.qty ?? '')}
-            value={draft.alt_quantity ?? ''} onChange={e => onChange({ alt_quantity: e.target.value })} />
-        </label>
-      )}
+      {/* Quantity is typed straight into the Qty column. */}
       {kind === 'spec' && (
         <label className="q-alter-f">New specification
           <select value={draft.alt_spec_id || ''} onChange={e => onChange({ alt_spec_id: e.target.value })}>
@@ -137,7 +132,7 @@ function AlterEditor({ line, draft, kind, specOptions, ep, onChange }) {
       {!draft.previewing && !draft.preview_error && draft.preview && (
         <span className="q-alter-msg q-alter-ok">→ {draft.preview.description} · {num(draft.preview.unit_weight, 2)} lb/ea</span>
       )}
-      {!body && !draft.previewing && <span className="q-alter-msg muted">Enter a value to reprice this line.</span>}
+      {!body && !draft.previewing && <span className="q-alter-msg muted">{kind === 'quantity' ? 'Type the new quantity in the Qty column.' : 'Enter a value to reprice this line.'}</span>}
     </div>
   );
 }
@@ -227,7 +222,7 @@ function AutofillMark({ mark }) {
     </div>
   );
 }
-const afRowClass = mark => (!mark ? '' : (mark.flags && mark.flags.length ? ' q-af-warn' : ' q-af-ok'));
+const afRowClass = mark => (!mark ? '' : !mark.found ? ' q-af-skip' : (mark.flags && mark.flags.length ? ' q-af-warn' : ' q-af-ok'));
 
 // Read a chosen file as bare base64 (no data: prefix).
 function fileToBase64(file) {
@@ -253,16 +248,50 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
   const lineTotal = !noQuote ? (parseFloat(draft.total_price) || 0) : 0;
   const unitPrice = qty > 0 ? lineTotal / qty : 0;
 
+  // A typed total or $/lb is the new price; forget any basis auto-fill brought in.
   const onTotal = v => {
     const t = parseFloat(v);
     const ppl = totalWeight > 0 && t > 0 ? round(t / totalWeight, 5) : '';
-    onChange({ total_price: v, price_per_lb: ppl === '' ? '' : String(ppl) });
+    onChange({ total_price: v, price_per_lb: ppl === '' ? '' : String(ppl), basis: null });
   };
   const onPpl = v => {
     const p = parseFloat(v);
     const tot = p > 0 ? round(p * totalWeight, 2) : '';
-    onChange({ price_per_lb: v, total_price: tot === '' ? '' : String(tot) });
+    onChange({ price_per_lb: v, total_price: tot === '' ? '' : String(tot), basis: null });
   };
+
+  // Editable qty = an "Alter Quantity" on this line; the server reprices the weight (via
+  // AlterEditor's preview) and the effect below reprices the total from the line's basis.
+  // A length/spec alteration owns the line (one alteration kind per line), so qty locks.
+  const qtyLocked = kind === 'length' || kind === 'spec' || noQuote;
+  const onQty = v => {
+    const patch = {};
+    if (!draft.basis) {
+      // Typed prices: hold the price per piece steady across the qty change.
+      const t = parseFloat(draft.total_price);
+      if (t > 0 && qty > 0) patch.basis = { price: t / qty, basis: 'each' };
+    }
+    const n = parseFloat(v);
+    if (Number.isFinite(n) && n === Number(line.qty)) onChange({ ...patch, quote_option: 'Quote As Is', alt_quantity: '', preview: null, preview_error: '' });
+    else onChange({ ...patch, quote_option: 'Alter Quantity', alt_quantity: v });
+  };
+  const lastQty = useRef(qty);
+  useEffect(() => {
+    if (lastQty.current === qty) return;
+    lastQty.current = qty;
+    const b = draft.basis;
+    if (!b || noQuote || !(qty > 0)) return;
+    const a = line.alteration || {};
+    const lenFt = (Number(a.length_ft) || 0) + (Number(a.length_inch) || 0) / 12;
+    let t = null;
+    if (b.basis === 'each') t = b.price * qty;
+    else if (b.basis === 'per_lb' && totalWeight > 0) t = b.price * totalWeight;
+    else if (b.basis === 'per_cwt' && totalWeight > 0) t = b.price * totalWeight / 100;
+    else if (b.basis === 'per_ft' && lenFt > 0) t = b.price * lenFt * qty;
+    if (!(t > 0)) return;
+    const tot = round(t, 2);
+    onChange({ total_price: tot.toFixed(2), price_per_lb: totalWeight > 0 ? String(round(tot / totalWeight, 5)) : '' });
+  }, [qty, totalWeight]);   // eslint-disable-line
 
   return (
     <tr className={(noQuote ? 'q-line q-noquote' : 'q-line') + afRowClass(mark)}>
@@ -279,7 +308,14 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
         <div className="q-ireq-lbl">Item requirements <span className="muted">(MFG — editable)</span></div>
         <ItemReqEditor value={draft.item_requirements} options={itemReqChoices} onChange={reqs => onChange({ item_requirements: reqs })} />
       </td>
-      <td className={eff.altered ? 'q-num q-altered' : 'q-num'}>{num(qty, 0)}</td>
+      <td className={eff.altered ? 'q-num q-altered' : 'q-num'}>
+        {qtyLocked
+          ? num(qty, 0)
+          : <input type="number" min="1" step="1" className="q-qty-in" title="Change to quote a different quantity"
+              value={kind === 'quantity' ? (draft.alt_quantity ?? '') : String(line.qty ?? '')}
+              placeholder={String(line.qty ?? '')} onChange={e => onQty(e.target.value)} />}
+        {eff.altered && <div className="q-qty-was">was {num(line.qty, 0)}</div>}
+      </td>
       <td className={eff.altered ? 'q-num q-altered' : 'q-num'}>{num(totalWeight, 1)} lb</td>
       <td className="q-opt">
         <select value={draft.quote_option || 'Quote As Is'} onChange={e => onChange({ quote_option: e.target.value })}>
@@ -426,8 +462,10 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
       setDrafts(prev => {
         const next = { ...prev };
         Object.entries(j.structural || {}).forEach(([id, v]) => {
-          if (!next[id] || !v.found) return;
-          const d = { ...next[id], quote_option: v.quote_option || next[id].quote_option };
+          if (!next[id]) return;
+          const d = { ...next[id], quote_option: v.quote_option || next[id].quote_option, basis: v.basis || null, alt_quantity: '', preview: null, preview_error: '' };
+          // The supplier quoted a different piece count: the card carries THEIR qty.
+          if (v.alt_quantity) d.alt_quantity = String(v.alt_quantity);
           if (v.quote_option === 'No Quote') { d.total_price = ''; d.price_per_lb = ''; }
           else if (v.total_price) { d.total_price = v.total_price; d.price_per_lb = v.price_per_lb || ''; }
           if (v.lead_time) d.lead_time = v.lead_time;
@@ -439,7 +477,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
       setFitDrafts(prev => {
         const next = { ...prev };
         Object.entries(j.fittings || {}).forEach(([id, v]) => {
-          if (!next[id] || !v.found) return;
+          if (!next[id]) return;
           const d = { ...next[id], quote_option: v.quote_option || next[id].quote_option };
           if (v.quote_option === 'No Quote') d.unit_price = '';
           else if (v.unit_price) d.unit_price = v.unit_price;
@@ -695,7 +733,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                 <div className="q-af-sum">
                   <div><strong>Filled {filled} of {all.length} lines</strong> from {afRes.file_name}.{' '}
                     {look > 0 && <span className="q-af-warn-txt">{look} filled line{look === 1 ? '' : 's'} need{look === 1 ? 's' : ''} a check. </span>}
-                    {missing > 0 && <span className="q-af-warn-txt">{missing} line{missing === 1 ? ' isn’t' : 's aren’t'} on the quote — price {missing === 1 ? 'it' : 'them'} by hand or mark No Quote. </span>}
+                    {missing > 0 && <span className="q-af-muted-txt">{missing} line{missing === 1 ? ' isn’t' : 's aren’t'} on the quote, so {missing === 1 ? 'it’s' : 'they’re'} set to No Quote (greyed out). </span>}
                     {!look && !missing && 'Check the prices before you save.'}</div>
                   {pdfTotal != null && (
                     <div className={off ? 'q-af-warn-txt' : 'q-af-ok-txt'}>

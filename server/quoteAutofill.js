@@ -157,11 +157,24 @@ function leadChoice(days, choices) {
 // Turn the model's reading of one structural row into card values, all money computed here.
 function shapeStructural(line, x) {
   const flags = [];
-  const qty = Number(line.qty) || 0;
-  const weight = qty * (Number(line.unit_weight) || 0);
+  const ourQty = Number(line.qty) || 0;
   const a = line.alteration || {};
   const lengthFt = (Number(a.length_ft) || 0) + (Number(a.length_inch) || 0) / 12;
   const price = num(x.price), printed = num(x.line_total);
+  // Priced per piece and the supplier quoted a different piece count: take THEIR count as an
+  // Alter Quantity, so qty, weight and total on the card all describe what they quoted. The
+  // user can type our qty back in and the card reprices from the same basis.
+  const pq = num(x.pdf_qty);
+  const pieceBasis = x.price_basis === 'each' || x.price_basis === 'per_ft';
+  let qty = ourQty, altQty = null;
+  if (pieceBasis && pq != null && pq > 0 && Number.isInteger(pq) && ourQty > 0 && pq !== ourQty) {
+    qty = pq; altQty = pq;
+    flags.push('Supplier quoted ' + pq + ' pcs, you asked for ' + ourQty + '. Qty set to ' + pq +
+      ' (Alter Quantity) — type ' + ourQty + ' in the Qty column to price your full quantity.');
+  } else if (pq != null && ourQty > 0 && pq !== ourQty && x.price_basis === 'line_total') {
+    flags.push('Quote qty ' + pq + ' vs our qty ' + ourQty + '.');
+  }
+  const weight = qty * (Number(line.unit_weight) || 0);
   let computed = null;
   switch (x.price_basis) {
     case 'per_lb': if (price != null && weight > 0) computed = price * weight; break;
@@ -178,23 +191,21 @@ function shapeStructural(line, x) {
   if (printed != null && computed != null && printed > 0) {
     const diff = Math.abs(printed - computed) / printed;
     if (diff > RECONCILE_TOL) {
-      flags.push('Quote shows ' + money(printed) + ' for this row, but its price × our ' +
-        (x.price_basis === 'each' ? 'qty' : x.price_basis === 'per_ft' ? 'length × qty' : 'weight') + ' = ' + money(computed) +
+      flags.push('Quote shows ' + money(printed) + ' for this row, but its price × ' +
+        (x.price_basis === 'each' ? 'qty' : x.price_basis === 'per_ft' ? 'length × qty' : 'our weight') + ' = ' + money(computed) +
         '. The supplier may have quoted a different quantity or length — check it.');
-    }
-  }
-  const pq = num(x.pdf_qty);
-  if (pq != null && qty > 0 && Math.abs(pq - qty) > 1e-6 && !/lb|cwt/i.test(String(x.pdf_text || ''))) {
-    // A per-lb row often prints pounds as the qty; only flag counts that look like pieces.
-    if (x.price_basis === 'each' || x.price_basis === 'per_ft' || x.price_basis === 'line_total') {
-      flags.push('Quote qty ' + pq + ' vs our qty ' + qty + '.');
     }
   }
   if (total != null && !(total > 0)) total = null;
   if (total == null) flags.push('No price could be read for this line — enter it by hand.');
+  // The supplier's price and what it's per, so a qty edit on the card reprices the same way.
+  const basis = price != null && price > 0 && ['each', 'per_lb', 'per_cwt', 'per_ft'].includes(x.price_basis)
+    ? { price, basis: x.price_basis } : null;
   return {
     total_price: total != null ? round(total, 2).toFixed(2) : '',
     price_per_lb: total != null && weight > 0 ? String(round(total / weight, 5)) : '',
+    alt_quantity: altQty,
+    basis,
     flags,
   };
 }
@@ -242,17 +253,24 @@ async function autofillQuote({ b64, mediaType, name, quote, leadChoices, validCh
   };
 
   const struct = {};
+  // A line the supplier didn't quote is recorded as No Quote, not dropped: the MFG compare
+  // needs to see this supplier left it uncovered. The user can switch it back.
+  const NOT_ON_QUOTE = { found: false, quote_option: 'No Quote', flags: ['Not on the supplier\'s quote — set to No Quote. Change the option if they do supply it.'] };
   structural.forEach((l, i) => {
     const x = byRef.get('S' + (i + 1));
-    if (!x || x.status === 'not_found') { struct[l.rfqs_sent_id] = { found: false, flags: ['Not on the supplier\'s quote — price it by hand or mark it No Quote.'] }; return; }
+    if (!x || x.status === 'not_found') { struct[l.rfqs_sent_id] = { ...NOT_ON_QUOTE }; return; }
     if (x.status === 'no_quote') { struct[l.rfqs_sent_id] = { found: true, quote_option: 'No Quote', ...lineResult(x, { flags: [] }) }; return; }
     const shaped = shapeStructural(l, x);
-    struct[l.rfqs_sent_id] = { found: true, quote_option: 'Quote As Is', total_price: shaped.total_price, price_per_lb: shaped.price_per_lb, ...lineResult(x, shaped) };
+    struct[l.rfqs_sent_id] = {
+      found: true, quote_option: shaped.alt_quantity ? 'Alter Quantity' : 'Quote As Is',
+      total_price: shaped.total_price, price_per_lb: shaped.price_per_lb,
+      alt_quantity: shaped.alt_quantity, basis: shaped.basis, ...lineResult(x, shaped),
+    };
   });
   const fit = {};
   fittings.forEach((l, i) => {
     const x = byRef.get('F' + (i + 1));
-    if (!x || x.status === 'not_found') { fit[l.rfq_row_id] = { found: false, flags: ['Not on the supplier\'s quote — price it by hand or mark it No Quote.'] }; return; }
+    if (!x || x.status === 'not_found') { fit[l.rfq_row_id] = { ...NOT_ON_QUOTE }; return; }
     if (x.status === 'no_quote') { fit[l.rfq_row_id] = { found: true, quote_option: 'No Quote', ...lineResult(x, { flags: [] }) }; return; }
     const shaped = shapeFitting(l, x);
     fit[l.rfq_row_id] = { found: true, quote_option: 'Quote As Is', unit_price: shaped.unit_price, ...lineResult(x, shaped) };
