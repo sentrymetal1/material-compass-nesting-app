@@ -687,13 +687,16 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
             {afRes && (() => {
               const all = [...Object.values(afRes.structural || {}), ...Object.values(afRes.fittings || {})];
               const filled = all.filter(m => m.found).length;
-              const look = all.filter(m => m.flags && m.flags.length).length;
+              const look = all.filter(m => m.found && m.flags && m.flags.length).length;
+              const missing = all.length - filled;
               const pdfTotal = afRes.pdf_grand_total;
               const off = pdfTotal != null && Math.abs(pdfTotal - totalAmount) > 1;
               return (
                 <div className="q-af-sum">
                   <div><strong>Filled {filled} of {all.length} lines</strong> from {afRes.file_name}.{' '}
-                    {look ? <span className="q-af-warn-txt">{look} need{look === 1 ? 's' : ''} a look — highlighted in amber below.</span> : 'Check the prices, then fill anything still blank.'}</div>
+                    {look > 0 && <span className="q-af-warn-txt">{look} filled line{look === 1 ? '' : 's'} need{look === 1 ? 's' : ''} a check. </span>}
+                    {missing > 0 && <span className="q-af-warn-txt">{missing} line{missing === 1 ? ' isn’t' : 's aren’t'} on the quote — price {missing === 1 ? 'it' : 'them'} by hand or mark No Quote. </span>}
+                    {!look && !missing && 'Check the prices before you save.'}</div>
                   {pdfTotal != null && (
                     <div className={off ? 'q-af-warn-txt' : 'q-af-ok-txt'}>
                       Total on the quote {money(pdfTotal)} · total here {money(totalAmount)}{off ? ' — they don’t match yet. Check the highlighted lines, shipping and misc.' : ' ✓'}
