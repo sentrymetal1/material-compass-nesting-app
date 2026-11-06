@@ -1111,6 +1111,45 @@ function registerSupplierRoutes(app, deps) {
   app.post('/api/supplier/me/quote-submit', withSupplier, quoteSubmitHandler);
   app.post('/api/mfg/supplier-quotes/quote-submit', withMfgOnBehalf, quoteSubmitHandler);
 
+  // POST /api/…/quote-attachment { sv_form_id, file_b64, file_name, media_type } — attach the
+  // supplier's quote PDF to the SV record a submit just created (Supplier_Internal_Quote, the
+  // form's "Internal quote" upload). Separate from the submit so a refused file never costs the
+  // prices. The record must be THIS supplier's, and on-behalf, this MFG's quote.
+  const SV_FILE_FIELD = process.env.SV_QUOTE_FILE_FIELD || 'Supplier_Internal_Quote';
+  const quoteAttachmentHandler = async (req, res) => {
+    try {
+      const { sv_form_id, file_b64, file_name, media_type } = req.body || {};
+      const id = String(sv_form_id || '');
+      if (!/^\d+$/.test(id)) return res.status(400).json({ ok: false, error: 'No saved quote to attach to.' });
+      const rows = await fetchAllZohoPages('/report/All_Supplier_Verify_Form_Report?criteria=' +
+        encodeURIComponent('(ID==' + id + ' && SV_Supplier_Entry_Form==' + req.supplier.id + ')'));
+      const sv = rows[0];
+      if (!sv) return res.status(404).json({ ok: false, error: 'That quote isn\'t this supplier\'s.' });
+      if (scopeOf(req)) {
+        const sent = await fetchSentRfqs(req.supplier.id);
+        if (!sent.quotes.some(q => String(q.quote_id) === lkid(sv.SV_Quote_Form) && inScope(req, q.manufacturer_id))) {
+          return res.status(403).json({ ok: false, error: 'That quote isn\'t yours.' });
+        }
+      }
+      const buf = Buffer.from(String(file_b64 || '').replace(/^data:[^,]*,/, ''), 'base64');
+      if (!buf.length) return res.status(400).json({ ok: false, error: 'No file was sent.' });
+      const FormData = require('form-data');
+      const fd = new FormData();
+      fd.append('file', buf, { filename: String(file_name || 'supplier-quote.pdf').replace(/[\\/:*?"<>|]/g, '_'), contentType: media_type || 'application/pdf' });
+      const token = await getAccessToken();
+      const r = await axios.post(creatorApiBase() + '/report/All_Supplier_Verify_Form_Report/' + id + '/' + SV_FILE_FIELD + '/upload', fd,
+        { headers: { ...zohoHeaders(token), ...fd.getHeaders() }, maxBodyLength: Infinity });
+      if (r.data && r.data.code && r.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho refused the file: ' + (r.data.message || r.data.code) });
+      res.json({ ok: true, attached: file_name || 'file' });
+    } catch (err) {
+      const z = err.response && err.response.data;
+      console.error('[quote-attachment]', z ? JSON.stringify(z).slice(0, 300) : err.message);
+      res.status(502).json({ ok: false, error: 'The file could not be attached: ' + ((z && (z.message || z.description)) || err.message) });
+    }
+  };
+  app.post('/api/supplier/me/quote-attachment', withSupplier, quoteAttachmentHandler);
+  app.post('/api/mfg/supplier-quotes/quote-attachment', withMfgOnBehalf, quoteAttachmentHandler);
+
   // GET /api/mfg/supplier-quotes/list?manufacturer_id= — the picker for the MFG's
   // "enter a supplier's quote" screen: every current quote this MFG sent out, with the
   // suppliers it went to and whether each has answered yet.

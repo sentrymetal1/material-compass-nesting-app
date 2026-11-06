@@ -468,6 +468,9 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     attachment_name: '',
   });
   const setH = patch => setHdr(p => ({ ...p, ...patch }));
+  // The supplier's quote file itself, uploaded onto the saved record after submit. The PDF
+  // used for auto-fill becomes this file unless the user picks another.
+  const [attachFile, setAttachFile] = useState(null);
   const onValidDays = v => {
     const n = parseInt(v, 10);
     let until = hdr.valid_until;
@@ -535,6 +538,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
         })() : p.valid_until),
         attachment_name: file.name,
       }));
+      setAttachFile(file);
       setAf(s => ({ ...s, status: 'done', result: j }));
       setSubmitState(null);
     } catch (e) {
@@ -708,7 +712,20 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
         fitResult = await r.json();
       }
 
-      setSubmitState({ status: 'done', structResult, fitResult });
+      // Attach the quote file to the record just saved. Its own call: a refused file must not
+      // undo saved prices, it is reported beside them.
+      let attachResult = null;
+      if (attachFile && structResult && structResult.ok && structResult.sv_form_id) {
+        try {
+          const b64 = await fileToBase64(attachFile);
+          const ar = await fetch(ep('quote-attachment'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sv_form_id: structResult.sv_form_id, file_b64: b64, file_name: attachFile.name, media_type: attachFile.type || 'application/pdf' }),
+          });
+          attachResult = await ar.json().catch(() => ({ ok: false, error: 'no answer (' + ar.status + ')' }));
+        } catch (e) { attachResult = { ok: false, error: String(e.message || e) }; }
+      }
+      setSubmitState({ status: 'done', structResult, fitResult, attachResult });
       if (onSubmitted && (!structResult || structResult.ok) && (!fitResult || fitResult.ok)) onSubmitted();
     } catch (e) {
       setSubmitState({ status: 'error', error: String(e.message || e) });
@@ -718,7 +735,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
   // Combined submit result message.
   let resultNode = null;
   if (submitState && submitState.status === 'done') {
-    const sr = submitState.structResult, fr = submitState.fitResult;
+    const sr = submitState.structResult, fr = submitState.fitResult, atr = submitState.attachResult;
     const sOk = !sr || sr.ok, fOk = !fr || fr.ok;
     const ok = sOk && fOk;
     const parts = [];
@@ -731,7 +748,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
           ? ' — ' + sr.line_errors.map(e => 'line ' + e.line + ': ' + e.error).join('; ')
           : '')));
     if (fr) parts.push(fr.ok ? `${fr.saved != null ? fr.saved : quote.fitting_lines.length} fitting` : `fitting failed (${fr.saved || 0}/${(fr.saved || 0) + (fr.failed || 0)})`);
-    resultNode = <span className={'q-result ' + (ok ? 'q-result-ok' : 'q-result-warn')}>{(ok ? (mfg ? 'Supplier quote saved — ' : 'Quote submitted — ') : 'Partial submit — ') + parts.join(', ') + ' line' + (parts.length ? 's' : '') + '.'}</span>;
+    resultNode = <span className={'q-result ' + (ok ? 'q-result-ok' : 'q-result-warn')}>{(ok ? (mfg ? 'Supplier quote saved — ' : 'Quote submitted — ') : 'Partial submit — ') + parts.join(', ') + ' line' + (parts.length ? 's' : '') + '.'}{atr && (atr.ok ? ' Quote PDF attached.' : <strong> The quote PDF was NOT attached: {atr.error}</strong>)}</span>;
   } else if (submitState && submitState.status === 'error') {
     resultNode = <span className="q-result q-result-warn">Error: {submitState.error}</span>;
   }
@@ -898,7 +915,8 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                 </div>
                 <label className="q-attach">
                   <span className="q-attach-lbl">{mfg ? "Supplier's quote (PDF)" : 'Internal quote (attachment)'}</span>
-                  <input type="file" onChange={e => setH({ attachment_name: e.target.files && e.target.files[0] ? e.target.files[0].name : '' })} />
+                  <input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={e => { const f0 = e.target.files && e.target.files[0]; setAttachFile(f0 || null); setH({ attachment_name: f0 ? f0.name : '' }); }} />
+                  {attachFile && <span className="q-attach-now">📎 {attachFile.name}{afRes && afRes.file_name === attachFile.name ? ' (from auto-fill)' : ''} — attached when you save</span>}
                 </label>
               </div>
 
