@@ -7,7 +7,7 @@ import { QuoteCard, mergeQuotes } from './QuotesView';
 // the same Supplier_Verify_Form record a supplier's submit creates — allocation and the
 // close-out read it the same way. Opened from Zoho with
 //   /mfg-quote-entry?manufacturer_id=<Customer_Entry ID>&t=<token>[&quote_id=…][&supplier_id=…]
-const BUILD_TAG = 'mfg-quote-entry-2026-11-06c';
+const BUILD_TAG = 'mfg-quote-entry-2026-11-06d';
 const BASE = '/api/mfg/supplier-quotes/';
 
 function params() {

@@ -263,6 +263,10 @@ function fileToBase64(file) {
   });
 }
 
+// The server rebuilds an altered description with an "Item No N |" prefix the list strips; compare
+// (and show) without it, or a qty-only change looks like a different item.
+const descKey = d => String(d || '').replace(/^s*(Item No d+s*)?|?s*/i, '').trim();
+
 // One structural line — supplier edits EITHER Line Total OR Price/lb (each recalcs the
 // other via line weight); unit price stays derived (total ÷ qty).
 function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptions, ep, mark }) {
@@ -329,8 +333,8 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
       <td className="q-desc">
         {/* When altered, show what the MFG asked for struck through above the new line, so
             the supplier can see exactly what they're changing before they send it. */}
-        {eff.altered && eff.description !== line.description
-          ? <><span className="q-desc-was">{line.description}</span><div className="q-desc-now">{eff.description}</div></>
+        {eff.altered && descKey(eff.description) !== descKey(line.description)
+          ? <><span className="q-desc-was">{line.description}</span><div className="q-desc-now">{descKey(eff.description)}</div></>
           : line.description}
         {line.mfg_note && <div className="q-mfgnote"><span className="q-mfgnote-lbl">MFG note:</span> {line.mfg_note}</div>}
         <AutofillMark mark={mark} />
