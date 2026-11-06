@@ -265,7 +265,7 @@ function fileToBase64(file) {
 
 // The server rebuilds an altered description with an "Item No N |" prefix the list strips; compare
 // (and show) without it, or a qty-only change looks like a different item.
-const descKey = d => String(d || '').replace(/^s*(Item No d+s*)?|?s*/i, '').trim();
+const descKey = d => String(d || '').replace(/^\s*(Item No \d+\s*)?\|?\s*/i, '').trim();
 
 // One structural line — supplier edits EITHER Line Total OR Price/lb (each recalcs the
 // other via line weight); unit price stays derived (total ÷ qty).
