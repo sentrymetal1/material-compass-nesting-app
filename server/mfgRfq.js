@@ -456,24 +456,43 @@ function registerMfgRfqRoutes(app, deps) {
       if (!r.data || r.data.code !== 3000) {
         return res.status(502).json({ ok: false, error: 'The supplier could not be added.', reasons: reasonsOf(r.data), detail: r.data });
       }
-      // The workflow has run by now. Re-read the matches (one call) and diff.
+      // The workflow has run by now. It writes the supplier it created OR reused
+      // (dedupe by company email, contact email, rep email, then email domain) into
+      // OS_Supplier. Read that back (1 call), then re-read the matches (1 call).
+      const osId = r.data.data && r.data.data.ID;
+      let osSupplierId = '', osSupplierName = '';
+      if (osId) {
+        try {
+          const g = await axios.get(creatorApiBase() + '/report/Add_Outside_Supplier_Report?field_config=all&criteria=' + enc('(ID==' + osId + ')'), { headers: zohoHeaders(token) });
+          const rec = g.data && g.data.data && g.data.data[0];
+          const s = rec && rec.OS_Supplier;
+          osSupplierId = s ? String(s.ID || '') : '';
+          osSupplierName = s ? String(s.Company_Name || s.zc_display_value || '') : '';
+          console.log('[add-supplier] OS', osId, 'result:', rec && rec.OS_Result);
+        } catch (e) { console.error('[add-supplier] read-back failed', e.message); }
+      }
       bust('rfq-matches:' + mfg);
       const matchesAfter = await cachedLookup('rfq-matches:' + mfg, 5 * 60 * 1000, () =>
         fetchAllZohoPages('/report/All_Supplier_Manufacture_Matches?criteria=' + enc('(MANUFACTURE==' + mfg + ')')));
       const before = new Set(matchesBefore.map(m => String(m.ID)));
       const suppliers = supplierList(matchesAfter);
-      let added = suppliers.filter(s => !before.has(s.match_id));
-      // Already matched (dedupe found them): tick the existing match by name instead.
       const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const existing = !added.length ? suppliers.filter(s => norm(s.name) === norm(b.company)) : [];
-      if (!added.length) added = existing;
+      const hit = osSupplierId
+        ? suppliers.filter(s => s.supplier_id === osSupplierId)
+        : suppliers.filter(s => !before.has(s.match_id) || norm(s.name) === norm(b.company));
+      const isNew = hit.some(s => !before.has(s.match_id));
+      const reusedOther = osSupplierName && norm(osSupplierName) !== norm(b.company);
+      let message;
+      if (!hit.length) message = 'The supplier details were saved, but the supplier could not be set up for quoting. Please let support know.';
+      else if (isNew) message = 'Added ' + hit[0].name + '. They are ticked below and will get the quote by email.';
+      else if (reusedOther) message = 'That contact email already belongs to ' + hit[0].name + ', so ' + hit[0].name + ' is ticked below instead of adding ' + t(b.company) + '. To add ' + t(b.company) + ' as a separate supplier, use an email that is only theirs.';
+      else message = hit[0].name + ' was already in your suppliers, so it is ticked below.';
       res.json({
         ok: true, suppliers,
-        added_match_ids: added.map(s => s.match_id),
-        already_matched: existing.length > 0,
-        message: added.length
-          ? (existing.length ? t(b.company) + ' was already in your suppliers, so it is ticked below.' : 'Added ' + added.map(s => s.name).join(', ') + '. They are ticked below and will get the quote by email.')
-          : 'The supplier details were saved, but the supplier could not be set up for quoting. Please let support know.',
+        added_match_ids: hit.map(s => s.match_id),
+        already_matched: hit.length > 0 && !isNew,
+        reused_other: !!(hit.length && !isNew && reusedOther),
+        message,
       });
     } catch (err) { fail(res, err); }
   });
