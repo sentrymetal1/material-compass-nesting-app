@@ -1120,13 +1120,22 @@ function registerSupplierRoutes(app, deps) {
       const svFormId = (addResp.data.data && addResp.data.data.ID) || '';
 
       // Supersede prior active quotes for this supplier+MFG-quote → "Revised".
+      // A PATCH re-runs the SV form's "Created or Edited" validation, and Zoho answers a
+      // refusal with HTTP 200 + a non-3000 code — so check the code, and report a failure
+      // instead of counting it (three Alro saves on MMQ-100478 all stayed "Submitted").
       let superseded = 0;
+      const supersedeErrors = [];
       for (const pid of priorSvIds) {
         try {
-          await axios.patch(creatorApiBase() + '/report/All_Supplier_Verify_Form_Report/' + pid, { data: { SV_Status: 'Revised' } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-          superseded++;
-        } catch (e) { /* non-fatal */ }
+          const pr = await axios.patch(creatorApiBase() + '/report/All_Supplier_Verify_Form_Report/' + pid, { data: { SV_Status: 'Revised' } }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+          const pc = pr.data && (pr.data.code != null ? pr.data.code : (pr.data.result && pr.data.result[0] && pr.data.result[0].code));
+          if (pc === 3000 || pc == null) superseded++;
+          else supersedeErrors.push({ sv: pid, code: pc, detail: JSON.stringify(pr.data).slice(0, 300) });
+        } catch (e) {
+          supersedeErrors.push({ sv: pid, detail: (e.response && JSON.stringify(e.response.data).slice(0, 300)) || e.message });
+        }
       }
+      if (supersedeErrors.length) console.error('[quote-submit] could not mark prior quotes Revised:', JSON.stringify(supersedeErrors));
       saveQuoteSnapshot(supplierId, quote_id, {
         sv_form_id: String(svFormId), saved_at: new Date().toISOString(),
         header: { ...header, attachment_name: '', fittings_total: undefined },
@@ -1144,6 +1153,7 @@ function registerSupplierRoutes(app, deps) {
         skipped: missing,
         altered: alteredCount,
         revised_prior: superseded,
+        ...(supersedeErrors.length ? { revise_failed: supersedeErrors } : {}),
         message: 'Quote submitted (SV record ' + svFormId + ', ' + detailRows.length + ' lines'
           + (alteredCount ? ', ' + alteredCount + ' altered' : '')
           + (superseded ? ', superseded ' + superseded + ' prior' : '') + '). The SV workflow handles email + write-back.',
