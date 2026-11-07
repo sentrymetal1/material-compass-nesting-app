@@ -213,9 +213,36 @@ function registerSupplierRoutes(app, deps) {
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
     }
   }
-  // '' on the supplier's own path; the MFG id on the on-behalf path.
+  // Supplier without a login, on the "Price this quote online" link from the RFQ email.
+  // The token (kind "q", minted for <supplier id>_<quote id>) is the whole identity: it
+  // opens ONE quote for ONE supplier and nothing else. Same handlers as on-behalf, plus
+  // req.onlyQuote, so every list and write below narrows to that quote.
+  async function withQuoteLink(req, res, next) {
+    try {
+      const v = require('./tenantToken').verify(req.get('X-MC-Token') || req.query.t || '');
+      if (v.error === 'expired') return res.status(401).json({ ok: false, error: 'This link has expired. Reply to the RFQ email or ask the manufacturer for a new link.' });
+      if (v.error || v.kind !== 'q') return res.status(401).json({ ok: false, error: 'This link is not valid. Please use the link in your RFQ email.' });
+      const [sid, qid] = v.id.split('_');
+      const supplier = shapeSupplier((await supplierDirectory()).find(r => String(r.ID) === sid));
+      if (!supplier) return res.status(404).json({ ok: false, error: 'This quote request is no longer available.' });
+      const [sent, fit] = await Promise.all([fetchSentRfqs(sid), fetchSentFittingRfqs(sid).catch(() => [])]);
+      const q = sent.quotes.find(x => String(x.quote_id) === qid) || fit.find(x => String(x.quote_id) === qid);
+      if (!q || !q.manufacturer_id) return res.status(404).json({ ok: false, error: 'This quote request is no longer open.' });
+      req.supplier = supplier;
+      req.onBehalfOf = String(q.manufacturer_id);
+      req.onlyQuote = qid;
+      next();
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  }
+
+  // '' on the supplier's own path; the MFG id on the on-behalf and quote-link paths.
   const scopeOf = req => (req.onBehalfOf ? String(req.onBehalfOf) : '');
-  const inScope = (req, mfgId) => !scopeOf(req) || String(mfgId || '') === scopeOf(req);
+  // On the quote link, also only that one quote (quoteId required there: no id = out of scope).
+  const inScope = (req, mfgId, quoteId) => (!scopeOf(req) || String(mfgId || '') === scopeOf(req))
+    && (!req.onlyQuote || String(quoteId || '') === req.onlyQuote);
 
   // Who am I? — lets the UI greet the supplier + confirm the seam works.
   app.get('/api/supplier/me', withSupplier, (req, res) => {
@@ -558,7 +585,7 @@ function registerSupplierRoutes(app, deps) {
   // at /api/supplier/:id/fitting-rfqs, which scores stock vs all open demand.)
   const sentFittingRfqsHandler = async (req, res) => {
     try {
-      const quotes = (await fetchSentFittingRfqs(req.supplier.id)).filter(q => inScope(req, q.manufacturer_id));
+      const quotes = (await fetchSentFittingRfqs(req.supplier.id)).filter(q => inScope(req, q.manufacturer_id, q.quote_id));
       const lineCount = quotes.reduce((n, q) => n + q.lines.length, 0);
       const respondedCount = quotes.reduce((n, q) => n + q.lines.filter(l => l.quote_option).length, 0);
       res.json({ ok: true, supplier: req.supplier, quote_count: quotes.length, line_count: lineCount, responded_count: respondedCount, quotes });
@@ -588,7 +615,7 @@ function registerSupplierRoutes(app, deps) {
       if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ ok: false, error: 'no lines to submit' });
 
       // Index the supplier's own bridge rows for ownership + qty (no extra API call).
-      const quotes = (await fetchSentFittingRfqs(sid)).filter(q => inScope(req, q.manufacturer_id));
+      const quotes = (await fetchSentFittingRfqs(sid)).filter(q => inScope(req, q.manufacturer_id, q.quote_id));
       const mine = new Map();
       quotes.forEach(q => q.lines.forEach(l => mine.set(String(l.rfq_row_id), l)));
 
@@ -667,7 +694,7 @@ function registerSupplierRoutes(app, deps) {
         fetchSupplierLookups(req.supplier.id),
       ]);
       const { alteration_catalog } = sent;
-      const quotes = sent.quotes.filter(q => inScope(req, q.manufacturer_id));
+      const quotes = sent.quotes.filter(q => inScope(req, q.manufacturer_id, q.quote_id));
       // A quote already saved reopens as saved (disk copy, no Zoho call).
       quotes.forEach(q => { const s = readQuoteSnapshot(req.supplier.id, q.quote_id); if (s) q.saved = s; });
       // Map the full Quote_Form.Status pipeline into the 4 supplier tiles.
@@ -702,8 +729,8 @@ function registerSupplierRoutes(app, deps) {
         fetchSentRfqs(req.supplier.id),
         fetchSentFittingRfqs(req.supplier.id).catch(() => []),
       ]);
-      const sq = sent.quotes.find(q => String(q.quote_id) === qid && inScope(req, q.manufacturer_id));
-      const fq = fitQuotes.find(q => String(q.quote_id) === qid && inScope(req, q.manufacturer_id));
+      const sq = sent.quotes.find(q => String(q.quote_id) === qid && inScope(req, q.manufacturer_id, q.quote_id));
+      const fq = fitQuotes.find(q => String(q.quote_id) === qid && inScope(req, q.manufacturer_id, q.quote_id));
       if (!sq && !fq) return res.status(404).json({ ok: false, error: 'That quote isn\'t open for this supplier.' });
       const quote = {
         quote_id: qid,
@@ -743,7 +770,7 @@ function registerSupplierRoutes(app, deps) {
       // On-behalf: only a quote of this MFG's that went to this supplier.
       if (scopeOf(req)) {
         const { quotes } = await fetchSentRfqs(req.supplier.id);
-        if (!quotes.some(q => q.quote_id === record && inScope(req, q.manufacturer_id))) return res.status(404).send('file not found');
+        if (!quotes.some(q => q.quote_id === record && inScope(req, q.manufacturer_id, q.quote_id))) return res.status(404).send('file not found');
       }
       const token = await getAccessToken();
       const url = creatorApiBase() + '/report/All_Quotes/' + record + '/File_upload/download?filepath=' + encodeURIComponent(filepath);
@@ -828,7 +855,7 @@ function registerSupplierRoutes(app, deps) {
       const { rowById, catalogs } = await loadAlterationContext(String(req.supplier.id), [spec_id]);
       const row = rowById.get(String(rfqs_sent_id));
       // Scoped to THIS supplier's rows, so an unknown id is either stale or not theirs.
-      if (!row || !inScope(req, lkid(row.Customer_LU))) return res.status(404).json({ ok: false, error: 'Line not found for this supplier' });
+      if (!row || !inScope(req, lkid(row.Customer_LU), lkid(row.Quote_LU))) return res.status(404).json({ ok: false, error: 'Line not found for this supplier' });
       try {
         const out = computeAlteredLine(row, { length_ft, length_inch, quantity, spec_id }, catalogs);
         res.json({ ok: true, preview: out });
@@ -865,7 +892,7 @@ function registerSupplierRoutes(app, deps) {
       const { catalogs } = ctx;
       // On-behalf: only this MFG's lines of THIS quote exist as far as the submit is concerned.
       const rowById = scopeOf(req)
-        ? new Map([...ctx.rowById].filter(([, r]) => inScope(req, lkid(r.Customer_LU)) && lkid(r.Quote_LU) === String(quote_id)))
+        ? new Map([...ctx.rowById].filter(([, r]) => inScope(req, lkid(r.Customer_LU), lkid(r.Quote_LU)) && lkid(r.Quote_LU) === String(quote_id)))
         : ctx.rowById;
       const rawRows = [...rowById.values()];
 
@@ -1182,7 +1209,7 @@ function registerSupplierRoutes(app, deps) {
       if (!sv) return res.status(404).json({ ok: false, error: 'That quote isn\'t this supplier\'s.' });
       if (scopeOf(req)) {
         const sent = await fetchSentRfqs(req.supplier.id);
-        if (!sent.quotes.some(q => String(q.quote_id) === lkid(sv.SV_Quote_Form) && inScope(req, q.manufacturer_id))) {
+        if (!sent.quotes.some(q => String(q.quote_id) === lkid(sv.SV_Quote_Form) && inScope(req, q.manufacturer_id, q.quote_id))) {
           return res.status(403).json({ ok: false, error: 'That quote isn\'t yours.' });
         }
       }
@@ -1204,6 +1231,35 @@ function registerSupplierRoutes(app, deps) {
   };
   app.post('/api/supplier/me/quote-attachment', withSupplier, quoteAttachmentHandler);
   app.post('/api/mfg/supplier-quotes/quote-attachment', withMfgOnBehalf, quoteAttachmentHandler);
+
+  // The no-login quote link (/quote-online?t=…): the supplier's own card, for one quote.
+  app.get('/api/q/rfqs', withQuoteLink, rfqsHandler);
+  app.get('/api/q/sent-fitting-rfqs', withQuoteLink, sentFittingRfqsHandler);
+  app.post('/api/q/sent-fitting-rfqs/submit', withQuoteLink, fittingSubmitHandler);
+  app.post('/api/q/autofill', withQuoteLink, autofillHandler);
+  app.get('/api/q/quote-file', withQuoteLink, quoteFileHandler);
+  app.post('/api/q/line-preview', withQuoteLink, linePreviewHandler);
+  app.post('/api/q/quote-submit', withQuoteLink, quoteSubmitHandler);
+  app.post('/api/q/quote-attachment', withQuoteLink, quoteAttachmentHandler);
+
+  // GET /api/mfg/supplier-quotes/quote-link?manufacturer_id=&supplier_id=&quote_id= — the
+  // manufacturer's copy of a supplier's "price this quote online" link, to paste into an
+  // email. Only for a quote of this MFG's that went to that supplier. Valid 60 days.
+  app.get('/api/mfg/supplier-quotes/quote-link', withMfgOnBehalf, async (req, res) => {
+    try {
+      const qid = String(req.query.quote_id || '').trim();
+      const sid = String(req.supplier.id);
+      const [sent, fit] = await Promise.all([fetchSentRfqs(sid), fetchSentFittingRfqs(sid).catch(() => [])]);
+      const ok = [...sent.quotes, ...fit].some(q => String(q.quote_id) === qid && inScope(req, q.manufacturer_id, q.quote_id));
+      if (!ok) return res.status(404).json({ ok: false, error: 'That quote was not sent to this supplier.' });
+      const t = require('./tenantToken').mint('q', sid + '_' + qid, 60 * 24 * 3600 * 1000);
+      const base = process.env.PUBLIC_BASE_URL || ('https://' + req.get('host'));
+      res.json({ ok: true, url: base + '/quote-online?t=' + encodeURIComponent(t) });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
 
   // GET /api/mfg/supplier-quotes/list?manufacturer_id= — the picker for the MFG's
   // "enter a supplier's quote" screen: every current quote this MFG sent out, with the

@@ -7,7 +7,7 @@ import { QuoteCard, mergeQuotes } from './QuotesView';
 // the same Supplier_Verify_Form record a supplier's submit creates — allocation and the
 // close-out read it the same way. Opened from Zoho with
 //   /mfg-quote-entry?manufacturer_id=<Customer_Entry ID>&t=<token>[&quote_id=…][&supplier_id=…]
-const BUILD_TAG = 'mfg-quote-entry-2026-11-07b-back-totals';
+const BUILD_TAG = 'mfg-quote-entry-2026-11-07c-quote-link';
 const BASE = '/api/mfg/supplier-quotes/';
 
 function params() {
@@ -25,6 +25,36 @@ function params() {
 function backToMc() {
   if (window.history.length > 1) window.history.back();
   else window.close();
+}
+
+// The supplier's own "price this quote online" link (no login), to paste into an email.
+function CopyQuoteLink({ ep, quoteId, name }) {
+  const [st, setSt] = useState({ status: 'idle' });
+  useEffect(() => { setSt({ status: 'idle' }); }, [quoteId, name]);
+  const go = async () => {
+    setSt({ status: 'busy' });
+    try {
+      const j = await fetch(ep('quote-link') + '&quote_id=' + encodeURIComponent(quoteId)).then(r => r.json());
+      if (!j.ok) throw new Error(j.error || 'The link could not be made.');
+      let copied = false;
+      try { await navigator.clipboard.writeText(j.url); copied = true; } catch (e) { /* show it to copy by hand */ }
+      setSt({ status: 'done', url: j.url, copied });
+    } catch (e) { setSt({ status: 'error', error: String(e.message || e) }); }
+  };
+  return (
+    <div className="mq-link">
+      <button type="button" className="btn-link" onClick={go} disabled={st.status === 'busy'}>
+        🔗 {st.status === 'busy' ? 'Making link…' : 'Copy ' + name + '’s link to price this quote online'}
+      </button>
+      {st.status === 'done' && (
+        <div className="mq-link-out">
+          {st.copied ? 'Copied. ' : 'Copy this link: '}Paste it into an email to {name}. They can price this quote without an account; the link works for 60 days.
+          {!st.copied && <input readOnly value={st.url} onFocus={e => e.target.select()} />}
+        </div>
+      )}
+      {st.status === 'error' && <div className="mq-link-out sup-msg-error">{st.error}</div>}
+    </div>
+  );
 }
 
 export default function MfgQuoteEntryApp() {
@@ -135,6 +165,8 @@ export default function MfgQuoteEntryApp() {
                 </div>
               )}
             </section>
+
+            {quote && supplier && <CopyQuoteLink ep={ep} quoteId={quoteId} name={supplier.name} />}
 
             {quote && !supplierId && quote.suppliers.length > 1 && (
               <div className="sup-msg">Click the supplier whose quote you’re entering. Their lines will open here, ready to price.</div>

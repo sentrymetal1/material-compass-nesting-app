@@ -4,6 +4,7 @@ import App from './App';
 import SupplierApp from './supplier/SupplierApp';
 import MfgQuoteEntryApp from './supplier/MfgQuoteEntryApp';
 import MfgRfqApp from './supplier/MfgRfqApp';
+import QuoteLinkApp from './supplier/QuoteLinkApp';
 
 // Path-based split (no router): /supplier* mounts the off-Zoho supplier platform;
 // /mfg-quote-entry is the manufacturer entering a supplier's quote; everything else is
@@ -13,6 +14,7 @@ const path = window.location.pathname;
 const isSupplier = path.replace(/\/+$/, '').endsWith('/supplier') || path.startsWith('/supplier');
 const isMfgQuoteEntry = path.startsWith('/mfg-quote-entry');
 const isMfgRfq = path.startsWith('/mfg-rfq');
+const isQuoteLink = path.startsWith('/quote-online');
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(isMfgRfq ? <MfgRfqApp /> : isMfgQuoteEntry ? <MfgQuoteEntryApp /> : isSupplier ? <SupplierApp /> : <App />);
+root.render(isQuoteLink ? <QuoteLinkApp /> : isMfgRfq ? <MfgRfqApp /> : isMfgQuoteEntry ? <MfgQuoteEntryApp /> : isSupplier ? <SupplierApp /> : <App />);

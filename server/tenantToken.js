@@ -7,6 +7,7 @@
 //
 //    token   = <kind><id> "." <expiryMs> "." <signature>
 //    kind    = "m" (manufacturer, id = Customer_Entry record id) | "s" (supplier, id = login email)
+//              | "q" (quote link emailed to one supplier, id = <supplier id>_<quote id>)
 //    payload = <kind><id> "." <expiryMs>          — exactly the first two parts, as sent
 //    signature = HMAC-SHA256(payload) with MC_TOKEN_SECRET
 //
@@ -55,7 +56,9 @@ function verify(token) {
   if (i1 <= 0) return { error: t ? "malformed" : "missing" };
   const who = t.slice(0, i1), expS = t.slice(i1 + 1, i2), sig = t.slice(i2 + 1);
   const kind = who.charAt(0), id = who.slice(1);
-  if ((kind !== "m" && kind !== "s") || !id || !/^\d{10,16}$/.test(expS)) return { error: "malformed" };
+  if ((kind !== "m" && kind !== "s" && kind !== "q") || !id || !/^\d{10,16}$/.test(expS)) return { error: "malformed" };
+  // "q" = one supplier's link to price one quote, no login: id = <supplier id>_<quote id>.
+  if (kind === "q" && !/^\d{6,25}_\d{6,25}$/.test(id)) return { error: "malformed" };
   const payload = who + "." + expS;
   const got = norm(sig), gotHex = String(sig).trim().toLowerCase();
   const pinned = process.env.MC_TOKEN_VARIANT || "";
