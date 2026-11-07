@@ -476,6 +476,7 @@
 .mq-link-out { margin-top: 6px; font-size: 13px; color: #34495e; }
 .mq-link-out input { display: block; width: 100%; margin-top: 6px; padding: 6px 8px; font-size: 12px; border: 1px solid #cdd8e4; border-radius: 6px; }
 .ql-join { margin-top: 24px; font-size: 13px; }
+.q-sum-hint { display: block; margin-top: 3px; font-size: 11px; color: #7a8a99; font-weight: 400; }
 
 /* Manufacturer: send material to suppliers (MfgRfqApp) */
 .mq-req-on { cursor: pointer; border: 1px solid var(--blue); background: #eef4fb; color: #1f5fb0; font-weight: 600; }

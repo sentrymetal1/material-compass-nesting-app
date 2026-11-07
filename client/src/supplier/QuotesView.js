@@ -200,10 +200,14 @@ function savedHeader(saved) {
   keep.forEach(k => { if (h[k] !== undefined && h[k] !== null) out[k] = h[k]; });
   // An auto-numbered save shows blank, so it isn't mistaken for the supplier's own number.
   if (/^AUTO-/.test(String(out.supplier_quote_number || ''))) out.supplier_quote_number = '';
+  ['shipping', 'misc', 'quote_total'].forEach(k => { if (out[k] !== undefined && out[k] !== '') out[k] = fmtMoneyC(out[k]) || out[k]; });
   return out;
 }
 // Format a currency input to 2 decimals on blur ("" stays "" so 'required' still catches blanks).
-const fmtMoney2 = v => { const n = parseFloat(v); return isNaN(n) ? '' : n.toFixed(2); };
+// Money inputs show commas (10,000.00); numOf reads either form. fmtMoney2 = plain, for saving.
+const numOf = v => parseFloat(String(v == null ? '' : v).replace(/[$,\s]/g, ''));
+const fmtMoney2 = v => { const n = numOf(v); return isNaN(n) ? '' : n.toFixed(2); };
+const fmtMoneyC = v => { const n = numOf(v); return isNaN(n) ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
 
 // Merge the two pipelines into one quote list keyed by quote_id (= Quote_LU).
 export function mergeQuotes(structuralQuotes, fittingQuotes) {
@@ -587,7 +591,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
         ...p, ...h,
         shipping: blank(h.shipping) ? p.shipping : h.shipping,
         misc: blank(h.misc) ? p.misc : h.misc,
-        quote_total: j.pdf_grand_total != null ? Number(j.pdf_grand_total).toFixed(2) : p.quote_total,
+        quote_total: j.pdf_grand_total != null ? fmtMoneyC(j.pdf_grand_total) : p.quote_total,
         // Valid-until follows valid-days unless the quote printed its own date.
         valid_until: h.valid_until || (h.valid_days ? (() => {
           const dt = new Date(); dt.setDate(dt.getDate() + parseInt(h.valid_days, 10));
@@ -683,7 +687,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     const e = effLine(l, dr);   // altered lines contribute their NEW weight, not the MFG's
     return s + (Number(e.qty) || 0) * (Number(e.unit_weight) || 0);
   }, 0);
-  const totalAmount = grand + (parseFloat(hdr.shipping) || 0) + (parseFloat(hdr.misc) || 0);
+  const totalAmount = grand + (numOf(hdr.shipping) || 0) + (numOf(hdr.misc) || 0);
 
   // Quote-summary fields the supplier MUST complete before submitting (structural quotes).
   // Attachment + Notes stay optional. Shipping/Misc are not listed: blank saves as $0.00.
@@ -743,7 +747,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
       return;
     }
     // Our total vs the total printed on the supplier's quote: to the cent, or ask first.
-    const qt = parseFloat(hdr.quote_total);
+    const qt = numOf(hdr.quote_total);
     if (hasStruct && Number.isFinite(qt) && qt > 0 && Math.abs(round(totalAmount, 2) - round(qt, 2)) >= 0.01) {
       const diff = round(totalAmount - qt, 2);
       const ok = window.confirm(
@@ -1072,7 +1076,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                     <span className="q-dollar">$</span>
                     <input type="text" inputMode="decimal" value={hdr.shipping} placeholder="0.00"
                       onChange={e => setH({ shipping: e.target.value })}
-                      onBlur={e => setH({ shipping: fmtMoney2(e.target.value) || '0.00' })} />
+                      onBlur={e => setH({ shipping: fmtMoneyC(e.target.value) || '0.00' })} />
                   </div>
                 </label>
                 <label className="q-sum-field" data-field="misc">Miscellaneous amount
@@ -1080,7 +1084,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                     <span className="q-dollar">$</span>
                     <input type="text" inputMode="decimal" value={hdr.misc} placeholder="0.00"
                       onChange={e => setH({ misc: e.target.value })}
-                      onBlur={e => setH({ misc: fmtMoney2(e.target.value) || '0.00' })} />
+                      onBlur={e => setH({ misc: fmtMoneyC(e.target.value) || '0.00' })} />
                   </div>
                 </label>
                 <label className="q-sum-field" data-field="quote_total">{mfg ? 'Total on supplier’s quote' : 'Total on your quote'}
@@ -1088,8 +1092,9 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                     <span className="q-dollar">$</span>
                     <input type="text" inputMode="decimal" value={hdr.quote_total} placeholder="optional"
                       onChange={e => setH({ quote_total: e.target.value })}
-                      onBlur={e => setH({ quote_total: fmtMoney2(e.target.value) })} />
+                      onBlur={e => setH({ quote_total: fmtMoneyC(e.target.value) })} />
                   </div>
+                  <span className="q-sum-hint">{mfg ? 'Checked against the lines before saving' : 'We check it against your line prices before you submit'}</span>
                 </label>
               </div>
 
@@ -1099,8 +1104,8 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
 
               <div className="q-totals">
                 <div><span className="q-tot-lbl">Material</span> {money(grand)}</div>
-                <div><span className="q-tot-lbl">+ Shipping</span> {money(parseFloat(hdr.shipping) || 0)}</div>
-                <div><span className="q-tot-lbl">+ Misc</span> {money(parseFloat(hdr.misc) || 0)}</div>
+                <div><span className="q-tot-lbl">+ Shipping</span> {money(numOf(hdr.shipping) || 0)}</div>
+                <div><span className="q-tot-lbl">+ Misc</span> {money(numOf(hdr.misc) || 0)}</div>
                 <div className="q-tot-grand"><span className="q-tot-lbl">Total amount</span> {money(totalAmount)}</div>
                 <div><span className="q-tot-lbl">Total weight</span> {num(totalWeight, 1)} lb</div>
               </div>
