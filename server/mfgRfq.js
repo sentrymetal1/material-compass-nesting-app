@@ -238,7 +238,7 @@ function registerMfgRfqRoutes(app, deps) {
 
   // Everything the screen and the send need for one project.
   async function loadProject(mfg, projectId) {
-    const [projects, quotes, purchase, fittings, matches, reps, shop] = await Promise.all([
+    const [projects, quotes, purchase, fittings, matches, reps, shop, locations] = await Promise.all([
       projectsOf(mfg),
       quotesOf(mfg),
       fetchAllZohoPages('/report/' + PURCHASE_REPORT + '?criteria=' + enc('(MCP_Customer_Project_Form==' + projectId + ')')),
@@ -249,6 +249,7 @@ function registerMfgRfqRoutes(app, deps) {
         fetchAllZohoPages('/report/All_Company_Representatives?criteria=' + enc('(Manufacture==' + mfg + ')'))),
       cachedLookup('rfq-shop:' + mfg, 10 * 60 * 1000, () =>
         fetchAllZohoPages('/report/Customer_Entry_Report?criteria=' + enc('(ID==' + mfg + ')'))),
+      locationsOf(mfg),
     ]);
     const project = projects.find(p => String(p.ID) === String(projectId));
     if (!project) return null;
@@ -272,10 +273,26 @@ function registerMfgRfqRoutes(app, deps) {
     return {
       project, existing, revision, missingColumns, lines,
       fittings: fittings.slice().sort((a, b) => num(a.Line_Item_Fitting) - num(b.Line_Item_Fitting)),
-      matches, reps,
+      matches, reps, locations,
       accountType: (shop[0] && shop[0].Type_Of_Material_Needs) || '',
     };
   }
+
+  // The shop's own locations (Add Outside Supplier needs one: "Your Location"). Rarely change.
+  const locationsOf = mfg => cachedLookup('rfq-locs:' + mfg, 30 * 60 * 1000, () =>
+    fetchAllZohoPages('/report/All_Company_Locations?criteria=' + enc('(Manaufacture==' + mfg + ')')).catch(() => []));
+
+  // The supplier picker, from the shop's match rows.
+  const supplierList = matches => matches
+    .filter(m => lkid(m.SUPPLIER) && !truthy(m.Hide_Supplier_From_Matching))
+    .map(m => ({
+      match_id: String(m.ID),
+      supplier_id: lkid(m.SUPPLIER),
+      name: (m.SUPPLIER && (m.SUPPLIER.Company_Name || m.SUPPLIER.zc_display_value)) || 'Supplier',
+      accepts: /^YES/i.test(m.Supplier_Accept_Quotes_From_Manufacture || ''),
+      declined: /^NO/i.test(m.Supplier_Accept_Quotes_From_Manufacture || '') || /^NO/i.test(m.Manufacture_Accept_Quotes_From_Supplier || ''),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   // GET /api/mfg/rfq/project?project_id= — lines, fittings, suppliers and contacts.
   app.get('/api/mfg/rfq/project', async (req, res) => {
@@ -304,19 +321,91 @@ function registerMfgRfqRoutes(app, deps) {
           description: [disp(f.Fitting_Type), disp(f.Fitting_Make), disp(f.End_Type), disp(f.Connection_Type), disp(f.Fitting_Specification)]
             .filter(Boolean).join(' · ') + (f.Fitting_Description_Text ? '  ·  ' + f.Fitting_Description_Text : ''),
         })),
-        suppliers: p.matches
-          .filter(m => lkid(m.SUPPLIER) && !truthy(m.Hide_Supplier_From_Matching))
-          .map(m => ({
-            match_id: String(m.ID),
-            supplier_id: lkid(m.SUPPLIER),
-            name: (m.SUPPLIER && (m.SUPPLIER.Company_Name || m.SUPPLIER.zc_display_value)) || 'Supplier',
-            accepts: /^YES/i.test(m.Supplier_Accept_Quotes_From_Manufacture || ''),
-            declined: /^NO/i.test(m.Supplier_Accept_Quotes_From_Manufacture || '') || /^NO/i.test(m.Manufacture_Accept_Quotes_From_Supplier || ''),
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
+        suppliers: supplierList(p.matches),
         contacts: p.reps.map(r => ({ id: String(r.ID), name: disp(r.Name).trim() || r.Email || '' })),
+        locations: p.locations.map(l => ({ id: String(l.ID), name: disp(l.Location_Name) || disp(l) || 'Location' })),
         requirements: QUOTE_REQUIREMENTS,
         account_type: p.accountType,
+      });
+    } catch (err) { fail(res, err); }
+  });
+
+  // POST /api/mfg/rfq/add-supplier — a supplier the shop works with that isn't on the
+  // platform (or is, under another shop). Files an "Add Outside Supplier" record; its
+  // "OS Create Supplier" success workflow does the rest: dedupe (company email, contact email,
+  // rep email, domain) -> supplier (Register = No) -> location -> rep -> junction -> rep match.
+  // Returns the refreshed picker and the match(es) that are new, so the screen can tick them.
+  const OS_MATERIAL = ['Structural And Pipe', 'Fittings And Pipe', 'Structural Pipe And Fittings'];
+  const OS_POSITION = ['Inside Sales', 'Outside Sales', 'Production Manager'];
+  app.post('/api/mfg/rfq/add-supplier', async (req, res) => {
+    const mfg = mfgOf(req, res); if (!mfg) return;
+    const b = req.body || {};
+    const t = v => String(v == null ? '' : v).trim();
+    const email = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t(v));
+    const missing = [];
+    if (!t(b.company)) missing.push('company name');
+    const digits = t(b.phone).replace(/\D/g, '');
+    if (digits.length < 10) missing.push('company phone');
+    if (!t(b.address1) || !t(b.city) || !t(b.state) || !t(b.zip)) missing.push('address (street, city, state, ZIP)');
+    if (!t(b.first_name) || !t(b.last_name)) missing.push('contact first and last name');
+    if (!email(b.contact_email)) missing.push('a valid contact email');
+    if (t(b.company_email) && !email(b.company_email)) missing.push('a valid company email (or leave it blank)');
+    if (missing.length) return res.status(400).json({ ok: false, error: 'Please add ' + missing.join(', ') + '.' });
+    try {
+      const [matchesBefore, reps, locations] = await Promise.all([
+        cachedLookup('rfq-matches:' + mfg, 5 * 60 * 1000, () =>
+          fetchAllZohoPages('/report/All_Supplier_Manufacture_Matches?criteria=' + enc('(MANUFACTURE==' + mfg + ')'))),
+        cachedLookup('mfg-reps:' + mfg, 10 * 60 * 1000, () =>
+          fetchAllZohoPages('/report/All_Company_Representatives?criteria=' + enc('(Manufacture==' + mfg + ')'))),
+        locationsOf(mfg),
+      ]);
+      // Your Location / Your Rep must be this shop's own.
+      const repId = t(b.rep_id) && reps.some(r => String(r.ID) === t(b.rep_id)) ? t(b.rep_id) : (reps[0] ? String(reps[0].ID) : '');
+      const locId = t(b.location_id) && locations.some(l => String(l.ID) === t(b.location_id)) ? t(b.location_id) : (locations[0] ? String(locations[0].ID) : '');
+      if (!repId || !locId) return res.status(409).json({ ok: false, error: 'Your shop needs at least one location and one representative set up first.' });
+
+      const data = clean({
+        OS_Manufacturer: mfg,
+        OS_MFG_Location: locId,
+        OS_MFG_Rep: repId,
+        OS_Company_Name: t(b.company),
+        OS_Company_Email: t(b.company_email),
+        OS_Phone: '+' + (digits.length === 10 ? '1' + digits : digits),
+        OS_Address: { address_line_1: t(b.address1), address_line_2: t(b.address2), district_city: t(b.city), state_province: t(b.state), postal_code: t(b.zip), country: t(b.country) || 'United States' },
+        OS_Material_Serviced: OS_MATERIAL.includes(t(b.material)) ? t(b.material) : '',
+        OS_Contact_Name: { first_name: t(b.first_name), last_name: t(b.last_name) },
+        OS_Contact_Email: t(b.contact_email),
+        OS_Position: OS_POSITION.includes(t(b.position)) ? t(b.position) : '',
+      });
+      const token = await getAccessToken();
+      let r;
+      try {
+        r = await axios.post(creatorApiBase() + '/form/Outside_Supplier_Entry', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      } catch (e) {
+        const d = e.response && e.response.data;
+        return res.status(502).json({ ok: false, error: 'Zoho refused the supplier.', reasons: reasonsOf(d), detail: d || e.message });
+      }
+      if (!r.data || r.data.code !== 3000) {
+        return res.status(502).json({ ok: false, error: 'Zoho refused the supplier.', reasons: reasonsOf(r.data), detail: r.data });
+      }
+      // The workflow has run by now. Re-read the matches (one call) and diff.
+      bust('rfq-matches:' + mfg);
+      const matchesAfter = await cachedLookup('rfq-matches:' + mfg, 5 * 60 * 1000, () =>
+        fetchAllZohoPages('/report/All_Supplier_Manufacture_Matches?criteria=' + enc('(MANUFACTURE==' + mfg + ')')));
+      const before = new Set(matchesBefore.map(m => String(m.ID)));
+      const suppliers = supplierList(matchesAfter);
+      let added = suppliers.filter(s => !before.has(s.match_id));
+      // Already matched (dedupe found them): tick the existing match by name instead.
+      const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const existing = !added.length ? suppliers.filter(s => norm(s.name) === norm(b.company)) : [];
+      if (!added.length) added = existing;
+      res.json({
+        ok: true, suppliers,
+        added_match_ids: added.map(s => s.match_id),
+        already_matched: existing.length > 0,
+        message: added.length
+          ? (existing.length ? t(b.company) + ' was already in your suppliers, so it is ticked below.' : 'Added ' + added.map(s => s.name).join(', ') + '. They are ticked below and will get the quote by email.')
+          : 'Saved, but the new supplier isn\'t in your list yet. Reload the page in a moment.',
       });
     } catch (err) { fail(res, err); }
   });

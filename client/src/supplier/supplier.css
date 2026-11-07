@@ -462,6 +462,11 @@
 .mq-st-done { background: #e7f6ec; color: #1a7f37; }
 .mq-reload { text-align: right; margin-top: 6px; }
 .mq-back { margin-left: auto; font-weight: 600; }
+.mq-add-sup { margin-top: 12px; font-weight: 600; }
+.mq-add-panel { margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px 4px; background: #fafcff; }
+.mq-add-head { font-weight: 600; margin-bottom: 10px; }
+.q-grid.q-grid-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) { .q-grid.q-grid-4 { grid-template-columns: repeat(2, 1fr); } }
 .mq-done { display: flex; align-items: center; gap: 14px; background: #e7f6ec; border: 1px solid #b7e1c3; color: #1a7f37; font-weight: 600; margin-top: 12px; }
 .mq-done-btn { background: #5286B4; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font-weight: 600; cursor: pointer; }
 .mq-done-btn:hover { background: #3f6f99; }

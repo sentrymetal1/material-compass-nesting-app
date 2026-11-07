@@ -6,8 +6,85 @@ import { useConfirm } from './ConfirmDialog';
 // Quote Form's screens; the send creates the same Quote_Form record, so Zoho numbers it,
 // matches each line to supplier stock, creates the supplier RFQ lines and sends the emails.
 // Opened with /mfg-rfq?manufacturer_id=<Customer_Entry ID>&t=<token>[&project_id=…]
-const BUILD_TAG = 'mfg-rfq-2026-11-06a-revise';
+const BUILD_TAG = 'mfg-rfq-2026-11-07a-add-supplier';
 const BASE = '/api/mfg/rfq/';
+
+const MATERIAL_CHOICES = ['Structural And Pipe', 'Fittings And Pipe', 'Structural Pipe And Fittings'];
+const POSITION_CHOICES = ['Inside Sales', 'Outside Sales', 'Production Manager'];
+const BLANK_SUP = { company: '', company_email: '', phone: '', address1: '', address2: '', city: '', state: '', zip: '',
+  material: '', first_name: '', last_name: '', contact_email: '', position: '', location_id: '', rep_id: '' };
+
+// A supplier the shop works with but hasn't got in its list. Saved through Zoho's
+// "Add Outside Supplier" form, which reuses the supplier if it's already in the system.
+function AddSupplier({ auth, contacts, locations, defaultRep, onAdded }) {
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState(BLANK_SUP);
+  const [st, setSt] = useState({ status: 'idle', error: '' });
+  const set = patch => setF(p => ({ ...p, ...patch }));
+  const field = (k, label, props) => (
+    <label className="q-sum-field">{label}
+      <input type="text" value={f[k]} onChange={e => set({ [k]: e.target.value })} {...props} />
+    </label>
+  );
+  const save = async () => {
+    setSt({ status: 'saving', error: '' });
+    try {
+      const r = await fetch(BASE + 'add-supplier?' + auth, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...f, rep_id: f.rep_id || defaultRep, location_id: f.location_id || (locations[0] && locations[0].id) || '' }),
+      });
+      const j = await r.json();
+      if (!j.ok) { setSt({ status: 'error', error: (j.error || 'Could not add the supplier.') + (j.reasons && j.reasons.length ? ' ' + j.reasons.join(' ') : '') }); return; }
+      onAdded(j);
+      setF(BLANK_SUP); setOpen(false); setSt({ status: 'idle', error: '' });
+    } catch (e) { setSt({ status: 'error', error: String(e.message || e) }); }
+  };
+  if (!open) return <button type="button" className="btn-link mq-add-sup" onClick={() => setOpen(true)}>+ Add a supplier that isn’t listed</button>;
+  return (
+    <div className="mq-add-panel">
+      <div className="mq-add-head">Add a supplier <span className="muted">— if they’re already in Material Compass they’re reused, not duplicated. They get your quotes by email with every line, and reply by email.</span></div>
+      <div className="q-grid q-grid-4">
+        {field('company', 'Company name *')}
+        {field('phone', 'Company phone *', { inputMode: 'tel', placeholder: '716-555-0100' })}
+        {field('company_email', 'Company email', { inputMode: 'email', placeholder: 'optional' })}
+        <label className="q-sum-field">Material they supply
+          <select value={f.material} onChange={e => set({ material: e.target.value })}>
+            <option value="">—</option>{MATERIAL_CHOICES.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </label>
+        {field('address1', 'Street address *')}
+        {field('city', 'City *')}
+        {field('state', 'State *', { placeholder: 'NY' })}
+        {field('zip', 'ZIP *', { inputMode: 'numeric' })}
+        {field('first_name', 'Contact first name *')}
+        {field('last_name', 'Contact last name *')}
+        {field('contact_email', 'Contact email *', { inputMode: 'email' })}
+        <label className="q-sum-field">Contact position
+          <select value={f.position} onChange={e => set({ position: e.target.value })}>
+            <option value="">—</option>{POSITION_CHOICES.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </label>
+        {locations.length > 1 && (
+          <label className="q-sum-field">Your location
+            <select value={f.location_id || locations[0].id} onChange={e => set({ location_id: e.target.value })}>
+              {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </label>
+        )}
+        <label className="q-sum-field">Your rep for them
+          <select value={f.rep_id || defaultRep} onChange={e => set({ rep_id: e.target.value })}>
+            {contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="q-actions">
+        <button type="button" className="btn-link" onClick={() => { setOpen(false); setSt({ status: 'idle', error: '' }); }}>Cancel</button>
+        <button type="button" className="btn-quote" disabled={st.status === 'saving'} onClick={save}>{st.status === 'saving' ? 'Adding…' : 'Add supplier'}</button>
+        {st.status === 'error' && <span className="q-result q-result-warn">{st.error}</span>}
+      </div>
+    </div>
+  );
+}
 
 function params() {
   const p = new URLSearchParams(window.location.search);
@@ -30,6 +107,7 @@ export default function MfgRfqApp() {
   const [picked, setPicked] = useState([]);
   const [form, setForm] = useState({ contact_id: '', description: '', due_date: defaultDue(), requirements: [] });
   const [send, setSend] = useState(null);
+  const [addMsg, setAddMsg] = useState('');
   const [dialog, confirm] = useConfirm();
   const setF = patch => setForm(f => ({ ...f, ...patch }));
 
@@ -45,7 +123,7 @@ export default function MfgRfqApp() {
   useEffect(() => {
     if (!projectId) { setProj({ status: 'idle' }); return undefined; }
     let live = true;
-    setProj({ status: 'loading' }); setPicked([]); setSend(null);
+    setProj({ status: 'loading' }); setPicked([]); setSend(null); setAddMsg('');
     fetch(BASE + 'project?' + auth + '&project_id=' + encodeURIComponent(projectId)).then(r => r.json()).then(j => {
       if (!live) return;
       if (!j.ok) { setProj({ status: 'error', error: j.error || 'Could not load the project' }); return; }
@@ -183,7 +261,8 @@ export default function MfgRfqApp() {
 
                   <section className="sup-section mq-pick">
                     <h2>Suppliers</h2>
-                    {proj.suppliers.length === 0 ? <div className="sup-empty">You have no matched suppliers yet. Match suppliers in the Match Hub first.</div> : (
+                    {addMsg && <div className="sup-msg">{addMsg}</div>}
+                    {proj.suppliers.length === 0 ? <div className="sup-empty">You have no matched suppliers yet. Add one below, or match suppliers in the Match Hub.</div> : (
                       <div className="mq-suppliers">
                         {proj.suppliers.map(s => (
                           <button key={s.match_id} type="button" disabled={s.declined}
@@ -198,6 +277,12 @@ export default function MfgRfqApp() {
                         ))}
                       </div>
                     )}
+                    <AddSupplier auth={auth} contacts={proj.contacts || []} locations={proj.locations || []} defaultRep={form.contact_id}
+                      onAdded={j => {
+                        setProj(p => ({ ...p, suppliers: j.suppliers || p.suppliers }));
+                        setPicked(p => [...new Set([...p, ...(j.added_match_ids || [])])]);
+                        setAddMsg(j.message || '');
+                      }} />
                   </section>
 
                   <section className="sup-section mq-pick">
