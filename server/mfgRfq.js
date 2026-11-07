@@ -386,10 +386,10 @@ function registerMfgRfqRoutes(app, deps) {
           { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
       } catch (e) {
         const d = e.response && e.response.data;
-        return res.status(502).json({ ok: false, error: 'Zoho refused the change. Nothing was sent.', reasons: reasonsOf(d), detail: d || e.message });
+        return res.status(502).json({ ok: false, error: 'The quote could not be updated. Nothing was sent.', reasons: reasonsOf(d), detail: d || e.message });
       }
       if (!r.data || r.data.code !== 3000) {
-        return res.status(502).json({ ok: false, error: 'Zoho refused the change. Nothing was sent.', reasons: reasonsOf(r.data), detail: r.data });
+        return res.status(502).json({ ok: false, error: 'The quote could not be updated. Nothing was sent.', reasons: reasonsOf(r.data), detail: r.data });
       }
       bust('rfq-sent-to:' + quoteId); bust('rfq-quotes:' + mfg); bust('mfg-sent-rfqs:' + mfg);
       res.json({ ok: true, quote_id: quoteId, quote_number: p.existing.Reference_Number || '', added: fresh.length,
@@ -447,13 +447,13 @@ function registerMfgRfqRoutes(app, deps) {
       const token = await getAccessToken();
       let r;
       try {
-        r = await axios.post(creatorApiBase() + '/form/Outside_Supplier_Entry', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+        r = await axios.post(creatorApiBase() + '/form/Add_Outside_Supplier', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
       } catch (e) {
         const d = e.response && e.response.data;
-        return res.status(502).json({ ok: false, error: 'Zoho refused the supplier.', reasons: reasonsOf(d), detail: d || e.message });
+        return res.status(502).json({ ok: false, error: 'The supplier could not be added.', reasons: reasonsOf(d), detail: d || e.message });
       }
       if (!r.data || r.data.code !== 3000) {
-        return res.status(502).json({ ok: false, error: 'Zoho refused the supplier.', reasons: reasonsOf(r.data), detail: r.data });
+        return res.status(502).json({ ok: false, error: 'The supplier could not be added.', reasons: reasonsOf(r.data), detail: r.data });
       }
       // The workflow has run by now. Re-read the matches (one call) and diff.
       bust('rfq-matches:' + mfg);
@@ -563,11 +563,11 @@ function registerMfgRfqRoutes(app, deps) {
         r = await axios.post(creatorApiBase() + '/form/Quote_Form', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
       } catch (e) {
         const d = e.response && e.response.data;
-        return res.status(502).json({ ok: false, error: 'Zoho refused the quote. Nothing was sent.', reasons: reasonsOf(d), detail: d || e.message });
+        return res.status(502).json({ ok: false, error: 'The quote could not be saved. Nothing was sent.', reasons: reasonsOf(d), detail: d || e.message });
       }
       const code = r.data && r.data.code;
       if (code !== 3000) {
-        return res.status(502).json({ ok: false, error: 'Zoho refused the quote. Nothing was sent.', reasons: reasonsOf(r.data), detail: r.data });
+        return res.status(502).json({ ok: false, error: 'The quote could not be saved. Nothing was sent.', reasons: reasonsOf(r.data), detail: r.data });
       }
       const quoteId = String((r.data.data && r.data.data.ID) || '');
       bust('rfq-quotes:' + mfg); bust('rfq-projects:' + mfg); bust('mfg-sent-rfqs:' + mfg);
@@ -590,7 +590,8 @@ function registerMfgRfqRoutes(app, deps) {
   function reasonsOf(d) {
     const e = d && d.error;
     if (Array.isArray(e)) return e.map(x => [].concat(x.alert_message || []).join(' ') || x.message || '').filter(Boolean);
-    if (e && typeof e === 'object') return Object.keys(e).map(k => k + ': ' + e[k]);
+    // The messages only ("Enter a value for Contact Email"); internal field names stay in the logs.
+    if (e && typeof e === 'object') return Object.values(e).map(String);
     return d && d.message ? [d.message] : [];
   }
 }

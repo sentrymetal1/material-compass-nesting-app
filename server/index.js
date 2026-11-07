@@ -59,6 +59,42 @@ app.use('/api/files', express.json({ limit: '60mb' })); // drawings saved to the
 app.use(['/api/supplier/me/autofill', '/api/mfg/supplier-quotes/autofill', '/api/supplier/me/quote-attachment', '/api/mfg/supplier-quotes/quote-attachment'], express.json({ limit: '40mb' })); // a supplier's quote PDF, base64; same reason, same placement
 app.use(express.json({ limit: '10mb' }));
 
+// ── NO VENDOR NAMES IN WHAT USERS SEE ─────────────────────────────────────────────────────────
+// Material Compass is the product; the data store behind it is never named to a user (Mark,
+// 2026-11-07: an "Add supplier" error read "Zoho refused the supplier. No form named … found").
+// Every JSON error a page can show passes through here: the user-facing keys are rewritten, an
+// internal "No form/report named …" becomes a plain setup message, and the raw store reply
+// (detail, zoho_*) is logged instead of sent. Server logs keep the full original.
+const USER_KEYS = ['error', 'message', 'hint', 'reasons', 'warning', 'warnings'];
+function scrubText(s) {
+  const t = String(s);
+  if (/\bNo (form|report|field) named\b/i.test(t)) return 'A Material Compass setup problem stopped this. Nothing was saved; please let support know.';
+  return t.replace(/\bZoho(?:'s)?(?: Creator| Developer)?(?: API)?\b/gi, 'Material Compass')
+    .replace(/Material Compass Material Compass/g, 'Material Compass');
+}
+function scrubValue(v) {
+  if (typeof v === 'string') return scrubText(v);
+  if (Array.isArray(v)) return v.map(scrubValue);
+  return v;
+}
+app.use('/api', (req, res, next) => {
+  const json = res.json.bind(res);
+  res.json = body => {
+    if (body && typeof body === 'object' && !Array.isArray(body) && (body.ok === false || body.error)) {
+      const out = { ...body };
+      USER_KEYS.forEach(k => { if (out[k] != null) out[k] = scrubValue(out[k]); });
+      // zoho_code stays: a bare number the BOM editor reads to spot the daily limit (4000).
+      if (out.detail != null || out.zoho_message != null) {
+        console.error('[api-error] ' + req.method + ' ' + req.path + ' ' + JSON.stringify({ detail: out.detail, zoho_code: out.zoho_code, zoho_message: out.zoho_message }).slice(0, 1500));
+        delete out.detail; delete out.zoho_message;
+      }
+      return json(out);
+    }
+    return json(body);
+  };
+  next();
+});
+
 // ── TENANT TOKEN (step 1, WARN-ONLY) ──────────────────────────────────────────────────────────
 // After the body parsers, so a claimed manufacturer_id in a POST body can be compared with the
 // token. In warn mode it records and serves; see tenantToken.js and /api/admin/token-report.
@@ -253,7 +289,7 @@ async function projectHeader(pid, token, base) {
 // Zoho answers an exhausted daily allowance with HTTP 200 + code 4000 and no rows. Read as "none
 // entered", the intake page showed a project with 52 drawings as empty and offered to create every
 // component again.
-const QUOTA_SCOPE_MSG = "Zoho's daily data limit has been reached, so the project's components and drawings " +
+const QUOTA_SCOPE_MSG = "Material Compass has reached its daily data limit, so the project's components and drawings " +
   "could not be read. Nothing is wrong with the project. It resets overnight; reload the page then.";
 app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
   try {
@@ -339,7 +375,7 @@ app.get('/api/takeoff/project-types', async (req, res) => {
       { headers: zohoHeaders(token) });
     // An exhausted allowance answers HTTP 200 + code 4000 and no rows. Reported as "no types", the
     // picker went blank with no reason given.
-    if (r.data && r.data.code === 4000) return res.status(429).json({ ok: false, code: 4000, error: "Zoho's daily data limit has been reached, so the type list could not be read. It resets overnight." });
+    if (r.data && r.data.code === 4000) return res.status(429).json({ ok: false, code: 4000, error: "Material Compass has reached its daily data limit, so the type list could not be read. It resets overnight." });
     const types = ((r.data && r.data.data) || []).map((x) => ({
       id: String(x.ID),
       name: String(x.Project_Type || '').trim(),
@@ -396,7 +432,7 @@ app.post('/api/takeoff/project-types', async (req, res) => {
 
     const ins = await axios.post(base + '/form/Type_Of_Projects', { data }, { headers: zohoHeaders(token) });
     const id = String(ins.data?.data?.ID || '');
-    if (!id) return res.status(502).json({ ok: false, error: 'Zoho accepted the call but returned no id.' });
+    if (!id) return res.status(502).json({ ok: false, error: 'The record was saved but no id came back. Please reload.' });
     console.log('[takeoff] new project type "' + name + '" (' + difficulty + ') for mfg ' + mfg + ' -> ' + id);
     res.json({ ok: true, type: { id, name, difficulty } });
   } catch (err) {

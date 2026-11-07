@@ -803,7 +803,7 @@ function registerSupplierRoutes(app, deps) {
         { data: { Form_Type: formTypeId, Material_Type: matTypeId, Type_Detail: label } },
         { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
       id = resp.data && resp.data.data && String(resp.data.data.ID || '');
-      if (!resp.data || resp.data.code !== 3000 || !id) throw new Error('Zoho refused the new spec: ' + JSON.stringify(resp.data).slice(0, 200));
+      if (!resp.data || resp.data.code !== 3000 || !id) throw new Error('The new specification could not be added: ' + JSON.stringify(resp.data).slice(0, 200));
       created = true;
       console.log('[autofill] added spec "' + label + '" (' + id + ') to Form ' + formTypeId + ' / Material ' + matTypeId);
     }
@@ -1194,7 +1194,7 @@ function registerSupplierRoutes(app, deps) {
       const token = await getAccessToken();
       const r = await axios.post(creatorApiBase() + '/report/All_Supplier_Verify_Form_Report/' + id + '/' + SV_FILE_FIELD + '/upload', fd,
         { headers: { ...zohoHeaders(token), ...fd.getHeaders() }, maxBodyLength: Infinity });
-      if (r.data && r.data.code && r.data.code !== 3000) return res.status(502).json({ ok: false, error: 'Zoho refused the file: ' + (r.data.message || r.data.code) });
+      if (r.data && r.data.code && r.data.code !== 3000) return res.status(502).json({ ok: false, error: 'The file could not be attached: ' + (r.data.message || r.data.code) });
       res.json({ ok: true, attached: file_name || 'file' });
     } catch (err) {
       const z = err.response && err.response.data;
