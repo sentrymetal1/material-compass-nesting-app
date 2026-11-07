@@ -46,7 +46,7 @@ function AddSupplier({ auth, contacts, locations, defaultRep, onAdded }) {
       <div className="q-grid q-grid-4">
         {field('company', 'Company name *')}
         {field('phone', 'Company phone *', { inputMode: 'tel', placeholder: '716-555-0100' })}
-        {field('company_email', 'Company email', { inputMode: 'email', placeholder: 'optional' })}
+        {field('company_email', 'Company email', { inputMode: 'email', placeholder: 'blank = use the contact email' })}
         <label className="q-sum-field">Material they supply
           <select value={f.material} onChange={e => set({ material: e.target.value })}>
             <option value="">—</option>{MATERIAL_CHOICES.map(o => <option key={o} value={o}>{o}</option>)}

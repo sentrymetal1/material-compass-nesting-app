@@ -436,7 +436,8 @@ function registerMfgRfqRoutes(app, deps) {
         OS_MFG_Location: locId,
         OS_MFG_Rep: repId,
         OS_Company_Name: t(b.company),
-        OS_Company_Email: t(b.company_email),
+        // The setup workflow needs a company email; fall back to the contact's.
+        OS_Company_Email: t(b.company_email) || t(b.contact_email),
         OS_Phone: '+' + (digits.length === 10 ? '1' + digits : digits),
         OS_Address: { address_line_1: t(b.address1), address_line_2: t(b.address2), district_city: t(b.city), state_province: t(b.state), postal_code: t(b.zip), country: t(b.country) || 'United States' },
         OS_Material_Serviced: OS_MATERIAL.includes(t(b.material)) ? t(b.material) : '',
@@ -472,7 +473,7 @@ function registerMfgRfqRoutes(app, deps) {
         already_matched: existing.length > 0,
         message: added.length
           ? (existing.length ? t(b.company) + ' was already in your suppliers, so it is ticked below.' : 'Added ' + added.map(s => s.name).join(', ') + '. They are ticked below and will get the quote by email.')
-          : 'Saved, but the new supplier isn\'t in your list yet. Reload the page in a moment.',
+          : 'The supplier details were saved, but the supplier could not be set up for quoting. Please let support know.',
       });
     } catch (err) { fail(res, err); }
   });
