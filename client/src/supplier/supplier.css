@@ -463,6 +463,8 @@
 .mq-reload { text-align: right; margin-top: 6px; }
 .mq-back { margin-left: auto; font-weight: 600; }
 .mq-add-sup { margin-top: 12px; font-weight: 600; }
+.mq-st-no { background: #fdecec; color: #b42318; }
+.mq-sup-sent { opacity: .65; cursor: default; }
 .mq-add-panel { margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px 4px; background: #fafcff; }
 .mq-add-head { font-weight: 600; margin-bottom: 10px; }
 .q-grid.q-grid-4 { grid-template-columns: repeat(4, 1fr); }

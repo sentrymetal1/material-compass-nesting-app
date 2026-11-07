@@ -303,8 +303,14 @@ function registerMfgRfqRoutes(app, deps) {
       const p = await loadProject(mfg, projectId);
       if (!p) return res.status(404).json({ ok: false, error: 'Project not found for this shop.' });
       const pr = p.project;
+      // Add-suppliers mode (?add_to=<quote id>): which suppliers already have this quote.
+      const addTo = String(req.query.add_to || '').trim();
+      const adding = !!(addTo && p.existing && String(p.existing.ID) === addTo);
+      const sent = adding ? await sentSupplierIds(addTo) : null;
       res.json({
         ok: true,
+        add_mode: adding ? { quote_id: addTo, allowed: ADDABLE.test(p.existing.Status || ''), sent_supplier_ids: [...sent] } : null,
+        add_to_stale: !!(addTo && !adding),
         project: {
           id: String(pr.ID), number: pr.Project_Quote_Number || '', description: pr.Project_Description || '',
           client: disp(pr.MFG_Client_Form), client_id: lkid(pr.MFG_Client_Form),
@@ -327,6 +333,67 @@ function registerMfgRfqRoutes(app, deps) {
         requirements: QUOTE_REQUIREMENTS,
         account_type: p.accountType,
       });
+    } catch (err) { fail(res, err); }
+  });
+
+  // ── Add suppliers to a quote already sent ──────────────────────────────────────────
+  // The Zoho "Add Suppliers To Send" page only re-saves the Quote_Form with more suppliers
+  // ticked; "Execute Matching and Send Emails" (Created or Edited) then creates RFQ lines and
+  // emails for suppliers that don't have them yet. We do the same re-save over the API.
+  // Only while the quote is still collecting responses: the re-save also sets
+  // Status = "Submitted - Waiting Responses", which would undo a later status.
+  const ADDABLE = /^(Open|Submitted)/i;
+  // Suppliers this quote already went to (structural or fittings), as Supplier_Entry ids.
+  const sentSupplierIds = quoteId => cachedLookup('rfq-sent-to:' + quoteId, 60 * 1000, async () => {
+    const [rs, rf] = await Promise.all([
+      fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + enc('(Quote_LU==' + quoteId + ')')).catch(() => []),
+      fetchAllZohoPages('/report/RFQs_Sent_Fittings_Report?criteria=' + enc('(Quote_LU==' + quoteId + ')')).catch(() => []),
+    ]);
+    return [...new Set([...rs, ...rf].map(r => lkid(r.Supplier_LU)).filter(Boolean))];
+  }).then(a => new Set(a));
+
+  // POST /api/mfg/rfq/add-suppliers { project_id, quote_id, supplier_match_ids }
+  app.post('/api/mfg/rfq/add-suppliers', async (req, res) => {
+    const mfg = mfgOf(req, res); if (!mfg) return;
+    const b = req.body || {};
+    const projectId = String(b.project_id || '').trim(), quoteId = String(b.quote_id || '').trim();
+    const matchIds = Array.isArray(b.supplier_match_ids) ? b.supplier_match_ids.map(String).filter(x => /^\d+$/.test(x)) : [];
+    if (!/^\d+$/.test(projectId) || !/^\d+$/.test(quoteId)) return res.status(400).json({ ok: false, error: 'Please reopen this page from Material Compass.' });
+    if (!matchIds.length) return res.status(400).json({ ok: false, error: 'Choose at least one supplier to add.' });
+    try {
+      const p = await loadProject(mfg, projectId);
+      if (!p) return res.status(404).json({ ok: false, error: 'Project not found for this shop.' });
+      if (!p.existing || String(p.existing.ID) !== quoteId) {
+        return res.status(409).json({ ok: false, error: 'This quote has been revised since the page opened. Reload the page and try again. Nothing was sent.' });
+      }
+      if (!ADDABLE.test(p.existing.Status || '')) {
+        return res.status(409).json({ ok: false, error: 'Quote ' + (p.existing.Reference_Number || '') + ' is ' + (p.existing.Status || 'closed') + ', so suppliers can\'t be added. Nothing was sent.' });
+      }
+      const byId = new Map(p.matches.map(m => [String(m.ID), m]));
+      if (matchIds.some(id => !byId.has(id))) return res.status(400).json({ ok: false, error: 'One or more suppliers are not matched to your shop.' });
+      bust('rfq-sent-to:' + quoteId);
+      const sent = await sentSupplierIds(quoteId);
+      const fresh = matchIds.filter(id => !sent.has(lkid(byId.get(id).SUPPLIER)));
+      if (!fresh.length) return res.status(400).json({ ok: false, error: 'Those suppliers already have this quote. Nothing was sent.' });
+      // Keep everyone already on the quote ticked, plus the new ones. The engine skips
+      // suppliers that already have their RFQ lines.
+      const keep = p.matches.filter(m => sent.has(lkid(m.SUPPLIER))).map(m => String(m.ID));
+      const choices = [...new Set([...keep, ...fresh])];
+      const token = await getAccessToken();
+      let r;
+      try {
+        r = await axios.patch(creatorApiBase() + '/report/All_Quotes/' + quoteId, { data: { Structural_Match_Choices: choices } },
+          { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
+      } catch (e) {
+        const d = e.response && e.response.data;
+        return res.status(502).json({ ok: false, error: 'Zoho refused the change. Nothing was sent.', reasons: reasonsOf(d), detail: d || e.message });
+      }
+      if (!r.data || r.data.code !== 3000) {
+        return res.status(502).json({ ok: false, error: 'Zoho refused the change. Nothing was sent.', reasons: reasonsOf(r.data), detail: r.data });
+      }
+      bust('rfq-sent-to:' + quoteId); bust('rfq-quotes:' + mfg); bust('mfg-sent-rfqs:' + mfg);
+      res.json({ ok: true, quote_id: quoteId, quote_number: p.existing.Reference_Number || '', added: fresh.length,
+        names: fresh.map(id => { const s = byId.get(id).SUPPLIER; return (s && (s.Company_Name || s.zc_display_value)) || 'Supplier'; }) });
     } catch (err) { fail(res, err); }
   });
 
