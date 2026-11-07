@@ -9,6 +9,7 @@
 const { matchFittingsForSupplier } = require('./fittingMatch');
 const { matchStructuralForSupplier, SUPPLY_REPORT: STRUCT_STOCK_REPORT } = require('./structuralMatch');
 const { fetchCatalogs, computeAlteredLine, LineCalcError } = require('./lineCalc');
+const filestore = require('./filestore');
 
 const SUPPLIER_REPORT = 'Supplier_Entry_Report';
 // Unfiltered reports for a supplier's locations and reps. All_Supplier_Locations /
@@ -346,15 +347,37 @@ function registerSupplierRoutes(app, deps) {
     return out;
   }
 
-  async function fetchSentRfqs(supplierId) {
-    // Cache per supplier (3 min) so a supplier refreshing the Quotes tab doesn't re-hit Zoho.
-    // Scope to Latest_Item_for_Supplier==true — the report holds every superseded revision's
-    // rows too (~1800 for an active supplier), and we only ever show the current version of
-    // each line. This cuts the fetch from ~10 pages to ~1-2, saving Developer-API calls.
+  // ── Saved-quote snapshots ────────────────────────────────────────────────────────────
+  // What the card held when a quote was saved: header + every line's option, price and
+  // alteration, keyed supplier × MFG quote, on our own disk. Reopening a saved quote reads
+  // this instead of the RFQs_Sent rows. Those rows are written by Zoho's SV success
+  // workflow and can't be trusted to match: on MMQ-100478 it wrote $0 on every altered
+  // line and swapped lines 8/10 with 13/14. Reading the copy costs no Zoho API call.
+  // Each save overwrites it, so it is always the latest revision.
+  const snapName = (sid, qid) => 'svq-' + String(sid).replace(/\D/g, '') + '-' + String(qid).replace(/\D/g, '') + '.json';
+  function saveQuoteSnapshot(sid, qid, snap) {
+    try { filestore.writeJson(snapName(sid, qid), snap); }
+    catch (e) { console.error('[quote-snapshot] save failed:', e.message); }
+  }
+  function readQuoteSnapshot(sid, qid) {
+    if (!/^\d+$/.test(String(qid))) return null;
+    try { return filestore.readJson(snapName(sid, qid), null); } catch (e) { return null; }
+  }
+
+  // The supplier's CURRENT RFQ rows (raw). One cache shared by the quote list, line
+  // previews and submit, so pricing an altered line never triggers its own Zoho fetch.
+  // Scoped to Latest_Item_for_Supplier==true — the report holds every superseded revision's
+  // rows too (~1800 for an active supplier), and we only ever use the current version of
+  // each line. That cuts the fetch from ~10 pages to ~1-2.
+  function sentRowsLatest(supplierId) {
     const crit = encodeURIComponent('(Supplier_LU==' + supplierId + ' && Latest_Item_for_Supplier==true)');
+    return cachedLookup('sent-rfqs:' + supplierId, 3 * 60 * 1000, async () =>
+      fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + crit));
+  }
+
+  async function fetchSentRfqs(supplierId) {
     const [rows, catalogs] = await Promise.all([
-      cachedLookup('sent-rfqs:' + supplierId, 3 * 60 * 1000, async () =>
-        fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + crit)),
+      sentRowsLatest(supplierId),
       // Cached 1h inside lineCalc — ~6 API calls/hour total, shared across suppliers.
       fetchCatalogs({ fetchAllZohoPages, cachedLookup }),
     ]);
@@ -645,6 +668,8 @@ function registerSupplierRoutes(app, deps) {
       ]);
       const { alteration_catalog } = sent;
       const quotes = sent.quotes.filter(q => inScope(req, q.manufacturer_id));
+      // A quote already saved reopens as saved (disk copy, no Zoho call).
+      quotes.forEach(q => { const s = readQuoteSnapshot(req.supplier.id, q.quote_id); if (s) q.saved = s; });
       // Map the full Quote_Form.Status pipeline into the 4 supplier tiles.
       const tile = s => {
         if (/^Open|Quote Revised/i.test(s)) return 'open';            // not submitted / past due / revised
@@ -739,8 +764,7 @@ function registerSupplierRoutes(app, deps) {
   // never to client-sent geometry.
   async function loadAlterationContext(supplierId, specIds) {
     const [rawRows, catalogs] = await Promise.all([
-      cachedLookup('sent-rfqs-raw:' + supplierId, 30 * 1000, async () =>
-        fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')')),
+      sentRowsLatest(supplierId),
       fetchCatalogs({ fetchAllZohoPages, cachedLookup }),
     ]);
     await ensureSpecs(catalogs, specIds);
@@ -875,6 +899,7 @@ function registerSupplierRoutes(app, deps) {
       const priorSvId = priorSvIds.length ? priorSvIds.slice().sort().reverse()[0] : '';
 
       const detailRows = [];
+      const snapLines = {};   // what the card showed, per RFQ line — see saveQuoteSnapshot
       let missing = 0;
       const lineErrors = [];  // per-line alteration failures — surfaced, never silently dropped
       let sumMaterial = 0;  // Σ line total price — feeds the header material/grand totals
@@ -938,6 +963,11 @@ function registerSupplierRoutes(app, deps) {
         // supplier's "N Days" pick to whole weeks; omit when none so we never send a non-number.
         const leadDays = parseInt(leadTxt, 10);
         const svLeadWeeks = (Number.isFinite(leadDays) && leadDays > 0) ? Math.ceil(leadDays / 7) : null;
+        snapLines[String(r.ID)] = {
+          quote_option: opt, total_price: round(tp, 2), price_per_lb: round(ppl, 3),
+          lead_time: leadTxt, comments: l.comments || '', item_requirements: supReq,
+          alteration: alt ? l.alteration : null, preview: alt || null,
+        };
 
         detailRows.push({
           // links back to the source RFQ line + master records
@@ -1097,6 +1127,11 @@ function registerSupplierRoutes(app, deps) {
           superseded++;
         } catch (e) { /* non-fatal */ }
       }
+      saveQuoteSnapshot(supplierId, quote_id, {
+        sv_form_id: String(svFormId), saved_at: new Date().toISOString(),
+        header: { ...header, attachment_name: '', fittings_total: undefined },
+        lines: snapLines,
+      });
       // The next load should show what was just saved, not a 3-minute-old copy.
       bust('sent-rfqs:' + supplierId);
       bust('sent-rfqs-raw:' + supplierId);

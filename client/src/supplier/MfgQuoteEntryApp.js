@@ -7,7 +7,7 @@ import { QuoteCard, mergeQuotes } from './QuotesView';
 // the same Supplier_Verify_Form record a supplier's submit creates — allocation and the
 // close-out read it the same way. Opened from Zoho with
 //   /mfg-quote-entry?manufacturer_id=<Customer_Entry ID>&t=<token>[&quote_id=…][&supplier_id=…]
-const BUILD_TAG = 'mfg-quote-entry-2026-11-06g';
+const BUILD_TAG = 'mfg-quote-entry-2026-11-07a-saved-copy';
 const BASE = '/api/mfg/supplier-quotes/';
 
 function params() {
@@ -132,6 +132,12 @@ export default function MfgQuoteEntryApp() {
             {card.status === 'loading' &&<div className="sup-msg">Loading {supplier ? supplier.name + '’s' : 'the'} lines…</div>}
             {card.status === 'error' && <div className="sup-msg sup-msg-error">Couldn’t load the lines: {card.error}</div>}
             {card.status === 'empty' && <div className="sup-msg sup-msg-warn">No open lines for this supplier on this quote.</div>}
+            {card.status === 'ready' && card.quote.saved && (
+              <div className="sup-msg">Showing {supplier ? supplier.name + '’s' : 'this'} quote as saved {new Date(card.quote.saved.saved_at).toLocaleString()}. Saving again makes a new revision of it.</div>
+            )}
+            {card.status === 'ready' && !card.quote.saved && supplier && supplier.answered && (
+              <div className="sup-msg sup-msg-warn">This quote was saved before the screen kept a copy, so altered lines may show $0 here. The saved quote itself is fine. To correct the screen, upload {supplier.name}’s PDF, press “Auto-fill lines”, then save.</div>
+            )}
             {card.status === 'ready' && (
               <QuoteCard key={quoteId + '|' + supplierId + '|' + reloadN}
                 quote={card.quote} lookups={card.lookups} alterationCatalog={card.alteration_catalog}

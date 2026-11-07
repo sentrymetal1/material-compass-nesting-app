@@ -73,6 +73,8 @@ function AlterEditor({ line, draft, kind, specOptions, ep, onChange }) {
 
   useEffect(() => {
     if (!body) { onChange({ preview: null, preview_error: '', previewing: false }); return undefined; }
+    // Already priced for exactly these values (a reopened saved quote): don't ask again.
+    if (draft.preview && draft.preview_key === bodyKey) return undefined;
     const mine = ++seq.current;
     onChange({ previewing: true });
     const t = setTimeout(async () => {
@@ -84,7 +86,7 @@ function AlterEditor({ line, draft, kind, specOptions, ep, onChange }) {
         const j = await r.json();
         // A slower earlier request must never clobber a newer one.
         if (mine !== seq.current) return;
-        if (r.ok && j.ok) onChange({ preview: j.preview, preview_error: '', previewing: false });
+        if (r.ok && j.ok) onChange({ preview: j.preview, preview_key: bodyKey, preview_error: '', previewing: false });
         else onChange({ preview: null, preview_error: j.error || 'Could not price this change.', previewing: false });
       } catch (e) {
         if (mine === seq.current) onChange({ preview: null, preview_error: String(e.message || e), previewing: false });
@@ -167,6 +169,39 @@ function effLine(line, draft) {
   if (!changed) return line;
   return { ...line, qty: p.quantity, unit_weight: p.unit_weight, description: p.description, altered: true };
 }
+// A line's draft rebuilt from the quote as last saved (server's copy — see
+// saveQuoteSnapshot). The saved preview comes along keyed to its alteration, so the
+// editor shows it without asking the server to price the line again.
+function savedDraft(s) {
+  const d = {
+    total_price: s.quote_option === 'No Quote' ? '' : (s.total_price ? Number(s.total_price).toFixed(2) : ''),
+    price_per_lb: s.price_per_lb || '',
+    quote_option: s.quote_option || 'Quote As Is',
+    lead_time: s.lead_time || '', comments: s.comments || '',
+    item_requirements: Array.isArray(s.item_requirements) ? s.item_requirements : [],
+  };
+  const a = s.alteration;
+  if (a) {
+    if (a.quantity != null) d.alt_quantity = String(a.quantity);
+    if (a.length_ft != null) d.alt_length_ft = String(a.length_ft);
+    if (a.length_inch != null) d.alt_length_inch = String(a.length_inch);
+    if (a.spec_id) d.alt_spec_id = String(a.spec_id);
+    const body = alterationBody(d, ALTER_KIND[d.quote_option] || null);
+    if (s.preview && body) { d.preview = s.preview; d.preview_key = JSON.stringify(body); }
+  }
+  return d;
+}
+function savedHeader(saved) {
+  const h = saved && saved.header;
+  if (!h) return {};
+  const keep = ['supplier_quote_number', 'meets_requirements', 'shipping', 'misc', 'valid_days', 'valid_until',
+    'lead_time', 'notes', 'ready', 'location', 'rep', 'requirements'];
+  const out = {};
+  keep.forEach(k => { if (h[k] !== undefined && h[k] !== null) out[k] = h[k]; });
+  // An auto-numbered save shows blank, so it isn't mistaken for the supplier's own number.
+  if (/^AUTO-/.test(String(out.supplier_quote_number || ''))) out.supplier_quote_number = '';
+  return out;
+}
 // Format a currency input to 2 decimals on blur ("" stays "" so 'required' still catches blanks).
 const fmtMoney2 = v => { const n = parseFloat(v); return isNaN(n) ? '' : n.toFixed(2); };
 
@@ -199,6 +234,7 @@ export function mergeQuotes(structuralQuotes, fittingQuotes) {
     e.status = e.status || q.status || '';
     if (Array.isArray(q.mfg_requirements) && q.mfg_requirements.length) e.mfg_requirements = q.mfg_requirements;
     if (Array.isArray(q.files) && q.files.length) e.files = q.files;
+    if (q.saved) e.saved = q.saved;   // the quote as last saved (server's disk copy)
   }
   for (const q of fittingQuotes || []) {
     const e = ensure(q);
@@ -431,7 +467,12 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
   // structural drafts keyed by rfqs_sent_id
   const [drafts, setDrafts] = useState(() => {
     const d = {};
-    quote.structural_lines.forEach(l => { d[l.rfqs_sent_id] = { total_price: l.total_price || '', price_per_lb: l.price_per_lb || '', quote_option: l.quote_option || 'Quote As Is', lead_time: '', comments: '', item_requirements: Array.isArray(l.item_requirements) ? l.item_requirements : [] }; });
+    const savedLines = (quote.saved && quote.saved.lines) || {};
+    quote.structural_lines.forEach(l => {
+      const s = savedLines[l.rfqs_sent_id];
+      if (s) { d[l.rfqs_sent_id] = savedDraft(s); return; }
+      d[l.rfqs_sent_id] = { total_price: l.total_price || '', price_per_lb: l.price_per_lb || '', quote_option: l.quote_option || 'Quote As Is', lead_time: '', comments: '', item_requirements: Array.isArray(l.item_requirements) ? l.item_requirements : [] };
+    });
     return d;
   });
   const setLine = (id, patch) => setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -472,6 +513,9 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     // confirming the manufacturer's requirements). Backend supplies quote.mfg_requirements.
     requirements: Array.isArray(quote.mfg_requirements) ? quote.mfg_requirements : [],
     attachment_name: '',
+    // A saved quote reopens with its summary as saved (location, rep, quote #, terms…).
+    // The email choices stay this screen's defaults.
+    ...savedHeader(quote.saved),
   });
   const setH = patch => setHdr(p => ({ ...p, ...patch }));
   // The supplier's quote file itself, uploaded onto the saved record after submit. The PDF
