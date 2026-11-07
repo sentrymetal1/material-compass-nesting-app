@@ -195,7 +195,7 @@ function savedHeader(saved) {
   const h = saved && saved.header;
   if (!h) return {};
   const keep = ['supplier_quote_number', 'meets_requirements', 'shipping', 'misc', 'valid_days', 'valid_until',
-    'lead_time', 'notes', 'ready', 'location', 'rep', 'requirements'];
+    'lead_time', 'notes', 'ready', 'location', 'rep', 'requirements', 'quote_total'];
   const out = {};
   keep.forEach(k => { if (h[k] !== undefined && h[k] !== null) out[k] = h[k]; });
   // An auto-numbered save shows blank, so it isn't mistaken for the supplier's own number.
@@ -502,7 +502,11 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
 
   // Quote-level header / summary (drives the structural SV-form submit).
   const [hdr, setHdr] = useState({
-    supplier_quote_number: '', meets_requirements: '', shipping: '', misc: '',
+    // Shipping/Misc start at $0.00: most quotes have neither, and a blank blocked the save.
+    supplier_quote_number: '', meets_requirements: '', shipping: '0.00', misc: '0.00',
+    // The total printed on the supplier's quote (auto-fill reads it; can be typed). When set,
+    // saving asks before going ahead if our total doesn't match it to the cent.
+    quote_total: '',
     valid_days: '', valid_until: '', lead_time: '', notes: '', ready: false,
     location: '', rep: '',
     // Who gets the 'quote received' email (Supplier_Verify_Form Email_Manufacturer / Email_Supplier).
@@ -578,8 +582,12 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
         return next;
       });
       const h = j.header || {};
+      const blank = v => v == null || String(v).trim() === '';
       setHdr(p => ({
         ...p, ...h,
+        shipping: blank(h.shipping) ? p.shipping : h.shipping,
+        misc: blank(h.misc) ? p.misc : h.misc,
+        quote_total: j.pdf_grand_total != null ? Number(j.pdf_grand_total).toFixed(2) : p.quote_total,
         // Valid-until follows valid-days unless the quote printed its own date.
         valid_until: h.valid_until || (h.valid_days ? (() => {
           const dt = new Date(); dt.setDate(dt.getDate() + parseInt(h.valid_days, 10));
@@ -678,7 +686,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
   const totalAmount = grand + (parseFloat(hdr.shipping) || 0) + (parseFloat(hdr.misc) || 0);
 
   // Quote-summary fields the supplier MUST complete before submitting (structural quotes).
-  // Attachment + Notes stay optional. Shipping/Misc are required but "0" is a valid entry.
+  // Attachment + Notes stay optional. Shipping/Misc are not listed: blank saves as $0.00.
   const REQUIRED_FIELDS = [
     ['location', 'Supplier location'],
     ['rep', 'Supplier representative'],
@@ -687,8 +695,6 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     ['valid_days', 'Quote valid (business days)'],
     ['valid_until', 'Valid until'],
     ['lead_time', 'Lead time for ship complete'],
-    ['shipping', 'Shipping amount'],
-    ['misc', 'Miscellaneous amount'],
   ];
   // Fittings-only quotes are exempt on purpose: the whole quote-summary block below is
   // rendered under `hasStruct`, and the fittings endpoint takes lines only -- no header.
@@ -736,6 +742,18 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
       setSubmitState({ status: 'error', error: 'Please resolve the altered lines: ' + alterationProblems.join(' ') });
       return;
     }
+    // Our total vs the total printed on the supplier's quote: to the cent, or ask first.
+    const qt = parseFloat(hdr.quote_total);
+    if (hasStruct && Number.isFinite(qt) && qt > 0 && Math.abs(round(totalAmount, 2) - round(qt, 2)) >= 0.01) {
+      const diff = round(totalAmount - qt, 2);
+      const ok = window.confirm(
+        'The totals don’t match.\n\n'
+        + 'Total here: ' + money(totalAmount) + '\n'
+        + (mfg ? 'Total on the supplier’s quote: ' : 'Total on your quote: ') + money(qt) + '\n'
+        + 'Difference: ' + (diff > 0 ? '+' : '−') + money(Math.abs(diff)) + '\n\n'
+        + 'Save anyway?');
+      if (!ok) return;
+    }
     setSubmitState({ status: 'saving' });
     try {
       let structResult = null, fitResult = null;
@@ -764,7 +782,10 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
           // separate endpoint that never sees the SV header, so this is the only point at
           // which the header money can be made whole. Matches the "Fittings total" shown
           // above -- No Quote lines already excluded.
-          body: JSON.stringify({ quote_id: quote.quote_id, sv_form_id, header: { ...hdr, fittings_total: fitGrand }, lines }),
+          body: JSON.stringify({ quote_id: quote.quote_id, sv_form_id, header: {
+            ...hdr, fittings_total: fitGrand,
+            shipping: fmtMoney2(hdr.shipping) || '0.00', misc: fmtMoney2(hdr.misc) || '0.00',
+          }, lines }),
         });
         structResult = await r.json();
       }
@@ -1046,20 +1067,28 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                 <label className={'q-sum-field' + inv('lead_time')} data-field="lead_time">Lead time for ship complete<span className="req-star">*</span>
                   <LeadTimeSelect value={hdr.lead_time} choices={leadChoices} blankLabel="— select —" onChange={v => setH({ lead_time: v })} />
                 </label>
-                <label className={'q-sum-field' + inv('shipping')} data-field="shipping">Shipping amount<span className="req-star">*</span>
+                <label className="q-sum-field" data-field="shipping">Shipping amount
                   <div className="q-money-in">
                     <span className="q-dollar">$</span>
                     <input type="text" inputMode="decimal" value={hdr.shipping} placeholder="0.00"
                       onChange={e => setH({ shipping: e.target.value })}
-                      onBlur={e => setH({ shipping: fmtMoney2(e.target.value) })} />
+                      onBlur={e => setH({ shipping: fmtMoney2(e.target.value) || '0.00' })} />
                   </div>
                 </label>
-                <label className={'q-sum-field' + inv('misc')} data-field="misc">Miscellaneous amount<span className="req-star">*</span>
+                <label className="q-sum-field" data-field="misc">Miscellaneous amount
                   <div className="q-money-in">
                     <span className="q-dollar">$</span>
                     <input type="text" inputMode="decimal" value={hdr.misc} placeholder="0.00"
                       onChange={e => setH({ misc: e.target.value })}
-                      onBlur={e => setH({ misc: fmtMoney2(e.target.value) })} />
+                      onBlur={e => setH({ misc: fmtMoney2(e.target.value) || '0.00' })} />
+                  </div>
+                </label>
+                <label className="q-sum-field" data-field="quote_total">{mfg ? 'Total on supplier’s quote' : 'Total on your quote'}
+                  <div className="q-money-in">
+                    <span className="q-dollar">$</span>
+                    <input type="text" inputMode="decimal" value={hdr.quote_total} placeholder="optional"
+                      onChange={e => setH({ quote_total: e.target.value })}
+                      onBlur={e => setH({ quote_total: fmtMoney2(e.target.value) })} />
                   </div>
                 </label>
               </div>

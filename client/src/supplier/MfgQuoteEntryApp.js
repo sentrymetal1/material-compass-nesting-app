@@ -7,7 +7,7 @@ import { QuoteCard, mergeQuotes } from './QuotesView';
 // the same Supplier_Verify_Form record a supplier's submit creates — allocation and the
 // close-out read it the same way. Opened from Zoho with
 //   /mfg-quote-entry?manufacturer_id=<Customer_Entry ID>&t=<token>[&quote_id=…][&supplier_id=…]
-const BUILD_TAG = 'mfg-quote-entry-2026-11-07a-saved-copy';
+const BUILD_TAG = 'mfg-quote-entry-2026-11-07b-back-totals';
 const BASE = '/api/mfg/supplier-quotes/';
 
 function params() {
@@ -20,6 +20,13 @@ function params() {
   };
 }
 
+// Back to wherever in Material Compass this page was opened from (the dashboard's
+// Enter Supplier Quote opens it in the same window). Opened in a new tab: close it.
+function backToMc() {
+  if (window.history.length > 1) window.history.back();
+  else window.close();
+}
+
 export default function MfgQuoteEntryApp() {
   const [{ mfg, token, quoteId: q0, supplierId: s0 }] = useState(params);
   const [list, setList] = useState({ status: 'loading', quotes: [], error: '' });
@@ -27,6 +34,8 @@ export default function MfgQuoteEntryApp() {
   const [supplierId, setSupplierId] = useState(s0);
   const [card, setCard] = useState({ status: 'idle' });
   const [reloadN, setReloadN] = useState(0);
+  const [savedNow, setSavedNow] = useState(false);   // this supplier's quote was just saved
+  useEffect(() => { setSavedNow(false); }, [quoteId, supplierId]);
 
   const auth = 'manufacturer_id=' + encodeURIComponent(mfg) + (token ? '&t=' + encodeURIComponent(token) : '');
   const ep = useCallback(name => BASE + name + '?' + auth + '&supplier_id=' + encodeURIComponent(supplierId), [auth, supplierId]);
@@ -81,6 +90,7 @@ export default function MfgQuoteEntryApp() {
           <span className="sup-logo">◆</span>
           <span className="sup-title">Material Compass <em>· Enter a supplier's quote</em></span>
         </div>
+        <button type="button" className="btn-link mq-back" onClick={backToMc}>← Back to Material Compass</button>
       </header>
       <main className="sup-main sup-main-wide">
         {!mfg ? (
@@ -142,7 +152,14 @@ export default function MfgQuoteEntryApp() {
               <QuoteCard key={quoteId + '|' + supplierId + '|' + reloadN}
                 quote={card.quote} lookups={card.lookups} alterationCatalog={card.alteration_catalog}
                 ep={ep} mfg defaultOpen revise={!!(supplier && supplier.answered)}
-                onSubmitted={() => { loadList(); }} />
+                onSubmitted={() => { setSavedNow(true); loadList(); }} />
+            )}
+            {savedNow && (
+              <div className="sup-msg mq-done">
+                {supplier ? supplier.name + '’s' : 'The'} quote is saved.
+                <button type="button" className="mq-done-btn" onClick={backToMc}>← Back to Material Compass</button>
+                {quote && quote.suppliers.length > 1 && <span className="muted"> or pick another supplier above.</span>}
+              </div>
             )}
             {card.status === 'ready' && (
               <div className="mq-reload"><button className="btn-link" onClick={() => setReloadN(n => n + 1)}>Reload lines</button></div>
