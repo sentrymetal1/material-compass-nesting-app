@@ -15,7 +15,7 @@ const responded = q =>
 export default function QuoteLinkApp() {
   const [token] = useState(() => new URLSearchParams(window.location.search).get('t') || '');
   const [card, setCard] = useState({ status: 'loading' });
-  const [reloadN, setReloadN] = useState(0);
+  const [reloadN] = useState(0);
   const [savedNow, setSavedNow] = useState(false);
   const ep = useCallback(name => BASE + name + '?t=' + encodeURIComponent(token), [token]);
 
@@ -80,7 +80,6 @@ export default function QuoteLinkApp() {
                     Thank you. Your quote is with {q.manufacturer || 'the manufacturer'}. You can close this page, or use this same link to revise it.
                   </div>
                 )}
-                <div className="mq-reload"><button className="btn-link" onClick={() => setReloadN(n => n + 1)}>Reload</button></div>
               </>
             )}
             <div className="sup-msg ql-join">
