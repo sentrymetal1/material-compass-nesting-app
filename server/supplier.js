@@ -1242,6 +1242,60 @@ function registerSupplierRoutes(app, deps) {
   app.post('/api/q/quote-submit', withQuoteLink, quoteSubmitHandler);
   app.post('/api/q/quote-attachment', withQuoteLink, quoteAttachmentHandler);
 
+  // ---------- RFQ email sent by Material Compass (Resend; see mailer.js) ----------
+  // Built from the supplier's own RFQ rows (what they were actually sent) plus the quote
+  // header (1 call) and the MFG contact (cached). opts: { due: 'Mon DD,YYYY', firstTime }.
+  async function buildRfqMessage(mfg, supplier, qid, opts) {
+    const o = opts || {};
+    const sid = String(supplier.id);
+    const sent = await fetchSentRfqs(sid);
+    const sq = sent.quotes.find(q => String(q.quote_id) === String(qid) && String(q.manufacturer_id) === String(mfg));
+    if (!sq) return null;
+    const token = await getAccessToken();
+    const qr = await axios.get(creatorApiBase() + '/report/All_Quotes?criteria=' + encodeURIComponent('(ID==' + qid + ')'), { headers: zohoHeaders(token) });
+    const qh = (qr.data && qr.data.data && qr.data.data[0]) || {};
+    const reps = await cachedLookup('mfg-reps:' + mfg, 10 * 60 * 1000, () =>
+      fetchAllZohoPages('/report/All_Company_Representatives?criteria=' + encodeURIComponent('(Manufacture==' + mfg + ')')));
+    const rep = reps.find(r => String(r.ID) === lkid(qh.Contact_Name)) || {};
+    const t = require('./tenantToken').mint('q', sid + '_' + qid, 60 * 24 * 3600 * 1000);
+    const base = process.env.PUBLIC_BASE_URL || 'https://material-compass-nesting-app-production.up.railway.app';
+    const rev = Number(qh.Revision_Number) || 0;
+    const q = {
+      quote_number: qh.Reference_Number || sq.quote_number,
+      revision: rev,
+      sent_date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      due_date: o.due || qh.Requested_Responses_Due || '',
+      manufacturer: sq.manufacturer || qh.Manufacture_Name || '',
+      mfg_contact: { name: flatten(rep.Name) || (qh.Contact_Name && String(qh.Contact_Name.zc_display_value || '').trim()) || '',
+                     email: rep.Email || '', phone: rep.Direct_Phone_Number || rep.Phone_Number || '' },
+      requirements: sq.mfg_requirements || [],
+      lines: sq.lines.map(l => ({ line: l.line, description: String(l.description || '').replace(/^\s*\|\s*/, ''), qty: l.qty, note: l.mfg_note,
+        total_weight: (Number(l.unit_weight) || 0) * (Number(l.qty) || 0) })),
+    };
+    const mail = require('./mailer').rfqEmail(q, { supplierName: supplier.company_name, link: base + '/quote-online?t=' + encodeURIComponent(t),
+      revised: rev > 0, firstTime: !!o.firstTime });
+    return { ...mail, replyTo: q.mfg_contact.email || undefined, to: supplier.email, quote: q };
+  }
+
+  // GET /api/mfg/supplier-quotes/rfq-email?manufacturer_id=&supplier_id=&quote_id=[&first=1][&due=][&send=me]
+  // Preview the email a supplier gets (HTML). send=me mails it to the quote's MFG contact
+  // instead of the supplier, to check how it lands in a real inbox.
+  app.get('/api/mfg/supplier-quotes/rfq-email', withMfgOnBehalf, async (req, res) => {
+    try {
+      const m = await buildRfqMessage(req.onBehalfOf, req.supplier, String(req.query.quote_id || ''),
+        { firstTime: req.query.first === '1', due: req.query.due ? String(req.query.due) : '' });
+      if (!m) return res.status(404).json({ ok: false, error: 'That quote was not sent to this supplier.' });
+      if (req.query.send !== 'me') return res.type('html').send(m.html);
+      if (!m.replyTo) return res.status(400).json({ ok: false, error: 'The quote has no contact email to send the test to.' });
+      const r = await require('./mailer').send({ to: m.replyTo, subject: '[Preview for ' + req.supplier.company_name + '] ' + m.subject, html: m.html, replyTo: m.replyTo });
+      if (!r.ok) return res.status(502).json({ ok: false, error: r.error === 'not_configured' ? 'Email sending is not set up yet.' : 'The test email could not be sent.', detail: r.error });
+      res.json({ ok: true, sent_to: m.replyTo, id: r.id });
+    } catch (err) {
+      if (sendZohoAwareError) return sendZohoAwareError(res, err);
+      res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
   // GET /api/mfg/supplier-quotes/quote-link?manufacturer_id=&supplier_id=&quote_id= — the
   // manufacturer's copy of a supplier's "price this quote online" link, to paste into an
   // email. Only for a quote of this MFG's that went to that supplier. Valid 60 days.
