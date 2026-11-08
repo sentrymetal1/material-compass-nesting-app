@@ -388,6 +388,14 @@ function registerMfgRfqRoutes(app, deps) {
       // suppliers that already have their RFQ lines.
       const keep = p.matches.filter(m => sent.has(lkid(m.SUPPLIER))).map(m => String(m.ID));
       const choices = [...new Set([...keep, ...fresh])];
+      // For the RFQ email Material Compass sends these suppliers (supplier.js rfq hook):
+      // they're new to this quote (no "REVISED" wording) and get the date chosen here.
+      const dueIso = /^\d{4}-\d{2}-\d{2}$/.test(String(b.due_date || '')) ? String(b.due_date) : '';
+      const dueTxt = dueIso ? new Date(dueIso + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '';
+      fresh.forEach(id => {
+        try { require('./filestore').writeJson('rfqadd-' + quoteId + '-' + lkid(byId.get(id).SUPPLIER) + '.json', { due: dueTxt, at: new Date().toISOString() }); }
+        catch (e) { console.error('[add-suppliers] note not saved', e.message); }
+      });
       const token = await getAccessToken();
       let r;
       try {

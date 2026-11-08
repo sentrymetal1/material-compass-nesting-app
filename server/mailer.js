@@ -60,7 +60,13 @@ function fmtWt(n) { return (Number(n) || 0).toLocaleString('en-US', { minimumFra
 // opts: { supplierName, link, firstTime, revised }
 function rfqEmail(q, opts) {
   const o = opts || {};
-  const totalWt = q.lines.reduce((s, l) => s + (Number(l.total_weight) || 0), 0);
+  const fits = q.fittings || [];
+  const totalWt = q.lines.concat(fits).reduce((s, l) => s + (Number(l.total_weight) || 0), 0);
+  const fitRows = fits.map((l, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '">' +
+    '<td style="padding:8px 10px;color:#7a8a99;font-size:12px">' + esc(l.line || i + 1) + '</td>' +
+    '<td style="padding:8px 10px;font-size:13px">' + esc(l.description) + '</td>' +
+    '<td style="padding:8px 10px;text-align:center;font-size:13px">' + esc(l.qty == null ? '' : l.qty) + '</td>' +
+    '<td style="padding:8px 10px;text-align:right;font-size:13px;white-space:nowrap">' + (Number(l.total_weight) ? fmtWt(l.total_weight) : '') + '</td></tr>').join('');
   const revisedBanner = o.revised && !o.firstTime
     ? '<tr><td style="padding:14px 28px"><div style="border-left:4px solid #e8590c;background:#fff4e6;padding:10px 14px;font-size:13px;color:#7a3e00"><b>REVISION ' + esc(q.revision || '') + ':</b> this request replaces the earlier one for this material. Please quote from this revision.</div></td></tr>'
     : '';
@@ -98,8 +104,8 @@ revisedBanner +
   (q.notes ? '<div style="margin-top:6px;font-size:13px">' + esc(q.notes) + '</div>' : '') + '</td></tr>' : '') +
 (button ? '<tr><td style="padding:8px 28px 18px" align="center">' + button + '</td></tr>' : '') +
 '<tr><td style="padding:0 28px"><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d9e2ec;border-collapse:collapse">' +
-'<tr style="background:#eef2f7;font-size:11px;color:#55677a"><td style="padding:8px 10px">#</td><td style="padding:8px 10px">ITEM</td><td style="padding:8px 10px;text-align:center">QTY</td><td style="padding:8px 10px;text-align:right">WEIGHT</td></tr>' +
-rows +
+(q.lines.length ? '<tr style="background:#eef2f7;font-size:11px;color:#55677a"><td style="padding:8px 10px">#</td><td style="padding:8px 10px">ITEM</td><td style="padding:8px 10px;text-align:center">QTY</td><td style="padding:8px 10px;text-align:right">WEIGHT</td></tr>' + rows : '') +
+(fits.length ? '<tr style="background:#eef2f7;font-size:11px;color:#55677a"><td style="padding:8px 10px">#</td><td style="padding:8px 10px">FITTING</td><td style="padding:8px 10px;text-align:center">QTY</td><td style="padding:8px 10px;text-align:right">WEIGHT</td></tr>' + fitRows : '') +
 '<tr style="background:#eef4fb"><td colspan="3" style="padding:10px;text-align:right;font-size:12px;color:#55677a">Total quote weight</td><td style="padding:10px;text-align:right;font-weight:700">' + fmtWt(totalWt) + '</td></tr>' +
 '</table></td></tr>' +
 '<tr><td style="padding:18px 28px"><div style="background:#fff8e6;border-top:2px solid #f0ad4e;padding:12px 16px;font-size:13px">' +

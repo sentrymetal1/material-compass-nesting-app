@@ -1248,12 +1248,19 @@ function registerSupplierRoutes(app, deps) {
   async function buildRfqMessage(mfg, supplier, qid, opts) {
     const o = opts || {};
     const sid = String(supplier.id);
-    const sent = await fetchSentRfqs(sid);
-    const sq = sent.quotes.find(q => String(q.quote_id) === String(qid) && String(q.manufacturer_id) === String(mfg));
-    if (!sq) return null;
+    const [sent, fitQuotes] = await Promise.all([fetchSentRfqs(sid), fetchSentFittingRfqs(sid).catch(() => [])]);
+    const mine = x => String(x.quote_id) === String(qid) && String(x.manufacturer_id) === String(mfg);
+    const sq = sent.quotes.find(mine) || { lines: [], mfg_requirements: [] };
+    const fq = fitQuotes.find(mine);
+    if (!sq.lines.length && !(fq && fq.lines.length)) return null;
     const token = await getAccessToken();
-    const qr = await axios.get(creatorApiBase() + '/report/All_Quotes?criteria=' + encodeURIComponent('(ID==' + qid + ')'), { headers: zohoHeaders(token) });
-    const qh = (qr.data && qr.data.data && qr.data.data[0]) || {};
+    // o.cache (one hook = one quote, several suppliers): header and drawings fetched once.
+    const cache = o.cache || {};
+    if (!cache.qh) {
+      const qr = await axios.get(creatorApiBase() + '/report/All_Quotes?criteria=' + encodeURIComponent('(ID==' + qid + ')'), { headers: zohoHeaders(token) });
+      cache.qh = (qr.data && qr.data.data && qr.data.data[0]) || {};
+    }
+    const qh = cache.qh;
     const reps = await cachedLookup('mfg-reps:' + mfg, 10 * 60 * 1000, () =>
       fetchAllZohoPages('/report/All_Company_Representatives?criteria=' + encodeURIComponent('(Manufacture==' + mfg + ')')));
     const rep = reps.find(r => String(r.ID) === lkid(qh.Contact_Name)) || {};
@@ -1265,9 +1272,9 @@ function registerSupplierRoutes(app, deps) {
     // The MFG's drawings (Quote_Form.File_upload), attached like the old email did. Up to
     // 35 MB in all (Resend's cap is 40); a file that fails or doesn't fit is left to the
     // online page, which lists every file.
-    const attachments = [];
+    const attachments = cache.attachments || [];
     let attBytes = 0;
-    for (const u of (o.attach && Array.isArray(qh.File_upload) ? qh.File_upload : [])) {
+    for (const u of (o.attach && !cache.attachments && Array.isArray(qh.File_upload) ? qh.File_upload : [])) {
       const mm = /[?&]filepath=([^&]+)/.exec(String(u));
       const fp = mm ? decodeURIComponent(mm[1]) : '';
       if (!fp) continue;
@@ -1280,20 +1287,35 @@ function registerSupplierRoutes(app, deps) {
         attachments.push({ filename: fp.replace(/^\d+_+/, ''), content: buf });
       } catch (e) { console.error('[rfq-email] drawing not attached', fp, e.message); }
     }
+    if (o.attach) cache.attachments = attachments;
     const q = {
-      quote_number: qh.Reference_Number || sq.quote_number,
+      quote_number: qh.Reference_Number || sq.quote_number || (fq && fq.quote_number) || '',
       revision: rev,
       sent_date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: process.env.MAIL_TZ || 'America/New_York' }),
       due_date: niceDate(o.due || qh.Requested_Responses_Due || ''),
-      manufacturer: sq.manufacturer || qh.Manufacture_Name || '',
+      manufacturer: sq.manufacturer || (fq && fq.manufacturer) || qh.Manufacture_Name || '',
       mfg_contact: { name: flatten(rep.Name) || (qh.Contact_Name && String(qh.Contact_Name.zc_display_value || '').trim()) || '',
                      email: rep.Email || '', phone: rep.Direct_Phone_Number || rep.Phone_Number || '' },
       requirements: sq.mfg_requirements || [],
       lines: sq.lines.map(l => ({ line: l.line, description: String(l.description || '').replace(/^\s*\|\s*/, ''), qty: l.qty, note: l.mfg_note,
         total_weight: (Number(l.unit_weight) || 0) * (Number(l.qty) || 0) })),
+      fittings: fq ? fq.lines.map(l => ({ line: l.line, description: l.description, qty: l.qty,
+        total_weight: (Number(l.unit_weight) || 0) * (Number(l.qty) || 0) })) : [],
     };
+    // "Revised" wording only for a supplier who was sent the revision this one replaces;
+    // anyone else is seeing this quote for the first time (1 call, revisions only).
+    let firstTime = !!o.firstTime;
+    const origId = lkid(qh.Original_Quote_Revised) || lkid(qh.Quote_To_Be_Revised);
+    if (rev > 0 && !firstTime && origId && origId !== String(qid)) {
+      try {
+        const pr = await axios.get(creatorApiBase() + '/report/All_RFQs_Sent_Report?criteria=' +
+          encodeURIComponent('(Quote_LU==' + origId + ' && Supplier_LU==' + sid + ')'), { headers: zohoHeaders(token) });
+        firstTime = !(pr.data && pr.data.data && pr.data.data.length);
+      } catch (e) { firstTime = true; }   // 9280 = no rows = never sent the earlier one
+    }
     const mail = require('./mailer').rfqEmail(q, { supplierName: supplier.company_name, link: base + '/quote-online?t=' + encodeURIComponent(t),
-      revised: rev > 0, firstTime: !!o.firstTime });
+      revised: rev > 0, firstTime });
+    cache.contactEmail = q.mfg_contact.email; cache.quoteNumber = q.quote_number;
     return { ...mail, attachments, replyTo: q.mfg_contact.email || undefined, to: supplier.email, quote: q };
   }
 
@@ -1313,6 +1335,76 @@ function registerSupplierRoutes(app, deps) {
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+
+  // POST /api/hooks/rfq-sent?t=<mcToken of the quote's MFG>
+  //   { quote_id, manufacturer_id, recipients: { <supplier id>: "a@x.com,b@y.com", ... } }
+  // Called by Zoho's "Execute Matching and Send Emails" in place of its per-supplier sendmail,
+  // for the suppliers that save just gave NEW lines. Replies { ok, sent_ids }; Zoho sends its
+  // own email to every supplier NOT in sent_ids, so a supplier is never left without one.
+  // Live only with RFQ_EMAIL_LIVE=1 and no MAIL_TEST_TO; until then it mails a test copy
+  // (redirected by MAIL_TEST_TO) and returns sent_ids [] so Zoho still sends the real ones.
+  const recentlyMailed = new Map();   // "<qid>_<sid>" -> ms; a second hook within 2 min is a repeat
+  app.post('/api/hooks/rfq-sent', async (req, res) => {
+    const b = req.body || {};
+    const qid = String(b.quote_id || '').trim(), mfg = String(b.manufacturer_id || '').trim();
+    const v = require('./tenantToken').verify(req.get('X-MC-Token') || req.query.t || '');
+    if (v.error || v.kind !== 'm' || String(v.id) !== mfg || !/^\d+$/.test(qid)) {
+      console.warn('[rfq-hook] refused', v.error || v.kind, mfg, qid);
+      return res.status(401).json({ ok: false, sent_ids: [], error: 'not authorized' });
+    }
+    let recipients = b.recipients || {};
+    if (typeof recipients === 'string') { try { recipients = JSON.parse(recipients); } catch (e) { recipients = {}; } }
+    const mailer = require('./mailer');
+    const live = mailer.configured() && process.env.RFQ_EMAIL_LIVE === '1' && !process.env.MAIL_TEST_TO;
+    const testing = !live && mailer.configured() && !!process.env.MAIL_TEST_TO;
+    // Quick checks only (cached directory): Zoho waits ~40 s for this reply, so the emails
+    // themselves go out after it, with retries.
+    const dir = await supplierDirectory().catch(() => []);
+    const jobs = [], sent_ids = [];
+    for (const [sid, to] of Object.entries(recipients)) {
+      if (!/^\d+$/.test(sid)) continue;
+      const supplier = shapeSupplier(dir.find(r => String(r.ID) === sid));
+      const toList = String(to || (supplier && supplier.email) || '').split(/[,;]/).map(s => s.trim()).filter(s => /@/.test(s));
+      if (!supplier || !toList.length) continue;          // Zoho sends this one
+      const key = qid + '_' + sid;
+      if (live && recentlyMailed.has(key) && Date.now() - recentlyMailed.get(key) < 120000) { sent_ids.push(sid); continue; }
+      if (live) { sent_ids.push(sid); recentlyMailed.set(key, Date.now()); }
+      if (live || testing) jobs.push({ sid, supplier, toList });
+    }
+    res.json({ ok: true, live, sent_ids });
+
+    // ---- after the reply: build and send, quote header + drawings fetched once ----
+    const cache = {};
+    const failedNames = [];
+    for (const j of jobs) {
+      let done = false, lastErr = '';
+      for (let attempt = 1; attempt <= 3 && !done; attempt++) {
+        try {
+          bust('sent-rfqs:' + j.sid); bust('fit-rfqs:' + j.sid);   // rows created moments ago
+          const added = filestore.readJson('rfqadd-' + qid + '-' + j.sid + '.json', null);
+          const m = await buildRfqMessage(mfg, j.supplier, qid, { attach: true, cache, firstTime: !!added, due: added && added.due });
+          if (!m) throw new Error('no lines for this supplier yet');
+          const r = await mailer.send({ to: j.toList, subject: m.subject, html: m.html, replyTo: m.replyTo, attachments: m.attachments });
+          if (!r.ok) throw new Error(r.error);
+          done = true;
+          console.log('[rfq-hook]', live ? 'SENT' : 'test copy', qid, j.sid, j.supplier.company_name, '->', j.toList.join(','), r.id);
+        } catch (e) {
+          lastErr = e.message;
+          if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 15000));
+        }
+      }
+      if (!done) {
+        console.error('[rfq-hook] FAILED', qid, j.sid, j.supplier.company_name, lastErr);
+        if (live) failedNames.push(j.supplier.company_name);
+      }
+    }
+    // Live and still failed: Zoho already skipped its copy, so tell the MFG who to chase.
+    if (failedNames.length && cache.contactEmail) {
+      await mailer.send({ to: cache.contactEmail, subject: 'Action needed: RFQ ' + (cache.quoteNumber || '') + ' was not emailed to ' + failedNames.join(', '),
+        html: '<p>Material Compass could not email quote <b>' + mailer.esc(cache.quoteNumber || '') + '</b> to: <b>' + failedNames.map(mailer.esc).join(', ') +
+          '</b>.</p><p>Their lines are on the quote. Open <b>Enter Supplier Quote</b>, choose the supplier, and use <b>Copy link to price this quote online</b> to send it to them yourself.</p>' }).catch(() => {});
     }
   });
 

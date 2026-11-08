@@ -148,7 +148,7 @@ export default function MfgRfqApp() {
   const blocked = proj.status === 'ready' && (am ? !am.allowed : ((eq && !eq.can_revise) || (proj.missing_columns && proj.missing_columns.length)));
   const nothing = !am && proj.status === 'ready' && !quotable.length && !proj.fittings.length;
   const busy = !!(send && (send.status === 'sending' || send.status === 'done'));
-  const canSend = proj.status === 'ready' && !blocked && !nothing && picked.length > 0 && (am || form.due_date) && !busy;
+  const canSend = proj.status === 'ready' && !blocked && !nothing && picked.length > 0 && !!form.due_date && !busy;
   const togglePick = id => setPicked(p => (p.includes(id) ? p.filter(x => x !== id) : [...p, id]));
   const toggleReq = r => setF({ requirements: form.requirements.includes(r) ? form.requirements.filter(x => x !== r) : [...form.requirements, r] });
 
@@ -167,7 +167,7 @@ export default function MfgRfqApp() {
     try {
       const r = await fetch(BASE + 'add-suppliers?' + auth, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId, quote_id: am.quote_id, supplier_match_ids: picked }),
+        body: JSON.stringify({ project_id: projectId, quote_id: am.quote_id, supplier_match_ids: picked, due_date: form.due_date }),
       });
       const j = await r.json();
       if (!j.ok) { setSend({ status: 'error', error: j.error || 'Send failed', reasons: j.reasons || [] }); return; }
@@ -355,6 +355,11 @@ export default function MfgRfqApp() {
                     </div>
                   </section>}
 
+                  {am && am.allowed && (
+                    <label className="q-sum-field mq-add-due">Responses due from these suppliers<span className="req-star">*</span>
+                      <input type="date" value={form.due_date} onChange={e => setF({ due_date: e.target.value })} />
+                    </label>
+                  )}
                   <div className="q-actions">
                     <button className="btn-quote" disabled={!canSend} onClick={onSend}>
                       {send && send.status === 'sending' ? 'Sending…'
@@ -365,6 +370,7 @@ export default function MfgRfqApp() {
                       <span className="q-result q-result-ok">Sent {send.added.quote_number} to {send.added.names.join(', ')}.</span>
                     )}
                     {!blocked && !nothing && picked.length === 0 && <span className="q-missing">Choose at least one supplier.</span>}
+                    {am && !blocked && picked.length > 0 && !form.due_date && <span className="q-missing">Choose the date their responses are due.</span>}
                     {nothing && !blocked && <span className="q-missing">Nothing on this project to quote.</span>}
                     {send && send.status === 'done' && !send.added && (
                       <span className="q-result q-result-ok">Sent{send.revision ? ' Rev # ' + send.revision : ''}{send.quote_number ? ' as ' + send.quote_number : ''} —{send.lines} line{send.lines === 1 ? '' : 's'}{send.fittings ? ', ' + send.fittings + ' fitting' + (send.fittings === 1 ? '' : 's') : ''} to {send.suppliers} supplier{send.suppliers === 1 ? '' : 's'}.</span>
