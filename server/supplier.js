@@ -521,7 +521,9 @@ function registerSupplierRoutes(app, deps) {
     // fetchAllZohoPages returns [] on an empty criteria result (Zoho 9280), so no guard here.
     const [rows, demandLineById] = await Promise.all([
       cachedLookup('fit-rfqs:' + supplierId, 60 * 1000, async () =>
-        fetchAllZohoPages('/report/' + FIT_RFQ_REPORT + '?criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')')),
+        // field_config=all: the report's columns leave out the response fields (Unit_Price,
+        // Total_Price, lead time, comments), so without it every saved fitting price read as blank.
+        fetchAllZohoPages('/report/' + FIT_RFQ_REPORT + '?field_config=all&criteria=(Supplier_LU==' + encodeURIComponent(supplierId) + ')')),
       fetchFittingDemandLines(),
     ]);
     const byQuote = new Map();
