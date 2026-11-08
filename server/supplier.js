@@ -1389,13 +1389,19 @@ function registerSupplierRoutes(app, deps) {
 
     const niceD = s => String(s || '').replace(/,(\d{4})$/, ', $1');
     const qq = { quote_number: String(qinfo.number || ''), revision: Number(qinfo.revision) || 0, quote_date: niceD(qinfo.date), due_date: niceD(qinfo.due) };
-    if (doSummary) {
+    // The summary goes out AFTER the supplier emails, so it can count what each supplier was
+    // actually sent: structural lines and fittings separately, weight of both. (Zoho's
+    // per-supplier figures lump fittings into the line count and leave their weight out.)
+    const stats = {};
+    const sendSummary = async () => {
       try {
         const outside = new Set(dir.filter(r => /^no$/i.test(String(r.Register || '').trim())).map(r => String(r.ID)));
         const rowsS = sumSuppliers.map(([sid, v]) => {
           const [lines, weight] = String(v || '').split('|');
           const rec = dir.find(r => String(r.ID) === sid);
-          return { name: (rec && rec.Company_Name) || 'Supplier', lines: Number(lines) || 0, weight: Number(weight) || 0, email_only: outside.has(sid) };
+          const s = stats[sid];
+          return { name: (rec && rec.Company_Name) || 'Supplier', email_only: outside.has(sid),
+            lines: s ? s.lines : (Number(lines) || 0), fittings: s ? s.fittings : null, weight: s ? s.weight : (Number(weight) || 0) };
         }).sort((a, b) => a.name.localeCompare(b.name));
         const notes = sumSuppliers.map(([sid]) => filestore.readJson('rfqadd-' + qid + '-' + sid + '.json', null)).filter(Boolean);
         const added = notes.length > 0;
@@ -1405,7 +1411,7 @@ function registerSupplierRoutes(app, deps) {
         const r = await mailer.send({ to: sumTo, subject: m.subject, html: m.html });
         console.log('[rfq-hook]', live ? 'SENT' : 'test copy', 'summary', qid, r.ok ? r.id : r.error);
       } catch (e) { console.error('[rfq-hook] summary', e.message); }
-    }
+    };
     if (doNomatch) {
       try {
         const m = mailer.noMatchEmail(qq, nmLines.map(l => ({ line: l.line, form: l.form, material: l.material, spec: l.spec, weight: Number(l.weight) || 0 })));
@@ -1425,6 +1431,8 @@ function registerSupplierRoutes(app, deps) {
           const added = filestore.readJson('rfqadd-' + qid + '-' + j.sid + '.json', null);
           const m = await buildRfqMessage(mfg, j.supplier, qid, { attach: true, cache, firstTime: !!added, due: added && added.due });
           if (!m) throw new Error('no lines for this supplier yet');
+          const wt = arr => arr.reduce((s, l) => s + (Number(l.total_weight) || 0), 0);
+          stats[j.sid] = { lines: m.quote.lines.length, fittings: m.quote.fittings.length, weight: wt(m.quote.lines) + wt(m.quote.fittings) };
           const r = await mailer.send({ to: j.toList, subject: m.subject, html: m.html, replyTo: m.replyTo, attachments: m.attachments });
           if (!r.ok) throw new Error(r.error);
           done = true;
@@ -1445,6 +1453,7 @@ function registerSupplierRoutes(app, deps) {
         html: '<p>Material Compass could not email quote <b>' + mailer.esc(cache.quoteNumber || '') + '</b> to: <b>' + failedNames.map(mailer.esc).join(', ') +
           '</b>.</p><p>Their lines are on the quote. Open <b>Enter Supplier Quote</b>, choose the supplier, and use <b>Copy link to price this quote online</b> to send it to them yourself.</p>' }).catch(() => {});
     }
+    if (doSummary) await sendSummary();
   });
 
   // GET /api/mfg/supplier-quotes/quote-link?manufacturer_id=&supplier_id=&quote_id= — the

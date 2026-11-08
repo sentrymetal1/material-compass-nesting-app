@@ -145,11 +145,14 @@ function mfgSentEmail(q, suppliers, opts) {
   const o = opts || {};
   const n = suppliers.length;
   const ref = q.quote_number + (q.revision ? ' Rev #' + q.revision : '');
+  // Fittings column only when we know the split (null = Zoho's lumped count).
+  const showFit = suppliers.some(s => s.fittings != null);
   const rows = suppliers.map((s, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '">' +
     td(esc(s.name) + (s.email_only ? ' <span style="color:#7a8a99;font-size:11px">(email only)</span>' : '')) +
-    td(esc(s.lines), 'center') + td(fmtWt(s.weight), 'right') + '</tr>').join('');
+    td(esc(s.lines), 'center') + (showFit ? td(esc(s.fittings == null ? '' : s.fittings), 'center') : '') +
+    td(fmtWt(s.weight), 'right') + '</tr>').join('');
   const body = '<tr><td style="padding:16px 28px"><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d9e2ec;border-collapse:collapse">' +
-    '<tr style="background:#eef2f7">' + th('SUPPLIER') + th('LINES') + th('WEIGHT') + '</tr>' + rows + '</table>' +
+    '<tr style="background:#eef2f7">' + th('SUPPLIER') + th(showFit ? 'STRUCTURAL / PIPE' : 'LINES') + (showFit ? th('FITTINGS') : '') + th('TOTAL WEIGHT') + '</tr>' + rows + '</table>' +
     '<div style="font-size:13px;color:#55677a;margin-top:10px">Each supplier got only the lines they stock (email-only suppliers get every line), with a link to price it online. Their prices show up in Material Compass as they respond.</div></td></tr>';
   const html = frame(o.added ? 'SUPPLIERS ADDED' : 'RFQ SENT',
     o.added ? esc(ref) + ' was sent to ' + n + ' more supplier' + (n === 1 ? '' : 's') + '.'
