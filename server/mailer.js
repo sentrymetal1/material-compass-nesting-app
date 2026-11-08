@@ -53,6 +53,10 @@ async function send(msg) {
 const BLUE = '#5286B4';
 const LOGO = process.env.MC_LOGO_URL || 'https://material-compass-nesting-app-production.up.railway.app/brand/mc-compass.png';
 
+// Brand standard header: 46px circle mark + "MATERIAL COMPASS" in Georgia, spaced, brand blue.
+const HEADER_MARK = '<img src="' + esc(LOGO) + '" alt="" width="46" height="46" style="vertical-align:middle">' +
+  ' <span style="font-family:Georgia,serif;font-size:18px;letter-spacing:4px;color:' + BLUE + ';vertical-align:middle">MATERIAL COMPASS</span>';
+
 function fmtWt(n) { return (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' lbs'; }
 
 // q: { quote_number, revision, quote_date, due_date, manufacturer, mfg_contact:{name,email,phone},
@@ -85,7 +89,7 @@ function rfqEmail(q, opts) {
 '<!DOCTYPE html><html><body style="margin:0;background:#eef2f7;font-family:Segoe UI,Arial,sans-serif;color:#1f2d3d">' +
 '<table width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f7;padding:24px 0"><tr><td align="center">' +
 '<table width="640" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:10px;overflow:hidden;border:1px solid #d9e2ec">' +
-'<tr><td style="padding:18px 28px">' + '<img src="' + esc(LOGO) + '" alt="" height="34" style="vertical-align:middle"> <span style="font-weight:700;color:' + BLUE + ';letter-spacing:2px;vertical-align:middle">MATERIAL COMPASS</span>' + '</td></tr>' +
+'<tr><td style="padding:18px 28px">' + '' + HEADER_MARK + '' + '</td></tr>' +
 '<tr><td style="background:' + BLUE + ';color:#fff;padding:18px 28px"><div style="font-size:22px;font-weight:700">REQUEST FOR QUOTE</div>' +
 '<div style="font-size:13px;opacity:.9">' + esc(q.manufacturer) + ' is asking ' + esc(o.supplierName || 'you') + ' for a price on the material below.</div></td></tr>' +
 revisedBanner +
@@ -126,7 +130,7 @@ function frame(title, subtitle, band, facts, body) {
   return '<!DOCTYPE html><html><body style="margin:0;background:#eef2f7;font-family:Segoe UI,Arial,sans-serif;color:#1f2d3d">' +
 '<table width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f7;padding:24px 0"><tr><td align="center">' +
 '<table width="640" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:10px;overflow:hidden;border:1px solid #d9e2ec">' +
-'<tr><td style="padding:18px 28px"><img src="' + esc(LOGO) + '" alt="" height="34" style="vertical-align:middle"> <span style="font-weight:700;color:' + BLUE + ';letter-spacing:2px;vertical-align:middle">MATERIAL COMPASS</span></td></tr>' +
+'<tr><td style="padding:18px 28px">' + HEADER_MARK + '</td></tr>' +
 '<tr><td style="background:' + band + ';color:#fff;padding:18px 28px"><div style="font-size:22px;font-weight:700">' + title + '</div>' +
 '<div style="font-size:13px;opacity:.92">' + subtitle + '</div></td></tr>' +
 '<tr><td style="padding:14px 28px;background:#f4f7fb"><table width="100%"><tr>' +
