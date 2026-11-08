@@ -105,7 +105,7 @@ rows +
 '<tr><td style="padding:18px 28px"><div style="background:#fff8e6;border-top:2px solid #f0ad4e;padding:12px 16px;font-size:13px">' +
 '<b>How to respond</b><br>' + (o.link ? 'Use <b>Price this quote online</b> above, or reply' : 'Reply') +
 ' to this email by <b>' + esc(q.due_date || 'the due date') + '</b> with your price and lead time for each line. Mark any line you cannot supply as <i>No Quote</i>.</div></td></tr>' +
-'<tr><td style="padding:12px 28px;background:#f4f6f8;font-size:11px;color:#7a8a99">Sent through Material Compass on behalf of ' + esc(q.manufacturer) +
+'<tr><td style="padding:12px 28px;background:#f4f6f8;font-size:11px;color:#7a8a99">Sent through Material Compass on behalf of ' + esc(String(q.manufacturer || '').replace(/\.$/, '')) +
 '. Want every request in one place, with your stock matched automatically? <a href="https://materialcompass.us" style="color:' + BLUE + '">Join Material Compass free</a>.</td></tr>' +
 '</table></td></tr></table></body></html>';
   const subject = (o.revised && !o.firstTime ? 'REVISED RFQ ~ Rev #' + (q.revision || '') + ' ~ ' : 'RFQ ~ ') + 'Quote #' + q.quote_number + ' from ' + q.manufacturer;
