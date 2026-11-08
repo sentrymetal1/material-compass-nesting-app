@@ -1647,9 +1647,31 @@ app.get('/api/takeoff/pricing', (req, res) => pricingHandler(req, res));
 // AI take-off COMMIT — write the reviewed BOM CSV into Import_BOM_Form (Zoho) server-side.
 // The widget runs standalone (no Creator SDK context), so the Zoho write happens here using the
 // app's existing OAuth. Flow: create record -> upload CSV file -> set Run_Import (fires the import).
+// AI BOM IMPORT — read a BOM in any form (PDF, Excel, CSV, photo, pasted text) into rows. Nothing
+// is written here; the page shows the rows, then commits them through /api/takeoff/commit below,
+// so the staging review is the same one a CSV upload lands on. See bomRead.js.
+app.post('/api/takeoff/bom-read', async (req, res) => {
+  try {
+    const { files, text } = req.body || {};
+    let catalogText = '';
+    try { catalogText = await buildLiveCatalogContext(); } catch (e) { console.error('[bom-read] catalog unavailable:', e.message || e); }
+    const out = await require('./bomRead').readBom({ files: Array.isArray(files) ? files : [], text, catalogText });
+    res.json(Object.assign({ ok: true }, out));
+  } catch (err) {
+    console.error('[bom-read]', err && (err.message || err));
+    res.status(err.status || 500).json({ ok: false, error: (err && err.message) || 'The BOM could not be read.' });
+  }
+});
+
 app.post('/api/takeoff/commit', async (req, res) => {
   try {
-    const { project_id, manufacturer_id, import_csv } = req.body || {};
+    const { project_id, manufacturer_id } = req.body || {};
+    let { import_csv } = req.body || {};
+    // The AI BOM import sends its reviewed rows; they become the same template CSV here.
+    if (!import_csv && Array.isArray((req.body || {}).rows)) import_csv = require('./bomRead').buildImportCsv(req.body.rows);
+    // Replace (default; the take-off always re-sends the whole BOM) or Append (an imported list
+    // that is only part of the job).
+    const mode = String((req.body || {}).mode || '') === 'Append' ? 'Append' : 'Replace';
     if (!project_id) return res.status(400).json({ ok: false, error: 'project_id required' });
     if (!import_csv) return res.status(400).json({ ok: false, error: 'import_csv required' });
     const token = await getAccessToken();
@@ -1661,7 +1683,7 @@ app.post('/api/takeoff/commit', async (req, res) => {
     // commit (incl. the "Add drawings" flow, which merges in-browser first). With the import's
     // Append mode now live (2026-07), 'Append' here would duplicate the BOM on any re-commit.
     const createResp = await axios.post(base + '/form/Import_BOM_Form',
-      { data: { Project_ID: project_id, BOM_Import_Mode: 'Replace' } },
+      { data: { Project_ID: project_id, BOM_Import_Mode: mode } },
       { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
     const recId = createResp.data && createResp.data.data && createResp.data.data.ID;
     if (!recId) return res.status(502).json({ ok: false, error: 'create returned no record ID', detail: createResp.data });

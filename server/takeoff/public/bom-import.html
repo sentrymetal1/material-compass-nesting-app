@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="/takeoff/mc-token.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import BOM — Material Compass</title>
+<!--
+  AI BOM IMPORT. Drop the BOM the customer or detailer sent — PDF, Excel, CSV, a photo of a handwritten
+  list, or pasted text. The AI copies its rows (never estimates), you look them over, and they go to the
+  SAME BOM Staging Review a CSV upload lands on: fuzzy match, error log, Include In Import, Import
+  Approved Rows. Opened with ?project_id=&manufacturer_id=&t= from the Project page.
+-->
+<style>
+:root{--blue:#5F94CE;--blue-d:#4a7fb8;--ink:#1f2937;--mut:#6b7280;--faint:#9ca3af;--line:#e5e7eb;--soft:#f7f8fa;--warn:#b45309;--warnbg:#fffbeb;--red:#b91c1c;--redbg:#fef2f2;--ok:#047857}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:13px;color:var(--ink);background:#f3f4f6}
+.bar{background:var(--blue);color:#fff;padding:10px 18px;display:flex;align-items:center;justify-content:space-between}
+.bar h1{margin:0;font-size:14px;font-weight:700;letter-spacing:.02em}
+.bar .sub{font-size:11.5px;opacity:.9;margin-top:2px}
+.bar a{color:#fff;font-size:11.5px;text-decoration:none;border:1px solid rgba(255,255,255,.6);border-radius:4px;padding:4px 10px}
+.wrap{max-width:1400px;margin:14px auto;background:#fff;border:1px solid var(--line);border-radius:6px;padding:14px 20px 22px}
+.sec{font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);border-bottom:1px solid var(--line);padding-bottom:6px;margin:16px 0 10px}
+.sec:first-child{margin-top:2px}
+.hint{color:var(--mut);font-size:12px;line-height:1.45}
+.drop{border:1.5px dashed #cbd5e1;border-radius:6px;padding:18px;text-align:center;color:var(--mut);cursor:pointer;background:var(--soft)}
+.drop.on{border-color:var(--blue);background:#eef4fb}
+.files{margin:8px 0 0;padding:0;list-style:none}
+.files li{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:12px;padding:3px 10px;margin:0 6px 6px 0;font-size:12px;background:#fff}
+.files li button{border:0;background:none;color:var(--faint);cursor:pointer;font-size:14px;padding:0}
+textarea{width:100%;min-height:70px;border:1px solid #cbd5e1;border-radius:6px;padding:8px;font:inherit;font-size:12px;resize:vertical}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.btn{font:inherit;font-size:12.5px;font-weight:600;border-radius:5px;padding:7px 16px;cursor:pointer;border:1px solid var(--blue);background:var(--blue);color:#fff}
+.btn:hover{background:var(--blue-d)}
+.btn.ghost{background:#fff;color:var(--blue)}
+.btn:disabled{opacity:.5;cursor:default}
+.msg{margin-top:10px;font-size:12.5px}
+.msg.err{color:var(--red)} .msg.ok{color:var(--ok)}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid #cbd5e1;border-top-color:var(--blue);border-radius:50%;animation:s 1s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes s{to{transform:rotate(360deg)}}
+.stats{display:flex;gap:18px;font-size:12px;color:var(--mut);margin-bottom:8px}
+.stats b{color:var(--ink)}
+.note{background:var(--warnbg);color:var(--warn);border-radius:5px;padding:7px 10px;font-size:12px;margin-bottom:8px}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);text-align:left;padding:6px 4px;border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0;background:#fff}
+.tbl td{padding:3px 4px;border-bottom:1px solid #f1f2f4;vertical-align:top}
+.tbl tr.flag td{background:var(--warnbg)}
+.tbl tr.off td{opacity:.45}
+.tbl input[type=text],.tbl input[type=number]{width:100%;border:1px solid transparent;border-radius:3px;padding:3px 4px;font:inherit;font-size:12px;background:transparent}
+.tbl input:hover,.tbl input:focus{border-color:#cbd5e1;background:#fff;outline:none}
+.tbl .num{width:58px}
+.tbl .src{color:var(--mut);font-size:11.5px;max-width:260px}
+.tbl .iss{color:var(--warn);font-size:11.5px;max-width:220px}
+.conf{font-weight:700;font-size:11px}
+.c-hi{color:var(--ok)} .c-mid{color:var(--warn)} .c-lo{color:var(--red)}
+.scroll{max-height:56vh;overflow:auto;border:1px solid var(--line);border-radius:5px}
+.mode label{margin-right:16px;cursor:pointer}
+.foot{font-size:10px;color:#c4c9d0;text-align:right;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="bar">
+  <div><h1>IMPORT BOM</h1><div class="sub" id="sub">Any format — the AI reads it, you check it, it goes to BOM Staging Review</div></div>
+  <a id="back" href="#" target="_top">← Back to project</a>
+</div>
+<div class="wrap">
+  <div class="sec">1 · The BOM you were sent</div>
+  <div class="drop" id="drop">Drop files here, or click to choose — PDF, Excel (.xlsx), CSV, or a photo of a handwritten list</div>
+  <input type="file" id="pick" multiple accept=".pdf,.xlsx,.csv,.txt,image/*,application/pdf,text/csv,text/plain" style="display:none">
+  <ul class="files" id="files"></ul>
+  <div class="hint" style="margin:8px 0 4px">…or paste it:</div>
+  <textarea id="paste" placeholder="Paste BOM rows here (copied from an email, a spreadsheet, a PDF…)"></textarea>
+  <div class="row">
+    <button class="btn" id="readBtn">Read BOM</button>
+    <span class="hint">The AI copies the rows exactly as written. It never works out a quantity — anything it can't read is flagged for you.</span>
+  </div>
+  <div class="msg" id="readMsg"></div>
+
+  <div id="result" style="display:none">
+    <div class="sec">2 · Check what was read</div>
+    <div class="stats" id="stats"></div>
+    <div class="note" id="notes" style="display:none"></div>
+    <div class="scroll">
+      <table class="tbl">
+        <thead><tr><th></th><th>Tag</th><th>Component</th><th>Form type</th><th>Material</th><th>Spec</th><th>Size</th><th>Qty</th><th>L ft</th><th>L in</th><th>W ft</th><th>W in</th><th>Galv</th><th>Paint</th><th>Conf.</th><th>As written</th><th>Check</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="hint" style="margin-top:6px">Yellow rows need a look. You can fix a cell here, or leave it — staging review matches every row to your catalog and lists anything it can't resolve. Untick a row to leave it out.</div>
+
+    <div class="sec">3 · Send to BOM Staging Review</div>
+    <div class="mode">
+      <label><input type="radio" name="mode" value="Append" checked> Add to the project's BOM</label>
+      <label><input type="radio" name="mode" value="Replace"> Replace the project's BOM</label>
+    </div>
+    <div class="row">
+      <button class="btn" id="sendBtn">Send to Staging Review</button>
+      <span class="hint" id="sendHint"></span>
+    </div>
+    <div class="msg" id="sendMsg"></div>
+  </div>
+  <div class="foot" id="build"></div>
+</div>
+
+<script>
+var BUILD = 'bom-import-2026-11-08a';
+document.getElementById('build').textContent = BUILD;
+var qs = new URLSearchParams(location.search);
+var P = { project: qs.get('project_id') || '', mfg: qs.get('manufacturer_id') || qs.get('Manufacture_ID') || qs.get('manufacture') || '' };
+var PORTAL = 'https://customer.materialcompassportal.com/';
+var REVIEW_PAGE = PORTAL + '#Page:BOM_Staging_Review_Page';
+var back = qs.get('return_url') || (P.project ? PORTAL + '#Page:Project_Dashboard?project_id=' + encodeURIComponent(P.project) : '');
+if (back) document.getElementById('back').href = back; else document.getElementById('back').style.display = 'none';
+if (qs.get('project_number') || qs.get('description')) document.getElementById('sub').textContent = [qs.get('project_number'), qs.get('description')].filter(Boolean).join(' · ');
+
+var FILES = [], ROWS = [];
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function setMsg(id, html, cls){ var e = document.getElementById(id); e.className = 'msg' + (cls ? ' ' + cls : ''); e.innerHTML = html || ''; }
+
+// ---- files ----------------------------------------------------------------------------------
+var drop = document.getElementById('drop'), pick = document.getElementById('pick');
+drop.onclick = function(){ pick.click(); };
+pick.onchange = function(){ addFiles(pick.files); pick.value = ''; };
+['dragenter','dragover'].forEach(function(t){ drop.addEventListener(t, function(e){ e.preventDefault(); drop.classList.add('on'); }); });
+['dragleave','drop'].forEach(function(t){ drop.addEventListener(t, function(e){ e.preventDefault(); drop.classList.remove('on'); }); });
+drop.addEventListener('drop', function(e){ addFiles(e.dataTransfer.files); });
+function addFiles(list){
+  Array.prototype.forEach.call(list || [], function(f){
+    if (f.size > 30 * 1024 * 1024) { setMsg('readMsg', esc(f.name) + ' is over 30 MB.', 'err'); return; }
+    FILES.push(f);
+  });
+  drawFiles();
+}
+function drawFiles(){
+  document.getElementById('files').innerHTML = FILES.map(function(f, i){
+    return '<li>' + esc(f.name) + ' <span class="hint">' + Math.max(1, Math.round(f.size / 1024)) + ' KB</span><button title="Remove" onclick="FILES.splice(' + i + ',1);drawFiles()">×</button></li>';
+  }).join('');
+}
+function b64(file){
+  return new Promise(function(ok, bad){
+    var r = new FileReader();
+    r.onload = function(){ ok(String(r.result).split(',')[1] || ''); };
+    r.onerror = function(){ bad(new Error('Could not read ' + file.name)); };
+    r.readAsDataURL(file);
+  });
+}
+
+// ---- read -----------------------------------------------------------------------------------
+document.getElementById('readBtn').onclick = async function(){
+  var text = document.getElementById('paste').value.trim();
+  if (!FILES.length && !text) { setMsg('readMsg', 'Add a file or paste the BOM first.', 'err'); return; }
+  var btn = this; btn.disabled = true;
+  setMsg('readMsg', '<span class="spin"></span>Reading the BOM… a long list can take a minute or two.');
+  try {
+    var files = [];
+    for (var i = 0; i < FILES.length; i++) files.push({ name: FILES[i].name, media_type: FILES[i].type || '', b64: await b64(FILES[i]) });
+    var r = await fetch('/api/takeoff/bom-read?manufacturer_id=' + encodeURIComponent(P.mfg), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: files, text: text }) });
+    var d = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !d.ok) throw new Error(d.error || ('The read failed (' + r.status + ').'));
+    ROWS = (d.rows || []).map(function(x){ x.include = true; return x; });
+    var n = document.getElementById('notes');
+    if (d.notes) { n.style.display = ''; n.textContent = d.notes; } else n.style.display = 'none';
+    setMsg('readMsg', '✓ Read ' + ROWS.length + ' row' + (ROWS.length === 1 ? '' : 's') + (d.cost_usd != null ? ' · AI cost $' + d.cost_usd.toFixed(2) : '') + '.', 'ok');
+    document.getElementById('result').style.display = ROWS.length ? '' : 'none';
+    if (!ROWS.length) setMsg('readMsg', 'No material rows were found in that document.', 'err');
+    draw();
+  } catch (e) {
+    setMsg('readMsg', esc(e.message), 'err');
+  }
+  btn.disabled = false;
+};
+
+// ---- table ----------------------------------------------------------------------------------
+var TXT = ['tag','component','form_type','material_type','specification','size'];
+var NUM = ['qty','length_ft','length_in','width_ft','width_in'];
+function draw(){
+  var flagged = ROWS.filter(function(r){ return r.issue; }).length, on = ROWS.filter(function(r){ return r.include; }).length;
+  document.getElementById('stats').innerHTML = '<span>Rows <b>' + ROWS.length + '</b></span><span>To send <b>' + on + '</b></span><span>Need a look <b>' + flagged + '</b></span>';
+  document.getElementById('tbody').innerHTML = ROWS.map(function(r, i){
+    var c = r.confidence >= 80 ? 'c-hi' : r.confidence >= 50 ? 'c-mid' : 'c-lo';
+    return '<tr class="' + (r.issue ? 'flag ' : '') + (r.include ? '' : 'off') + '">' +
+      '<td><input type="checkbox" ' + (r.include ? 'checked' : '') + ' onchange="ROWS[' + i + '].include=this.checked;draw()"></td>' +
+      TXT.map(function(k){ return '<td><input type="text" value="' + esc(r[k]) + '" onchange="ROWS[' + i + '].' + k + '=this.value"></td>'; }).join('') +
+      NUM.map(function(k){ return '<td><input class="num" type="number" step="any" value="' + (r[k] == null ? '' : r[k]) + '" onchange="ROWS[' + i + '].' + k + '=(this.value===\'\'?null:Number(this.value))"></td>'; }).join('') +
+      '<td><input type="checkbox" ' + (r.galvanized ? 'checked' : '') + ' onchange="ROWS[' + i + '].galvanized=this.checked"></td>' +
+      '<td><input type="checkbox" ' + (r.painted ? 'checked' : '') + ' onchange="ROWS[' + i + '].painted=this.checked"></td>' +
+      '<td class="conf ' + c + '">' + r.confidence + '</td>' +
+      '<td class="src">' + esc(r.source_text) + '</td>' +
+      '<td class="iss">' + esc(r.issue) + '</td></tr>';
+  }).join('');
+}
+
+// ---- send -----------------------------------------------------------------------------------
+document.getElementById('sendBtn').onclick = async function(){
+  if (!P.project) { setMsg('sendMsg', 'Open this page from a project — it has no project to send to.', 'err'); return; }
+  var rows = ROWS.filter(function(r){ return r.include; });
+  if (!rows.length) { setMsg('sendMsg', 'No rows are ticked.', 'err'); return; }
+  var mode = (document.querySelector('input[name=mode]:checked') || {}).value || 'Append';
+  if (mode === 'Replace' && !confirm('Replace the project\'s BOM?\n\nThe rows you approve in staging will REPLACE every BOM row this project has now.')) return;
+  var btn = this; btn.disabled = true;
+  setMsg('sendMsg', '<span class="spin"></span>Sending ' + rows.length + ' rows to BOM Staging Review…');
+  try {
+    var r = await fetch('/api/takeoff/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: P.project, manufacturer_id: P.mfg, rows: rows, mode: mode }) });
+    var d = await r.json().catch(function(){ return {}; });
+    if (!r.ok || d.ok === false) throw new Error(d.error || ('Sending failed (' + r.status + ').'));
+    setMsg('sendMsg', '✓ Sent. Opening BOM Staging Review — check the rows there, then click Import Approved Rows.', 'ok');
+    var url = REVIEW_PAGE + '?import_id=' + encodeURIComponent(d.import_id || '') + '&project_id=' + encodeURIComponent(P.project) + '&client_id=' + encodeURIComponent(P.mfg);
+    setTimeout(function(){ window.open(url, '_top'); }, 1200);
+  } catch (e) {
+    setMsg('sendMsg', esc(e.message), 'err'); btn.disabled = false;
+  }
+};
+</script>
+</body>
+</html>
