@@ -118,4 +118,60 @@ revisedBanner +
   return { subject, html };
 }
 
-module.exports = { send, configured, rfqEmail, esc };
+// ---------- Manufacturer notices ------------------------------------------------------
+const PORTAL = process.env.MC_PORTAL_URL || 'https://customer.materialcompassportal.com';
+
+// Shared frame: logo, colored title band, quote facts, body, footer.
+function frame(title, subtitle, band, facts, body) {
+  return '<!DOCTYPE html><html><body style="margin:0;background:#eef2f7;font-family:Segoe UI,Arial,sans-serif;color:#1f2d3d">' +
+'<table width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f7;padding:24px 0"><tr><td align="center">' +
+'<table width="640" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:10px;overflow:hidden;border:1px solid #d9e2ec">' +
+'<tr><td style="padding:18px 28px"><img src="' + esc(LOGO) + '" alt="" height="34" style="vertical-align:middle"> <span style="font-weight:700;color:' + BLUE + ';letter-spacing:2px;vertical-align:middle">MATERIAL COMPASS</span></td></tr>' +
+'<tr><td style="background:' + band + ';color:#fff;padding:18px 28px"><div style="font-size:22px;font-weight:700">' + title + '</div>' +
+'<div style="font-size:13px;opacity:.92">' + subtitle + '</div></td></tr>' +
+'<tr><td style="padding:14px 28px;background:#f4f7fb"><table width="100%"><tr>' +
+facts.map(([k, v, red]) => '<td style="font-size:11px;color:#7a8a99">' + esc(k) + '<div style="font-size:15px;color:' + (red ? '#c92a2a' : '#1f2d3d') + ';font-weight:700">' + esc(v || '') + '</div></td>').join('') +
+'</tr></table></td></tr>' + body +
+'<tr><td style="padding:18px 28px" align="center"><a href="' + esc(PORTAL) + '" style="display:inline-block;background:' + BLUE + ';color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:6px;font-size:15px">Open Material Compass</a></td></tr>' +
+'<tr><td style="padding:12px 28px;background:#f4f6f8;font-size:11px;color:#7a8a99">Sent automatically by Material Compass.</td></tr>' +
+'</table></td></tr></table></body></html>';
+}
+const th = s => '<td style="padding:8px 10px;font-size:11px;color:#55677a">' + s + '</td>';
+const td = (s, align) => '<td style="padding:8px 10px;font-size:13px' + (align ? ';text-align:' + align : '') + '">' + s + '</td>';
+
+// q: { quote_number, revision, quote_date, due_date }
+// suppliers: [{ name, lines, weight, email_only }]; opts: { added } (Add Other Suppliers)
+function mfgSentEmail(q, suppliers, opts) {
+  const o = opts || {};
+  const n = suppliers.length;
+  const ref = q.quote_number + (q.revision ? ' Rev #' + q.revision : '');
+  const rows = suppliers.map((s, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '">' +
+    td(esc(s.name) + (s.email_only ? ' <span style="color:#7a8a99;font-size:11px">(email only)</span>' : '')) +
+    td(esc(s.lines), 'center') + td(fmtWt(s.weight), 'right') + '</tr>').join('');
+  const body = '<tr><td style="padding:16px 28px"><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d9e2ec;border-collapse:collapse">' +
+    '<tr style="background:#eef2f7">' + th('SUPPLIER') + th('LINES') + th('WEIGHT') + '</tr>' + rows + '</table>' +
+    '<div style="font-size:13px;color:#55677a;margin-top:10px">Each supplier got only the lines they stock (email-only suppliers get every line), with a link to price it online. Their prices show up in Material Compass as they respond.</div></td></tr>';
+  const html = frame(o.added ? 'SUPPLIERS ADDED' : 'RFQ SENT',
+    o.added ? esc(ref) + ' was sent to ' + n + ' more supplier' + (n === 1 ? '' : 's') + '.'
+            : 'Your request was sent to ' + n + ' matched supplier' + (n === 1 ? '' : 's') + '.',
+    BLUE, [['QUOTE NUMBER', ref], ['QUOTE DATE', q.quote_date], ['RESPONSES DUE', q.due_date, true]], body);
+  const subject = (o.added ? 'Sent to ' + n + ' more supplier' + (n === 1 ? '' : 's') + ' ~ Quote #' + q.quote_number
+    : (q.revision ? 'REVISED RFQ Sent ~ Rev #' + q.revision + ' ~ ' : 'RFQ Sent ~ ') + 'Quote #' + q.quote_number + ' ~ ' + n + ' supplier' + (n === 1 ? '' : 's') + ' notified');
+  return { subject, html };
+}
+
+// lines: [{ line, form, material, spec, weight }]
+function noMatchEmail(q, lines) {
+  const ref = q.quote_number + (q.revision ? ' Rev #' + q.revision : '');
+  const rows = lines.map((l, i) => '<tr style="background:' + (i % 2 ? '#fff5f5' : '#fff') + '">' +
+    td(esc(l.line), 'center') + td(esc(l.form)) + td(esc(l.material)) + td(esc(l.spec)) + td(fmtWt(l.weight), 'right') + '</tr>').join('');
+  const body = '<tr><td style="padding:16px 28px"><div style="font-size:13px;margin-bottom:10px">No matched supplier stocks ' + (lines.length === 1 ? 'this line' : 'these ' + lines.length + ' lines') +
+    ', so nobody was asked to price ' + (lines.length === 1 ? 'it' : 'them') + '. Check the material is entered correctly, or add a supplier who carries it (Add Other Suppliers on the quote).</div>' +
+    '<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f1c0c0;border-collapse:collapse">' +
+    '<tr style="background:#fdecec">' + th('LINE') + th('FORM') + th('MATERIAL') + th('SPEC') + th('WEIGHT') + '</tr>' + rows + '</table></td></tr>';
+  const html = frame('ACTION REQUIRED: UNMATCHED ITEMS', esc(lines.length) + ' line' + (lines.length === 1 ? '' : 's') + ' on quote ' + esc(ref) + ' could not be matched to any supplier.',
+    '#c62828', [['QUOTE NUMBER', ref], ['QUOTE DATE', q.quote_date], ['RESPONSES DUE', q.due_date, true]], body);
+  return { subject: 'Action Required ~ Quote #' + q.quote_number + (q.revision ? ' Rev #' + q.revision : '') + ' Has Unmatched Items', html };
+}
+
+module.exports = { send, configured, rfqEmail, mfgSentEmail, noMatchEmail, esc };

@@ -1373,7 +1373,43 @@ function registerSupplierRoutes(app, deps) {
       if (live) { sent_ids.push(sid); recentlyMailed.set(key, Date.now()); }
       if (live || testing) jobs.push({ sid, supplier, toList });
     }
-    res.json({ ok: true, live, sent_ids });
+    // Manufacturer notices (also optional in the body):
+    //   summary: { to: "a@x,b@y", suppliers: { <sid>: "<lines>|<weight>" } }
+    //   nomatch: { to: "a@x", lines: [{ line, form, material, spec, weight }] }
+    //   quote:   { number, revision, date, due }
+    const parse = v => { if (typeof v === 'string') { try { return JSON.parse(v); } catch (e) { return null; } } return v || null; };
+    const summary = parse(b.summary), nomatch = parse(b.nomatch), qinfo = parse(b.quote) || {};
+    const addrs = s => String(s || '').split(/[,;]/).map(x => x.trim()).filter(x => /@/.test(x));
+    const sumTo = summary ? addrs(summary.to) : [], nmTo = nomatch ? addrs(nomatch.to) : [];
+    const nmLines = nomatch && Array.isArray(nomatch.lines) ? nomatch.lines : [];
+    const sumSuppliers = summary && summary.suppliers && typeof summary.suppliers === 'object' ? Object.entries(summary.suppliers) : [];
+    const doSummary = sumTo.length > 0 && sumSuppliers.length > 0 && (live || testing);
+    const doNomatch = nmTo.length > 0 && nmLines.length > 0 && (live || testing);
+    res.json({ ok: true, live, sent_ids, summary_sent: live && doSummary, nomatch_sent: live && doNomatch });
+
+    const niceD = s => String(s || '').replace(/,(\d{4})$/, ', $1');
+    const qq = { quote_number: String(qinfo.number || ''), revision: Number(qinfo.revision) || 0, quote_date: niceD(qinfo.date), due_date: niceD(qinfo.due) };
+    if (doSummary) {
+      try {
+        const outside = new Set(dir.filter(r => /^no$/i.test(String(r.Register || '').trim())).map(r => String(r.ID)));
+        const rowsS = sumSuppliers.map(([sid, v]) => {
+          const [lines, weight] = String(v || '').split('|');
+          const rec = dir.find(r => String(r.ID) === sid);
+          return { name: (rec && rec.Company_Name) || 'Supplier', lines: Number(lines) || 0, weight: Number(weight) || 0, email_only: outside.has(sid) };
+        }).sort((a, b) => a.name.localeCompare(b.name));
+        const added = sumSuppliers.some(([sid]) => filestore.readJson('rfqadd-' + qid + '-' + sid + '.json', null));
+        const m = mailer.mfgSentEmail(qq, rowsS, { added });
+        const r = await mailer.send({ to: sumTo, subject: m.subject, html: m.html });
+        console.log('[rfq-hook]', live ? 'SENT' : 'test copy', 'summary', qid, r.ok ? r.id : r.error);
+      } catch (e) { console.error('[rfq-hook] summary', e.message); }
+    }
+    if (doNomatch) {
+      try {
+        const m = mailer.noMatchEmail(qq, nmLines.map(l => ({ line: l.line, form: l.form, material: l.material, spec: l.spec, weight: Number(l.weight) || 0 })));
+        const r = await mailer.send({ to: nmTo, subject: m.subject, html: m.html });
+        console.log('[rfq-hook]', live ? 'SENT' : 'test copy', 'no-match', qid, r.ok ? r.id : r.error);
+      } catch (e) { console.error('[rfq-hook] no-match', e.message); }
+    }
 
     // ---- after the reply: build and send, quote header + drawings fetched once ----
     const cache = {};
