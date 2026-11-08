@@ -171,10 +171,11 @@ async function readBom({ files, text, catalogText, client }) {
 
   let usage = { input_tokens: 0, output_tokens: 0 }, out = null;
   for (let attempt = 0; attempt < 2 && !out; attempt++) {
-    const resp = await ai.messages.create({
+    // Streamed: a long BOM is a long answer, and the SDK refuses a non-streamed call this size.
+    const resp = await ai.messages.stream({
       model: MODEL, max_tokens: 32000, system: SYSTEM, tools: [TOOL], tool_choice: { type: 'auto' },
       messages: [{ role: 'user', content }],
-    });
+    }).finalMessage();
     const u = resp.usage || {};
     usage.input_tokens += (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) * 0.1;
     usage.output_tokens += u.output_tokens || 0;
