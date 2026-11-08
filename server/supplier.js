@@ -1260,11 +1260,31 @@ function registerSupplierRoutes(app, deps) {
     const t = require('./tenantToken').mint('q', sid + '_' + qid, 60 * 24 * 3600 * 1000);
     const base = process.env.PUBLIC_BASE_URL || 'https://material-compass-nesting-app-production.up.railway.app';
     const rev = Number(qh.Revision_Number) || 0;
+    // Zoho writes "Nov 14,2026"; show it like the sent date ("Nov 14, 2026").
+    const niceDate = s => String(s || '').replace(/,(\d{4})$/, ', $1');
+    // The MFG's drawings (Quote_Form.File_upload), attached like the old email did. Up to
+    // 35 MB in all (Resend's cap is 40); a file that fails or doesn't fit is left to the
+    // online page, which lists every file.
+    const attachments = [];
+    let attBytes = 0;
+    for (const u of (o.attach && Array.isArray(qh.File_upload) ? qh.File_upload : [])) {
+      const mm = /[?&]filepath=([^&]+)/.exec(String(u));
+      const fp = mm ? decodeURIComponent(mm[1]) : '';
+      if (!fp) continue;
+      try {
+        const fr = await axios.get(creatorApiBase() + '/report/All_Quotes/' + qid + '/File_upload/download?filepath=' + encodeURIComponent(fp),
+          { headers: zohoHeaders(token), responseType: 'arraybuffer', timeout: 60000 });
+        const buf = Buffer.from(fr.data);
+        if (attBytes + buf.length > 35 * 1024 * 1024) continue;
+        attBytes += buf.length;
+        attachments.push({ filename: fp.replace(/^\d+_+/, ''), content: buf });
+      } catch (e) { console.error('[rfq-email] drawing not attached', fp, e.message); }
+    }
     const q = {
       quote_number: qh.Reference_Number || sq.quote_number,
       revision: rev,
-      sent_date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      due_date: o.due || qh.Requested_Responses_Due || '',
+      sent_date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: process.env.MAIL_TZ || 'America/New_York' }),
+      due_date: niceDate(o.due || qh.Requested_Responses_Due || ''),
       manufacturer: sq.manufacturer || qh.Manufacture_Name || '',
       mfg_contact: { name: flatten(rep.Name) || (qh.Contact_Name && String(qh.Contact_Name.zc_display_value || '').trim()) || '',
                      email: rep.Email || '', phone: rep.Direct_Phone_Number || rep.Phone_Number || '' },
@@ -1274,7 +1294,7 @@ function registerSupplierRoutes(app, deps) {
     };
     const mail = require('./mailer').rfqEmail(q, { supplierName: supplier.company_name, link: base + '/quote-online?t=' + encodeURIComponent(t),
       revised: rev > 0, firstTime: !!o.firstTime });
-    return { ...mail, replyTo: q.mfg_contact.email || undefined, to: supplier.email, quote: q };
+    return { ...mail, attachments, replyTo: q.mfg_contact.email || undefined, to: supplier.email, quote: q };
   }
 
   // GET /api/mfg/supplier-quotes/rfq-email?manufacturer_id=&supplier_id=&quote_id=[&first=1][&due=][&send=me]
@@ -1283,11 +1303,11 @@ function registerSupplierRoutes(app, deps) {
   app.get('/api/mfg/supplier-quotes/rfq-email', withMfgOnBehalf, async (req, res) => {
     try {
       const m = await buildRfqMessage(req.onBehalfOf, req.supplier, String(req.query.quote_id || ''),
-        { firstTime: req.query.first === '1', due: req.query.due ? String(req.query.due) : '' });
+        { firstTime: req.query.first === '1', due: req.query.due ? String(req.query.due) : '', attach: req.query.send === 'me' });
       if (!m) return res.status(404).json({ ok: false, error: 'That quote was not sent to this supplier.' });
       if (req.query.send !== 'me') return res.type('html').send(m.html);
       if (!m.replyTo) return res.status(400).json({ ok: false, error: 'The quote has no contact email to send the test to.' });
-      const r = await require('./mailer').send({ to: m.replyTo, subject: '[Preview for ' + req.supplier.company_name + '] ' + m.subject, html: m.html, replyTo: m.replyTo });
+      const r = await require('./mailer').send({ to: m.replyTo, subject: '[Preview for ' + req.supplier.company_name + '] ' + m.subject, html: m.html, replyTo: m.replyTo, attachments: m.attachments });
       if (!r.ok) return res.status(502).json({ ok: false, error: r.error === 'not_configured' ? 'Email sending is not set up yet.' : 'The test email could not be sent.', detail: r.error });
       res.json({ ok: true, sent_to: m.replyTo, id: r.id });
     } catch (err) {
