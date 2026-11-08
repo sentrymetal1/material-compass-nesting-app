@@ -337,7 +337,9 @@ function registerMfgRfqRoutes(app, deps) {
             .filter(Boolean).join(' · ') + (f.Fitting_Description_Text ? '  ·  ' + f.Fitting_Description_Text : ''),
         })),
         suppliers: supplierList(p.matches, await outsideIds()),
-        contacts: p.reps.map(r => ({ id: String(r.ID), name: disp(r.Name).trim() || r.Email || '' })),
+        contacts: p.reps.map(r => ({ id: String(r.ID), name: disp(r.Name).trim() || r.Email || '',
+          // Which of the shop's locations this rep works at (rep.Location is multi-select).
+          location_ids: (Array.isArray(r.Location) ? r.Location : r.Location ? [r.Location] : []).map(x => String((x && x.ID) || x)).filter(Boolean) })),
         locations: p.locations.map(l => ({ id: String(l.ID), name: disp(l.Location_Name) || disp(l) || 'Location' })),
         requirements: QUOTE_REQUIREMENTS,
         account_type: p.accountType,

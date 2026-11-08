@@ -21,6 +21,13 @@ function AddSupplier({ auth, contacts, locations, defaultRep, onAdded }) {
   const [f, setF] = useState(BLANK_SUP);
   const [st, setSt] = useState({ status: 'idle', error: '' });
   const set = patch => setF(p => ({ ...p, ...patch }));
+  // Reps narrow to the chosen location (a rep with no location set shows everywhere).
+  const locId = f.location_id || (locations[0] && locations[0].id) || '';
+  const repsHere = (() => {
+    const r = contacts.filter(c => !locId || !c.location_ids || !c.location_ids.length || c.location_ids.includes(locId));
+    return r.length ? r : contacts;
+  })();
+  const repId = [f.rep_id, defaultRep].find(id => id && repsHere.some(c => c.id === id)) || (repsHere[0] && repsHere[0].id) || '';
   const field = (k, label, props) => (
     <label className="q-sum-field">{label}
       <input type="text" value={f[k]} onChange={e => set({ [k]: e.target.value })} {...props} />
@@ -31,7 +38,7 @@ function AddSupplier({ auth, contacts, locations, defaultRep, onAdded }) {
     try {
       const r = await fetch(BASE + 'add-supplier?' + auth, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...f, rep_id: f.rep_id || defaultRep, location_id: f.location_id || (locations[0] && locations[0].id) || '' }),
+        body: JSON.stringify({ ...f, rep_id: repId, location_id: locId }),
       });
       const j = await r.json();
       if (!j.ok) { setSt({ status: 'error', error: (j.error || 'Could not add the supplier.') + (j.reasons && j.reasons.length ? ' ' + j.reasons.join(' ') : '') }); return; }
@@ -66,14 +73,14 @@ function AddSupplier({ auth, contacts, locations, defaultRep, onAdded }) {
         </label>
         {locations.length > 1 && (
           <label className="q-sum-field">Your location
-            <select value={f.location_id || locations[0].id} onChange={e => set({ location_id: e.target.value })}>
+            <select value={locId} onChange={e => set({ location_id: e.target.value, rep_id: '' })}>
               {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           </label>
         )}
         <label className="q-sum-field">Your rep for them
-          <select value={f.rep_id || defaultRep} onChange={e => set({ rep_id: e.target.value })}>
-            {contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          <select value={repId} onChange={e => set({ rep_id: e.target.value })}>
+            {repsHere.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </label>
       </div>
