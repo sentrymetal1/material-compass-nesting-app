@@ -95,12 +95,14 @@ tr.this td{background:#f0f9ff}
 <div class="foot" id="foot"></div>
 
 <script>
-var BUILD = 'mi-v3.3 · 2026-10-01';
+var BUILD = 'mi-v3.4 · 2026-11-08';
 // Served by the Material Compass server itself (/intel/), so the API is same-origin — and stays so
 // under a custom domain. Only an old GitHub Pages copy needs the absolute host.
 var API = /github\.io$/.test(location.hostname) ? 'https://material-compass-nesting-app-production.up.railway.app' : '';
 var PID = '', DATA = null, VIEW = 'project', DETAIL = null, lastTrigger = '';
 var qs = new URLSearchParams(location.search);
+// Tenant pass minted by Zoho for the logged-in shop: from the link (?t=, pop-out) or the widget params.
+var TOK = qs.get('t') || '';
 document.getElementById('foot').textContent = BUILD;
 
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -119,7 +121,7 @@ function arrow(trend, pct){
 function load(){
   if (!PID){ document.getElementById('body').innerHTML = '<div class="state">Open this from a project — it needs the project id.</div>'; return; }
   document.getElementById('body').innerHTML = '<div class="state">Loading material intelligence…</div>';
-  fetch(API + '/api/intel/project/' + encodeURIComponent(PID))
+  fetch(API + '/api/intel/project/' + encodeURIComponent(PID), { headers: TOK ? { 'X-MC-Token': TOK } : {} })
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (!d || !d.ok){ document.getElementById('body').innerHTML = '<div class="err">' + esc((d && d.error) || 'Could not load.') + '</div>'; return; }
@@ -294,9 +296,10 @@ function popGeom(){
 }
 var popWin = null;
 document.getElementById('expandBtn').onclick = function(){
-  var win = window.open(location.origin + location.pathname + '?project_id=' + encodeURIComponent(PID) + '&popout=1', 'mi_popout', popGeom());
+  var u = location.origin + location.pathname + '?project_id=' + encodeURIComponent(PID) + '&popout=1' + (TOK ? '&t=' + encodeURIComponent(TOK) : '');
+  var win = window.open(u, 'mi_popout', popGeom());
   if (win) { popWin = win; try { win.focus(); } catch (e) {} }
-  else { window.open(location.origin + location.pathname + '?project_id=' + encodeURIComponent(PID) + '&popout=1', '_blank'); }   // pop-up blocked: a tab still works
+  else { window.open(u, '_blank'); }   // pop-up blocked: a tab still works
 };
 if (qs.get('popout') === '1' || qs.get('wide') === '1') {
   document.getElementById('expandBtn').style.display = 'none';
@@ -335,6 +338,7 @@ if (qs.get('project_id')) { start(qs.get('project_id')); }
 else if (window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.init) {
   ZOHO.CREATOR.init().then(function(){
     var p = {}; try { p = ZOHO.CREATOR.UTIL.getQueryParams() || {}; } catch (e) {}
+    if (!TOK && p.t) TOK = String(p.t);
     start(p.project_id);
     try { ZOHO.CREATOR.UI.resize({ width: '100%', height: '100%' }); } catch (e) {}
     pollTrigger(); setInterval(pollTrigger, 20000);
