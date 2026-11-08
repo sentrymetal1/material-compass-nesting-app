@@ -103,7 +103,8 @@ function jeffCalcsRow(s, n, ctx) {
     Total_Length: Math.round((lengthFt + lengthInchResult / 12) * 10000) / 10000,
     Populate: ['YES'],
     // Field defaults a form submit fills and an API insert does not (every live line carries them).
-    Item_Requirements: ['Stock Size'],
+    // A cut-to-size purchase line asks for Cut To Size, not Stock Size (Mark 2026-11-07).
+    Item_Requirements: [/cut\s*to\s*size/i.test(String(s.Item_QTY_and_Description || '') + ' ' + String(s.Item_Description || '')) ? 'Cut To Size' : 'Stock Size'],
     Part_Number: 'N/A',
     New_Material_Needed: false,
     Revise_by_Manufacture: false,

@@ -492,17 +492,32 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
   // Batch-fill (structural lines).
   const [batch, setBatch] = useState({ quote_option: '', lead_time: '', comments: '' });
   const setB = patch => setBatch(p => ({ ...p, ...patch }));
-  const applyBatch = () => setDrafts(prev => {
-    const next = { ...prev };
-    quote.structural_lines.forEach(l => {
-      const d = { ...next[l.rfqs_sent_id] };
-      if (batch.quote_option) d.quote_option = batch.quote_option;
-      if (batch.lead_time !== '') d.lead_time = batch.lead_time;
-      if (batch.comments !== '') d.comments = batch.comments;
-      next[l.rfqs_sent_id] = d;
+  const applyBatch = () => {
+    setDrafts(prev => {
+      const next = { ...prev };
+      quote.structural_lines.forEach(l => {
+        const d = { ...next[l.rfqs_sent_id] };
+        if (batch.quote_option) d.quote_option = batch.quote_option;
+        if (batch.lead_time !== '') d.lead_time = batch.lead_time;
+        if (batch.comments !== '') d.comments = batch.comments;
+        next[l.rfqs_sent_id] = d;
+      });
+      return next;
     });
-    return next;
-  });
+    // Fittings take the same lead time and comments; only "Quote As Is" / "No Quote" carry
+    // over (the Alter options are structural-only).
+    setFitDrafts(prev => {
+      const next = { ...prev };
+      quote.fitting_lines.forEach(l => {
+        const d = { ...next[l.rfq_row_id] };
+        if (batch.quote_option === 'Quote As Is' || batch.quote_option === 'No Quote') d.quote_option = batch.quote_option;
+        if (batch.lead_time !== '') d.lead_time = batch.lead_time;
+        if (batch.comments !== '') d.comments = batch.comments;
+        next[l.rfq_row_id] = d;
+      });
+      return next;
+    });
+  };
 
   // Quote-level header / summary (drives the structural SV-form submit).
   const [hdr, setHdr] = useState({
@@ -956,7 +971,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
             <>
               {hasFit && <div className="q-section-label">Structural / Pipe</div>}
               <div className="q-batch">
-                <span className="q-batch-lbl">⚡ Fill all lines:</span>
+                <span className="q-batch-lbl">⚡ Fill all lines{hasFit ? ' (and fittings)' : ''}:</span>
                 <select value={batch.quote_option} onChange={e => setB({ quote_option: e.target.value })}>
                   <option value="">Quote option…</option>
                   {QUOTE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
