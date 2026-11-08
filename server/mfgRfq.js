@@ -283,11 +283,20 @@ function registerMfgRfqRoutes(app, deps) {
     fetchAllZohoPages('/report/All_Company_Locations?criteria=' + enc('(Manaufacture==' + mfg + ')')).catch(() => []));
 
   // The supplier picker, from the shop's match rows.
-  const supplierList = matches => matches
+  // Suppliers with no login (Register = "No"): they get RFQs by email only. Same cache key
+  // and report as supplier.js's directory, so it's one shared call.
+  const outsideIds = async () => {
+    try {
+      const rows = await cachedLookup('supplier-directory', 5 * 60 * 1000, () => fetchAllZohoPages('/report/Supplier_Entry_Report'));
+      return new Set(rows.filter(r => /^no$/i.test(String(r.Register || '').trim())).map(r => String(r.ID)));
+    } catch (e) { return new Set(); }
+  };
+  const supplierList = (matches, outside) => matches
     .filter(m => lkid(m.SUPPLIER) && !truthy(m.Hide_Supplier_From_Matching))
     .map(m => ({
       match_id: String(m.ID),
       supplier_id: lkid(m.SUPPLIER),
+      email_only: !!(outside && outside.has(lkid(m.SUPPLIER))),
       name: (m.SUPPLIER && (m.SUPPLIER.Company_Name || m.SUPPLIER.zc_display_value)) || 'Supplier',
       accepts: /^YES/i.test(m.Supplier_Accept_Quotes_From_Manufacture || ''),
       declined: /^NO/i.test(m.Supplier_Accept_Quotes_From_Manufacture || '') || /^NO/i.test(m.Manufacture_Accept_Quotes_From_Supplier || ''),
@@ -327,7 +336,7 @@ function registerMfgRfqRoutes(app, deps) {
           description: [disp(f.Fitting_Type), disp(f.Fitting_Make), disp(f.End_Type), disp(f.Connection_Type), disp(f.Fitting_Specification)]
             .filter(Boolean).join(' · ') + (f.Fitting_Description_Text ? '  ·  ' + f.Fitting_Description_Text : ''),
         })),
-        suppliers: supplierList(p.matches),
+        suppliers: supplierList(p.matches, await outsideIds()),
         contacts: p.reps.map(r => ({ id: String(r.ID), name: disp(r.Name).trim() || r.Email || '' })),
         locations: p.locations.map(l => ({ id: String(l.ID), name: disp(l.Location_Name) || disp(l) || 'Location' })),
         requirements: QUOTE_REQUIREMENTS,
@@ -475,7 +484,8 @@ function registerMfgRfqRoutes(app, deps) {
       const matchesAfter = await cachedLookup('rfq-matches:' + mfg, 5 * 60 * 1000, () =>
         fetchAllZohoPages('/report/All_Supplier_Manufacture_Matches?criteria=' + enc('(MANUFACTURE==' + mfg + ')')));
       const before = new Set(matchesBefore.map(m => String(m.ID)));
-      const suppliers = supplierList(matchesAfter);
+      bust('supplier-directory');
+      const suppliers = supplierList(matchesAfter, await outsideIds());
       const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       const hit = osSupplierId
         ? suppliers.filter(s => s.supplier_id === osSupplierId)

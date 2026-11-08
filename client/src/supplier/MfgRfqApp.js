@@ -316,6 +316,7 @@ export default function MfgRfqApp() {
                               <span className="mq-sup-name">{picked.includes(s.match_id) ? '✓ ' : ''}{s.name}</span>
                               {already ? <span className="mq-sup-st mq-st-done">Already sent</span>
                                 : s.declined ? <span className="mq-sup-st mq-st-no">Not accepting</span>
+                                : s.email_only ? <span className="mq-sup-st mq-st-wait">Email only</span>
                                 : s.accepts ? <span className="mq-sup-st mq-st-done">On the platform</span>
                                 : <span className="mq-sup-st mq-st-wait">By email</span>}
                             </button>
