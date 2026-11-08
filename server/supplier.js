@@ -1397,8 +1397,11 @@ function registerSupplierRoutes(app, deps) {
           const rec = dir.find(r => String(r.ID) === sid);
           return { name: (rec && rec.Company_Name) || 'Supplier', lines: Number(lines) || 0, weight: Number(weight) || 0, email_only: outside.has(sid) };
         }).sort((a, b) => a.name.localeCompare(b.name));
-        const added = sumSuppliers.some(([sid]) => filestore.readJson('rfqadd-' + qid + '-' + sid + '.json', null));
-        const m = mailer.mfgSentEmail(qq, rowsS, { added });
+        const notes = sumSuppliers.map(([sid]) => filestore.readJson('rfqadd-' + qid + '-' + sid + '.json', null)).filter(Boolean);
+        const added = notes.length > 0;
+        // Added suppliers were given their own date on the Add Other Suppliers screen.
+        const addedDue = (notes.find(n => n.due) || {}).due;
+        const m = mailer.mfgSentEmail(addedDue ? { ...qq, due_date: addedDue } : qq, rowsS, { added });
         const r = await mailer.send({ to: sumTo, subject: m.subject, html: m.html });
         console.log('[rfq-hook]', live ? 'SENT' : 'test copy', 'summary', qid, r.ok ? r.id : r.error);
       } catch (e) { console.error('[rfq-hook] summary', e.message); }
