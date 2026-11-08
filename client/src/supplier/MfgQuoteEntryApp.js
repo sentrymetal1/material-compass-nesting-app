@@ -177,7 +177,7 @@ export default function MfgQuoteEntryApp() {
             {card.status === 'ready' && card.quote.saved && (
               <div className="sup-msg">Showing {supplier ? supplier.name + '’s' : 'this'} quote as saved {new Date(card.quote.saved.saved_at).toLocaleString()}. Saving again makes a new revision of it.</div>
             )}
-            {card.status === 'ready' && !card.quote.saved && supplier && supplier.answered && (
+            {card.status === 'ready' && !card.quote.saved && supplier && !!supplier.answered && (
               <div className="sup-msg sup-msg-warn">This quote was saved before the screen kept a copy, so altered lines may show $0 here. The saved quote itself is fine. To correct the screen, upload {supplier.name}’s PDF, press “Auto-fill lines”, then save.</div>
             )}
             {card.status === 'ready' && (
