@@ -23,11 +23,9 @@ function AddSupplier({ auth, contacts, locations, defaultRep, onAdded }) {
   const set = patch => setF(p => ({ ...p, ...patch }));
   // Reps narrow to the chosen location (a rep with no location set shows everywhere).
   const locId = f.location_id || (locations[0] && locations[0].id) || '';
-  const repsHere = (() => {
-    const r = contacts.filter(c => !locId || !c.location_ids || !c.location_ids.length || c.location_ids.includes(locId));
-    return r.length ? r : contacts;
-  })();
-  const noRepsHere = locations.length > 1 && !!locId && !contacts.some(c => !c.location_ids || !c.location_ids.length || c.location_ids.includes(locId));
+  // A location with no reps shows an empty list and can't be saved.
+  const repsHere = contacts.filter(c => !locId || !c.location_ids || !c.location_ids.length || c.location_ids.includes(locId));
+  const noRepsHere = !repsHere.length;
   const locName = (locations.find(l => l.id === locId) || {}).name || 'this location';
   const repId = [f.rep_id, defaultRep].find(id => id && repsHere.some(c => c.id === id)) || (repsHere[0] && repsHere[0].id) || '';
   const field = (k, label, props) => (
@@ -84,12 +82,12 @@ function AddSupplier({ auth, contacts, locations, defaultRep, onAdded }) {
           <select value={repId} onChange={e => set({ rep_id: e.target.value })}>
             {repsHere.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-          {noRepsHere && <span className="q-sum-hint">No reps are assigned to {locName} yet, so all your reps are listed.</span>}
+          {noRepsHere && <span className="q-sum-hint mq-hint-warn">No reps are assigned to {locName}. Choose another location, or add a rep to it on your Manufacture Profile (Representatives).</span>}
         </label>
       </div>
       <div className="q-actions">
         <button type="button" className="btn-link" onClick={() => { setOpen(false); setSt({ status: 'idle', error: '' }); }}>Cancel</button>
-        <button type="button" className="btn-quote" disabled={st.status === 'saving'} onClick={save}>{st.status === 'saving' ? 'Adding…' : 'Add supplier'}</button>
+        <button type="button" className="btn-quote" disabled={st.status === 'saving' || noRepsHere} onClick={save}>{st.status === 'saving' ? 'Adding…' : 'Add supplier'}</button>
         {st.status === 'error' && <span className="q-result q-result-warn">{st.error}</span>}
       </div>
     </div>

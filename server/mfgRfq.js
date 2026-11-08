@@ -446,9 +446,16 @@ function registerMfgRfqRoutes(app, deps) {
         locationsOf(mfg),
       ]);
       // Your Location / Your Rep must be this shop's own.
-      const repId = t(b.rep_id) && reps.some(r => String(r.ID) === t(b.rep_id)) ? t(b.rep_id) : (reps[0] ? String(reps[0].ID) : '');
       const locId = t(b.location_id) && locations.some(l => String(l.ID) === t(b.location_id)) ? t(b.location_id) : (locations[0] ? String(locations[0].ID) : '');
-      if (!repId || !locId) return res.status(409).json({ ok: false, error: 'Your shop needs at least one location and one representative set up first.' });
+      // The rep must work at that location (a rep with no location set counts everywhere).
+      const locsOf = r => (Array.isArray(r.Location) ? r.Location : r.Location ? [r.Location] : []).map(x => String((x && x.ID) || x)).filter(Boolean);
+      const repsAt = reps.filter(r => { const l = locsOf(r); return !l.length || l.includes(locId); });
+      const repId = t(b.rep_id) && repsAt.some(r => String(r.ID) === t(b.rep_id)) ? t(b.rep_id) : (repsAt[0] ? String(repsAt[0].ID) : '');
+      if (!locId) return res.status(409).json({ ok: false, error: 'Your shop needs at least one location set up first.' });
+      if (!repId) {
+        const ln = disp((locations.find(l => String(l.ID) === locId) || {}).Location_Name) || 'that location';
+        return res.status(409).json({ ok: false, error: 'No reps are assigned to ' + ln + '. Choose another location, or add a rep to it on your Manufacture Profile.' });
+      }
 
       const data = clean({
         OS_Manufacturer: mfg,
