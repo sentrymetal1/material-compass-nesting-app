@@ -6,7 +6,7 @@ import { useConfirm } from './ConfirmDialog';
 // Quote Form's screens; the send creates the same Quote_Form record, so Zoho numbers it,
 // matches each line to supplier stock, creates the supplier RFQ lines and sends the emails.
 // Opened with /mfg-rfq?manufacturer_id=<Customer_Entry ID>&t=<token>[&project_id=…]
-const BUILD_TAG = 'mfg-rfq-2026-11-07b-add-to-quote';
+const BUILD_TAG = 'mfg-rfq-2026-11-07d-rep-by-location';
 const BASE = '/api/mfg/rfq/';
 
 const MATERIAL_CHOICES = ['Structural And Pipe', 'Fittings And Pipe', 'Structural Pipe And Fittings'];
@@ -27,6 +27,8 @@ function AddSupplier({ auth, contacts, locations, defaultRep, onAdded }) {
     const r = contacts.filter(c => !locId || !c.location_ids || !c.location_ids.length || c.location_ids.includes(locId));
     return r.length ? r : contacts;
   })();
+  const noRepsHere = locations.length > 1 && !!locId && !contacts.some(c => !c.location_ids || !c.location_ids.length || c.location_ids.includes(locId));
+  const locName = (locations.find(l => l.id === locId) || {}).name || 'this location';
   const repId = [f.rep_id, defaultRep].find(id => id && repsHere.some(c => c.id === id)) || (repsHere[0] && repsHere[0].id) || '';
   const field = (k, label, props) => (
     <label className="q-sum-field">{label}
@@ -82,6 +84,7 @@ function AddSupplier({ auth, contacts, locations, defaultRep, onAdded }) {
           <select value={repId} onChange={e => set({ rep_id: e.target.value })}>
             {repsHere.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
+          {noRepsHere && <span className="q-sum-hint">No reps are assigned to {locName} yet, so all your reps are listed.</span>}
         </label>
       </div>
       <div className="q-actions">
