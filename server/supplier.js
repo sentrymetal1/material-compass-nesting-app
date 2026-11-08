@@ -35,9 +35,6 @@ function phoneForZoho(v) {
 // Extend this list if the Zoho field carries options beyond 14 days.
 const LEAD_TIME_CHOICES = ['1 Day'].concat(
   Array.from({ length: 13 }, (_, i) => (i + 2) + ' Days'));
-// Fallback lead time written when a supplier leaves it blank, so the MFG close-out's
-// mandatory Lead Time never sees an empty value. Must be one of LEAD_TIME_CHOICES.
-const LEAD_TIME_FALLBACK = '7 Days';
 
 // Quote_Is_Valid_For (header) — business days the quote stays valid; drives valid_until.
 // Mirror the Zoho choice list (the API doesn't strictly enforce it, but keep values clean).
@@ -884,6 +881,12 @@ function registerSupplierRoutes(app, deps) {
       const supplierId = String(req.supplier.id);
       if (!quote_id) return res.status(400).json({ ok: false, error: 'quote_id required' });
       if (!lines.length) return res.status(400).json({ ok: false, error: 'no priced lines' });
+      // The order lead time is required (Mark, 2026-11-08): it is what every line without
+      // its own lead time ships on. The form already insists; this stops anything that
+      // gets past it from being saved with an invented "7 Days".
+      if (!LEAD_TIME_CHOICES.includes(String(header.lead_time || '').trim())) {
+        return res.status(400).json({ ok: false, error: 'Please choose a lead time for ship complete.' });
+      }
 
       // supplier quote number (their input) or an auto placeholder
       let svQuoteNum = (header.supplier_quote_number || '').trim();
@@ -1081,11 +1084,9 @@ function registerSupplierRoutes(app, deps) {
       const fittingsTotal = Number(header.fittings_total) || 0;
       const materialTotal = sumMaterial + fittingsTotal;
       const grandTotal = materialTotal + shipAmt + miscAmt;  // material + fittings + shipping + misc
-      // Header lead time (Lead_Time_For_Ship_Complete, a CHOICE field): use the supplier's
-      // header value if valid, else the first valid per-line value, else the fallback.
-      const hdrLeadRaw = (header.lead_time || '').trim();
-      const firstLineLead = (lines.find(x => LEAD_TIME_CHOICES.includes((x.lead_time || '').trim())) || {}).lead_time;
-      const headerLead = LEAD_TIME_CHOICES.includes(hdrLeadRaw) ? hdrLeadRaw : (firstLineLead || LEAD_TIME_FALLBACK);
+      // Header lead time (Lead_Time_For_Ship_Complete, a CHOICE field): validated above,
+      // so this is always the supplier's own answer.
+      const headerLead = String(header.lead_time).trim();
       const data = {
         SV_Supplier_Entry_Form: supplierId,
         SV_Quote_Form: String(quote_id),

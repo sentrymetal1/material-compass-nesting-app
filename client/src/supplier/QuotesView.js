@@ -740,6 +740,13 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     return acc;
   }, []);
 
+  const fitLeadMissing = (!hasStruct && hasFit)
+    ? quote.fitting_lines.filter(l => {
+        const d = fitDrafts[l.rfq_row_id] || {};
+        return d.quote_option !== 'No Quote' && String(d.lead_time || '').trim() === '';
+      }).map(l => 'Fitting ' + l.line)
+    : [];
+
   const onSubmit = async () => {
     if (missingFields.length) {
       setShowErrors(true);
@@ -759,6 +766,13 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     }
     if (alterationProblems.length) {
       setSubmitState({ status: 'error', error: 'Please resolve the altered lines: ' + alterationProblems.join(' ') });
+      return;
+    }
+    // A fittings-only quote has no quote summary, so no order lead time to fall back
+    // on: each fitting the supplier prices must carry its own. (With structural lines
+    // present, a blank fitting lead time takes the order lead time at submit.)
+    if (fitLeadMissing.length) {
+      setSubmitState({ status: 'error', error: 'Please choose a lead time for: ' + fitLeadMissing.join(', ') + '.' });
       return;
     }
     // Our total vs the total printed on the supplier's quote: to the cent, or ask first.
@@ -789,7 +803,9 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
             rfqs_sent_id: l.rfqs_sent_id, sv_detail_id: l.sv_detail_id, line: l.line,
             quote_option: d.quote_option || 'Quote As Is',
             total_price: total, price_per_lb: parseFloat(d.price_per_lb) || 0,
-            unit_price: qty > 0 ? total / qty : 0, lead_time: d.lead_time, comments: d.comments,
+            // A line with no lead time of its own ships with the order: the supplier gave
+            // one lead time for the quote, and a blank line used to reach the MFG as "—".
+            unit_price: qty > 0 ? total / qty : 0, lead_time: d.lead_time || hdr.lead_time, comments: d.comments,
             item_requirements: Array.isArray(d.item_requirements) ? d.item_requirements : [],
             ...(alteration ? { alteration } : {}),
           };
@@ -816,7 +832,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
             rfq_row_id: l.rfq_row_id,
             quote_option: d.quote_option || 'Quote As Is',
             unit_price: d.quote_option === 'No Quote' ? 0 : (parseFloat(d.unit_price) || 0),
-            lead_time: d.lead_time || '', comments: d.comments || '',
+            lead_time: d.lead_time || (hasStruct ? hdr.lead_time || '' : ''), comments: d.comments || '',
           };
         });
         // Link each fitting row back to the SV record the structural submit just
