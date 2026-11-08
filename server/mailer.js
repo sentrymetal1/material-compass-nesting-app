@@ -188,17 +188,21 @@ function noMatchEmail(q, lines) {
 function money(n) { return '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function quoteReceivedEmail(d, opts) {
   const copy = !!(opts && opts.copy);
-  const statusCell = s => {
+  const statusCell = (s, kind) => {
     const no = /no quote/i.test(s || ''), alt = /alter/i.test(s || '');
-    return td('<span style="color:' + (no ? '#c92a2a' : alt ? '#b54708' : '#1a7f37') + ';font-weight:700;font-size:12px">' + esc(no ? 'No Quote' : alt ? 'Altered' : 'Quoted') + '</span>', 'center');
+    return td('<span style="color:' + (no ? '#c92a2a' : alt ? '#b54708' : '#1a7f37') + ';font-weight:700;font-size:12px">' + esc(no ? 'No Quote' : alt ? 'Altered' + (kind ? ': ' + kind : '') : 'Quoted') + '</span>', 'center');
   };
+  const all = d.lines.concat(d.fittings);
+  const nNo = all.filter(l => /no quote/i.test(l.status || '')).length;
+  const nAlt = all.filter(l => /alter/i.test(l.status || '')).length;
+  const breakdown = (all.length - nNo) + ' quoted' + (nAlt ? ' · ' + nAlt + ' altered' : '') + (nNo ? ' · ' + nNo + ' not quoted' : '');
   const mat = d.lines.reduce((s, l) => s + (Number(l.total) || 0), 0);
   const fit = d.fittings.reduce((s, l) => s + (Number(l.total) || 0), 0);
   const total = mat + fit + (Number(d.shipping) || 0) + (Number(d.misc) || 0);
-  const quoted = d.lines.concat(d.fittings).filter(l => !/no quote/i.test(l.status || '')).length;
   const tbl = (head, rows) => '<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d9e2ec;border-collapse:collapse;margin-top:10px">' + head + rows + '</table>';
-  const sRows = d.lines.map((l, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '">' + td(esc(l.line), 'center') + td(esc(l.description)) +
-    td(esc(l.qty == null ? '' : l.qty), 'center') + statusCell(l.status) + td(/no quote/i.test(l.status || '') ? '—' : money(l.total), 'right') + '</tr>').join('');
+  const sRows = d.lines.map((l, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '">' + td(esc(l.line), 'center') +
+    td(esc(l.description) + (l.alt_note ? '<div style="font-size:11px;color:#b54708;margin-top:3px">SUPPLIER ALTERED: ' + esc(l.alt_note) + '</div>' : '')) +
+    td(esc(l.qty == null ? '' : l.qty), 'center') + statusCell(l.status, l.alt_kind) + td(/no quote/i.test(l.status || '') ? '—' : money(l.total), 'right') + '</tr>').join('');
   const fRows = d.fittings.map((l, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '">' + td(esc(l.line), 'center') + td(esc(l.description)) +
     td(esc(l.qty == null ? '' : l.qty), 'center') + statusCell(l.status) + td(/no quote/i.test(l.status || '') ? '—' : money(l.unit) + '/ea', 'right') +
     td(/no quote/i.test(l.status || '') ? '—' : money(l.total), 'right') + '</tr>').join('');
@@ -210,7 +214,7 @@ function quoteReceivedEmail(d, opts) {
       (d.description ? '<div style="font-size:12px;color:#7a8a99;margin-top:6px">' + esc(d.description) + '</div>' : '') +
     '</td><td style="vertical-align:top;text-align:right"><div style="background:#f4f7fb;border-radius:8px;padding:12px 18px;display:inline-block;text-align:center">' +
       '<div style="font-size:11px;color:#7a8a99">QUOTE TOTAL</div><div style="font-size:24px;font-weight:700">' + money(total) + '</div>' +
-      '<div style="font-size:11px;color:#7a8a99">' + quoted + ' of ' + (d.lines.length + d.fittings.length) + ' priced</div></div></td></tr></table></td></tr>' +
+      '<div style="font-size:11px;color:#7a8a99">' + esc(breakdown) + '</div></div></td></tr></table></td></tr>' +
     '<tr><td style="padding:0 28px"><table width="100%" style="background:#f4f7fb;border-radius:6px"><tr>' +
       [['STRUCTURAL / PIPE', money(mat)], ['FITTINGS', money(fit)], ['SHIPPING', money(d.shipping)], ['MISC', money(d.misc)], ['LEAD TIME', d.lead_time || '']]
         .filter(([k]) => k !== 'FITTINGS' || d.fittings.length)

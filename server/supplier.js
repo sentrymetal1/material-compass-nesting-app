@@ -1277,8 +1277,20 @@ function registerSupplierRoutes(app, deps) {
         shipping: parseFloat(String(h.shipping || '0').replace(/[$,]/g, '')) || 0,
         misc: parseFloat(String(h.misc || '0').replace(/[$,]/g, '')) || 0,
         notes: h.notes || '',
-        lines: sq.lines.map(l => { const s = snapL[l.rfqs_sent_id] || {}; return { line: l.line, description: String(l.description || '').replace(/^\s*\|\s*/, ''), qty: l.qty,
-          status: s.quote_option || l.quote_option, total: s.total_price != null ? s.total_price : l.total_price }; }),
+        lines: sq.lines.map(l => {
+          const s = snapL[l.rfqs_sent_id] || {};
+          // What the supplier changed, from the preview saved with the quote (original -> new).
+          const p = s.preview, a = l.alteration || {}, notes = [], kinds = [];
+          const len = (ft, inch) => (Number(ft) || 0) + "'" + (Number(inch) ? Number(inch) + '"' : '');
+          if (p && p.changed) {
+            if (p.changed.quantity) { kinds.push('qty'); notes.push('qty ' + l.qty + ' → ' + p.quantity); }
+            if (p.changed.length) { kinds.push('length'); notes.push('length ' + len(a.length_ft, a.length_inch) + ' → ' + len(p.length_ft, p.length_inch)); }
+            if (p.changed.spec) { kinds.push('spec'); notes.push('spec → ' + p.spec_name); }
+          }
+          return { line: l.line, description: String(l.description || '').replace(/^\s*\|\s*/, ''), qty: l.qty,
+            status: s.quote_option || l.quote_option, total: s.total_price != null ? s.total_price : l.total_price,
+            alt_kind: kinds.join(', '), alt_note: notes.join('; ') };
+        }),
         fittings: fq ? fq.lines.map(l => ({ line: l.line, description: l.description, qty: l.qty, status: l.quote_option, unit: l.unit_price, total: l.total_price })) : [],
       };
       const accountEmails = String(qh['Customer_Entry_Form.Account_User_Email'] || '').split(',').map(s => s.trim()).filter(Boolean);
