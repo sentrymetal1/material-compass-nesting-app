@@ -54,7 +54,9 @@ function verify(token) {
   // Split from the RIGHT: a supplier token's id is an email, and emails contain dots.
   const i2 = t.lastIndexOf("."), i1 = i2 > 0 ? t.lastIndexOf(".", i2 - 1) : -1;
   if (i1 <= 0) return { error: t ? "malformed" : "missing" };
-  const who = t.slice(0, i1), expS = t.slice(i1 + 1, i2), sig = t.slice(i2 + 1);
+  // A "+" in a supplier's email (name+tag@x.com) arrives as a space after URL decoding;
+  // emails never contain spaces, so put it back before checking the signature.
+  const who = t.slice(0, i1).replace(/ /g, "+"), expS = t.slice(i1 + 1, i2), sig = t.slice(i2 + 1);
   const kind = who.charAt(0), id = who.slice(1);
   if ((kind !== "m" && kind !== "s" && kind !== "q") || !id || !/^\d{10,16}$/.test(expS)) return { error: "malformed" };
   // "q" = one supplier's link to price one quote, no login: id = <supplier id>_<quote id>.
@@ -90,7 +92,7 @@ function claimed(req) {
             q.Manufacture_ID || b.Manufacture_ID || q.mfg_id || b.mfg_id ||
             (req.params && req.params.manufacturer_id) || "";
   const s = q.email || req.get("X-Supplier-Email") || "";
-  return { mfg: String(m || "").trim(), email: String(s || "").trim().toLowerCase() };
+  return { mfg: String(m || "").trim(), email: String(s || "").trim().replace(/ /g, "+").toLowerCase() };
 }
 
 // Tenant routes: everything that reads or writes one shop's data (Tier 1 in the inventory).

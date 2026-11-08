@@ -171,8 +171,10 @@ function registerSupplierRoutes(app, deps) {
   // this is the only spot that changes.
   async function withSupplier(req, res, next) {
     try {
-      const email = req.query.email || req.get('X-Supplier-Email') || '';
-      const supplier = await resolveSupplier(email);
+      // "+" in an email arrives as a space after URL decoding (emails never contain spaces).
+      const email = String(req.query.email || req.get('X-Supplier-Email') || '').trim().replace(/ /g, '+');
+      // A valid supplier pass names the login itself: trust it over the address bar.
+      const supplier = await resolveSupplier(req.tenant && req.tenant.kind === 's' ? req.tenant.id : email);
       if (!supplier) {
         return res.status(404).json({
           ok: false, error: 'No supplier found for this login.',
