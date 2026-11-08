@@ -103,11 +103,39 @@ const TENANT_ROUTES = [
   /^\/api\/labor\/(shop|weld-time|estimate)$/, /^\/api\/intel\//,
 ];
 
-// What the report shows: per route, how requests would have fared under enforce.
-const stats = {};
-function tally(route, outcome) {
+// What the report shows: per route, how requests would have fared under enforce. Kept on
+// disk (flushed each minute) so it survives deploys and builds up over days of real use;
+// each non-ok outcome also records the PAGE that called (Referer path) and when, which is
+// what says which Zoho button/page still opens a screen without ?t=.
+let filestore = null;
+try { filestore = require("./filestore"); } catch (e) {}
+const STATS_FILE = "token-report.json";
+const loaded = (() => { try { return (filestore && filestore.readJson(STATS_FILE, null)) || {}; } catch (e) { return {}; } })();
+const stats = loaded.routes || {};
+const pages = loaded.pages || {};          // "<outcome> <page path>" -> { n, last, route }
+const since = loaded.since || new Date().toISOString();
+let dirty = false;
+function tally(route, outcome, page) {
   const r = stats[route] = stats[route] || {};
   r[outcome] = (r[outcome] || 0) + 1;
+  if (outcome !== "ok") {
+    const k = outcome + " " + (page || "(no referer)");
+    const p = pages[k] = pages[k] || { n: 0, route };
+    p.n++; p.last = new Date().toISOString(); p.route = route;
+  }
+  dirty = true;
+}
+if (filestore) {
+  setInterval(() => {
+    if (!dirty) return;
+    dirty = false;
+    try { filestore.writeJson(STATS_FILE, { since, routes: stats, pages }); } catch (e) {}
+  }, 60 * 1000).unref();
+}
+function resetStats() {
+  for (const k of Object.keys(stats)) delete stats[k];
+  for (const k of Object.keys(pages)) delete pages[k];
+  dirty = true;
 }
 
 function middleware(req, res, next) {
@@ -123,7 +151,9 @@ function middleware(req, res, next) {
   else outcome = "ok";
   // Group ids out of the route so the report reads per endpoint, not per record.
   const route = req.method + " " + p.replace(/\/\d{6,25}(?=\/|$)/g, "/:id");
-  tally(route, outcome);
+  let page = "";
+  try { const ref = req.get("Referer") || ""; page = ref ? new URL(ref).pathname : ""; } catch (e) {}
+  tally(route, outcome, page);
   req.tenant = v.error ? null : v;
   if (outcome === "ok" || MODE() !== "enforce") {
     if (outcome !== "ok" && outcome !== "missing") {
@@ -136,7 +166,7 @@ function middleware(req, res, next) {
 
 function report() {
   return { mode: MODE(), secret_configured: SECRET().length >= 32, variant_seen: lastVariant,
-           pinned_variant: process.env.MC_TOKEN_VARIANT || null, routes: stats };
+           pinned_variant: process.env.MC_TOKEN_VARIANT || null, since, routes: stats, pages };
 }
 
-module.exports = { verify, mint, middleware, report, candidates, TENANT_ROUTES };
+module.exports = { verify, mint, middleware, report, resetStats, candidates, TENANT_ROUTES };
