@@ -1106,8 +1106,12 @@ function registerSupplierRoutes(app, deps) {
         Valid_Until_Date: toZohoDate(nextBusinessDayIso(header.valid_until)),
         SV_Radio_For_Submit: header.ready ? 'Ready for submission' : 'Not ready for submit',
         // Email choices from the card; omitted by older clients -> the form defaults (checked) apply.
-        ...(typeof header.email_mfg === 'boolean' ? { Email_Manufacturer: header.email_mfg } : {}),
-        ...(typeof header.email_supplier === 'boolean' ? { Email_Supplier: header.email_supplier } : {}),
+        // Once Material Compass sends email itself, Zoho's copies are off: the card calls
+        // quote-notify after the fittings are saved too, so the email has the whole quote.
+        ...(require('./mailer').live() ? { Email_Manufacturer: false, Email_Supplier: false } : {
+          ...(typeof header.email_mfg === 'boolean' ? { Email_Manufacturer: header.email_mfg } : {}),
+          ...(typeof header.email_supplier === 'boolean' ? { Email_Supplier: header.email_supplier } : {}),
+        }),
         Shipping_Amount: header.shipping != null ? String(header.shipping) : '0',
         Miscellaneous_Charges: header.misc != null ? String(header.misc) : '0',
         Supplier_Notes_To_Buyer: header.notes || '',
@@ -1231,6 +1235,67 @@ function registerSupplierRoutes(app, deps) {
   };
   app.post('/api/supplier/me/quote-attachment', withSupplier, quoteAttachmentHandler);
   app.post('/api/mfg/supplier-quotes/quote-attachment', withMfgOnBehalf, quoteAttachmentHandler);
+
+  // POST …/quote-notify { quote_id } — after a quote's structural AND fitting parts are saved,
+  // email the manufacturer ("quote received") and the supplier (copy), each if the card asked
+  // for it. Live: Material Compass is the only sender. Testing: a [TEST] copy next to Zoho's.
+  const quoteNotifyHandler = async (req, res) => {
+    const mailer = require('./mailer');
+    const qid = String((req.body && req.body.quote_id) || '');
+    const sid = String(req.supplier.id);
+    const live = mailer.live(), testing = mailer.testing();
+    const snap = qid ? readQuoteSnapshot(sid, qid) : null;
+    if ((!live && !testing) || !snap) return res.json({ ok: true, sent: false });
+    res.json({ ok: true, sent: live });
+    try {
+      const h = snap.header || {};
+      bust('sent-rfqs:' + sid); bust('fit-rfqs:' + sid);
+      const [sent, fits] = await Promise.all([fetchSentRfqs(sid), fetchSentFittingRfqs(sid).catch(() => [])]);
+      const sq = sent.quotes.find(q => String(q.quote_id) === qid && inScope(req, q.manufacturer_id, q.quote_id)) || { lines: [] };
+      const fq = fits.find(q => String(q.quote_id) === qid && inScope(req, q.manufacturer_id, q.quote_id));
+      const mfg = sq.manufacturer_id || (fq && fq.manufacturer_id);
+      if (!mfg) return;
+      const token = await getAccessToken();
+      const qr = await axios.get(creatorApiBase() + '/report/All_Quotes?criteria=' + encodeURIComponent('(ID==' + qid + ')'), { headers: zohoHeaders(token) });
+      const qh = (qr.data && qr.data.data && qr.data.data[0]) || {};
+      const reps = await cachedLookup('mfg-reps:' + mfg, 10 * 60 * 1000, () =>
+        fetchAllZohoPages('/report/All_Company_Representatives?criteria=' + encodeURIComponent('(Manufacture==' + mfg + ')')));
+      const rep = reps.find(r => String(r.ID) === lkid(qh.Contact_Name)) || {};
+      // What was submitted (snapshot) wins over the rows, which the write-back may still be filling.
+      const snapL = snap.lines || {};
+      const sqNum = String(h.supplier_quote_number || '').trim();
+      const fmtD = s => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || '')); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : String(s || ''); };
+      const d = {
+        quote_number: qh.Reference_Number || sq.quote_number || (fq && fq.quote_number) || '',
+        description: qh.Quote_Description || sq.quote_description || '',
+        manufacturer: sq.manufacturer || (fq && fq.manufacturer) || qh.Manufacture_Name || '',
+        supplier: { name: req.supplier.company_name, email: req.supplier.email, phone: req.supplier.phone },
+        supplier_quote_number: sqNum && !/^AUTO-/.test(sqNum) ? sqNum : '—',
+        valid_until: fmtD(h.valid_until), lead_time: h.lead_time || '',
+        shipping: parseFloat(String(h.shipping || '0').replace(/[$,]/g, '')) || 0,
+        misc: parseFloat(String(h.misc || '0').replace(/[$,]/g, '')) || 0,
+        notes: h.notes || '',
+        lines: sq.lines.map(l => { const s = snapL[l.rfqs_sent_id] || {}; return { line: l.line, description: String(l.description || '').replace(/^\s*\|\s*/, ''), qty: l.qty,
+          status: s.quote_option || l.quote_option, total: s.total_price != null ? s.total_price : l.total_price }; }),
+        fittings: fq ? fq.lines.map(l => ({ line: l.line, description: l.description, qty: l.qty, status: l.quote_option, unit: l.unit_price, total: l.total_price })) : [],
+      };
+      const accountEmails = String(qh['Customer_Entry_Form.Account_User_Email'] || '').split(',').map(s => s.trim()).filter(Boolean);
+      const mfgTo = rep.Email ? [rep.Email] : accountEmails;
+      if (h.email_mfg !== false && mfgTo.length) {
+        const m = mailer.quoteReceivedEmail(d, { copy: false });
+        const r = await mailer.send({ to: mfgTo, subject: m.subject, html: m.html, replyTo: req.supplier.email || undefined });
+        console.log('[quote-notify]', live ? 'SENT' : 'test copy', 'mfg', qid, sid, r.ok ? r.id : r.error);
+      }
+      if (h.email_supplier !== false && req.supplier.email) {
+        const m = mailer.quoteReceivedEmail(d, { copy: true });
+        const r = await mailer.send({ to: req.supplier.email, subject: m.subject, html: m.html, replyTo: rep.Email || undefined });
+        console.log('[quote-notify]', live ? 'SENT' : 'test copy', 'supplier', qid, sid, r.ok ? r.id : r.error);
+      }
+    } catch (e) { console.error('[quote-notify]', qid, sid, e.message); }
+  };
+  app.post('/api/supplier/me/quote-notify', withSupplier, quoteNotifyHandler);
+  app.post('/api/mfg/supplier-quotes/quote-notify', withMfgOnBehalf, quoteNotifyHandler);
+  app.post('/api/q/quote-notify', withQuoteLink, quoteNotifyHandler);
 
   // The no-login quote link (/quote-online?t=…): the supplier's own card, for one quote.
   app.get('/api/q/rfqs', withQuoteLink, rfqsHandler);

@@ -846,6 +846,11 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
         } catch (e) { attachResult = { ok: false, error: String(e.message || e) }; }
       }
       setSubmitState({ status: 'done', structResult, fitResult, attachResult });
+      // Everything is saved: now the "quote received" / copy emails, with structural AND fittings.
+      if (structResult && structResult.ok) {
+        fetch(ep('quote-notify'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quote_id: quote.quote_id }) }).catch(() => {});
+      }
       if (onSubmitted && (!structResult || structResult.ok) && (!fitResult || fitResult.ok)) onSubmitted();
     } catch (e) {
       setSubmitState({ status: 'error', error: String(e.message || e) });

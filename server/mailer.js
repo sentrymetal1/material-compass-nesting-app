@@ -181,4 +181,59 @@ function noMatchEmail(q, lines) {
   return { subject: 'Action Required ~ Quote #' + q.quote_number + (q.revision ? ' Rev #' + q.revision : '') + ' Has Unmatched Items', html };
 }
 
-module.exports = { send, configured, rfqEmail, mfgSentEmail, noMatchEmail, esc };
+// A supplier's quote, as saved: to the manufacturer ("received") or the supplier ("copy").
+// d: { quote_number, description, manufacturer, supplier:{name,email,phone}, supplier_quote_number,
+//      valid_until, lead_time, shipping, misc, notes,
+//      lines:[{line, description, qty, status, total}], fittings:[{line, description, qty, status, unit, total}] }
+function money(n) { return '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function quoteReceivedEmail(d, opts) {
+  const copy = !!(opts && opts.copy);
+  const statusCell = s => {
+    const no = /no quote/i.test(s || ''), alt = /alter/i.test(s || '');
+    return td('<span style="color:' + (no ? '#c92a2a' : alt ? '#b54708' : '#1a7f37') + ';font-weight:700;font-size:12px">' + esc(no ? 'No Quote' : alt ? 'Altered' : 'Quoted') + '</span>', 'center');
+  };
+  const mat = d.lines.reduce((s, l) => s + (Number(l.total) || 0), 0);
+  const fit = d.fittings.reduce((s, l) => s + (Number(l.total) || 0), 0);
+  const total = mat + fit + (Number(d.shipping) || 0) + (Number(d.misc) || 0);
+  const quoted = d.lines.concat(d.fittings).filter(l => !/no quote/i.test(l.status || '')).length;
+  const tbl = (head, rows) => '<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d9e2ec;border-collapse:collapse;margin-top:10px">' + head + rows + '</table>';
+  const sRows = d.lines.map((l, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '">' + td(esc(l.line), 'center') + td(esc(l.description)) +
+    td(esc(l.qty == null ? '' : l.qty), 'center') + statusCell(l.status) + td(/no quote/i.test(l.status || '') ? '—' : money(l.total), 'right') + '</tr>').join('');
+  const fRows = d.fittings.map((l, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '">' + td(esc(l.line), 'center') + td(esc(l.description)) +
+    td(esc(l.qty == null ? '' : l.qty), 'center') + statusCell(l.status) + td(/no quote/i.test(l.status || '') ? '—' : money(l.unit) + '/ea', 'right') +
+    td(/no quote/i.test(l.status || '') ? '—' : money(l.total), 'right') + '</tr>').join('');
+  const sup = d.supplier || {};
+  const body =
+    '<tr><td style="padding:16px 28px"><table width="100%"><tr><td style="vertical-align:top">' +
+      '<div style="font-size:11px;color:#7a8a99">QUOTED BY</div><div style="font-size:16px;font-weight:700">' + esc(sup.name) + '</div>' +
+      (sup.email ? '<div style="font-size:13px">' + esc(sup.email) + '</div>' : '') + (sup.phone ? '<div style="font-size:13px">' + esc(sup.phone) + '</div>' : '') +
+      (d.description ? '<div style="font-size:12px;color:#7a8a99;margin-top:6px">' + esc(d.description) + '</div>' : '') +
+    '</td><td style="vertical-align:top;text-align:right"><div style="background:#f4f7fb;border-radius:8px;padding:12px 18px;display:inline-block;text-align:center">' +
+      '<div style="font-size:11px;color:#7a8a99">QUOTE TOTAL</div><div style="font-size:24px;font-weight:700">' + money(total) + '</div>' +
+      '<div style="font-size:11px;color:#7a8a99">' + quoted + ' of ' + (d.lines.length + d.fittings.length) + ' priced</div></div></td></tr></table></td></tr>' +
+    '<tr><td style="padding:0 28px"><table width="100%" style="background:#f4f7fb;border-radius:6px"><tr>' +
+      [['STRUCTURAL / PIPE', money(mat)], ['FITTINGS', money(fit)], ['SHIPPING', money(d.shipping)], ['MISC', money(d.misc)], ['LEAD TIME', d.lead_time || '']]
+        .filter(([k]) => k !== 'FITTINGS' || d.fittings.length)
+        .map(([k, v]) => '<td style="padding:10px 12px;font-size:11px;color:#7a8a99">' + k + '<div style="font-size:14px;color:#1f2d3d;font-weight:700">' + esc(v) + '</div></td>').join('') +
+    '</tr></table></td></tr>' +
+    (d.lines.length ? '<tr><td style="padding:12px 28px 0">' + tbl('<tr style="background:#eef2f7">' + th('#') + th('STRUCTURAL / PIPE') + th('QTY') + th('STATUS') + th('LINE TOTAL') + '</tr>', sRows) + '</td></tr>' : '') +
+    (d.fittings.length ? '<tr><td style="padding:12px 28px 0">' + tbl('<tr style="background:#eef2f7">' + th('#') + th('FITTING') + th('QTY') + th('STATUS') + th('UNIT') + th('LINE TOTAL') + '</tr>', fRows) + '</td></tr>' : '') +
+    '<tr><td style="padding:12px 28px"><table width="100%"><tr><td style="text-align:right;font-size:12px;color:#55677a">Quote total (incl. shipping &amp; misc.)</td><td style="text-align:right;font-size:18px;font-weight:700;width:150px">' + money(total) + '</td></tr></table>' +
+      (d.notes ? '<div style="margin-top:8px;font-size:13px"><b>Notes:</b> ' + esc(d.notes) + '</div>' : '') +
+      '<div style="background:#fff8e6;border-top:2px solid #f0ad4e;padding:12px 16px;font-size:13px;margin-top:12px">' +
+      (copy ? '<b>For your records</b><br>If anything above is not what you quoted, submit a revised quote for <b>' + esc(d.quote_number) + '</b>. You will be notified if the manufacturer awards any lines.'
+            : '<b>Next steps</b><br>Open <b>' + esc(d.quote_number) + '</b> in Material Compass. Check any altered or not-quoted lines, then compare with your other suppliers before awarding.') +
+      '</div></td></tr>';
+  const html = frame(copy ? 'QUOTE SUBMITTED' : 'SUPPLIER QUOTE RECEIVED',
+    copy ? 'A copy of your quote to ' + esc(d.manufacturer) + ', as recorded in Material Compass.' : esc(sup.name) + ' has responded to your request for quote. Review it before awarding.',
+    BLUE, [['RFQ NUMBER', d.quote_number], ['SUPPLIER QUOTE #', d.supplier_quote_number], ['VALID UNTIL', d.valid_until, true]], body);
+  const subject = copy ? 'Your quote for ' + d.quote_number + ' - ' + money(total) + ' (copy)'
+    : sup.name + ' quoted ' + d.quote_number + ' - ' + money(total);
+  return { subject, html, total };
+}
+
+// Material Compass is the real sender (Zoho's copies are switched off) vs. test copies only.
+const live = () => configured() && process.env.RFQ_EMAIL_LIVE === '1' && !process.env.MAIL_TEST_TO;
+const testing = () => configured() && !live() && !!process.env.MAIL_TEST_TO;
+
+module.exports = { send, configured, live, testing, rfqEmail, mfgSentEmail, noMatchEmail, quoteReceivedEmail, esc };
