@@ -401,6 +401,19 @@ function registerSupplierRoutes(app, deps) {
       fetchAllZohoPages('/report/All_RFQs_Sent_Report?criteria=' + crit));
   }
 
+  // Zoho date / datetime ("Nov 08,2026" or "Nov 08,2026 09:35:27") -> sortable
+  // "2026-11-08" / "2026-11-08T09:35:27". Anything else -> "".
+  const MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+  function zohoIso(s) {
+    const m = /^([A-Za-z]{3})\s*(\d{1,2}),\s*(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(String(s || '').trim());
+    if (!m || !MON[m[1].toLowerCase()]) return '';
+    const p2 = n => String(n).padStart(2, '0');
+    const d = m[3] + '-' + p2(MON[m[1].toLowerCase()]) + '-' + p2(m[2]);
+    return m[4] ? d + 'T' + m[4] + ':' + m[5] + ':' + (m[6] || '00') : d;
+  }
+  // Keep the later of two ISO strings ("" loses).
+  const laterIso = (a, b) => (b && b > (a || '') ? b : (a || ''));
+
   async function fetchSentRfqs(supplierId) {
     const [rows, catalogs] = await Promise.all([
       sentRowsLatest(supplierId),
@@ -426,13 +439,23 @@ function registerSupplierRoutes(app, deps) {
           manufacturer: r['Customer_LU.Company_Name'] || flatten(r.Manufacturer) || '',
           status: r['Quote_LU.Status'] || '',
           quote_date: r.Quote_Date || r.RFQSent_Timestamp || '',
+          // For the card header: when it reached this supplier, when they last priced it,
+          // and the MFG's "responses due" date. The due date needs the dot-walk column
+          // Quote_LU.Requested_Responses_Due on All_RFQs_Sent_Report; blank until it's added.
+          sent_at: '',
+          priced_at: '',
+          due_date: zohoIso(r['Quote_LU.Requested_Responses_Due']).slice(0, 10),
           // MFG's quote requirements (Quote_Form.Quote_Requirements, dot-walked via Quote_LU on
           // this report) — prepopulates the supplier's Quote_Requirements_Selection.
           mfg_requirements: Array.isArray(r['Quote_LU.Quote_Requirements']) ? r['Quote_LU.Quote_Requirements'] : [],
           lines: [],
         });
       }
-      byQuote.get(qid).lines.push({
+      const qe = byQuote.get(qid);
+      qe.sent_at = laterIso(qe.sent_at, zohoIso(r.RFQSent_Timestamp) || zohoIso(r.Quote_Date));
+      if (r.Item_Verification_Status) qe.priced_at = laterIso(qe.priced_at, zohoIso(r.Price_Last_Updated));
+      if (!qe.due_date) qe.due_date = zohoIso(r['Quote_LU.Requested_Responses_Due']).slice(0, 10);
+      qe.lines.push({
         rfqs_sent_id: String(r.ID),
         sv_detail_id: lkid(r.Supplier_Verify_Detail),
         sv_form_id: lkid(r.Supplier_Verify_Form),
@@ -539,6 +562,8 @@ function registerSupplierRoutes(app, deps) {
           manufacturer_id: lkid(r.Customer_LU),
           manufacturer: r['Customer_LU.Company_Name'] || r.Customer_Name || '',
           quote_date: r.Quote_Date || r.Quote_Timestamp || '',
+          sent_at: zohoIso(r.Quote_Date) || zohoIso(r.Quote_Timestamp),
+          due_date: zohoIso(r['Quote_LU.Requested_Responses_Due']).slice(0, 10),
           status: r.RFQ_Fitting_Sent_Status || '',
           lines: [],
         });

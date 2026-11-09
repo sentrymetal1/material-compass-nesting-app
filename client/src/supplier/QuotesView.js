@@ -220,6 +220,7 @@ export function mergeQuotes(structuralQuotes, fittingQuotes) {
         quote_description: q.quote_description || '',
         manufacturer: q.manufacturer || '',
         status: q.status || '',
+        sent_at: '', priced_at: '', due_date: '',
         // quote-level fields from the structural pipeline — preserve them through the merge
         mfg_requirements: Array.isArray(q.mfg_requirements) ? q.mfg_requirements : [],
         files: Array.isArray(q.files) ? q.files : [],
@@ -227,7 +228,12 @@ export function mergeQuotes(structuralQuotes, fittingQuotes) {
         fitting_lines: [],
       });
     }
-    return m.get(q.quote_id);
+    const e = m.get(q.quote_id);
+    // Dates: the later sent/priced time wins; the first due date found wins.
+    if (q.sent_at && q.sent_at > e.sent_at) e.sent_at = q.sent_at;
+    if (q.priced_at && q.priced_at > e.priced_at) e.priced_at = q.priced_at;
+    if (!e.due_date && q.due_date) e.due_date = q.due_date;
+    return e;
   };
   for (const q of structuralQuotes || []) {
     const e = ensure(q);
@@ -249,6 +255,69 @@ export function mergeQuotes(structuralQuotes, fittingQuotes) {
     if (!e.status) e.status = q.status || '';
   }
   return [...m.values()];
+}
+
+// "2026-11-08" / "2026-11-08T09:35:27" -> "Nov 8" ("Nov 8, 2025" outside this year).
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function shortDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  const s = MONTHS[+m[2] - 1] + ' ' + (+m[3]);
+  return +m[1] === new Date().getFullYear() ? s : s + ', ' + m[1];
+}
+// Whole days from today to an ISO date (negative = past).
+function daysUntil(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return null;
+  const t = new Date(); const today = Date.UTC(t.getFullYear(), t.getMonth(), t.getDate());
+  return Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - today) / 86400000);
+}
+// What's on the quote, from its lines: material forms ("Plate · Angle · Pipe") and the
+// MFG's structural weight. The form is the first part of "Plate | Carbon Steel | A36 | …".
+function quoteContents(q) {
+  const forms = [];
+  q.structural_lines.forEach(l => {
+    const f = String(l.description || '').split('|')[0].trim();
+    if (f && !forms.includes(f)) forms.push(f);
+  });
+  if (q.fitting_lines.length) forms.push('Fittings');
+  const lb = q.structural_lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.unit_weight) || 0), 0);
+  return { forms, lb };
+}
+
+// Second line of a quote card header: due date, sent date, last priced, what's on it.
+function QuoteFacts({ quote, active, showPriced }) {
+  const { forms, lb } = quoteContents(quote);
+  const facts = [];
+  if (quote.due_date) {
+    const d = daysUntil(quote.due_date);
+    let cls = 'q-fact-due', txt = 'Due ' + shortDate(quote.due_date);
+    if (active && d != null) {
+      if (d < 0) { cls += ' q-fact-late'; txt += ' (past due)'; }
+      else if (d === 0) { cls += ' q-fact-soon'; txt += ' (today)'; }
+      else if (d <= 3) { cls += ' q-fact-soon'; txt += ' (in ' + d + ' day' + (d > 1 ? 's' : '') + ')'; }
+    }
+    facts.push(<span key="due" className={cls}>{txt}</span>);
+  }
+  if (quote.sent_at) facts.push(<span key="sent">Sent {shortDate(quote.sent_at)}</span>);
+  if (showPriced && quote.priced_at) facts.push(<span key="priced">Last priced {shortDate(quote.priced_at)}</span>);
+  if (forms.length) facts.push(<span key="forms" title={forms.join(', ')}>{forms.slice(0, 4).join(' · ')}{forms.length > 4 ? ' +' + (forms.length - 4) + ' more' : ''}</span>);
+  if (lb > 0) facts.push(<span key="lb">≈ {Math.round(lb).toLocaleString('en-US')} lb</span>);
+  if (!facts.length) return null;
+  return <div className="q-facts">{facts}</div>;
+}
+
+// Open quotes: soonest due date first (no due date after), then newest sent.
+// Every other tab: newest sent first.
+function sortQuotes(list, byDue) {
+  return [...list].sort((a, b) => {
+    if (byDue && (a.due_date || b.due_date)) {
+      if (!a.due_date) return 1;
+      if (!b.due_date) return -1;
+      if (a.due_date !== b.due_date) return a.due_date < b.due_date ? -1 : 1;
+    }
+    return (b.sent_at || '').localeCompare(a.sent_at || '');
+  });
 }
 
 // What auto-fill did to one line: the quote row it was read from, and anything that needs a
@@ -930,8 +999,13 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
       <div className="q-head" onClick={() => setOpen(o => !o)}>
         <div className="q-head-main">
           <span className="q-caret">{open ? '▾' : '▸'}</span>
-          <strong>Quote {quote.quote_number}</strong>
-          <span className="q-head-desc">{quote.quote_description}</span>
+          <div className="q-head-text">
+            <div className="q-head-title">
+              <strong>Quote {quote.quote_number}</strong>
+              <span className="q-head-desc" title={quote.quote_description}>{quote.quote_description}</span>
+            </div>
+            <QuoteFacts quote={quote} active showPriced={revise} />
+          </div>
         </div>
         <div className="q-head-meta">
           {quote.manufacturer && <span className="chip">{quote.manufacturer}</span>}
@@ -1280,7 +1354,7 @@ export default function QuotesView({ email }) {
     awarded: 'sourcing in progress',
     closed: 'completed or cancelled',
   };
-  const list = buckets[tab] || [];
+  const list = sortQuotes(buckets[tab] || [], tab === 'open');
   const readOnly = tab === 'awarded' || tab === 'closed';
 
   return (
@@ -1301,7 +1375,15 @@ export default function QuotesView({ email }) {
             ? (
               <div key={q.quote_id} className="q-card q-card-ro">
                 <div className="q-head">
-                  <div className="q-head-main"><strong>Quote {q.quote_number}</strong><span className="q-head-desc">{q.quote_description}</span></div>
+                  <div className="q-head-main">
+                    <div className="q-head-text">
+                      <div className="q-head-title">
+                        <strong>Quote {q.quote_number}</strong>
+                        <span className="q-head-desc" title={q.quote_description}>{q.quote_description}</span>
+                      </div>
+                      <QuoteFacts quote={q} active={false} showPriced />
+                    </div>
+                  </div>
                   <div className="q-head-meta">
                     {q.manufacturer && <span className="chip">{q.manufacturer}</span>}
                     {q.structural_lines.length > 0 && <span className="chip">{q.structural_lines.length} structural</span>}

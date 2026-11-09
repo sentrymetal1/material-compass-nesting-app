@@ -111,6 +111,15 @@
 .q-head-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .q-caret { color: var(--muted); font-size: 12px; }
 .q-head-desc { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.q-head-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.q-head-title strong { white-space: nowrap; }
+.q-head-title .q-head-desc { color: #374151; }
+.q-facts { display: flex; flex-wrap: wrap; gap: 4px 0; font-size: 12px; color: var(--muted); }
+.q-facts > span + span::before { content: '·'; margin: 0 8px; color: #c3c9d2; }
+.q-fact-due { color: #1f2937; font-weight: 600; }
+.q-fact-soon { color: #b45309; }
+.q-fact-late { color: #c0392b; }
 .q-head-meta { display: flex; gap: 6px; flex-shrink: 0; }
 .q-body { border-top: 1px solid var(--line); padding: 4px 0 0; }
 .q-table { width: 100%; border-collapse: collapse; font-size: 13px; }
