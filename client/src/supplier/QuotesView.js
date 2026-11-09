@@ -311,7 +311,7 @@ const descKey = d => String(d || '').replace(/^\s*(Item No \d+\s*)?\|?\s*/i, '')
 
 // One structural line — supplier edits EITHER Line Total OR Price/lb (each recalcs the
 // other via line weight); unit price stays derived (total ÷ qty).
-function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptions, ep, mark }) {
+function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptions, ep, mark, invalid }) {
   const kind = ALTER_KIND[draft.quote_option] || null;
   // An altered line prices against its NEW qty/weight — effLine folds the server's
   // preview over the original so the row, the pricing math and the quote totals can
@@ -370,7 +370,7 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
   }, [qty, totalWeight]);   // eslint-disable-line
 
   return (
-    <tr className={(noQuote ? 'q-line q-noquote' : 'q-line') + afRowClass(mark)}>
+    <tr className={(noQuote ? 'q-line q-noquote' : 'q-line') + afRowClass(mark) + (invalid ? ' q-invalid' : '')}>
       <LineNoCell line={line} mark={mark} />
       <td className="q-desc">
         {/* When altered, show what the MFG asked for struck through above the new line, so
@@ -415,13 +415,13 @@ function LineRow({ line, draft, onChange, leadChoices, itemReqChoices, specOptio
 }
 
 // One fitting line — priced PER-EACH (total = unit × qty).
-function FittingLineRow({ line, draft, onChange, leadChoices, mark }) {
+function FittingLineRow({ line, draft, onChange, leadChoices, mark, invalid }) {
   const qty = Number(line.qty) || 0;
   const noQuote = draft.quote_option === 'No Quote';
   const unit = !noQuote ? (parseFloat(draft.unit_price) || 0) : 0;
   const total = unit * qty;
   return (
-    <tr className={(noQuote ? 'q-line q-noquote' : 'q-line') + afRowClass(mark)}>
+    <tr className={(noQuote ? 'q-line q-noquote' : 'q-line') + afRowClass(mark) + (invalid ? ' q-invalid' : '')}>
       <LineNoCell line={line} mark={mark} />
       <td className="q-desc">{line.description}<AutofillMark mark={mark} /></td>
       <td className="q-num">{num(qty, 0)}</td>
@@ -747,7 +747,38 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
       }).map(l => 'Fitting ' + l.line)
     : [];
 
+  // Every line is answered: a price, or an explicit No Quote (Mark, 2026-11-08). A blank
+  // line used to go out as $0 under "Quote As Is", which the MFG side cannot tell apart
+  // from a real quote, and the sourcing tool then treats it as a priced option.
+  const unpricedStruct = new Set(quote.structural_lines.filter(l => {
+    const d = drafts[l.rfqs_sent_id] || {};
+    return d.quote_option !== 'No Quote' && !((parseFloat(d.total_price) || 0) > 0);
+  }).map(l => l.rfqs_sent_id));
+  const unpricedFit = new Set(quote.fitting_lines.filter(l => {
+    const d = fitDrafts[l.rfq_row_id] || {};
+    return d.quote_option !== 'No Quote' && !((parseFloat(d.unit_price) || 0) > 0);
+  }).map(l => l.rfq_row_id));
+  const unpricedLabels = quote.structural_lines.filter(l => unpricedStruct.has(l.rfqs_sent_id)).map(l => 'Line ' + l.line)
+    .concat(quote.fitting_lines.filter(l => unpricedFit.has(l.rfq_row_id)).map(l => 'Fitting ' + l.line));
+
+  const jumpToFirstInvalid = () => setTimeout(() => {
+    const root = cardRef.current;
+    if (!root) return;
+    const first = root.querySelector('.q-invalid');
+    if (!first) return;
+    first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const control = first.querySelector('select, input, textarea, button');
+    if (control) control.focus({ preventScroll: true });
+  }, 0);
+
   const onSubmit = async () => {
+    if (unpricedLabels.length) {
+      setShowErrors(true);
+      const shown = unpricedLabels.slice(0, 12).join(', ') + (unpricedLabels.length > 12 ? ' and ' + (unpricedLabels.length - 12) + ' more' : '');
+      setSubmitState({ status: 'error', error: 'Every line needs a price or “No Quote”. Not answered: ' + shown + '.' });
+      jumpToFirstInvalid();
+      return;
+    }
     if (missingFields.length) {
       setShowErrors(true);
       setSubmitState({ status: 'error', error: 'Please complete all required fields: ' + missingFields.join(', ') + '.' });
@@ -1009,7 +1040,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                   {orderLines(quote.structural_lines, 'structural', 'rfqs_sent_id').map(([l, divider]) => (
                     <React.Fragment key={l.rfqs_sent_id}>
                     {divider && <tr className="q-af-divider"><td colSpan="10">Not on {mfg ? "the supplier's" : 'your'} quote — set to No Quote</td></tr>}
-                    <LineRow line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} ep={ep} specOptions={specOptionsFor(l)} mark={markOf('structural', l.rfqs_sent_id)} />
+                    <LineRow line={l} draft={drafts[l.rfqs_sent_id]} onChange={p => setLine(l.rfqs_sent_id, p)} leadChoices={leadChoices} itemReqChoices={itemReqChoices} ep={ep} specOptions={specOptionsFor(l)} mark={markOf('structural', l.rfqs_sent_id)} invalid={showErrors && unpricedStruct.has(l.rfqs_sent_id)} />
                     </React.Fragment>
                   ))}
                 </tbody>
@@ -1031,7 +1062,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
                   {orderLines(quote.fitting_lines, 'fittings', 'rfq_row_id').map(([l, divider]) => (
                     <React.Fragment key={l.rfq_row_id}>
                     {divider && <tr className="q-af-divider"><td colSpan="8">Not on {mfg ? "the supplier's" : 'your'} quote — set to No Quote</td></tr>}
-                    <FittingLineRow line={l} draft={fitDrafts[l.rfq_row_id]} onChange={p => setFit(l.rfq_row_id, p)} leadChoices={leadChoices} mark={markOf('fittings', l.rfq_row_id)} />
+                    <FittingLineRow line={l} draft={fitDrafts[l.rfq_row_id]} onChange={p => setFit(l.rfq_row_id, p)} leadChoices={leadChoices} mark={markOf('fittings', l.rfq_row_id)} invalid={showErrors && unpricedFit.has(l.rfq_row_id)} />
                     </React.Fragment>
                   ))}
                 </tbody>

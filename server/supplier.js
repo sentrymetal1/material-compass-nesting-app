@@ -614,6 +614,11 @@ function registerSupplierRoutes(app, deps) {
       // Empty on a fittings-only quote, where no SV record was created at all.
       const svFormId = String((req.body && req.body.sv_form_id) || '').trim();
       if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ ok: false, error: 'no lines to submit' });
+      // Price or No Quote on every fitting, checked before anything is written.
+      const unansweredFit = lines.filter(l => l.quote_option !== 'No Quote' && !(Number(l.unit_price) > 0));
+      if (unansweredFit.length) {
+        return res.status(400).json({ ok: false, error: 'Every fitting needs a price or "No Quote". ' + unansweredFit.length + ' not answered.' });
+      }
 
       // Index the supplier's own bridge rows for ownership + qty (no extra API call).
       const quotes = (await fetchSentFittingRfqs(sid)).filter(q => inScope(req, q.manufacturer_id, q.quote_id));
@@ -886,6 +891,13 @@ function registerSupplierRoutes(app, deps) {
       // gets past it from being saved with an invented "7 Days".
       if (!LEAD_TIME_CHOICES.includes(String(header.lead_time || '').trim())) {
         return res.status(400).json({ ok: false, error: 'Please choose a lead time for ship complete.' });
+      }
+      // Every line is answered: a price or an explicit No Quote (Mark, 2026-11-08). A blank
+      // line saved as $0 "Quote As Is" reads on the MFG side as a real $0 offer.
+      const unanswered = lines.filter(l => l.quote_option !== 'No Quote' && !(Number(l.total_price) > 0));
+      if (unanswered.length) {
+        return res.status(400).json({ ok: false, error: 'Every line needs a price or "No Quote". Not answered: '
+          + unanswered.map(l => 'Line ' + (l.line != null ? l.line : '?')).join(', ') + '.' });
       }
 
       // supplier quote number (their input) or an auto placeholder
