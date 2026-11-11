@@ -209,11 +209,14 @@
                         color:#2c5c96; font-family:inherit; text-align:center; padding:1px 0; }
     .comp .cqty input:focus { outline:1px solid var(--blue); border-radius:3px; background:#fff; }
     /* How many of one DRAWING a unit needs ("QTY 2 REQ'D"). Orange = read off the sheet, not yet touched. */
-    .comp .dqty { font-size:10px; color:#3d6ea8; background:#eef4fb; border:1px solid #d7e5f5; border-radius:8px;
-                  padding:0 4px; white-space:nowrap; font-weight:600; display:inline-flex; align-items:center; gap:1px; }
+    .comp .dqty { font-size:11px; color:#3d6ea8; background:#eef4fb; border:1px solid #d7e5f5; border-radius:8px;
+                  padding:1px 6px; white-space:nowrap; font-weight:600; display:inline-flex; align-items:center; gap:3px;
+                  flex:0 0 auto; }
     .comp .dqty.ai { color:#8a4b09; background:#fff7ed; border-color:#fcd9a8; }
-    .comp .dqty input { width:30px; border:0; background:transparent; font-size:11px; font-weight:700; color:inherit;
-                        font-family:inherit; text-align:center; padding:0; }
+    /* Wide enough for 3 digits plus the browser's up/down arrows (Mark: "the number field is too small"). */
+    .comp .dqty input { width:52px; min-width:52px; border:1px solid #cfdcec; border-radius:5px; background:#fff;
+                        font-size:12.5px; font-weight:700; color:#1f2a36; font-family:inherit; text-align:center;
+                        padding:2px 2px; box-sizing:border-box; }
     .comp .dqty input:focus { outline:1px solid var(--blue); border-radius:3px; background:#fff; }
     .scopesum { font-size:11px; color:#556; background:#f7fafd; border:1px solid #e3ecf6;
                 border-radius:6px; padding:6px 9px; margin-bottom:9px; line-height:1.6; }
