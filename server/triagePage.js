@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-11-10-2';
+const BUILD_TAG = 'triage-ui-2026-11-10-3';
 const { SCOPE_ITEMS, FINISH_TYPES, FINISH_BY } = require('./triageScope');
 
 // The narrated walkthrough of this page. Linked rather than embedded: this page

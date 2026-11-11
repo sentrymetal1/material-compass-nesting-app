@@ -16,6 +16,9 @@
 const SCOPE_ITEMS = [
   { key: 'material',      label: 'Material',      printed: 'material' },
   { key: 'fittings',      label: 'Fittings',      printed: 'fittings' },
+  { key: 'grating',       label: 'Grating',       printed: 'grating' },
+  { key: 'fasteners',     label: 'Fasteners',     printed: 'fasteners' },
+  { key: 'anchor_bolts',  label: 'Anchor bolts',  printed: 'anchor bolts' },
   { key: 'fabrication',   label: 'Fabrication',   printed: 'shop fabrication' },
   { key: 'welding',       label: 'Welding',       printed: 'welding' },
   { key: 'delivery',      label: 'Delivery',      printed: 'delivery' },
@@ -46,6 +49,9 @@ const SCOPE_PROMPT_RULE =
   "- scope = what the requester wants INCLUDED in the price, read ONLY from explicit words. " +
   "'include material' / 'furnish' -> material included; 'material by others' / 'customer furnished' -> material excluded. " +
   "'elbows', 'fittings', 'flanges' to be included -> fittings included. 'fabricate' -> fabrication included. " +
+  "'grating', 'bar grating', 'grating treads' to be furnished -> grating included; 'grating by others' -> grating excluded. " +
+  "'bolts', 'hardware', 'fasteners', 'connection bolts' to be furnished -> fasteners included; 'bolts by others/erector' -> fasteners excluded. " +
+  "'anchor bolts', 'anchor rods' to be furnished -> anchor_bolts included; 'anchor rods by others', 'exclude anchor rods', 'by concrete contractor' -> anchor_bolts excluded. " +
   "'weld', 'welded', 'fabrication and welding' -> welding included; 'bolted only', 'no welding' -> welding excluded. " +
   "'install', 'erect', 'furnish and install' -> installation included; 'furnish only', 'install by others' -> installation excluded. " +
   "'delivered', 'deliver to site' -> delivery included; 'F.O.B. shop', 'will pick up' -> delivery excluded. " +
