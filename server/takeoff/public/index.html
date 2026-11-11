@@ -9,6 +9,7 @@
   <!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
   <script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
   <script src="mc-dialog.js"></script>
+<script src="scope-pills.js"></script>
 
   <style>
     :root { --blue:#5F94CE; --w:1780px; }
@@ -464,8 +465,11 @@
     <!-- WHAT TO QUOTE: the estimator's instructions for this job, written at Create Project on the
          RFQ or here. Sent with the run; the AI follows it over its own reading of the scope. -->
     <div style="margin:0 0 16px;padding:11px 13px;background:#fbfcfe;border:1px solid #dfe6ee;border-radius:8px;">
+      <!-- The triage pills again, plus the "How it gets made" drill-down (scope-pills.js). Their words
+           are added to the notes below when the run is sent — see briefText(). -->
+      <div id="scopePanel"></div>
       <label for="quoteBrief" style="display:block;font-size:13px;font-weight:700;color:#2b3340;margin-bottom:5px">
-        What to quote <span style="font-weight:400;color:#8893a0">— optional; the AI follows it</span></label>
+        Additional information or notes <span style="font-weight:400;color:#8893a0">— optional; the AI follows these with the choices above</span></label>
       <textarea id="quoteBrief" rows="2" style="width:100%;box-sizing:border-box;font:inherit;font-size:13px;padding:7px 9px;
         border:1px solid #cdd3da;border-radius:6px;resize:vertical"
         placeholder="e.g. Handrail and guardrail only. Exclude anchor rods and the support steel. Hot-dip galvanized."></textarea>
@@ -759,6 +763,28 @@
         .catch(function () {});
     }
 
+    // The pills + "How it gets made" (scope-pills.js). Their words come back from the server on every
+    // change and are added to the notes when the run is sent, so the AI always gets the current choices.
+    let scopeBriefText = "";
+    let scopeMounted = false;
+    function mountScope(d) {
+      if (scopeMounted || !window.McScope) return;
+      scopeMounted = true;
+      window.McScope.mount(document.getElementById("scopePanel"), {
+        base: RAILWAY_URL, project_id: params.project_id, manufacture: params.manufacturer_id,
+        scope: d && d.scope, scope_text: d && d.scope_text,
+        onText: (t) => { scopeBriefText = t || ""; },
+      });
+    }
+    function stripScopeParagraph(s) {
+      return String(s || "").replace(/(^|\n)\s*SCOPE \(from triage\):[^\n]*(\n|$)/g, "$1").trim();
+    }
+    // What the AI is told: the estimator's own notes, then the pill choices in words.
+    function briefText() {
+      const notes = stripScopeParagraph(((document.getElementById("quoteBrief") || {}).value || "").trim());
+      return [notes, scopeBriefText].filter((s) => String(s).trim()).join("\n\n");
+    }
+
     // "What to quote": saved for the project when it changes (on the server's own disk, no Zoho calls),
     // so a reopened take-off and the next run get the same instructions.
     (function () {
@@ -799,19 +825,23 @@
       const box = document.getElementById("fromRfq");
       let d;
       try {
-        const r = await fetch(RAILWAY_URL + "/api/triage/source-files/" + encodeURIComponent(params.project_id));
+        const r = await fetch(RAILWAY_URL + "/api/triage/source-files/" + encodeURIComponent(params.project_id) +
+          "?manufacture=" + encodeURIComponent(params.manufacturer_id || ""));
         d = await r.json();
-      } catch (e) { return; }
+      } catch (e) { mountScope(null); return; }
       rfqUnits = (d && Array.isArray(d.unit_counts)) ? d.unit_counts : [];
       // The "what to quote" note written on the RFQ at Create Project (or here, earlier).
       const qb = document.getElementById("quoteBrief");
-      // Plus what the quote includes, as chosen with the pills at triage ("SCOPE (from triage):
-      // Includes … Excludes …"), so the AI reads both. Only into an empty box — never over an edit.
-      if (qb && !qb.value.trim() && d && (d.quote_note || d.scope_text)) {
-        qb.value = [d.quote_note || "", d.scope_text || ""].filter(function (s) { return String(s).trim(); }).join("\n\n");
+      // The pills and the "how it gets made" drill-down now sit above the box (scopePanel), so their
+      // words are no longer typed into it. An earlier build did put a "SCOPE (from triage): …"
+      // paragraph in the box; take that out so it is not sent twice.
+      if (qb && d && d.quote_note && !qb.value.trim()) {
+        qb.value = stripScopeParagraph(d.quote_note);
         const qn = document.getElementById("quoteBriefNote");
         if (qn) qn.textContent = "From the RFQ. Edit it if the scope has changed — it is saved for this project.";
       }
+      if (qb) qb.value = stripScopeParagraph(qb.value);
+      mountScope(d);
       const all = (d && d.files) || [];
       if (!all.length) return;
       const pdfs = all.filter((f) => /pdf$/i.test(f.media_type || "") || /\.pdf$/i.test(f.name || ""));
@@ -2217,7 +2247,7 @@
                                  // so it proposes YOUR components rather than variants of them
                                  components: project.components.map((c) => c.name),
                                  // "What to quote": sheets it excludes come back in_scope=false
-                                 quote_note: ((document.getElementById("quoteBrief") || {}).value || "").trim(),
+                                 quote_note: briefText(),
                                  model: (document.getElementById("model") || {}).value || "sonnet" }),
         });
         const d = await r.json();
@@ -3685,7 +3715,7 @@
               .map((d) => ({ name: d.name, file_id: d.fileId || null })),
             model: document.getElementById("model").value,
             scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
-            quote_brief: ((document.getElementById("quoteBrief") || {}).value || "").trim(),   // the estimator's "what to quote"
+            quote_brief: briefText(),   // the estimator's notes + the scope pills and "how it gets made", in words
             // Everything the estimator decided about coverage travels with the run: which sheets to
             // skip and why, and any sheet whose number on the drawing differs from the project's.
             reference_drawings: referenceSheets.map((x) => ({ number: x.number, title: x.title, reason: x.reason }))

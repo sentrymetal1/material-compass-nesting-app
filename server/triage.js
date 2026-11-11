@@ -1033,7 +1033,13 @@ function registerTriageRoutes(app, deps) {
     notes[key] = { ...cur, scope: scope, scope_at: new Date().toISOString() };
     if (!noteEntryHasData(notes[key])) delete notes[key];
     try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
-    res.json({ ok: true, scope: scope, scope_text: triageScope.toText(scope) });
+    res.json({ ok: true, scope: scope, scope_text: triageScope.toText(scope, triageScope.shopDefaults(b.manufacture)) });
+  });
+
+  // The pill lists, the "how it gets made" drill-down and the shop's defaults (welding = MIG for
+  // now), so the triage page and the take-off page draw the same options from one source.
+  app.get('/api/triage/scope-def', (req, res) => {
+    res.json({ ok: true, ...triageScope.definitions(req.query.manufacture) });
   });
 
   // The shop's clients, for the Client search box on "Start a quote". Names and ids only.
@@ -1115,7 +1121,7 @@ function registerTriageRoutes(app, deps) {
         // What the quote includes, as chosen at triage. The take-off adds scope_text to its
         // "What to quote" brief, so the AI reads it with the estimator's note.
         scope: projScope,
-        scope_text: triageScope.toText(projScope),
+        scope_text: triageScope.toText(projScope, triageScope.shopDefaults(req.query.manufacture)),
       });
     } catch (err) {
       if (isQuotaError(err)) return res.json({ ok: true, project_id: projectId, files: [], quota: true });

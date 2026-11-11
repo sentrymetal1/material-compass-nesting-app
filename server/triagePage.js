@@ -510,6 +510,7 @@ function renderTriagePage() {
     });
     var f=s.finish||{};
     b.finish={type:f.type||'',by:f.by||'',src:f.src||'',why:f.why||''};
+    b.ops=s.ops||{}; b.picks=s.picks||{};   // the take-off's "how it gets made" — carried, not drawn here
     return b;
   }
   function scopeHtml(s,label){

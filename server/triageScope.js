@@ -39,6 +39,84 @@ const FINISH_BY = [
   { key: 'outside',  label: 'Outside' },
 ];
 
+// ---- "How it gets made" — the drill-down shown on the AI Take-off page (Mark 2026-11-10) ----
+// Each option is one of:
+//   where — In house / Outside / Not needed   (values 'in' | 'out' | 'no')
+//   yes   — Yes / No                          (values 'yes' | 'no')
+// plus a few single picks (welding process, weld code, blast grade). Blank = not decided.
+// Job-wide for now; a per-component override belongs on the labor step later.
+const OPS_GROUPS = [
+  { key: 'cutting', label: 'Cutting', options: [
+    { key: 'cut_saw', label: 'Saw', kind: 'where' },
+    { key: 'cut_cnc_plasma', label: 'CNC plasma', kind: 'where' },
+    { key: 'cut_torch', label: 'Torch (oxy-fuel)', kind: 'where' },
+    { key: 'cut_laser', label: 'Laser', kind: 'where' },
+    { key: 'cut_waterjet', label: 'Waterjet', kind: 'where' },
+    { key: 'cut_shear', label: 'Shear', kind: 'where' },
+    { key: 'cut_buy_to_size', label: 'Buy cut to size', kind: 'yes' },
+  ] },
+  { key: 'holes', label: 'Holes', options: [
+    { key: 'hole_drill', label: 'Drill', kind: 'where' },
+    { key: 'hole_punch', label: 'Punch', kind: 'where' },
+    { key: 'hole_cnc_drill', label: 'CNC drill line', kind: 'where' },
+    { key: 'hole_tap', label: 'Tap', kind: 'where' },
+    { key: 'hole_vent_drain', label: 'Vent & drain holes (galvanizing)', kind: 'yes' },
+  ] },
+  { key: 'ends', label: 'Pipe & tube ends', options: [
+    { key: 'end_notch', label: 'Notch', kind: 'where' },
+    { key: 'end_cope', label: 'Cope', kind: 'where' },
+    { key: 'end_miter', label: 'Miter', kind: 'where' },
+    { key: 'end_bevel', label: 'Bevel for weld', kind: 'where' },
+  ] },
+  { key: 'forming', label: 'Forming', options: [
+    { key: 'form_brake', label: 'Brake / bend', kind: 'where' },
+    { key: 'form_roll', label: 'Roll', kind: 'where' },
+    { key: 'form_pipe_bend', label: 'Pipe bending (goosenecks, returns)', kind: 'where' },
+  ] },
+  { key: 'welding', label: 'Welding', picks: ['weld_process', 'weld_code'], options: [
+    { key: 'weld_fillet', label: 'Fillet welds', kind: 'yes' },
+    { key: 'weld_cjp', label: 'Full penetration (CJP)', kind: 'yes' },
+    { key: 'weld_stitch', label: 'Stitch / seal welds', kind: 'yes' },
+    { key: 'weld_grind_smooth', label: 'Grind welds smooth (handrail)', kind: 'yes' },
+  ] },
+  { key: 'prep', label: 'Surface prep', picks: ['blast'], options: [
+    { key: 'prep_grind_deburr', label: 'Grind & deburr', kind: 'where' },
+  ] },
+  { key: 'inspection', label: 'Inspection', options: [
+    { key: 'insp_visual', label: 'Visual', kind: 'yes' },
+    { key: 'insp_cwi', label: 'CWI inspection', kind: 'where' },
+    { key: 'insp_ndt', label: 'NDT (UT / MT)', kind: 'where' },
+    { key: 'insp_mill_certs', label: 'Mill certs required', kind: 'yes' },
+  ] },
+  { key: 'assembly', label: 'Assembly & shipping', options: [
+    { key: 'asm_shop_assemble', label: 'Shop assemble', kind: 'yes' },
+    { key: 'asm_trial_fit', label: 'Trial fit', kind: 'yes' },
+    { key: 'asm_match_mark', label: 'Match-mark', kind: 'yes' },
+    { key: 'asm_ship_loose', label: 'Ship loose', kind: 'yes' },
+  ] },
+];
+const OPS_PICKS = {
+  weld_process: { label: 'Welding process', options: [
+    { key: 'mig', label: 'MIG (GMAW)' }, { key: 'fcaw', label: 'Flux-core (FCAW)' },
+    { key: 'smaw', label: 'Stick (SMAW)' }, { key: 'gtaw', label: 'TIG (GTAW)' } ] },
+  weld_code: { label: 'Weld code', options: [
+    { key: 'd1_1', label: 'AWS D1.1 structural' }, { key: 'd1_6', label: 'AWS D1.6 stainless' }, { key: 'none', label: 'No code' } ] },
+  blast: { label: 'Blast', options: [
+    { key: 'none', label: 'No blast' }, { key: 'sp6', label: 'SP6 commercial' }, { key: 'sp10', label: 'SP10 near-white' } ] },
+};
+const OPS_OPTIONS = [].concat(...OPS_GROUPS.map(g => g.options));
+const OPS_KIND = Object.fromEntries(OPS_OPTIONS.map(o => [o.key, o.kind]));
+const VALID_OP = { where: ['in', 'out', 'no'], yes: ['yes', 'no'] };
+
+// What a pick starts at when nobody has chosen. Mark (2026-11-10): welding defaults to MIG — that is
+// how Sentry welds — "but in the future we may want other users to pick what is default". So this is
+// the platform fallback only; shopDefaults() is the seam where a per-shop setting will plug in.
+const DEFAULT_PICKS = { weld_process: 'mig' };
+function shopDefaults(/* manufactureId */) {
+  // TODO per-shop: read the shop's own defaults (e.g. a Viking that sticks-welds) and spread over these.
+  return { ...DEFAULT_PICKS };
+}
+
 const ITEM_KEYS = SCOPE_ITEMS.map(i => i.key);
 const FINISH_KEYS = FINISH_TYPES.map(f => f.key);
 const BY_KEYS = FINISH_BY.map(b => b.key);
@@ -85,7 +163,7 @@ const clip = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().sl
 function emptyScope() {
   const items = {};
   ITEM_KEYS.forEach(k => { items[k] = { v: '', src: '', why: '' }; });
-  return { items, finish: { type: '', by: '', src: '', why: '' } };
+  return { items, finish: { type: '', by: '', src: '', why: '' }, ops: {}, picks: {} };
 }
 
 // What the AI returned -> stored shape. Anything unrecognised becomes "not decided".
@@ -118,10 +196,20 @@ function sanitize(input) {
   if (FINISH_KEYS.indexOf(f.type) >= 0) s.finish.type = f.type;
   if (BY_KEYS.indexOf(f.by) >= 0) s.finish.by = f.by;
   if (s.finish.type || s.finish.by) { s.finish.src = f.src === 'ai' ? 'ai' : 'user'; s.finish.why = clip(f.why, 120); }
+  const ops = input.ops && typeof input.ops === 'object' ? input.ops : {};
+  Object.keys(ops).forEach(k => {
+    const kind = OPS_KIND[k];
+    if (kind && VALID_OP[kind].indexOf(ops[k]) >= 0) s.ops[k] = ops[k];
+  });
+  const picks = input.picks && typeof input.picks === 'object' ? input.picks : {};
+  Object.keys(OPS_PICKS).forEach(k => {
+    if (OPS_PICKS[k].options.some(o => o.key === picks[k])) s.picks[k] = picks[k];
+  });
   return s;
 }
 
 // The user's answers win; the AI only fills what the user left undecided.
+// (The AI does not set the "how it gets made" options at triage — those are the user's.)
 function merge(user, ai) {
   const u = sanitize(user), a = sanitize(ai), out = emptyScope();
   ITEM_KEYS.forEach(k => { out.items[k] = u.items[k].v ? u.items[k] : a.items[k]; });
@@ -131,19 +219,50 @@ function merge(user, ai) {
     src: (u.finish.type || u.finish.by) ? 'user' : a.finish.src,
     why: (u.finish.type || u.finish.by) ? u.finish.why : a.finish.why,
   };
+  out.ops = { ...a.ops, ...u.ops };
+  out.picks = { ...a.picks, ...u.picks };
   return out;
 }
 
 function isBlank(scope) {
   const s = sanitize(scope);
-  return ITEM_KEYS.every(k => !s.items[k].v) && !s.finish.type && !s.finish.by;
+  return ITEM_KEYS.every(k => !s.items[k].v) && !s.finish.type && !s.finish.by
+    && !Object.keys(s.ops).length && !Object.keys(s.picks).length;
+}
+
+// The "how it gets made" choices in words. Defaults (e.g. MIG) are said, and said to be defaults.
+function methodsText(scope, defaults) {
+  const s = sanitize(scope);
+  const d = defaults || {};
+  const lines = [];
+  const word = { in: 'in house', out: 'outside', yes: '', no: '' };
+  OPS_GROUPS.forEach(g => {
+    const done = [], notNeeded = [];
+    (g.picks || []).forEach(pk => {
+      const val = s.picks[pk] || d[pk];
+      const opt = val && OPS_PICKS[pk].options.find(o => o.key === val);
+      if (opt) done.push(opt.label + (s.picks[pk] ? '' : ' (shop default)'));
+    });
+    g.options.forEach(o => {
+      const v = s.ops[o.key];
+      if (!v) return;
+      if (v === 'no') notNeeded.push(o.label.toLowerCase());
+      else done.push(o.label.toLowerCase() + (word[v] ? ' (' + word[v] + ')' : ''));
+    });
+    if (!done.length && !notNeeded.length) return;
+    lines.push(g.label + ': ' + [done.join(', '), notNeeded.length ? 'not needed: ' + notNeeded.join(', ') : '']
+      .filter(Boolean).join('; ') + '.');
+  });
+  return lines.length ? 'HOW IT GETS MADE: ' + lines.join(' ') : '';
 }
 
 // The scope in words, for the AI take-off's "What to quote" brief and, later, the customer quote's
 // Includes / Excludes lines. '' when nothing was decided.
-function toText(scope) {
-  if (!scope || isBlank(scope)) return '';
+function toText(scope, defaults) {
   const s = sanitize(scope);
+  const methods = methodsText(s, defaults);
+  const itemsSet = ITEM_KEYS.some(k => s.items[k].v) || s.finish.type || s.finish.by;
+  if (!itemsSet) return methods;
   const inc = [], exc = [], open = [];
   SCOPE_ITEMS.forEach(it => {
     const v = s.items[it.key].v;
@@ -157,7 +276,7 @@ function toText(scope) {
   if (inc.length) parts.push('Includes: ' + inc.join(', ') + '.');
   if (exc.length) parts.push('Excludes: ' + exc.join(', ') + '.');
   if (open.length) parts.push('Not decided yet: ' + open.join(', ') + '.');
-  return 'SCOPE (from triage): ' + parts.join(' ');
+  return 'SCOPE: ' + parts.join(' ') + (methods ? '\n' + methods : '');
 }
 
 // An opportunity's Extracted_JSON -> the AI's scope. Email rows carry the extraction at the top
@@ -172,7 +291,13 @@ function fromExtractedJson(json) {
   } catch (e) { return null; }
 }
 
+// Everything a page needs to draw the pills and the drill-down — one source for both pages.
+function definitions(manufactureId) {
+  return { items: SCOPE_ITEMS, finish_types: FINISH_TYPES, finish_by: FINISH_BY,
+           ops_groups: OPS_GROUPS, ops_picks: OPS_PICKS, defaults: shopDefaults(manufactureId) };
+}
+
 module.exports = {
-  SCOPE_ITEMS, FINISH_TYPES, FINISH_BY, SCOPE_SCHEMA, SCOPE_PROMPT_RULE,
-  emptyScope, fromAi, sanitize, merge, isBlank, toText, fromExtractedJson,
+  SCOPE_ITEMS, FINISH_TYPES, FINISH_BY, SCOPE_SCHEMA, SCOPE_PROMPT_RULE, OPS_GROUPS, OPS_PICKS, DEFAULT_PICKS,
+  emptyScope, fromAi, sanitize, merge, isBlank, toText, methodsText, fromExtractedJson, shopDefaults, definitions,
 };

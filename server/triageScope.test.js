@@ -55,7 +55,7 @@ test('junk from the page is dropped, not stored', () => {
 test('the take-off gets the scope in words: includes, excludes, not decided', () => {
   const s = sc.merge({ items: { installation: { v: 'no' } } }, sc.fromAi(AI));
   const t = sc.toText(s);
-  assert.match(t, /^SCOPE \(from triage\): Includes: material, fittings, shop fabrication, galvanize \(by an outside vendor\)\./);
+  assert.match(t, /^SCOPE: Includes: material, fittings, shop fabrication, galvanize \(by an outside vendor\)\./);
   assert.match(t, /Excludes: field installation\./);
   assert.match(t, /Not decided yet: grating, fasteners, anchor bolts, welding, delivery, shop drawings, field measuring\./);
 });
@@ -74,7 +74,8 @@ test('the AI is asked for the scope, and told not to guess', () => {
   assert.match(sc.SCOPE_PROMPT_RULE, /never guess/);
   assert.match(t, /app\.post\('\/api\/triage\/scope'/, 'POST /api/triage/scope is gone');
   assert.match(t, /app\.get\('\/api\/triage\/clients'/, 'GET /api/triage/clients is gone');
-  assert.match(t, /scope_text: triageScope\.toText\(projScope\)/, 'source-files no longer hands the scope to the take-off');
+  assert.match(t, /scope_text: triageScope\.toText\(projScope, /, 'source-files no longer hands the scope to the take-off');
+  assert.match(t, /app\.get\('\/api\/triage\/scope-def'/, 'GET /api/triage/scope-def is gone');
 });
 
 test('the quote-note save keeps the pills and the client stored beside it', () => {
@@ -84,9 +85,43 @@ test('the quote-note save keeps the pills and the client stored beside it', () =
   assert.match(body, /\{ \.\.\.cur, note: note/, 'saving a note would wipe the scope pills');
 });
 
-test('the take-off adds the scope to its "What to quote" brief', () => {
+test('how it gets made: welding defaults to MIG and says so', () => {
+  const d = sc.shopDefaults('anything');
+  assert.strictEqual(d.weld_process, 'mig');
+  assert.strictEqual(sc.toText(null, d), 'HOW IT GETS MADE: Welding: MIG (GMAW) (shop default).');
+  assert.strictEqual(sc.toText(null), '', 'without defaults nothing is said');
+});
+
+test('how it gets made: choices in words, user picks beat the default', () => {
+  const s = sc.sanitize({ ops: { cut_saw: 'in', end_notch: 'out', cut_torch: 'no', weld_grind_smooth: 'yes', hole_vent_drain: 'yes' },
+                          picks: { weld_process: 'smaw', blast: 'sp6' } });
+  const t = sc.methodsText(s, sc.shopDefaults());
+  assert.match(t, /Cutting: saw \(in house\); not needed: torch \(oxy-fuel\)\./);
+  assert.match(t, /Holes: vent & drain holes \(galvanizing\)\./);
+  assert.match(t, /Pipe & tube ends: notch \(outside\)\./);
+  assert.match(t, /Welding: Stick \(SMAW\), grind welds smooth \(handrail\)\./);
+  assert.doesNotMatch(t, /shop default/);
+  assert.match(t, /Surface prep: SP6 commercial\./);
+});
+
+test('how it gets made: junk is dropped and a card save cannot invent options', () => {
+  const s = sc.sanitize({ ops: { cut_saw: 'yes', end_notch: 'maybe', made_up: 'in', hole_vent_drain: 'in' }, picks: { weld_process: 'laser', weld_code: 'd1_1' } });
+  assert.deepStrictEqual(s.ops, {}, 'a "where" option takes in/out/no only; a "yes" option yes/no only');
+  assert.deepStrictEqual(s.picks, { weld_code: 'd1_1' });
+  const m = sc.merge({ ops: { cut_saw: 'in' } }, sc.fromAi(AI));
+  assert.strictEqual(m.ops.cut_saw, 'in', 'merge keeps the user\'s drill-down');
+});
+
+test('the take-off draws the pills and drill-down, and sends them with the notes', () => {
   const idx = fs.readFileSync(path.join(__dirname, 'takeoff/public/index.html'), 'utf8');
-  assert.match(idx, /d\.scope_text/);
+  assert.match(idx, /<script src="scope-pills\.js"><\/script>/);
+  assert.match(idx, /id="scopePanel"/);
+  assert.match(idx, /quote_brief: briefText\(\)/);
+  assert.match(idx, /quote_note: briefText\(\)/);
+  const js = fs.readFileSync(path.join(__dirname, 'takeoff/public/scope-pills.js'), 'utf8');
+  assert.doesNotThrow(() => new Function(js), 'scope-pills.js does not parse');
+  const defs = sc.definitions();
+  assert.ok(defs.ops_groups.length >= 8 && defs.ops_picks.weld_process);
 });
 
 test('the triage page renders the optional note, fields and pills, and its script parses', () => {
