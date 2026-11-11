@@ -112,6 +112,18 @@ test('a weld schedule that cannot be measured keeps the drawing\'s assumed welds
   assert.ok(!measured.components.Handrail.lines.some((l) => /weld Plate/.test(l.what)), 'assumed plate weld dropped');
 });
 
+test('a drawing built twice doubles its own rows, not the whole component', () => {
+  const { laborForTakeoff } = require('./takeoffLabor');
+  const row = (sheet, q) => ({ form_type: 'Pipe', material_type: 'Carbon Steel', size: '1-1/2" SCH 40 (STD)', length_ft: 4, quantity: 1, component: 'Handrail', source_sheet: sheet, disposition: 'fabricate', sheet_qty: q, units: q });
+  const hrs = (rows) => laborForTakeoff({ rows }, null).components.find((c) => c.name === 'Handrail');
+  const one = hrs([row('A', 1), row('B', 1)]);
+  const mixed = hrs([row('A', 1), row('B', 2)]);
+  const sum = (c) => c.items.reduce((a, i) => a + i.hours, 0);
+  assert.strictEqual(mixed.units, 1, 'one handrail, not two');
+  // B's second copy adds work, but the component is not doubled (that was ×1.9 with learning).
+  assert.ok(sum(mixed) > sum(one) * 1.1 && sum(mixed) < sum(one) * 1.6, 'B built twice adds one drawing of work: ' + sum(one) + ' -> ' + sum(mixed));
+});
+
 test('no reference joint: pipe butt and socket welds by the weld-time method', () => {
   const est = estimateTakeoff({ rows: [], fittings: [
     { fitting_type: 'Elbow', end_type: 'Butt Weld', size: '4"', schedule_or_class: 'SCH 40', quantity: 1, component: 'P' },

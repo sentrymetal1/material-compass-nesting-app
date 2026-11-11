@@ -35,12 +35,37 @@ function learnFactor(u, pct) {
 // takeoff = { rows, fittings, welds, features, extras } exactly as the review page holds them.
 function laborForTakeoff(takeoff, profile, jobType) {
   const live = (r) => r && !r.deleted && Number(r.quantity) > 0;
-  const rows = ((takeoff && takeoff.rows) || []).filter(live);
-  const fittings = ((takeoff && takeoff.fittings) || []).filter(live);
+  const rawRows = ((takeoff && takeoff.rows) || []).filter(live);
+  const rawFittings = ((takeoff && takeoff.fittings) || []).filter(live);
   // The weld schedule read off the drawings; a weld counts when it has a count, like a row a quantity.
-  const welds = ((takeoff && takeoff.welds) || []).filter((w) => w && !w.deleted && Number(w.count) > 0);
+  const rawWelds = ((takeoff && takeoff.welds) || []).filter((w) => w && !w.deleted && Number(w.count) > 0);
   const ctx = shop.estimateContext(profile);
-  const features = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
+  const rawFeatures = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
+
+  // UNITS vs DRAWING QTY. A row's `units` is the component count when that is above 1, otherwise
+  // its own drawing's QTY REQ'D (sheet_qty) — the review page's compCountOf rule. Taking the most
+  // units on any row as the component count priced MCP-10013 (2026-11-11) as TWO whole handrails,
+  // 1,293 h, because two of its 43 drawings are built twice. Now the component count comes from
+  // rows whose units differ from their sheet qty, and a drawing built more than once is multiplied
+  // into its own rows (and its welds and features) before the per-unit estimate.
+  const sheetQty = (r) => Math.max(1, Math.round(Number(r && r.sheet_qty) || 1));
+  const compUnits = {};
+  for (const r of rawRows.concat(rawFittings)) {
+    const k = compKey(r.component), u = unitsOf(r);
+    compUnits[k] = Math.max(compUnits[k] || 1, u !== sheetQty(r) ? u : 1);
+  }
+  const multOf = (r) => { const cu = compUnits[compKey(r.component)] || 1; return Math.max(1, Math.round(unitsOf(r) / cu)); };
+  const sheetMult = {};
+  for (const r of rawRows) {
+    const k = compKey(r.component) + '|' + String(r.source_sheet || '').trim().toUpperCase();
+    sheetMult[k] = Math.max(sheetMult[k] || 1, multOf(r));
+  }
+  const multOfSheet = (x) => sheetMult[compKey(x.component) + '|' + String(x.source_sheet || '').trim().toUpperCase()] || 1;
+  const scaleQty = (r) => { const m = multOf(r); return Object.assign({}, r, { quantity: Number(r.quantity) * m, units: compUnits[compKey(r.component)] || 1 }); };
+  const rows = rawRows.map(scaleQty);
+  const fittings = rawFittings.map(scaleQty);
+  const welds = rawWelds.map((w) => Object.assign({}, w, { count: Number(w.count) * multOfSheet(w) }));
+  const features = rawFeatures.map((f) => Object.assign({}, f, { count: Number(f.count) * multOfSheet(f) }));
   const extras = (takeoff && takeoff.extras) || {};
   const est = estimateTakeoff({ rows, fittings, welds, features, extras }, ctx);
   const learnPct = pm.opv(ctx.model, 'LEARNING', 'pct') || 1;
