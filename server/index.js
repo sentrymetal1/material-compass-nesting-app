@@ -1870,7 +1870,16 @@ app.post('/api/takeoff/save', async (req, res) => {
     // COMPRESSED. `Package` holds ~64 KB and Zoho TRUNCATES past that without an error — a
     // take-off with its fittings ran to 65,398 chars on 2026-09-28, the tail was cut mid-string,
     // and the saved take-off could no longer be read at all. gzip takes it to a fraction of that.
-    const json = 'gz:' + zlib.gzipSync(Buffer.from(raw, 'utf8')).toString('base64');
+    let json = 'gz:' + zlib.gzipSync(Buffer.from(raw, 'utf8')).toString('base64');
+    // OVERFLOW to the Railway volume. A 532-row handrail job (MCP-10013, 2026-11-11) ran to 62,963
+    // compressed chars and every save failed. The full package goes to disk; the Zoho record keeps
+    // a `vol:` pointer plus its Row_Count/Cost/Updated_At, so it still lists and relates normally.
+    if (json.length > 60000 && filestore.isDurable() && /^\d+$/.test(String(project_id))) {
+      const name = 'takeoff-pkg-' + project_id + '.json';
+      filestore.writeJson(name, { project_id: String(project_id), saved_at: new Date().toISOString(), package: json });
+      console.log('[takeoff save] project ' + project_id + ': ' + json.length + ' chars compressed -> volume ' + name);
+      json = 'vol:' + name;
+    }
     if (json.length > 60000) {
       console.error('[takeoff save] project ' + project_id + ': too large (' + json.length + ' chars compressed)');
       return res.status(413).json({ ok: false, error: 'This take-off is too large to save to the project even compressed (' +
@@ -1947,7 +1956,12 @@ app.get('/api/takeoff/saved/:project_id', async (req, res) => {
     if (!rec || !rec.Package) return res.json({ ok: true, found: false });
     let pkg;
     try {
-      const s = String(rec.Package);
+      let s = String(rec.Package);
+      if (s.indexOf('vol:') === 0) {   // overflowed to the Railway volume — see the save route
+        const v = filestore.readJson(s.slice(4), null);
+        if (!v || !v.package || String(v.project_id) !== String(project_id)) throw new Error('volume copy ' + s.slice(4) + ' missing');
+        s = String(v.package);
+      }
       pkg = JSON.parse(s.indexOf('gz:') === 0 ? zlib.gunzipSync(Buffer.from(s.slice(3), 'base64')).toString('utf8') : s);
     } catch (e) {
       // Say so. Reporting a damaged save as "none" sent the page off to look elsewhere.
