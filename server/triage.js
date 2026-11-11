@@ -21,6 +21,7 @@ const { getGraphAccessToken, effectiveConfig } = require('./outlook');
 const pdfkind = require('./pdfkind');   // is this PDF something to look at, or something to read?
 const { renderTriagePage, renderOpportunityDetail } = require('./triagePage');
 const filestore = require('./filestore');
+const triageScope = require('./triageScope');   // "What this quote includes" pills
 
 const EXTRACT_MODEL = 'claude-haiku-4-5-20251001';     // bump to 'claude-sonnet-4-6' if extraction quality lags
 
@@ -127,6 +128,7 @@ const EXTRACT_SYSTEM =
   "('10 frame supports', '(4) skids', 'QTY 2 stairs', 'two identical platforms'). One entry per item: item = the " +
   "assembly as written, count = the whole number, evidence = the exact words it came from. Never infer a count from " +
   "context and never count line items or drawings. Empty array when no count is stated.\n" +
+  triageScope.SCOPE_PROMPT_RULE +
   "- IMPORTANT: if a field cannot be determined from the email content, return an EMPTY STRING (\"\") " +
   "for it — never 'UNKNOWN', 'N/A', 'TBD', or a guess. Bid-platform notification emails are often sparse " +
   "(details behind a paid link); leaving fields blank is correct and expected.\n" +
@@ -160,6 +162,7 @@ const EXTRACT_TOOL = {
           required: ['item', 'count', 'evidence'],
         },
       },
+      scope:             triageScope.SCOPE_SCHEMA,
     },
     required: ['is_rfq', 'confidence', 'summary'],
   },
@@ -336,7 +339,7 @@ async function extractManual(client, text, attachments) {
     try {
       const resp = await client.messages.create({
         model: EXTRACT_MODEL,
-        max_tokens: 1024,
+        max_tokens: 1536,   // room for the scope pills + their evidence
         system: MANUAL_SYSTEM,
         tools: [EXTRACT_TOOL],
         tool_choice: { type: 'tool', name: 'submit_opportunity' },
@@ -365,7 +368,7 @@ async function extractOpportunity(client, email) {
     'BODY:\n' + body;
   const resp = await client.messages.create({
     model: EXTRACT_MODEL,
-    max_tokens: 1024,
+    max_tokens: 1536,   // room for the scope pills + their evidence
     system: EXTRACT_SYSTEM,
     tools: [EXTRACT_TOOL],
     tool_choice: { type: 'tool', name: 'submit_opportunity' },
@@ -559,6 +562,24 @@ function registerTriageRoutes(app, deps) {
     const key = manufactureId || 'all';
     const hit = _clientMapCache[key];
     if (hit && (Date.now() - hit.at) < 10 * 60 * 1000) return hit.map;
+    const rows = await getClientRows(manufactureId);
+    const map = {};
+    for (const row of rows) {
+      const nk = normClientName(row.Client_Company_Name);
+      if (!nk) continue;
+      (map[nk] = map[nk] || []).push(row.ID);
+    }
+    _clientMapCache[key] = { at: Date.now(), map };
+    return map;
+  }
+
+  // The shop's client records, cached 10 min. Feeds both the GC-name matching above and the
+  // Client search box on "Start a quote", so the two cost one Zoho read between them.
+  const _clientRowsCache = {};
+  async function getClientRows(manufactureId) {
+    const key = manufactureId || 'all';
+    const hit = _clientRowsCache[key];
+    if (hit && (Date.now() - hit.at) < 10 * 60 * 1000) return hit.rows;
     const token = await getAccessToken();
     const base = creatorApiBase();
     const path = manufactureId
@@ -573,14 +594,8 @@ function registerTriageRoutes(app, deps) {
       if (isQuotaError(e)) throw e;
       if (!isNoRecords(e)) throw e;
     }
-    const map = {};
-    for (const row of rows) {
-      const nk = normClientName(row.Client_Company_Name);
-      if (!nk) continue;
-      (map[nk] = map[nk] || []).push(row.ID);
-    }
-    _clientMapCache[key] = { at: Date.now(), map };
-    return map;
+    _clientRowsCache[key] = { at: Date.now(), rows };
+    return rows;
   }
 
   async function getConnectedMailboxes(mailboxFilter) {
@@ -993,12 +1008,50 @@ function registerTriageRoutes(app, deps) {
     if (!key) return res.status(400).json({ ok: false, error: 'project_id or opportunity_id required' });
     const notes = readNotes();
     const note = String(b.note || '').trim().slice(0, 4000);
-    const keep = notes[key] && Array.isArray(notes[key].unit_counts) ? { unit_counts: notes[key].unit_counts } : null;
-    if (note) notes[key] = { ...(keep || {}), note: note, at: new Date().toISOString() };
-    else if (keep) notes[key] = { ...keep, note: '' };
-    else delete notes[key];
+    // Keep everything else stored under this key (unit counts, scope pills, chosen client) —
+    // only the note itself changes here.
+    const cur = notes[key] || {};
+    notes[key] = note ? { ...cur, note: note, at: new Date().toISOString() } : { ...cur, note: '' };
+    if (!noteEntryHasData(notes[key])) delete notes[key];
     try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
     res.json({ ok: true, note: note });
+  });
+  function noteEntryHasData(n) {
+    return !!(n && (n.note || Array.isArray(n.unit_counts) || n.client_id || n.scope));
+  }
+
+  // WHAT THIS QUOTE INCLUDES — the scope pills, edited on a triage card. Saved beside the note,
+  // same file, same keys. All optional: an empty scope simply removes what was there.
+  app.post('/api/triage/scope', (req, res) => {
+    const b = req.body || {};
+    const key = /^\d{6,25}$/.test(String(b.project_id || '')) ? 'p:' + b.project_id
+              : /^\d{6,25}$/.test(String(b.opportunity_id || '')) ? 'o:' + b.opportunity_id : '';
+    if (!key) return res.status(400).json({ ok: false, error: 'project_id or opportunity_id required' });
+    const notes = readNotes();
+    const scope = triageScope.sanitize(b.scope);
+    const cur = notes[key] || { note: '' };
+    notes[key] = { ...cur, scope: scope, scope_at: new Date().toISOString() };
+    if (!noteEntryHasData(notes[key])) delete notes[key];
+    try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+    res.json({ ok: true, scope: scope, scope_text: triageScope.toText(scope) });
+  });
+
+  // The shop's clients, for the Client search box on "Start a quote". Names and ids only.
+  app.get('/api/triage/clients', async (req, res) => {
+    const mfg = /^\d{6,25}$/.test(String(req.query.manufacture || '')) ? String(req.query.manufacture) : '';
+    if (!mfg) return res.json({ ok: true, clients: [] });   // never list every shop's clients
+    try {
+      const rows = await getClientRows(mfg);
+      const clients = rows
+        .map(r => ({ id: String(r.ID), name: String(r.Client_Company_Name || '').trim() }))
+        .filter(c => c.name)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      res.json({ ok: true, clients });
+    } catch (err) {
+      if (isQuotaError(err)) return res.json({ ok: true, clients: [], quota: true });
+      console.error('[triage] clients error:', err.response?.data || err.message);
+      res.json({ ok: false, clients: [], error: 'Could not load your clients.' });
+    }
   });
 
   app.get('/api/triage/source-files/:projectId', async (req, res) => {
@@ -1020,7 +1073,7 @@ function registerTriageRoutes(app, deps) {
       let quoteNote = notes['p:' + projectId] ? notes['p:' + projectId].note : '';
       if (!quoteNote && opp && opp.ID && notes['o:' + opp.ID]) {
         quoteNote = notes['o:' + opp.ID].note;
-        notes['p:' + projectId] = { note: quoteNote, at: new Date().toISOString(), from_opportunity: String(opp.ID) };
+        notes['p:' + projectId] = { ...(notes['p:' + projectId] || {}), note: quoteNote, at: new Date().toISOString(), from_opportunity: String(opp.ID) };
         try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { /* the note still goes back this time */ }
       }
       // Unit counts the RFQ stated ("10 frame supports"), read at triage. The take-off shows them
@@ -1028,24 +1081,41 @@ function registerTriageRoutes(app, deps) {
       // opens cost no Zoho call; a project with no RFQ stores an empty list.
       const pk = 'p:' + projectId;
       let unitCounts = notes[pk] && Array.isArray(notes[pk].unit_counts) ? notes[pk].unit_counts : null;
-      if (!unitCounts) {
+      // The RFQ's scope pills follow it onto the project the same way, once. The card's own
+      // edits ('o:' entry) win over what the AI read from the RFQ.
+      const scopeChecked = !!(notes[pk] && notes[pk].scope_checked);
+      if (!unitCounts || !scopeChecked) {
         if (!opp) { try { opp = await opportunityForProject(projectId); } catch (e) { if (isQuotaError(e)) throw e; } }
-        unitCounts = [];
-        try {
-          const x = opp && opp.Extracted_JSON ? JSON.parse(opp.Extracted_JSON) : null;
-          unitCounts = (x && Array.isArray(x.unit_counts) ? x.unit_counts : [])
-            .filter(u => u && u.item && Number(u.count) >= 1)
-            .map(u => ({ item: String(u.item).slice(0, 120), count: Math.round(Number(u.count)), evidence: String(u.evidence || '').slice(0, 200) }));
-        } catch (e) { /* older RFQs predate unit_counts */ }
-        notes[pk] = { ...(notes[pk] || { note: '' }), unit_counts: unitCounts };
+        const patch = { scope_checked: true };
+        if (!unitCounts) {
+          unitCounts = [];
+          try {
+            const x = opp && opp.Extracted_JSON ? JSON.parse(opp.Extracted_JSON) : null;
+            unitCounts = (x && Array.isArray(x.unit_counts) ? x.unit_counts : [])
+              .filter(u => u && u.item && Number(u.count) >= 1)
+              .map(u => ({ item: String(u.item).slice(0, 120), count: Math.round(Number(u.count)), evidence: String(u.evidence || '').slice(0, 200) }));
+          } catch (e) { /* older RFQs predate unit_counts */ }
+          patch.unit_counts = unitCounts;
+        }
+        if (!(notes[pk] && notes[pk].scope) && opp && opp.ID) {
+          const fromCard = notes['o:' + opp.ID] && notes['o:' + opp.ID].scope;
+          const sc = fromCard ? triageScope.sanitize(fromCard) : triageScope.fromExtractedJson(opp.Extracted_JSON);
+          if (sc) patch.scope = sc;
+        }
+        notes[pk] = { ...(notes[pk] || { note: '' }), ...patch };
         try { filestore.writeJson(NOTES_FILE, notes); } catch (e) { /* still returned this time */ }
       }
+      const projScope = (notes[pk] && notes[pk].scope) || null;
       res.json({
         ok: true, project_id: projectId, files,
         durable: filestore.isDurable(),
         opportunity: opp ? { id: opp.ID, project: opp.Project || '', summary: opp.Summary || '' } : null,
         quote_note: quoteNote,
         unit_counts: unitCounts,
+        // What the quote includes, as chosen at triage. The take-off adds scope_text to its
+        // "What to quote" brief, so the AI reads it with the estimator's note.
+        scope: projScope,
+        scope_text: triageScope.toText(projScope),
       });
     } catch (err) {
       if (isQuotaError(err)) return res.json({ ok: true, project_id: projectId, files: [], quota: true });
@@ -1077,10 +1147,12 @@ function registerTriageRoutes(app, deps) {
   function mapOpportunity(row) {
     let webLink = row.Web_Link || '';
     let source = '';
+    let aiScope = null;
     try {
       const j = JSON.parse(row.Extracted_JSON || '{}');
       if (!webLink) webLink = j.webLink || '';
       source = j.source || row.From_Email || '';
+      aiScope = triageScope.fromExtractedJson(j);
     } catch (e) { source = row.From_Email || ''; }
     return {
       id: row.ID, project: row.Project || '', customer: row.Customer_Name || '',
@@ -1091,6 +1163,7 @@ function registerTriageRoutes(app, deps) {
       // What this row is carrying. A card that says "9 documents held" is the
       // only place the estimator learns the drawings did not evaporate.
       files: keptFiles(row.ID).length,
+      ai_scope: aiScope,
     };
   }
 
@@ -1168,8 +1241,14 @@ function registerTriageRoutes(app, deps) {
       try { clientMap = await getClientMap(req.query.manufacture); } catch (e) { /* skip matching */ }
       const notes = readNotes();   // "what to quote", shown and edited on the card
       const opportunities = rows.map(mapOpportunity).map(o => {
-        o.client_id = matchClientId(clientMap, o.customer);
-        o.quote_note = (notes['o:' + o.id] && notes['o:' + o.id].note) || '';
+        const n = notes['o:' + o.id] || {};
+        // A client chosen on "Start a quote" beats a match guessed from the name.
+        o.client_id = n.client_id || matchClientId(clientMap, o.customer);
+        o.quote_note = n.note || '';
+        // The card's own pill edits, else what the AI read from the RFQ, else all undecided.
+        // (A scope the user saved counts even if they cleared every pill — it must not snap back.)
+        o.scope = n.scope ? triageScope.sanitize(n.scope) : (o.ai_scope || triageScope.emptyScope());
+        delete o.ai_scope;
         return o;
       });
       res.json({ status, count: rows.length, manufacture_label: label, last_synced, opportunities });
@@ -1248,6 +1327,13 @@ function registerTriageRoutes(app, deps) {
   app.post('/api/triage/manual', async (req, res) => {
     try {
       const { manufacture, text, attachments } = req.body || {};
+      // Optional answers typed on "Start a quote" before reading. Each one, when given, beats what
+      // the AI reads; anything left blank is filled from the material, or stays blank.
+      const b = req.body || {};
+      const userJob = String(b.job || '').trim().slice(0, 200);
+      const userClientName = String(b.client_name || '').trim().slice(0, 200);
+      const userClientId = /^\d{6,25}$/.test(String(b.client_id || '')) ? String(b.client_id) : '';
+      const userBid = /^\d{4}-\d{2}-\d{2}$/.test(String(b.bid_date || '')) ? String(b.bid_date) : '';
       const note = String(text || '').trim();
       const files = Array.isArray(attachments) ? attachments : [];
       if (!note && !files.length) {
@@ -1267,11 +1353,11 @@ function registerTriageRoutes(app, deps) {
         Source_inbox: 'Manual entry',
         Email_Message_ID: messageId,
         Received_Date: fmtDateTime(nowIso),
-        Subject_field: out.project_name || 'Manual entry',
+        Subject_field: userJob || out.project_name || 'Manual entry',
         Summary: out.summary || '',
-        Customer_Name: out.customer_name || '',
-        Project: out.project_name || '',
-        Due_Date: fmtDate(out.due_date),
+        Customer_Name: userClientName || out.customer_name || '',
+        Project: userJob || out.project_name || '',
+        Due_Date: fmtDate(userBid || out.due_date),
         Location: out.location || '',
         Material_Scope: out.material_scope || '',
         Confidence: typeof out.confidence === 'number' ? Math.round(out.confidence * 100) / 100 : 0,
@@ -1305,8 +1391,20 @@ function registerTriageRoutes(app, deps) {
         kept = out2.saved.length; keptRejected = out2.rejected;
       } catch (e) { console.error('[triage] could not keep intake files:', e.message); }
 
+      // The pills: the user's answers, with the AI filling only what they left undecided. Kept
+      // beside the "What to quote" note with the chosen client, so the card, Create Project and
+      // the take-off all see the same thing. A store failure must not lose the row.
+      const scope = triageScope.merge(b.scope, triageScope.fromAi(out.scope));
+      try {
+        const notes = readNotes();
+        notes['o:' + result.id] = { ...(notes['o:' + result.id] || { note: '' }), scope, scope_at: nowIso, ...(userClientId ? { client_id: userClientId } : {}) };
+        filestore.writeJson(NOTES_FILE, notes);
+      } catch (e) { console.error('[triage] could not keep intake scope:', e.message); }
+      const aiFilled = triageScope.SCOPE_ITEMS.filter(i => scope.items[i.key].src === 'ai').length + (scope.finish.src === 'ai' ? 1 : 0);
+
       res.json({
         ok: true, id: result.id, dates_dropped: !!result.dateDropped, extracted: out,
+        scope, scope_ai_filled: aiFilled,
         files_kept: kept, files_rejected: keptRejected, files_durable: filestore.isDurable(),
       });
     } catch (err) {

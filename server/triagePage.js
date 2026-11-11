@@ -5,7 +5,8 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-10-11-2';
+const BUILD_TAG = 'triage-ui-2026-11-10-1';
+const { SCOPE_ITEMS, FINISH_TYPES, FINISH_BY } = require('./triageScope');
 
 // The narrated walkthrough of this page. Linked rather than embedded: this page
 // is itself inside an iframe on the Zoho dashboard and a nested iframe with sound
@@ -163,6 +164,31 @@ function renderTriagePage() {
   .files-badge{font-size:11.5px;background:#eefaf1;color:#1a6b34;border:1px solid #bfe3c9;padding:3px 9px;border-radius:14px;font-weight:600}
   .nextup{margin-top:11px;padding:10px 12px;background:#f7fafd;border:1px solid #dce6f3;border-radius:8px;font-size:12.5px;color:#3d4955;line-height:1.55}
   .nextup b{color:var(--ink)}
+  /* "What this quote includes" — three-state pills, on the intake box and on every card. All
+     optional: a dashed amber pill is "not decided", which is a reminder, never a blocker. */
+  .scopebox{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 12px}
+  .scopebox .slbl{font-size:11.5px;font-weight:700;color:#5b6573;margin-right:2px}
+  .scp{font:inherit;font-size:12px;font-weight:600;padding:4px 10px;border-radius:14px;cursor:pointer;border:1px solid;line-height:1.4}
+  .scp.yes{background:#e9f6ec;border-color:#a9d8b5;color:#1a6b34}
+  .scp.no{background:#f2f4f6;border-color:#d5dbe1;color:#5b6573}
+  .scp.open{background:#fff7e6;border:1px dashed #e0b25c;color:#7a5000}
+  .scp:hover{filter:brightness(.97)}
+  .scp .ai{font-size:9.5px;font-weight:700;letter-spacing:.04em;background:var(--mc-blue);color:#fff;border-radius:6px;padding:0 4px;margin-left:5px;vertical-align:1px}
+  .scopebox select{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:14px;padding:3px 8px;background:#fff;color:var(--ink)}
+  .scopebox select.open{background:#fff7e6;border:1px dashed #e0b25c;color:#7a5000}
+  .intake .optnote{display:flex;gap:10px;align-items:flex-start;background:#eef4fb;border:1px solid #d6e3f2;border-radius:8px;
+    padding:10px 12px;font-size:12.5px;line-height:1.55;color:#33475b;margin:0 0 12px}
+  .intake .optnote .i{flex:none;width:18px;height:18px;border-radius:50%;background:var(--mc-blue);color:#fff;font-size:11px;font-weight:700;
+    display:inline-flex;align-items:center;justify-content:center;margin-top:1px}
+  .intake .fields{display:grid;grid-template-columns:2fr 2fr 1.1fr;gap:10px;margin-bottom:10px}
+  .intake .fields label{display:block;font-size:12px;font-weight:600;margin-bottom:4px}
+  .intake .fields input{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;background:#fff}
+  .intake .fhint{font-size:11.5px;color:var(--muted);margin-top:3px;min-height:14px}
+  .intake .fhint.good{color:var(--good)}
+  .intake .scopehead{font-size:12.5px;font-weight:700;margin:2px 0 6px}
+  .intake .scopehead span{font-weight:400;color:var(--muted)}
+  .intake .notelbl{font-size:12.5px;font-weight:700;margin:4px 0 6px}
+  @media (max-width:640px){.intake .fields{grid-template-columns:1fr}}
 </style></head>
 <body><div class="wrap">
   <div class="head">
@@ -207,6 +233,18 @@ function renderTriagePage() {
       It gets read and lands in this list as an ordinary opportunity, so Quote and the take-off work on it as usual.<br>
       <b>Drawings you add here are kept.</b> When you turn this into a project, the take-off opens with them already
       loaded — you will not be asked for them twice.</p>
+    <div class="optnote"><span class="i">i</span><span><b>Everything here is optional, but it pays off.</b>
+      The more you tell us before the drawings and specs are read (the client, what's included, the finish),
+      the more accurate the take-off and the quote. Skip whatever you don't know yet: the AI fills in what it can
+      from your notes and files, and you can change any of it on the card afterwards.</span></div>
+    <div class="fields">
+      <div><label for="intakeJob">Job</label><input id="intakeJob" placeholder="Leave blank and the AI names it"><div class="fhint"></div></div>
+      <div><label for="intakeClient">Client</label><input id="intakeClient" list="clientList" placeholder="Search your clients" autocomplete="off"><datalist id="clientList"></datalist><div class="fhint" id="clientHint"></div></div>
+      <div><label for="intakeBid">Bid due</label><input id="intakeBid" type="date"><div class="fhint"></div></div>
+    </div>
+    <div class="scopehead">What this quote includes <span>· click a pill to switch it: included, not included, not decided</span></div>
+    <div class="scopebox" id="intakeScope"></div>
+    <div class="notelbl">Notes, an email, a scope list</div>
     <textarea id="intakeText" placeholder="Paste or type here. Rough is fine — a project name, a customer, a bid date and a few lines of scope is plenty to start."></textarea>
     <div class="drop" id="intakeDrop">Drop files here, or click to choose — images, PDFs, text and CSV</div>
     <input type="file" id="intakeFiles" multiple accept="image/*,application/pdf,text/plain,text/csv,.csv,.txt" style="display:none">
@@ -339,6 +377,7 @@ function renderTriagePage() {
       + '</div>'
       + (o.summary?'<p class="summary">'+esc(o.summary)+'</p>':'')
       + '<div class="chips">'+chips(o.material_scope)+'</div>'
+      + (status!=='Decline' ? '<div class="scopebox">'+scopeHtml(o.scope,'Includes')+'</div>' : '')
       + '<div class="duewrap"><span class="due'+(di.past?' past':(di.soon?' soon':''))+'"><span class="lbl">Bid due</span> '+esc(di.txt)+(di.past?' · PAST DUE':'')+'</span>'
       + (o.received?'<span class="meta">Received '+esc(o.received)+'</span>':'')
       + filesBadge(o)+'</div>'
@@ -448,6 +487,117 @@ function renderTriagePage() {
     askConfirm('Remove "'+name+'" from your list?\\n\\nIt leaves every tab and will not come back from the inbox. '
       + 'A project already created from it is not touched.', function(){ decide(btn,'remove'); });
   };
+  // ---- What this quote includes (scope pills) ------------------------------
+  // Three states per pill: included, not included, not decided. All optional. On a card each
+  // change saves at once; on "Start a quote" they go with Read it, and the AI fills only the
+  // ones left undecided. AI-set pills carry an "AI" tag and say, on hover, the words they came from.
+  var SCOPE_ITEMS = ${JSON.stringify(SCOPE_ITEMS)};
+  var FINISH_TYPES = ${JSON.stringify(FINISH_TYPES)};
+  var FINISH_BY = ${JSON.stringify(FINISH_BY)};
+  function blankScope(){
+    var s={items:{},finish:{type:'',by:'',src:'',why:''}};
+    SCOPE_ITEMS.forEach(function(i){ s.items[i.key]={v:'',src:'',why:''}; });
+    return s;
+  }
+  function fixScope(s){
+    var b=blankScope();
+    if(!s||typeof s!=='object') return b;
+    SCOPE_ITEMS.forEach(function(i){
+      var it=(s.items||{})[i.key];
+      if(it&&(it.v==='yes'||it.v==='no')) b.items[i.key]={v:it.v,src:it.src||'',why:it.why||''};
+    });
+    var f=s.finish||{};
+    b.finish={type:f.type||'',by:f.by||'',src:f.src||'',why:f.why||''};
+    return b;
+  }
+  function scopeHtml(s,label){
+    s=fixScope(s);
+    var h=label?'<span class="slbl">'+esc(label)+'</span>':'';
+    SCOPE_ITEMS.forEach(function(i){
+      var it=s.items[i.key];
+      var cls=it.v==='yes'?'yes':(it.v==='no'?'no':'open');
+      var mark=it.v==='yes'?'✓':(it.v==='no'?'✕':'?');
+      var state=it.v==='yes'?'included':(it.v==='no'?'not included':'not decided');
+      var tip=i.label+': '+state+(it.src==='ai'&&it.why?' (the AI read this from: '+it.why+')':'')+'. Click to change.';
+      h+='<button type="button" class="scp '+cls+'" data-k="'+i.key+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'">'
+        +mark+' '+esc(i.label)+(it.src==='ai'?'<span class="ai">AI</span>':'')+'</button>';
+    });
+    var ft='<option value="">Finish: not decided</option>'+FINISH_TYPES.map(function(f){
+      return '<option value="'+f.key+'"'+(s.finish.type===f.key?' selected':'')+'>Finish: '+esc(f.label)+'</option>';
+    }).join('');
+    var fb='<option value="">Finish by: not decided</option>'+FINISH_BY.map(function(f){
+      return '<option value="'+f.key+'"'+(s.finish.by===f.key?' selected':'')+'>Finish by: '+esc(f.label)+'</option>';
+    }).join('');
+    var ftip=(s.finish.src==='ai'&&s.finish.why)?' title="'+esc('The AI read this from: '+s.finish.why)+'"':'';
+    h+='<select data-f="type" aria-label="Finish"'+ftip+' class="'+(s.finish.type?'':'open')+'">'+ft+'</select>';
+    if(s.finish.type&&s.finish.type!=='none') h+='<select data-f="by" aria-label="Who does the finish" class="'+(s.finish.by?'':'open')+'">'+fb+'</select>';
+    return h;
+  }
+  var intakeScope=blankScope();
+  function renderIntakeScope(){ var b=document.getElementById('intakeScope'); if(b) b.innerHTML=scopeHtml(intakeScope,''); }
+  function scopeTarget(box){
+    if(!box) return null;
+    if(box.id==='intakeScope') return {s:intakeScope,o:null};
+    var o=oppOf(box); if(!o) return null;
+    o.scope=fixScope(o.scope);
+    return {s:o.scope,o:o};
+  }
+  function scopeChanged(box,t){
+    box.innerHTML=scopeHtml(t.s, box.id==='intakeScope'?'':'Includes');
+    if(t.o) saveScope(t.o);
+  }
+  function saveScope(o){
+    fetch('/api/triage/scope',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({opportunity_id:o.id, scope:o.scope})})
+      .then(function(r){return r.json();})
+      .then(function(j){ if(!j||!j.ok) notify('Could not save that change. Try again.','bad'); })
+      .catch(function(){ notify('Could not save that change. Try again.','bad'); });
+  }
+  document.addEventListener('click',function(e){
+    var b=e.target&&e.target.closest?e.target.closest('.scp'):null; if(!b) return;
+    var box=b.closest('.scopebox'); var t=scopeTarget(box); if(!t) return;
+    var k=b.getAttribute('data-k'); var it=t.s.items[k]; if(!it) return;
+    var nv=it.v===''?'yes':(it.v==='yes'?'no':'');
+    t.s.items[k]={v:nv,src:nv?'user':'',why:''};
+    scopeChanged(box,t);
+  });
+  document.addEventListener('change',function(e){
+    var sel=e.target; if(!sel||!sel.matches||!sel.matches('.scopebox select')) return;
+    var box=sel.closest('.scopebox'); var t=scopeTarget(box); if(!t) return;
+    var f=sel.getAttribute('data-f');
+    t.s.finish[f]=sel.value; t.s.finish.src=(t.s.finish.type||t.s.finish.by)?'user':''; t.s.finish.why='';
+    if(f==='type'&&(sel.value==='none'||!sel.value)) t.s.finish.by='';
+    scopeChanged(box,t);
+  });
+  renderIntakeScope();
+
+  // The Client box searches the shop's own client records. A name that matches one links the
+  // opportunity to it, so Create Project fills the Client lookup instead of retyping it.
+  var clients=[], clientsLoaded=false;
+  function loadClients(){
+    if(clientsLoaded||!MFG) return; clientsLoaded=true;
+    fetch('/api/triage/clients?manufacture='+encodeURIComponent(MFG))
+      .then(function(r){return r.json();})
+      .then(function(d){
+        clients=(d&&d.clients)||[];
+        document.getElementById('clientList').innerHTML=clients.map(function(c){ return '<option value="'+esc(c.name)+'"></option>'; }).join('');
+        clientHintUpdate();
+      })
+      .catch(function(){ clientsLoaded=false; });
+  }
+  function findClient(name){
+    var n=String(name||'').trim().toLowerCase(); if(!n) return null;
+    for(var i=0;i<clients.length;i++){ if(clients[i].name.toLowerCase()===n) return clients[i]; }
+    return null;
+  }
+  function clientHintUpdate(){
+    var v=document.getElementById('intakeClient').value.trim(), h=document.getElementById('clientHint');
+    if(!v){ h.textContent=''; h.className='fhint'; return; }
+    if(findClient(v)){ h.textContent='Linked to your client record.'; h.className='fhint good'; }
+    else { h.textContent=clients.length?'Not one of your clients yet. You can add it when you create the project.':''; h.className='fhint'; }
+  }
+  document.getElementById('intakeClient').addEventListener('input',clientHintUpdate);
+
   // ---- Manual intake -------------------------------------------------------
   // Files are read in the browser and posted as base64. Nothing is stored server
   // side: the extraction pulls the header fields out and the files are then let
@@ -569,7 +719,7 @@ function renderTriagePage() {
   }
   document.getElementById('newQuoteBtn').addEventListener('click',function(){
     var p=document.getElementById('intake'); p.classList.toggle('open');
-    if(p.classList.contains('open')) document.getElementById('intakeText').focus();
+    if(p.classList.contains('open')){ loadClients(); document.getElementById('intakeText').focus(); }
   });
   document.getElementById('intakeCancel').addEventListener('click',function(){
     document.getElementById('intake').classList.remove('open');
@@ -590,8 +740,17 @@ function renderTriagePage() {
     if(total>MAX_INTAKE_BYTES){ notify('Those files total '+fmtBytes(total)+'. Keep it under 25 MB — the full drawing set goes in at take-off time instead.','bad'); return; }
     var btn=this; btn.disabled=true; var was=btn.textContent; btn.textContent='Reading…';
     document.getElementById('intakeNote').textContent='Reading your material…';
+    // The optional answers. Anything left blank is read from the material by the AI, or stays blank.
+    var clientName=document.getElementById('intakeClient').value.trim();
+    var clientRec=findClient(clientName);
     fetch('/api/triage/manual',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({manufacture:MFG, text:text, attachments:intakeFiles.map(function(f){
+      body:JSON.stringify({manufacture:MFG, text:text,
+        job:document.getElementById('intakeJob').value.trim(),
+        client_name:clientRec?clientRec.name:clientName,
+        client_id:clientRec?clientRec.id:'',
+        bid_date:document.getElementById('intakeBid').value||'',
+        scope:intakeScope,
+        attachments:intakeFiles.map(function(f){
         // read_as carries the drawing/document choice through, so the server honours what is
         // on screen rather than guessing again and possibly differently.
         return {kind:f.kind, name:f.name, media_type:f.media_type, data:f.data, text:f.text, read_as:f.read_as};
@@ -600,6 +759,8 @@ function renderTriagePage() {
       .then(function(res){
         if(!res.ok){ notify('Could not add it: '+(res.error||'unknown error'),'bad'); return; }
         document.getElementById('intakeText').value=''; intakeFiles=[]; renderIntakeFiles();
+        ['intakeJob','intakeClient','intakeBid'].forEach(function(id){ document.getElementById(id).value=''; });
+        clientHintUpdate(); intakeScope=blankScope(); renderIntakeScope();
         document.getElementById('intake').classList.remove('open');
         // Reload rather than splice it in locally: the row now exists server-side and
         // the list should show exactly what was stored, not a local guess at it.
@@ -613,6 +774,8 @@ function renderTriagePage() {
         var msg = kept
           ? 'Added, and ' + kept + ' document' + (kept===1?'':'s') + ' ' + (kept===1?'is':'are') + ' kept with it.\\n\\nNext: press Quote on the new card, then Create Project on the Quoting tab, then run the take-off from the project page. The take-off will open with ' + (kept===1?'this document':'these documents') + ' already loaded.'
           : 'Added to your list.\\n\\nNext: press Quote on the new card, then Create Project on the Quoting tab, then run the take-off from the project page with the drawings for this job.';
+        var aiN=Number(res.scope_ai_filled)||0;
+        if(aiN) msg += '\\n\\nThe AI set ' + aiN + ' of the scope pills from your material (marked AI). Check them on the card; click any pill to change it.';
         notify(msg,'good',true);
         var rej=(res.files_rejected||[]).filter(function(f){ return f && f.why!=='already stored'; });
         if(rej.length) notify(rej.length+' file'+(rej.length===1?' was':'s were')+' not kept: '+rej.map(function(f){return f.name+' ('+f.why+')';}).join(', '),'bad');

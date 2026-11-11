@@ -805,8 +805,10 @@
       rfqUnits = (d && Array.isArray(d.unit_counts)) ? d.unit_counts : [];
       // The "what to quote" note written on the RFQ at Create Project (or here, earlier).
       const qb = document.getElementById("quoteBrief");
-      if (qb && !qb.value.trim() && d && d.quote_note) {
-        qb.value = d.quote_note;
+      // Plus what the quote includes, as chosen with the pills at triage ("SCOPE (from triage):
+      // Includes … Excludes …"), so the AI reads both. Only into an empty box — never over an edit.
+      if (qb && !qb.value.trim() && d && (d.quote_note || d.scope_text)) {
+        qb.value = [d.quote_note || "", d.scope_text || ""].filter(function (s) { return String(s).trim(); }).join("\n\n");
         const qn = document.getElementById("quoteBriefNote");
         if (qn) qn.textContent = "From the RFQ. Edit it if the scope has changed — it is saved for this project.";
       }
