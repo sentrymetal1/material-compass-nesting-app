@@ -977,7 +977,11 @@
     if(Number(w.confidence)<0.5) return "low confidence — check";
     return "";
   }
-  function weldProblems(R){ return arr(R.welds).filter(function(w){ const x=weldIssue(w); return x && x.indexOf("field")<0; }); }
+  // Welds of a component with typical welds are not used in the labor, so they are never "to check".
+  function weldProblems(R){
+    const ruled={}; arr(R.weld_rules).forEach(function(x){ if(x && !x.deleted && x.component) ruled[String(x.component).trim().toLowerCase()]=1; });
+    return arr(R.welds).filter(function(w){ const x=weldIssue(w); return x && x.indexOf("field")<0 && !ruled[String(w.component||"").trim().toLowerCase()]; });
+  }
   function weldSet(i,k,el){
     const R=loadResult(); const w=arr(R.welds)[i]; if(!w) return;
     let v=el.type==="checkbox"?el.checked:el.value;
@@ -1127,10 +1131,18 @@
     const sel='style="font-size:12px;padding:2px 4px;border:1px solid #dfe5ec;border-radius:5px;max-width:120px"';
     const num=function(i,k,v,wd,dis){ return '<input class="lab-in" style="width:'+(wd||54)+'px" value="'+escAttr(v==null||v===0?"":v)+'"'+(dis?' disabled title="measured from the member\'s section"':'')+' onchange="weldSet('+i+',\''+k+'\',this)">'; };
     const chk=function(i,k,v,t){ return '<input type="checkbox"'+(v?' checked':'')+' title="'+escAttr(t)+'" onchange="weldSet('+i+',\''+k+'\',this)">'; };
-    const probs=weldProblems(R).length;
-    let rows="";
+    // A component with typical welds has this schedule REPLACED in the labor (weld-rules.js) — so its
+    // entries are folded away, not counted as "to check", and say they are not used. Mark 2026-11-11:
+    // "this is still required?" — it showed 11 to check that no longer priced anything.
+    const ruled={}; arr(R.weld_rules).forEach(function(x){ if(x && !x.deleted && x.component) ruled[String(x.component).trim().toLowerCase()]=x.component; });
+    const isRuled=function(w){ return !!ruled[String(w.component||"").trim().toLowerCase()]; };
+    const probs=weldProblems(R).filter(function(w){ return !isRuled(w); }).length;
+    let outer="", replaced="", nRep=0;
     Object.keys(sheets).sort().forEach(function(sh){
       const idx=sheets[sh], comp=W[idx[0]].component||"";
+      const rep=isRuled(W[idx[0]]);
+      if(rep) nRep+=idx.length;
+      let rows="";
       rows+='<tr class="grp-comp"><td colspan="12">Drawing '+esc(sh)+(comp?' <span class="grp-meta">'+esc(comp)+'</span>':'')+
         ' <span class="pillbtn" style="margin-left:8px" onclick="weldAdd(\''+escAttr(sh)+'\',\''+escAttr(comp)+'\')">+ add weld</span></td></tr>';
       idx.forEach(function(i){
@@ -1152,13 +1164,25 @@
           '<td class="n">'+(w.confidence!=null?Math.round(Number(w.confidence)*100)+'%':'')+'</td>'+
           '<td><button class="applybtn" style="background:#9aa6b2;padding:1px 7px" title="Remove" onclick="weldDel('+i+')">✕</button></td></tr>';
       });
+      if(rep) replaced+=rows; else outer+=rows;
     });
+    const thead='<thead><tr><th>Joint</th><th>Size, in</th><th>All around / length, in</th><th>Both sides</th><th>Pitch</th><th>Count</th><th>Position</th><th>Field</th><th>Symbol on drawing</th><th>Conf.</th><th></th></tr></thead>';
+    const live=W.length-nRep, nSh=Object.keys(sheets).filter(function(sh){ return !isRuled(W[sheets[sh][0]]); }).length;
+    const names=Object.keys(ruled).map(function(k){ return ruled[k]; }).join(", ");
     return head+
-      '<div class="src" style="margin:0 0 10px;font-size:12.5px;line-height:1.5">'+W.filter(liveWeldJS).length+' welds on '+Object.keys(sheets).length+' drawing'+(Object.keys(sheets).length===1?'':'s')+'. '+
-        'On these drawings the Labor tab prices welding from this schedule — joint, size, length, both sides, position — instead of the assumed welds. '+
-        'An all-around weld is measured round the member\'s section. Sizes and lengths in <b>inches</b> (1/4 or 0.25). '+
-        (probs?'<b style="color:var(--ylw)">'+probs+' to check.</b> ':'')+'After changes, <b>Recalculate</b> on the Labor tab.</div>'+
-      '<div style="overflow-x:auto"><table><thead><tr><th>Joint</th><th>Size, in</th><th>All around / length, in</th><th>Both sides</th><th>Pitch</th><th>Count</th><th>Position</th><th>Field</th><th>Symbol on drawing</th><th>Conf.</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      (outer
+        ? '<div class="src" style="margin:0 0 10px;font-size:12.5px;line-height:1.5">'+live+' welds on '+nSh+' drawing'+(nSh===1?'':'s')+'. '+
+          'On these drawings the Labor tab prices welding from this schedule — joint, size, length, both sides, position — instead of the assumed welds. '+
+          'An all-around weld is measured round the member\'s section. Sizes and lengths in <b>inches</b> (1/4 or 0.25). '+
+          (probs?'<b style="color:var(--ylw)">'+probs+' to check.</b> ':'')+'After changes, <b>Recalculate</b> on the Labor tab.</div>'+
+          '<div style="overflow-x:auto"><table>'+thead+'<tbody>'+outer+'</tbody></table></div>'
+        : '')+
+      (replaced
+        ? '<div style="font-size:12.5px;line-height:1.5;margin:'+(outer?'12px':'0')+' 0 6px"><b>Not used — replaced by typical welds.</b> '+
+          '<span class="src">'+esc(names)+' has typical welds above, so the labor prices its welding from those. The '+nRep+' welds the AI read off its drawings are kept here for reference only; nothing to check.</span></div>'+
+          '<details><summary style="cursor:pointer;font-size:12.5px;color:var(--mut)">Show what was read off the drawings</summary>'+
+          '<div style="overflow-x:auto;opacity:.6"><table>'+thead+'<tbody>'+replaced+'</tbody></table></div></details>'
+        : '')+
       '</div></div>';
   }
 
