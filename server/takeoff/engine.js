@@ -1021,6 +1021,8 @@ const SHEET_INDEX_TOOL = {
             confidence: { type: "number",  description: "0-1 confidence the number was read correctly (0 when there is no number)." },
             suggested_component: { type: "string", description: "The component / assembly this sheet details, as a SHORT name (2-4 words) taken from the title block, e.g. 'Catwalk Floor', 'Platform Railing', 'Stair Stringers'. Drop the project/product prefix. Sheets detailing the SAME assembly MUST get the IDENTICAL string so they group. Empty for a cover, index or notes page." },
             in_scope:   { type: "boolean", description: "False ONLY when the estimator's scope note (if one is given) clearly excludes what this sheet details. True otherwise, and always true when no scope note is given." },
+            sheet_qty:  { type: "integer", description: "How many of the assembly this sheet details the job needs, ONLY as printed on the sheet ('QTY 2 REQ'D', '2 EA', '(2) REQUIRED', 'MAKE 2', '2 THUS'). 1 when the sheet states no quantity or the page has no drawing. Never infer it." },
+            qty_evidence: { type: "string", description: "The exact words the quantity was read from (e.g. 'QTY: 2 REQ'D'); empty when sheet_qty is 1 because nothing is stated." },
           },
           required: ["page", "number"],
         },
@@ -1047,7 +1049,9 @@ const SHEET_INDEX_TOOL = {
 
 const SHEET_SYSTEM =
   "You are INDEXING a structural steel drawing package — not taking it off. Go through the attached PDF(s) PAGE BY PAGE " +
-  "and report the drawing number in each page's title block. Do NOT list members, quantities, sizes, or materials. " +
+  "and report the drawing number in each page's title block. Do NOT list members, quantities, sizes, or materials — " +
+  "the ONE quantity you report is how many of the drawing's assembly is required, when the sheet prints it " +
+  "('QTY 2 REQ'D', 'MAKE 2', '2 THUS'), in `sheet_qty` with the words in `qty_evidence`; 1 when nothing is printed. " +
   "Do NOT infer or propose components.\n" +
   "RULES: (1) Return EXACTLY ONE ENTRY PER PAGE, in page order, for EVERY page — no page skipped, no page reported twice. " +
   "The number of entries you return MUST equal the number of pages stated in the request. " +
@@ -1124,9 +1128,13 @@ function groupPagesIntoSheets(entries) {
     if (!s) {
       byKey[k] = { doc: e.doc, number: e.number, title: e.title || "", pages: [e.page, e.page],
                    page_list: [e.page], confidence: (e.confidence == null ? null : e.confidence),
-                   suggested_component: e.suggested_component || "", in_scope: e.in_scope !== false };
+                   suggested_component: e.suggested_component || "", in_scope: e.in_scope !== false,
+                   // How many of this drawing's assembly the job needs, as the sheet prints it.
+                   qty: e.sheet_qty || 1, qty_evidence: e.qty_evidence || "" };
       order.push(k);
     } else {
+      // A two-page drawing states its quantity once; keep the one that was actually printed.
+      if ((e.sheet_qty || 1) > (s.qty || 1)) { s.qty = e.sheet_qty; s.qty_evidence = e.qty_evidence || s.qty_evidence; }
       if (!s.suggested_component && e.suggested_component) s.suggested_component = e.suggested_component;
       if (e.in_scope !== false) s.in_scope = true;   // out of scope only when EVERY page of it is
       if (last !== k && split.indexOf(s.number) < 0) split.push(s.number);   // non-adjacent repeat
@@ -1291,6 +1299,8 @@ async function readSheetIndex(opts) {
         confidence: (p && typeof p.confidence === "number") ? p.confidence : null,
         suggested_component: String((p && p.suggested_component) == null ? "" : p.suggested_component).trim(),
         in_scope: !(scopeNote && p && p.in_scope === false),
+        sheet_qty: Math.max(1, Math.min(999, Math.round(Number(p && p.sheet_qty) || 1))),
+        qty_evidence: String((p && p.qty_evidence) == null ? "" : p.qty_evidence).trim().slice(0, 80),
       });
     });
 

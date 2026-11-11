@@ -358,6 +358,21 @@ async function takeoffHandler(req, res, deps) {
     // drawing at its own quantity, so a row multiplies by its sheet's quantity instead. Only when the
     // estimator left the component at x1: a component set to xN already carries the count, and using
     // both would double it.
+    // The estimator confirms each drawing's quantity on the intake screen (read off the sheet at the
+    // index step, editable on the drawing chip). A confirmed quantity beats what the run read, so a
+    // misread "QTY 2 REQ'D" can't change the order. Same rule as before for which count applies.
+    const confirmedQty = {};
+    (Array.isArray(body.drawing_qty) ? body.drawing_qty : []).forEach(function (x) {
+      const k = String((x && x.number) == null ? "" : x.number).toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const q = Math.round(Number(x && x.qty));
+      if (k && q >= 1 && q <= 999) confirmedQty[k] = q;
+    });
+    let qtyApplied = 0;
+    rows.concat(fittings).forEach(function (r) {
+      const k = String((r && r.source_sheet) || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (k && confirmedQty[k] && Number(r.sheet_qty) !== confirmedQty[k]) { r.sheet_qty = confirmedQty[k]; qtyApplied++; }
+    });
+    if (qtyApplied) console.log("[takeoff] " + qtyApplied + " rows took the drawing quantity the estimator confirmed");
     const sheetQtyOf = function (r) { return Math.max(1, Math.round(Number(r && r.sheet_qty) || 1)); };
     let multiplied = 0, bySheet = 0;
     rows.forEach(function (r) {

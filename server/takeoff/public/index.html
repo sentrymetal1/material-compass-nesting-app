@@ -208,6 +208,13 @@
     .comp .cqty input { width:34px; border:0; background:transparent; font-size:11.5px; font-weight:700;
                         color:#2c5c96; font-family:inherit; text-align:center; padding:1px 0; }
     .comp .cqty input:focus { outline:1px solid var(--blue); border-radius:3px; background:#fff; }
+    /* How many of one DRAWING a unit needs ("QTY 2 REQ'D"). Orange = read off the sheet, not yet touched. */
+    .comp .dqty { font-size:10px; color:#3d6ea8; background:#eef4fb; border:1px solid #d7e5f5; border-radius:8px;
+                  padding:0 4px; white-space:nowrap; font-weight:600; display:inline-flex; align-items:center; gap:1px; }
+    .comp .dqty.ai { color:#8a4b09; background:#fff7ed; border-color:#fcd9a8; }
+    .comp .dqty input { width:30px; border:0; background:transparent; font-size:11px; font-weight:700; color:inherit;
+                        font-family:inherit; text-align:center; padding:0; }
+    .comp .dqty input:focus { outline:1px solid var(--blue); border-radius:3px; background:#fff; }
     .scopesum { font-size:11px; color:#556; background:#f7fafd; border:1px solid #e3ecf6;
                 border-radius:6px; padding:6px 9px; margin-bottom:9px; line-height:1.6; }
     .scopedup { margin-top:5px; padding-top:5px; border-top:1px solid #e3ecf6; color:#8a4b09; }
@@ -1392,6 +1399,55 @@
       } catch (e) {}
     }
     const isReference = (num) => referenceSheets.some((x) => _norm(x.number) === _norm(num));
+
+    // HOW MANY OF EACH DRAWING one unit of its component needs (Mark 2026-11-11: "2 drawings with 2 ea.
+    // assemblies"). Read off the sheet ("QTY 2 REQ'D") at the quick read, shown on the drawing chip,
+    // editable there. Keyed by normalized drawing number → { qty, src: 'ai'|'user', why }. Sent with
+    // the run as drawing_qty; a confirmed quantity beats what the run reads.
+    const drawQtyKey = () => "mc_dwgqty_" + (params.project_id || "_");
+    let drawQty = (function () { try { return JSON.parse(localStorage.getItem(drawQtyKey()) || "{}") || {}; } catch (e) { return {}; } })();
+    function saveDrawQty() { try { localStorage.setItem(drawQtyKey(), JSON.stringify(drawQty)); } catch (e) {} }
+    function qtyOf(num) { const e = drawQty[_norm(num)]; return e ? Math.max(1, Number(e.qty) || 1) : 1; }
+    function seedDrawQty(list) {
+      (list || []).forEach((s) => {
+        const k = _norm(s.number); if (!k) return;
+        const cur = drawQty[k];
+        if (cur && cur.src === "user") return;                       // the estimator's number stands
+        const q = Math.max(1, Number(s.qty) || 1);
+        if (q > 1) drawQty[k] = { qty: q, src: "ai", why: s.qtyWhy || "" };
+        else if (cur) delete drawQty[k];                             // a re-read that found no quantity
+      });
+      saveDrawQty();
+    }
+    function drawingQtyPayload() {
+      return Object.keys(drawQty).map((k) => ({ number: k, qty: Math.max(1, Number(drawQty[k].qty) || 1) }));
+    }
+    // The notice above the components: which drawings are needed more than once, and the one case
+    // where those quantities are NOT used (the component itself is set above x1).
+    function drawQtyNotice() {
+      const many = [], clash = [];
+      scope.forEach((c) => {
+        const mine = (c.drawings || []).filter((d) => d && d.number && qtyOf(d.number) > 1);
+        if (!mine.length) return;
+        mine.forEach((d) => {
+          const e = drawQty[_norm(d.number)] || {};
+          many.push(escHtml(d.number) + " × " + qtyOf(d.number) + (e.why ? ' <span style="opacity:.75">(' + escHtml(e.why) + ")</span>" : ""));
+        });
+        if (Math.max(1, Number(c.qty) || 1) > 1) clash.push(c);
+      });
+      if (!many.length) return "";
+      const n = many.length;
+      let html = '<div class="aud ' + (clash.length ? "warn" : "ok") + '" style="margin:0 0 10px"><b>' + n + " drawing" + (n === 1 ? " is" : "s are") +
+        " needed more than once:</b> " + many.join(" · ") +
+        '<span class="sub2">The take-off multiplies each of these drawings’ material by its quantity. Change a quantity in the box on the drawing.</span>';
+      clash.forEach((c) => {
+        html += '<span class="sub2"><b>' + escHtml(c.name) + " is set to × " + Math.max(1, Number(c.qty) || 1) +
+          "</b>, so that count is used for every one of its drawings and these drawing quantities are not. " +
+          "If the × " + c.qty + " was for these drawings, set " + escHtml(c.name) + " back to × 1. If the job really builds " +
+          c.qty + " of the whole " + escHtml(c.name) + ", move the multi-quantity drawings onto their own component.</span>";
+      });
+      return html + "</div>";
+    }
     const exclKey = () => "mc_excl_" + (params.project_id || "_");
     const descKey = () => "mc_desc_" + (params.project_id || "_");
     function escAttr(s) { return escHtml(s).replace(/"/g, "&quot;"); }
@@ -1713,6 +1769,7 @@
               escAttr((desc ? desc + " — " : "") + "click to change, rename or delete") + '">' + escHtml(g.number) + "</button>" +
             (g.ids.length > 1 ? '<span class="dmul" title="' + g.ids.length + " drawing records on the project carry this number — " +
               'usually one per sheet. All are included.">×' + g.ids.length + "</span>" : "") +
+            (qtyOf(g.number) > 1 ? dqtyBox(g.number) : "") +
             '<button type="button" class="xbtn" data-k="dxg" data-ci="' + ci + '" data-ids="' + escAttr(g.ids.join(",")) +
               '" title="Leave out of this take-off">✕</button></span>';
         }).join("");
@@ -1727,7 +1784,7 @@
               ? editCell("drawing", d.id, d.number, ci, di)
               : '<select data-k="dsel" data-ci="' + ci + '" data-di="' + di + '">' +
                   drawOptions(c.cid, d && d.id, used) + "</select>";
-          return '<div class="drow">' + cell + rowBtns("drawing", ci, di, d && d.id) + "</div>" +
+          return '<div class="drow">' + cell + (d && d.id && d.number ? dqtyBox(d.number) : "") + rowBtns("drawing", ci, di, d && d.id) + "</div>" +
             (desc ? '<div class="ddesc">' + escHtml(desc) + "</div>" : "");
         }).join("");
         const ccell = (creating && creating.ci === ci && creating.di == null)
@@ -1761,9 +1818,19 @@
           ? '<div class="aud warn" style="margin:0 0 10px"><b>The project’s components and drawings did not load.</b>' +
               '<span class="sub2">' + escHtml(project.failed) + " The list below is NOT the project — adding components now " +
               "would duplicate the ones already there.</span></div>"
-          : (!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + cards;
+          : (!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + drawQtyNotice() + cards;
       renderSummary();
       renderCoverage();          // scope changed ⇒ the accounted-for tally changed
+    }
+    // The quantity box on a drawing chip / drawing row: how many of this drawing ONE unit of the
+    // component needs. Orange when it was read off the sheet, so it gets a look before the run.
+    function dqtyBox(num) {
+      const e = drawQty[_norm(num)] || {};
+      const q = qtyOf(num);
+      const tip = "How many of drawing " + num + " one unit of this component needs" +
+        (e.src === "ai" && e.why ? " — read off the sheet: “" + e.why + "”" : "") + ". Type a new number to change it.";
+      return '<span class="dqty' + (e.src === "ai" ? " ai" : "") + '" title="' + escAttr(tip) + '">qty' +
+        '<input type="number" min="1" step="1" data-k="dqty" data-num="' + escAttr(num) + '" value="' + q + '" aria-label="' + escAttr(tip) + '" />ea</span>';
     }
     function focusScopeInput(sel) {
       const el = document.querySelector("#scopeList " + sel);
@@ -1804,6 +1871,15 @@
         const q = Math.max(1, Math.round(Number(t.value) || 1));
         t.value = q;
         await saveCompQty(Number(t.getAttribute("data-ci")), q);
+        return;
+      }
+      if (t.getAttribute && t.getAttribute("data-k") === "dqty") {
+        const q = Math.max(1, Math.min(999, Math.round(Number(t.value) || 1)));
+        const num = t.getAttribute("data-num") || "";
+        drawQty[_norm(num)] = { qty: q, src: "user", why: "" };
+        saveDrawQty();
+        renderScope();
+        setScopeStatus("Drawing <b>" + escHtml(num) + "</b> is now <b>" + q + " ea</b> per unit. The take-off multiplies its material by " + q + ".");
         return;
       }
       if (t.tagName !== "SELECT") return;
@@ -2274,6 +2350,8 @@
           confidence: (s.confidence == null ? null : Number(s.confidence)),
           suggestion: String(s.suggested_component || "").trim(),   // AI's proposed component for this sheet
           inScope: s.in_scope !== false,                           // false = the "What to quote" note excludes it
+          qty: Math.max(1, Number(s.qty) || 1),                    // "QTY 2 REQ'D" as printed on the sheet
+          qtyWhy: String(s.qty_evidence || "").trim(),
           // A file with no title blocks (a BOM, a parts list, a spec) comes back as ONE entry for the
           // file itself, so it can be placed on a component and named to the AI like any drawing.
           kind: s.kind === "document" ? "document" : "drawing",
@@ -2284,6 +2362,7 @@
         })).filter((s) => s.number));
         // Coverage tracks the same objects, so edits and drops in the grid follow through.
         sheets = detected;
+        seedDrawQty(detected);   // each drawing's own "QTY 2 REQ'D" onto its chip
         // Sheets the "What to quote" note excludes start out left out, exactly as if "Not our scope"
         // had been pressed on each, so no component is proposed for them. "put back" undoes it.
         const leftOut = detected.filter((s) => s.inScope === false && !isOut(s.number));
@@ -3715,6 +3794,7 @@
               .map((d) => ({ name: d.name, file_id: d.fileId || null })),
             model: document.getElementById("model").value,
             scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
+            drawing_qty: drawingQtyPayload(),   // how many of each drawing one unit needs, as confirmed on the chips
             quote_brief: briefText(),   // the estimator's notes + the scope pills and "how it gets made", in words
             // Everything the estimator decided about coverage travels with the run: which sheets to
             // skip and why, and any sheet whose number on the drawing differs from the project's.
