@@ -18,6 +18,7 @@ const { BUCKETS } = require('./standards');
 const shop = require('./shop');
 const pm = require('./processModel');
 const { typeForLine } = require('./laborTypes');
+const WeldRules = require('../takeoff/public/weld-rules');   // shared with the review page
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const unitsOf = (x) => Math.max(1, Math.round(Number(x && x.units) || 1));
@@ -38,8 +39,14 @@ function laborForTakeoff(takeoff, profile, jobType) {
   const rawRows = ((takeoff && takeoff.rows) || []).filter(live);
   const rawFittings = ((takeoff && takeoff.fittings) || []).filter(live);
   // The weld schedule read off the drawings; a weld counts when it has a count, like a row a quantity.
-  const rawWelds = ((takeoff && takeoff.welds) || []).filter((w) => w && !w.deleted && Number(w.count) > 0);
-  const ctx = shop.estimateContext(profile);
+  // Typical-weld rules (weld-rules.js), counted per drawing from its labelled pieces. A component
+  // with rules has its AI-read weld schedule replaced by them — the same welds, never both.
+  const ruled = WeldRules.expandAll({ rows: (takeoff && takeoff.rows) || [], fittings: (takeoff && takeoff.fittings) || [],
+    weld_rules: (takeoff && takeoff.weld_rules) || [], drawing_counts: (takeoff && takeoff.drawing_counts) || {} });
+  const rawWelds = ((takeoff && takeoff.welds) || [])
+    .filter((w) => w && !w.deleted && Number(w.count) > 0 && !ruled.ruleComps[WeldRules.compKey(w.component)])
+    .concat(ruled.welds);
+  const ctx = Object.assign({}, shop.estimateContext(profile), { elbowComps: ruled.elbowComps });
   const rawFeatures = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
 
   // UNITS vs DRAWING QTY. A row's `units` is the component count when that is above 1, otherwise
@@ -68,6 +75,12 @@ function laborForTakeoff(takeoff, profile, jobType) {
   const features = rawFeatures.map((f) => Object.assign({}, f, { count: Number(f.count) * multOfSheet(f) }));
   const extras = (takeoff && takeoff.extras) || {};
   const est = estimateTakeoff({ rows, fittings, welds, features, extras }, ctx);
+  // What a rule could not count (pieces not labelled, no length) is listed, never zero-filled.
+  for (const m of ruled.missing) {
+    const comp = Object.keys(est.components).find((n) => n.trim().toLowerCase() === WeldRules.compKey(m.component || '')) ||
+      Object.keys(est.components).find((n) => n !== 'Whole job');
+    if (comp) est.components[comp].missing.push(m);
+  }
   const learnPct = pm.opv(ctx.model, 'LEARNING', 'pct') || 1;
 
   // Units and weight per component. A component's units are the most any of its rows carries,

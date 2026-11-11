@@ -6,7 +6,7 @@ const zohoMeter = require('./zohoMeter');        // counts every Zoho call by ro
 const path = require('path');
 const zlib = require('zlib');
 const FormData = require('form-data');
-const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, repairHandler } = require('./takeoff/route');
+const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, repairHandler, labelPiecesHandler } = require('./takeoff/route');
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
 const filestore = require('./filestore');        // the project's own copy of the drawings
 const nestStore = require('./nestStore');        // a saved nesting run's stock pieces + cuts, one file per run
@@ -1638,6 +1638,7 @@ app.post('/api/takeoff/bom-preview', async (req, res) => {
 app.post('/api/takeoff/index', (req, res) => indexHandler(req, res)); // intake: read sheet numbers + page ranges
 app.post('/api/takeoff/inspect', (req, res) => inspectHandler(req, res)); // intake: drawing or document? (no AI, no size limit)
 app.post('/api/takeoff/addenda', (req, res) => addendaHandler(req, res)); // review: what each addendum changed
+app.post('/api/takeoff/label-pieces', (req, res) => labelPiecesHandler(req, res)); // review: piece roles + pipe joints for typical welds
 app.post('/api/takeoff/repair', (req, res) => repairHandler(req, res));   // review: metric + duplicate checks on an older take-off
 app.post('/api/takeoff/ask', (req, res) => askHandler(req, res));     // intake: ask about the uploaded documents
 // What a run would cost per reading depth, before anything is spent. Rates come from the

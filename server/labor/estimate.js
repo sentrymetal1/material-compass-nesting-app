@@ -333,7 +333,11 @@ function estimateFitting(f, ctx) {
 // the assumed welds (a member's weld share, a plate's perimeter fillet) are dropped for its rows —
 // never both. Drawings with no weld schedule keep the assumptions.
 const sheetKey = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-const scheduled = (c, row) => !!(c.weldSheets && c.weldSheets.has(sheetKey(row.source_sheet)));
+// A typical-weld rule (weld-rules.js) replaces the assumed welds only of the piece forms it joins on
+// a drawing where it priced — the flat bar on a handrail keeps its assumption until a rule covers it.
+const formFam = (ft) => String(ft || '').trim().split(/[\s-]+/)[0].toLowerCase();
+const scheduled = (c, row) => !!((c.weldSheets && c.weldSheets.has(sheetKey(row.source_sheet))) ||
+  (c.ruleCover && c.ruleCover.has(sheetKey(row.source_sheet) + '|' + formFam(row.form_type))));
 const liveWeld = (w) => w && !w.deleted && Number(w.count) > 0;
 
 // Length round a member, in inches, from its own section — the deterministic anchor for an
@@ -611,8 +615,11 @@ function estimateTakeoff(takeoff, ctx) {
   // (2026-11-11): five drawings had typical-weld notes with no length or member, so nothing on them
   // could be measured — and they were left with no welding hours at all instead of the assumptions.
   const weldRes = welds.map((w) => ({ w, res: estimateWeld(w, ctx || {}, matOfSheet) }));
-  const weldSheets = new Set(weldRes.filter((x) => x.res.lines.length).map((x) => sheetKey(x.w.source_sheet)).filter(Boolean));
-  const rctx = Object.assign({}, ctx || {}, { weldSheets });
+  const priced = weldRes.filter((x) => x.res.lines.length);
+  const weldSheets = new Set(priced.filter((x) => !x.w.from_rule).map((x) => sheetKey(x.w.source_sheet)).filter(Boolean));
+  const ruleCover = new Set();
+  priced.filter((x) => x.w.from_rule && x.w.source_sheet).forEach((x) => (x.w.cover_forms || []).forEach((f) => ruleCover.add(sheetKey(x.w.source_sheet) + '|' + f)));
+  const rctx = Object.assign({}, ctx || {}, { weldSheets, ruleCover });
   for (const row of (takeoff && takeoff.rows) || []) add(row.component, estimateRow(row, rctx));
   for (const x of weldRes) add(x.w.component, x.res);
   const features = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
@@ -628,7 +635,12 @@ function estimateTakeoff(takeoff, ctx) {
   }
   const jl = jobLines(allRows, P, extras);
   if (jl.length) { const jc = bucketFor(JOB_COMPONENT); for (const l of jl) { jc.hours[l.bucket] += l.hours; jc.lines.push(l); } }
-  for (const f of (takeoff && takeoff.fittings) || []) add(f.component, estimateFitting(f, ctx));
+  // An elbow whose welds a typical-weld rule prices is not priced again here as butt-weld joints.
+  const elbowComps = (ctx && ctx.elbowComps) || {};
+  for (const f of (takeoff && takeoff.fittings) || []) {
+    if (elbowComps[String(f.component || '').trim().toLowerCase()] && /elbow/i.test(String(f.fitting_type || ''))) continue;
+    add(f.component, estimateFitting(f, ctx));
+  }
 
   let total = 0, missing = 0;
   for (const comp of Object.values(components)) {

@@ -1628,4 +1628,85 @@ async function askDocuments(opts) {
            usage: resp.usage, modelId: model.id };
 }
 
-module.exports = { compareAddenda, applyChanges, indexedPackage, EDIT_TOOL, runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, pdfPageCount, groupPagesIntoSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };
+// -----------------------------------------------------------------------------
+//  labelPieces — WHAT EACH PIECE IS, for typical-weld rules (weld-rules.js).
+//  Plate marks change from one drawing series to the next (pl196/pl204, pl259/pl260, p248/p250 on
+//  one job), so "the base plate" can't be found by mark. This reads the drawings once and names each
+//  existing piece mark's job (post, base plate, connection plate…), and counts the welded
+//  pipe-to-pipe joints on each drawing — the one count no parts list carries. It never adds,
+//  removes or re-sizes a row.
+// -----------------------------------------------------------------------------
+const LABEL_ROLES = ["post", "top_rail", "mid_rail", "bottom_rail", "rail", "picket", "stub", "toe_plate",
+  "base_plate", "connection_plate", "gusset", "bracket", "other"];
+const LABEL_TOOL = {
+  name: "submit_labels",
+  description: "Name each listed piece's job in its assembly, and count the welded pipe-to-pipe joints on each drawing.",
+  input_schema: {
+    type: "object",
+    properties: {
+      pieces: { type: "array", description: "One entry per listed piece (drawing + mark).", items: { type: "object", properties: {
+        source_sheet: { type: "string" }, member_mark: { type: "string" },
+        role: { type: "string", enum: LABEL_ROLES, description: "post = vertical upright; top/mid/bottom_rail = horizontal rails; rail = any other rail run; picket = infill baluster; stub = short pipe piece between fittings or a return; toe_plate = kick plate / flat bar at the walking surface; base_plate = the plate that bears on or fastens to the structure; connection_plate = a plate joining a member to the base plate or structure; gusset = stiffener; bracket = clip/bracket." },
+      }, required: ["source_sheet", "member_mark", "role"] } },
+      drawings: { type: "array", description: "One entry per drawing listed.", items: { type: "object", properties: {
+        source_sheet: { type: "string" },
+        pipe_joints: { type: "number", description: "Welded joints where a pipe meets ANOTHER PIPE (end to side, e.g. a rail into a post, or end to end) in ONE assembly of this drawing. Do NOT count pipe-to-elbow/fitting welds or pipe-to-plate welds. Count them on the views; never estimate." },
+        elbows: { type: "number", description: "Elbows/bends drawn in ONE assembly of this drawing, for cross-checking. 0 if none." },
+        confidence: { type: "number", description: "0.0–1.0 for the joint count." },
+        note: { type: "string", description: "How you counted, briefly (e.g. '3 posts × 2 rails = 6 + 2 returns')." },
+      }, required: ["source_sheet", "pipe_joints"] } },
+    },
+    required: ["pieces", "drawings"],
+  },
+};
+
+async function labelPieces(opts) {
+  opts = opts || {};
+  const docs = Array.isArray(opts.docs) ? opts.docs : [];
+  const pieces = Array.isArray(opts.pieces) ? opts.pieces : [];
+  if (!docs.length) throw new Error("labelPieces: no drawings");
+  if (!pieces.length) throw new Error("labelPieces: no pieces");
+  const model = MODELS[opts.modelKey] || MODELS.sonnet;
+  const anthropic = opts.client || new Anthropic();
+  const items = await docprep.prepareDocs(docs, Array.isArray(opts.names) ? opts.names : []);
+  docprep.fitText(items);
+  const plan = await docprep.planBatches(items);
+  const texts = items.filter(function (it) { return it.kind === "text"; }).map(docprep.textBlock);
+  const bySheet = {};
+  pieces.forEach(function (p) { (bySheet[p.source_sheet] = bySheet[p.source_sheet] || []).push(p); });
+  const list = Object.keys(bySheet).map(function (s) {
+    return "Drawing " + s + ": " + bySheet[s].map(function (p) {
+      return (p.member_mark || "(no mark)") + " = " + p.form_type + " " + p.size + (p.length_in ? " × " + p.length_in + '"' : "") + " qty " + p.quantity;
+    }).join("; ");
+  }).join("\n");
+  const out = { pieces: [], drawings: [], cost_usd: 0, requests: 0 };
+  const batches = plan.batches.length ? plan.batches : [{ parts: [] }];
+  for (let b = 0; b < batches.length; b++) {
+    const content = batches[b].parts.map(docprep.partBlock).concat(texts);
+    content.push({ type: "text", text:
+      "THE PIECES ALREADY TAKEN OFF, by drawing (mark = form size × length, qty per assembly):\n" + list + "\n\n" +
+      (batches.length > 1 ? "Only part of the drawing set is attached to this request (part " + (b + 1) + " of " + batches.length +
+        "). Label ONLY the drawings you can see; leave the others out.\n\n" : "") +
+      "For every drawing you can see: give each listed piece its role, and count the welded pipe-to-pipe joints in one assembly. " +
+      "Use the marks exactly as listed. Submit via submit_labels." });
+    const resp = await anthropic.messages.create({
+      model: model.id, max_tokens: 16000,
+      system: "You are Material Compass AI, reading steel fabrication drawings for a shop estimator. You label pieces that " +
+        "are already taken off and count welded joints from the views. Never invent a piece; never guess a count you cannot see — " +
+        "give confidence ≤ 0.4 and say so in the note.",
+      tools: [LABEL_TOOL], tool_choice: { type: "tool", name: "submit_labels" },
+      messages: [{ role: "user", content: content }],
+    });
+    out.cost_usd += costOf(resp.usage, model); out.requests++;
+    const tu = resp.content.find(function (x) { return x.type === "tool_use"; });
+    const r = tu ? tu.input : {};
+    const ps = unwrap(r.pieces, []), ds = unwrap(r.drawings, []);
+    if (Array.isArray(ps)) out.pieces = out.pieces.concat(ps.filter(function (p) { return p && LABEL_ROLES.indexOf(p.role) > -1; }));
+    if (Array.isArray(ds)) out.drawings = out.drawings.concat(ds.filter(function (d) { return d && d.source_sheet; }));
+  }
+  out.cost_usd = Number(out.cost_usd.toFixed(4));
+  out.modelId = model.id;
+  return out;
+}
+
+module.exports = { labelPieces, compareAddenda, applyChanges, indexedPackage, EDIT_TOOL, runTakeoff, reviseTakeoff, chatTakeoff, readSheetIndex, askDocuments, pdfPageCount, groupPagesIntoSheets, MODELS, LOW_CONF, buildTakeoffTool, TAKEOFF_TOOL, costOf };

@@ -684,6 +684,30 @@ async function addendaHandler(req, res) {
   }
 }
 
+// POST /api/takeoff/label-pieces — name each piece's job and count pipe-to-pipe joints per drawing,
+// for typical-weld rules. Body: { project_id, pieces:[{source_sheet, member_mark, form_type, size,
+// length_in, quantity}] }. Reads the project's stored PDFs; never edits a row. Not metered (like ask).
+async function labelPiecesHandler(req, res) {
+  try {
+    const body = req.body || {};
+    const pid = String(body.project_id || "");
+    if (!/^\d+$/.test(pid)) return res.status(400).json({ ok: false, error: "project_id required" });
+    const pieces = (Array.isArray(body.pieces) ? body.pieces : []).slice(0, 3000);
+    if (!pieces.length) return res.status(400).json({ ok: false, error: "no pieces to label" });
+    const fstore = require("../filestore");
+    const files = fstore.listFiles("project", pid).filter(function (f) { return /pdf/i.test(f.media_type || "") || /\.pdf$/i.test(f.name || ""); });
+    const docs = [], names = [];
+    files.forEach(function (f) { const r = fstore.readFile("project", pid, f.id); if (r && r.buf) { docs.push(r.buf.toString("base64")); names.push(f.name); } });
+    if (!docs.length) return res.json({ ok: false, error: "This project's drawings aren't in its file store — reopen the take-off screen once so they're saved, then try again." });
+    const out = await require("./engine").labelPieces({ docs: docs, names: names, pieces: pieces, modelKey: body.model || "sonnet" });
+    ledger.record("labels", out.cost_usd, Object.assign(costMetaOf(body), { detail: docs.length + " file(s), " + out.requests + " request(s)" }));
+    return res.json({ ok: true, pieces: out.pieces, drawings: out.drawings, cost_usd: out.cost_usd, files: names, at: new Date().toISOString() });
+  } catch (err) {
+    console.error("takeoff label-pieces error", err);
+    return res.status(500).json({ ok: false, error: outward(err) });
+  }
+}
+
 // POST /api/takeoff/repair — the same metric + duplicate checks, for a take-off saved before they
 // existed. Body: { rows }. No AI, no Zoho. Returns the repaired rows and every change made.
 function repairHandler(req, res) {
@@ -794,4 +818,4 @@ function pricingHandler(req, res) {
   }
 }
 
-module.exports = { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, repairHandler, mergeSynopsis, runBatches };
+module.exports = { labelPiecesHandler, takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, repairHandler, mergeSynopsis, runBatches };
