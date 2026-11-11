@@ -5,7 +5,7 @@
 // Scoped by ?manufacture=<id> in the page URL (same convention as the nesting
 // app's project_id). Ships a BUILD_TAG so we can verify what's loaded.
 // ============================================================================
-const BUILD_TAG = 'triage-ui-2026-11-10-1';
+const BUILD_TAG = 'triage-ui-2026-11-10-2';
 const { SCOPE_ITEMS, FINISH_TYPES, FINISH_BY } = require('./triageScope');
 
 // The narrated walkthrough of this page. Linked rather than embedded: this page
@@ -389,9 +389,11 @@ function renderTriagePage() {
         // "What to quote" box. It went missing twice after other edits. Guarded by
         // server/triage.quotenote.test.js — run it after ANY change to this file.
         : status==='Quoting' ? '<div class="qnote" style="margin:10px 0 2px">'
-          + '<div style="font-weight:700;font-size:12.5px;color:#2b3340;margin-bottom:4px">What to quote <span style="font-weight:400;color:#8893a0">— the AI Take-off follows this</span></div>'
+          // Heading renamed by Mark 2026-11-10 ("What to quote" → additional notes) now that the pills
+          // above carry the scope. The BOX stays — this note still goes to the AI Take-off.
+          + '<div style="font-weight:700;font-size:12.5px;color:#2b3340;margin-bottom:4px">Additional information or notes <span style="font-weight:400;color:#8893a0">— optional · the AI Take-off reads this with the pills above</span></div>'
           + '<textarea onchange="saveNote(this)" style="width:100%;min-height:54px;box-sizing:border-box;font:inherit;font-size:13px;padding:7px 9px;border:1px solid #cdd3da;border-radius:6px;resize:vertical" '
-          + 'placeholder="e.g. Handrail and guardrail only. Exclude anchor rods and the support steel. Hot-dip galvanized.">'+esc(o.quote_note||'')+'</textarea>'
+          + 'placeholder="Anything the pills don&#39;t cover, e.g. exclude anchor rods and the support steel; match the existing rail height.">'+esc(o.quote_note||'')+'</textarea>'
           + '<div class="qsaved" style="font-size:11px;color:#8893a0;min-height:14px"></div></div>'
           + '<div class="actions">'
           + '<button class="btn project" onclick="createProject(this)">＋ Create Project</button>'

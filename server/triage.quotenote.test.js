@@ -15,10 +15,12 @@ const page = require('./triagePage.js');
 const html = String((() => { try { return page.renderTriagePage({}); } catch (e) { return page.renderTriagePage(); } })());
 const read = (f) => fs.readFileSync(path.join(__dirname, f), 'utf8');
 
-test('Quoting cards render the "What to quote" box', () => {
+// 2026-11-10: Mark renamed the heading to "Additional information or notes" once the scope pills
+// took over the what-is-included part. The box itself is still required.
+test('Quoting cards render the notes box (formerly "What to quote")', () => {
   const quoting = html.slice(html.indexOf("status==='Quoting'"));
   assert.ok(html.indexOf("status==='Quoting'") > -1, 'the Quoting branch of the card is gone');
-  assert.match(quoting.slice(0, 1500), /What to quote/, 'the Quoting card lost its "What to quote" heading');
+  assert.match(quoting.slice(0, 1500), /Additional information or notes/, 'the Quoting card lost its notes heading');
   assert.match(quoting.slice(0, 1500), /<textarea onchange="saveNote\(this\)"/, 'the Quoting card lost its notes box');
   assert.match(quoting.slice(0, 1500), /o\.quote_note/, 'the box no longer shows the saved note');
 });

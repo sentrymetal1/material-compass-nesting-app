@@ -57,7 +57,7 @@ test('the take-off gets the scope in words: includes, excludes, not decided', ()
   const t = sc.toText(s);
   assert.match(t, /^SCOPE \(from triage\): Includes: material, fittings, shop fabrication, galvanize \(by an outside vendor\)\./);
   assert.match(t, /Excludes: field installation\./);
-  assert.match(t, /Not decided yet: delivery, shop drawings, field measuring\./);
+  assert.match(t, /Not decided yet: welding, delivery, shop drawings, field measuring\./);
 });
 
 test('scope is read back from an opportunity row, email or manual', () => {

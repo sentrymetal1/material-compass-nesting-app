@@ -17,6 +17,7 @@ const SCOPE_ITEMS = [
   { key: 'material',      label: 'Material',      printed: 'material' },
   { key: 'fittings',      label: 'Fittings',      printed: 'fittings' },
   { key: 'fabrication',   label: 'Fabrication',   printed: 'shop fabrication' },
+  { key: 'welding',       label: 'Welding',       printed: 'welding' },
   { key: 'delivery',      label: 'Delivery',      printed: 'delivery' },
   { key: 'installation',  label: 'Installation',  printed: 'field installation' },
   { key: 'shop_drawings', label: 'Shop drawings', printed: 'shop drawings' },
@@ -45,6 +46,7 @@ const SCOPE_PROMPT_RULE =
   "- scope = what the requester wants INCLUDED in the price, read ONLY from explicit words. " +
   "'include material' / 'furnish' -> material included; 'material by others' / 'customer furnished' -> material excluded. " +
   "'elbows', 'fittings', 'flanges' to be included -> fittings included. 'fabricate' -> fabrication included. " +
+  "'weld', 'welded', 'fabrication and welding' -> welding included; 'bolted only', 'no welding' -> welding excluded. " +
   "'install', 'erect', 'furnish and install' -> installation included; 'furnish only', 'install by others' -> installation excluded. " +
   "'delivered', 'deliver to site' -> delivery included; 'F.O.B. shop', 'will pick up' -> delivery excluded. " +
   "'shop drawings', 'submittals' required -> shop_drawings included. 'field verify', 'field measure' by us -> field_measure included. " +
