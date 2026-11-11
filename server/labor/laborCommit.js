@@ -191,6 +191,24 @@ function registerLaborCommit(app, deps) {
     return data;
   }
 
+  // The shop's labour rates, for the take-off's Summary tab to turn hours into dollars BEFORE anything
+  // is written — the same Default row approve uses, so the Summary and the project agree. One Zoho
+  // call per shop per 10 minutes.
+  const rateCache = {};
+  app.get('/api/takeoff/labor-rates', async (req, res) => {
+    try {
+      const mfg = String((req.tenant && req.tenant.kind === 'm' && req.tenant.id) || req.query.manufacturer_id || '').trim();
+      if (!/^\d{6,25}$/.test(mfg)) return res.status(400).json({ ok: false, error: 'manufacturer_id required' });
+      const hit = rateCache[mfg];
+      if (hit && Date.now() - hit.at < 600000) return res.json(hit.body);
+      const rows = await fetchAllZohoPages('/report/All_Manufacture_Labor_Rates?criteria=' + crit('(Manufacture==' + mfg + ')'));
+      const { rates, estimated } = pickRates(rows);
+      const body = { ok: true, rates: rates || null, estimated, stems: Object.fromEntries(BUCKETS.map((b) => [b, STEM(b)])) };
+      rateCache[mfg] = { at: Date.now(), body };
+      res.json(body);
+    } catch (e) { res.status(500).json({ ok: false, error: e.response?.data?.message || e.message }); }
+  });
+
   // body: { project_id, manufacturer_id, components: [{ name, items:[{bucket,hours}] }], prior_ids: [] }
   app.post('/api/takeoff/commit-labor', async (req, res) => {
     try {

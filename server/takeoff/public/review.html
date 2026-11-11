@@ -312,7 +312,7 @@
     const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
                 superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[], check:R.check||null, checked_v1:!!R.checked_v1,
                 fittings_written:R.fittings_written||[], welds:R.welds||[], features:R.features||[], labor_extras:R.labor_extras||null,
-                weld_rules:R.weld_rules||[], drawing_counts:R.drawing_counts||{}, labels_at:R.labels_at||null, labor_methods:R.labor_methods||null };
+                weld_rules:R.weld_rules||[], drawing_counts:R.drawing_counts||{}, labels_at:R.labels_at||null, labor_methods:R.labor_methods||null, cost_summary:R.cost_summary||null };
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
@@ -1009,6 +1009,170 @@
       '</div></div>';
   }
 
+  // ---- SUMMARY — every cost on the job in one place (Mark, 2026-11-11) -------------------------
+  // "a summary tab [that] gives all the costs along with anything such as outsource costs —
+  // galvanizing, trucking, fasteners, detailing, etc. — just so the user is reminded of costs they
+  // may not have remembered." Material by weight, labor hours × the shop's rates, and one line per
+  // outside cost. Each outside cost says what on THIS take-off points to it (galvanized rows, holes
+  // that take bolts, drawings to detail, tons to truck); the estimator enters the amount or marks it
+  // not needed. Nothing here is a price the take-off made up: an amount is blank until someone types
+  // it, and a reminder stays orange until it is answered.
+  // Categories match the project's Outsource Totals columns (Project_Quote_Outsource_Totals).
+  const COST_CATS=[
+    ["galvanize","Galvanizing","lb"],["blast_paint","Blast / paint","lb"],["fasteners","Fasteners & anchors","ea"],
+    ["trucking","Trucking / delivery","load"],["detailing","Detailing (shop drawings)","drawing"],["inspection","Inspection / testing","lot"],
+    ["installation","Installation / rigging","lot"],["grating","Grating","sq ft"],["decking","Decking","sq ft"],
+    ["machining","Machining","lot"],["fittings","Fittings (bought in)","ea"],["other","Other / buyout","lot"]
+  ];
+  let SUM_RATES=null, SUM_RATES_ERR="", SUM_RATES_ASKED=false;
+  function sumLoadRates(){
+    if(SUM_RATES_ASKED || !params.manufacturer_id) return; SUM_RATES_ASKED=true;
+    fetch(RAILWAY_URL+"/api/takeoff/labor-rates?manufacturer_id="+encodeURIComponent(params.manufacturer_id))
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if(j&&j.ok){ SUM_RATES=j; } else SUM_RATES_ERR=(j&&j.error)||"could not read labor rates"; render(); })
+      .catch(function(e){ SUM_RATES_ERR=e.message; render(); });
+  }
+  function sumState(R){ const s=R.cost_summary&&typeof R.cost_summary==="object"?R.cost_summary:{}; s.lines=s.lines||{}; s.mat_rate=s.mat_rate||{}; return s; }
+  function sumEdit(fn){ const R=loadResult(); R.cost_summary=sumState(R); fn(R.cost_summary); saveResult(R); render(); }
+  // Qty × $ each = $ total, like the labor lines: editing Qty or $ each recomputes the total; editing
+  // the total works $ each back from the Qty. The Qty the take-off suggests is adopted once priced.
+  function sumLine(key,field,el){
+    const hq=((sumHints(loadResult())[key])||{}).qty;
+    sumEdit(function(S){ const l=Object.assign({},S.lines[key]||{});
+      if(field==="status"){ l.status=el.value||""; }
+      else if(field==="note"){ l.note=String(el.value||"").slice(0,200); }
+      else if(field==="unit"){ l.unit=String(el.value||"").slice(0,20); }
+      else { const v=String(el.value).replace(/[$,\s]/g,""); const n=v===""?null:Number(v);
+        if(n!=null && !(n>=0)){ render(); return; }
+        if(l.qty==null && hq!=null && field!=="qty") l.qty=hq;
+        if(field==="total"){ l.total=n; if(n!=null && Number(l.qty)>0) l.unit_amt=n/Number(l.qty); }
+        else {
+          l[field]=n;
+          if(field==="unit_amt" && n!=null && l.qty==null) l.qty=1;
+          if(Number(l.qty)>0 && l.unit_amt!=null) l.total=Number(l.qty)*Number(l.unit_amt);
+        }
+        if(l.total!=null && l.total>0 && !l.status) l.status="include"; }
+      S.lines[key]=l; }); }
+  function sumMatRate(mat,el){ sumEdit(function(S){ const v=String(el.value).replace(/[$,\s]/g,""); if(v===""){ delete S.mat_rate[mat]; return; } const n=Number(v); if(n>=0) S.mat_rate[mat]=n; }); }
+  function sumAddOther(){ sumEdit(function(S){ const k="x"+Math.random().toString(36).slice(2,8); S.lines[k]={label:"", unit:"lot", status:"include", extra:true}; }); }
+  function sumDelOther(k){ sumEdit(function(S){ delete S.lines[k]; }); }
+  function sumLabel(k,el){ sumEdit(function(S){ S.lines[k]=Object.assign({},S.lines[k]||{}, {label:String(el.value||"").slice(0,80)}); }); }
+
+  // What on this take-off points to each outside cost: { why, qty, likely }.
+  function sumHints(R){
+    const live=function(r){ return r && !r.deleted && Number(r.quantity)>0; };
+    const rows=arr(R.rows).filter(live), fab=rows.filter(function(r){ return String(r.disposition||"fabricate").toLowerCase()==="fabricate"; });
+    const finish=jobFinish(R.synopsis);
+    const lbOf=function(list){ let lb=0,miss=0; list.forEach(function(r){ const w=rowWeight(r); if(w) lb+=w.total; else miss++; }); return {lb:lb,miss:miss}; };
+    const all=lbOf(fab);
+    const feats=arr(R.features).filter(function(f){ return f && !f.deleted && Number(f.count)>0; });
+    const fcount=function(k){ return feats.filter(function(f){ return String(f.feature||"").toLowerCase()===k; }).reduce(function(a,f){ return a+(Number(f.count)||0); },0); };
+    const holes=fcount("hole"), bolts=fcount("bolt");
+    const sheets={}; fab.forEach(function(r){ if(r.source_sheet) sheets[_sk(r.source_sheet)]=1; });
+    const nSheets=Object.keys(sheets).length;
+    const txt=JSON.stringify([R.synopsis&&R.synopsis.scope_of_work, R.synopsis&&R.synopsis.notes, R.out_of_scope, R.notes, R.quote_notes]).toLowerCase();
+    const galvRows=fab.filter(function(r){ return r.galvanized || finish==="galv"; });
+    const g=lbOf(galvRows);
+    const formRows=function(re){ return rows.filter(function(r){ return re.test(String(r.form_type||"")); }); };
+    const area=function(list){ return list.reduce(function(a,r){ return a+(Number(r.length_ft)||0)*(Number(r.width_ft)||0)*orderQtyOf(r); },0); };
+    const grat=formRows(/grating/i), deck=formRows(/deck/i);
+    const buy=rows.filter(function(r){ return /buy/i.test(String(r.disposition||"")); });
+    const fit=arr(R.fittings).filter(live), fitQty=fit.reduce(function(a,f){ return a+orderQtyOf(f); },0);
+    const tons=all.lb/2000, ex=R.labor_extras||{};
+    const n0=function(x){ return Math.round(x).toLocaleString(); };
+    return {
+      galvanize: galvRows.length ? {likely:true, qty:Math.round(g.lb), why:galvRows.length+" galvanized row"+(galvRows.length===1?"":"s")+" — "+n0(g.lb)+" lb"+(g.miss?" (+"+g.miss+" unweighed)":"")+(finish==="galv"?" · job finish is galvanize":"")}
+        : /galvan|hdg|hot[\s-]*dip/.test(txt) ? {likely:true, why:"the specs / notes mention galvanizing, but no row is marked galvanized"} : {why:"no galvanized rows"},
+      blast_paint: finish==="paint" ? {likely:true, qty:Math.round(all.lb), why:"job finish is paint / prime — "+n0(all.lb)+" lb of steel"}
+        : /\bpaint|prime[dr]?\b|sspc|blast/.test(txt) ? {likely:true, why:"the specs / notes mention paint, primer or blasting"} : {why:"no paint finish chosen"+(finish?" (finish: "+finish+")":"")},
+      fasteners: (bolts||holes) ? {likely:true, qty:bolts||null, why:(bolts?bolts+" bolts counted":"")+(bolts&&holes?" · ":"")+(holes?holes+" holes drilled — bolts or anchors in them?":"")}
+        : {why:"no bolts or holes counted — check for anchors and field bolts"},
+      trucking: {likely:all.lb>0, qty:all.lb>0?Math.max(1,Math.ceil(tons/20)):null, why:all.lb>0?n0(all.lb)+" lb ("+tons.toFixed(1)+" tons) to deliver — "+Math.max(1,Math.ceil(tons/20))+" load"+(Math.ceil(tons/20)>1?"s":"")+" at 20 t; check length / permits":"no weight yet"},
+      detailing: {likely:nSheets>0, qty:nSheets||null, why:nSheets?nSheets+" drawing"+(nSheets===1?"":"s")+" on this take-off — shop drawings done outside, or in house (Labor tab)?":"no drawings"},
+      inspection: (ex.code||Number(ex.tests)>0) ? {likely:true, why:(ex.code?"weld code "+ex.code:"")+(ex.code&&ex.tests?" · ":"")+(Number(ex.tests)>0?ex.tests+" pressure / leak tests":"")+" — third-party inspection or NDE?"}
+        : /\b(inspect|ndt|nde|ultrason|radiograph|special inspection|cwi)\b/.test(txt) ? {likely:true, why:"the specs / notes mention inspection or testing"} : {why:"nothing points to outside inspection"},
+      installation: /\b(install|erect|field weld|setting|rigging)\b/.test(txt) ? {likely:true, why:"the specs / notes mention installation or erection — in your scope, or by others?"} : {why:"nothing points to installation"},
+      grating: grat.length ? {likely:true, qty:Math.round(area(grat))||null, why:grat.length+" grating row"+(grat.length===1?"":"s")+(area(grat)?" — "+n0(area(grat))+" sq ft":"")} : {why:"no grating on the take-off"},
+      decking: deck.length ? {likely:true, qty:Math.round(area(deck))||null, why:deck.length+" decking row"+(deck.length===1?"":"s")} : {why:"no decking on the take-off"},
+      machining: /\bmachin|\bturn(ed|ing)\b|\bmill(ed|ing)\b|tolerance/.test(txt) ? {likely:true, why:"the specs / notes mention machining or tight tolerances"} : {why:"nothing points to machining"},
+      fittings: fit.length ? {likely:true, qty:fitQty||null, why:fit.length+" fitting line"+(fit.length===1?"":"s")+", "+fitQty+" pcs — priced by the supplier quote, or here?"} : {why:"no fittings on the take-off"},
+      other: buy.length ? {likely:true, why:buy.length+" buyout row"+(buy.length===1?"":"s")+": "+buy.slice(0,4).map(function(r){ return [r.form_type,r.size].filter(Boolean).join(" "); }).join(", ")+(buy.length>4?"…":"")} : {why:"anything else: permits, crating, crane rental, engineering stamps…"}
+    };
+  }
+  // Open reminders: a likely cost with no answer yet. Shown as the tab's badge.
+  function sumOpen(R){ const S=sumState(R), H=sumHints(R);
+    return COST_CATS.filter(function(c){ const l=S.lines[c[0]]||{}; return H[c[0]].likely && !l.status; }).length; }
+
+  function summaryCardHtml(R){
+    sumLoadRates();
+    const S=sumState(R), H=sumHints(R);
+    const money=function(n){ return n==null?"—":"$"+Number(n).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}); };
+    const inp=function(v,on,w,ph){ return '<input class="lab-in" style="width:'+(w||70)+'px" placeholder="'+(ph||"")+'" value="'+escAttr(v==null?"":v)+'" onchange="'+on+'">'; };
+    // MATERIAL — weight by material, $ only when the estimator gives a $/lb.
+    const live=function(r){ return r && !r.deleted && Number(r.quantity)>0; };
+    const fab=arr(R.rows).filter(function(r){ return live(r) && String(r.disposition||"fabricate").toLowerCase()==="fabricate"; });
+    const mats={}, order=[];
+    fab.forEach(function(r){ const m=String(r.material_type||"(no material)"); if(!mats[m]){ mats[m]={lb:0,miss:0}; order.push(m); } const w=rowWeight(r); if(w) mats[m].lb+=w.total; else mats[m].miss++; });
+    let matTot=0, matPriced=true;
+    const matRows=order.map(function(m){ const x=mats[m], rate=S.mat_rate[m]; const amt=rate!=null?x.lb*rate:null; if(amt!=null) matTot+=amt; else matPriced=false;
+      return '<tr><td>'+esc(m)+'</td><td class="num">'+Math.round(x.lb).toLocaleString()+' lb'+(x.miss?' <span class="src">(+'+x.miss+' unweighed)</span>':'')+'</td>'+
+        '<td class="num">'+inp(rate,"sumMatRate(\''+escAttr(m)+'\',this)",64,"$/lb")+'</td><td class="num"><b>'+money(amt)+'</b></td></tr>'; }).join("");
+    // LABOR — hours by type from the Labor tab × the shop's rates.
+    const L=R.labor; const hrs={}; Object.keys(LAB_BUCKET).forEach(function(b){ hrs[b]=0; });
+    if(L) L.components.forEach(function(c){ arr(c.items).forEach(function(i){ if(hrs[i.bucket]!=null) hrs[i.bucket]+=Number(i.hours)||0; }); });
+    const rates=SUM_RATES&&SUM_RATES.rates, stems=(SUM_RATES&&SUM_RATES.stems)||{};
+    let labH=0, labTot=0;
+    const labRows=Object.keys(LAB_BUCKET).filter(function(b){ return hrs[b]>0.005; }).map(function(b){
+      const rate=rates?rates[stems[b]||b.replace(/_Hrs$/,"")]:null, amt=rate!=null?hrs[b]*rate:null; labH+=hrs[b]; if(amt!=null) labTot+=amt;
+      const est=SUM_RATES&&arr(SUM_RATES.estimated).indexOf(stems[b])>-1;
+      return '<tr><td>'+LAB_BUCKET[b]+'</td><td class="num">'+labFmt(hrs[b],1)+' h</td><td class="num">'+(rate!=null?'$'+labFmt(rate,2)+'/h'+(est?' <span class="src" title="This rate is not on your labor rates report; the average of the others is used">avg</span>':''):'—')+'</td><td class="num"><b>'+money(amt)+'</b></td></tr>'; }).join("");
+    const labStale=L && L.sig!==labSig(R);
+    // OUTSIDE COSTS — one line per category, plus any the estimator adds.
+    let outTot=0, open=0;
+    const statusSel=function(k,st){ return '<select style="font-size:12px;padding:1px 3px;border:1px solid #dfe5ec;border-radius:5px" onchange="sumLine(\''+k+'\',\'status\',this)">'+
+      [["","— not answered —"],["include","include"],["by_others","by others / not in scope"],["none","not needed"]].map(function(o){ return '<option value="'+o[0]+'"'+(String(st||"")===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select>'; };
+    const outRow=function(k,label,unit,h,extra){
+      const l=S.lines[k]||{}, on=l.status==="include", tot=on&&l.total!=null?Number(l.total):null;
+      if(tot!=null) outTot+=tot;
+      const flag=h&&h.likely&&!l.status; if(flag) open++;
+      const qty=l.qty!=null?l.qty:(h&&h.qty!=null&&!l.status?h.qty:null);
+      return '<tr class="lab-item"'+(l.status==="none"||l.status==="by_others"?' style="opacity:.55"':'')+'>'+
+        '<td>'+(extra?'<button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove this cost" onclick="sumDelOther(\''+k+'\')">✕</button> <input class="lab-in txt" style="width:150px" placeholder="what the cost is" value="'+escAttr(l.label||"")+'" onchange="sumLabel(\''+k+'\',this)">'
+            :'<b>'+esc(label)+'</b>')+
+          (h?'<div style="font-size:11.5px;'+(flag?'color:var(--ylw);font-weight:600':'color:var(--mut)')+'">'+(flag?'⚠ ':'')+esc(h.why)+'</div>':'')+'</td>'+
+        '<td>'+statusSel(k,l.status)+'</td>'+
+        '<td class="num" style="white-space:nowrap">'+inp(qty,"sumLine(\''+k+'\',\'qty\',this)",70)+' '+
+          '<input class="lab-in txt" style="width:52px" value="'+escAttr(l.unit||unit||"")+'" onchange="sumLine(\''+k+'\',\'unit\',this)"></td>'+
+        '<td class="num">'+inp(l.unit_amt!=null?Math.round(l.unit_amt*10000)/10000:null,"sumLine(\''+k+'\',\'unit_amt\',this)",70,"$ each")+'</td>'+
+        '<td class="num">'+inp(l.total!=null?Math.round(l.total*100)/100:null,"sumLine(\''+k+'\',\'total\',this)",86,"$ total")+'</td>'+
+        '<td><input class="lab-in txt" style="width:150px" placeholder="supplier, quote #, note" value="'+escAttr(l.note||"")+'" onchange="sumLine(\''+k+'\',\'note\',this)"></td></tr>';
+    };
+    const outRows=COST_CATS.map(function(c){ return outRow(c[0],c[1],c[2],H[c[0]],false); }).join("")+
+      Object.keys(S.lines).filter(function(k){ return S.lines[k]&&S.lines[k].extra; }).map(function(k){ return outRow(k,"","lot",null,true); }).join("");
+    const grand=matTot+labTot+outTot;
+    const tile=function(lbl,v,sub){ return '<div style="flex:1;min-width:150px;border:1px solid #e3e8ef;border-radius:8px;padding:8px 12px;background:#fafbfd">'+
+      '<div style="font-size:11.5px;color:var(--mut)">'+lbl+'</div><div style="font-size:20px;font-weight:700;color:#1f3a5f">'+v+'</div>'+(sub?'<div class="src" style="font-size:11.5px">'+sub+'</div>':'')+'</div>'; };
+    return '<div class="card" id="summaryCard"><h2>🧾 Job summary <span class="lt">— every cost on this job, before markup</span></h2><div class="body">'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'+
+        tile("Material",money(matTot||null),matPriced?'':'enter a $/lb below to price it')+
+        tile("Shop labor",money(rates?labTot:null),labFmt(labH,1)+' h'+(rates?'':SUM_RATES_ERR?' · rates: '+esc(SUM_RATES_ERR):' · reading your rates…'))+
+        tile("Outside costs",money(outTot||null),open?'<span style="color:var(--ylw);font-weight:600">'+open+' to answer</span>':'all answered')+
+        tile("Job cost",money(grand||null),'before markup')+
+      '</div>'+
+      (open?'<div class="lab-stale" style="margin-bottom:10px">'+open+' cost'+(open===1?'':'s')+' below '+(open===1?'looks':'look')+' likely on this job but '+(open===1?'has':'have')+' no answer yet. Enter an amount, or mark '+(open===1?'it':'them')+' not needed or by others.</div>':'')+
+      '<h3 style="font-size:14px;margin:6px 0">Outside costs</h3>'+
+      '<div style="overflow-x:auto"><table><thead><tr><th>Cost — and what on this take-off points to it</th><th>Answer</th><th class="num">Qty</th><th class="num">$ each</th><th class="num">$ total</th><th>Note</th></tr></thead><tbody>'+outRows+'</tbody></table></div>'+
+      '<div style="margin:6px 0 14px"><span class="pillbtn" style="margin-left:0" onclick="sumAddOther()">+ add another cost</span></div>'+
+      '<h3 style="font-size:14px;margin:6px 0">Material <span class="lt" style="font-weight:400;font-size:12px;color:var(--mut)">— fabricated steel by weight; real prices come from nesting and supplier quotes</span></h3>'+
+      '<table><thead><tr><th>Material</th><th class="num">Weight</th><th class="num">$/lb</th><th class="num">$</th></tr></thead><tbody>'+(matRows||'<tr><td colspan="4" style="color:var(--mut)">No fabricated rows.</td></tr>')+'</tbody></table>'+
+      '<h3 style="font-size:14px;margin:14px 0 6px">Shop labor <span class="lt" style="font-weight:400;font-size:12px;color:var(--mut)">— hours from the Labor tab × your labor rates</span></h3>'+
+      (labStale?'<div class="lab-stale">The BOM changed since the labor was worked out — recalculate on the Labor tab.</div>':'')+
+      (L?'<table><thead><tr><th>Type</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">$</th></tr></thead><tbody>'+(labRows||'<tr><td colspan="4" style="color:var(--mut)">No hours yet.</td></tr>')+
+          '<tr><td><b>Total</b></td><td class="num"><b>'+labFmt(labH,1)+' h</b></td><td></td><td class="num"><b>'+money(rates?labTot:null)+'</b></td></tr></tbody></table>'
+        :'<div class="src">Labor has not been worked out yet — open the Labor tab.</div>')+
+      '</div></div>';
+  }
+
   // ---- WELDS — the weld schedule read off the drawings ---------------------------------------
   // Each entry is one kind of weld on one drawing (joint, size, length or all-around member, how
   // many per unit). The labour step prices welding from it: on a drawing that has entries, they
@@ -1331,7 +1495,7 @@
   // (chat + Approve) stay. Switching only shows and hides panes — no re-render — so the BOM
   // editor iframe, a half-typed edit and every id other code looks up survive a tab change.
   // The chosen tab is remembered per project for this browser tab.
-  const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["welds","Welds & features"],["labor","Labor"],["ai","Ask the AI"]];
+  const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["welds","Welds & features"],["labor","Labor"],["summary","Summary"],["ai","Ask the AI"]];
   function tabKey(){ return "mc_review_tab_"+(params.project_id||"sample"); }
   let TAB=(function(){ try{ return sessionStorage.getItem(tabKey())||"overview"; }catch(e){ return "overview"; } })();
   function setTab(t){
@@ -1359,6 +1523,7 @@
       fittings: arr(R.fittings).length?[fprobs?'bad':'',arr(R.fittings).length]:null,
       welds: (arr(R.welds).filter(liveWeldJS).length+arr(R.features).filter(liveWeldJS).length)?[(weldProblems(R).length+featureProblems(R).length)?'warn':'',arr(R.welds).filter(liveWeldJS).length+arr(R.features).filter(liveWeldJS).length]:null,
       labor: hrs!=null?['',labFmt(hrs,0)+' h']:null,
+      summary: (function(){ try{ const n=sumOpen(R); return n?['warn',n]:null; }catch(e){ return null; } })(),
       ai: chat?['',chat]:null,
     };
     return '<div class="tabs" role="tablist">'+TABS.map(function(t){
@@ -2857,6 +3022,9 @@
 
       // shop labor — hours for this take-off, at job / component / item level
       '<div class="tabpane" data-tab="labor">'+laborCardHtml(R)+'</div>'+
+
+      // every cost on the job: material, labor $, and the outside costs it is easy to forget
+      '<div class="tabpane" data-tab="summary">'+summaryCardHtml(R)+'</div>'+
 
       // tell-the-AI — conversational thread (3c)
       '<div class="tabpane" data-tab="ai">'+
