@@ -1077,7 +1077,9 @@
         ' <span class="pillbtn" style="margin-left:6px" onclick="ruleAdd(\''+escAttr(comp)+'\')">+ add typical weld</span>'+
         (mine.length?'':' <span class="pillbtn" onclick="rulePreset(\''+escAttr(comp)+'\')">use standard pipe-handrail welds</span>')+'</div>';
       if(!mine.length){ html+='<div class="src" style="margin-bottom:8px">No typical welds — welding is priced from the schedule below and the assumed welds.</div>'; return; }
-      html+='<table><thead><tr><th>Weld</th><th>Size, in</th><th>Length</th><th>Both sides</th><th>Counted from</th><th>On this job</th><th></th></tr></thead><tbody>';
+      // Scrolls inside the card rather than running off its edge, and Remove sits first — at the end
+      // it was cut off on a normal screen and an added weld could not be taken back (Mark 2026-11-11).
+      html+='<div style="overflow-x:auto"><table><thead><tr><th></th><th>Weld</th><th>Size, in</th><th>Length</th><th>Both sides</th><th>Counted from</th><th>On this job</th></tr></thead><tbody>';
       mine.forEach(function(r){
         const id=escAttr(r.id), b=X.byRule[r.id]||{total:0,drawings:0,missing:0};
         const lenCell='<select '+sel+' onchange="ruleSet(\''+id+'\',\'length_from\',this)">'+opt(RULE_LEN,r.length_from)+'</select> '+
@@ -1085,17 +1087,17 @@
           : r.length_from==="typed"?'<input class="lab-in" style="width:54px" value="'+escAttr(r.length_in||"")+'" onchange="ruleSet(\''+id+'\',\'length_in\',this)"> in'
           : 'of <select '+sel+' onchange="ruleSet(\''+id+'\',\'length_role\',this)">'+opt([["","— piece —"]].concat(WeldRules.ROLES),r.length_role)+'</select>');
         html+='<tr class="lab-item">'+
-          '<td><input class="lab-in txt" style="width:190px" value="'+escAttr(r.label||"")+'" onchange="ruleSet(\''+id+'\',\'label\',this)"></td>'+
+          '<td><button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove this typical weld" onclick="ruleDel(\''+id+'\')">✕</button></td>'+
+          '<td><input class="lab-in txt" style="width:160px" value="'+escAttr(r.label||"")+'" onchange="ruleSet(\''+id+'\',\'label\',this)"></td>'+
           '<td><input class="lab-in" style="width:54px" value="'+escAttr(r.size_in||"")+'" onchange="ruleSet(\''+id+'\',\'size_in\',this)"></td>'+
           '<td style="white-space:nowrap">'+lenCell+'</td>'+
           '<td><input type="checkbox"'+(r.both_sides?' checked':'')+' onchange="ruleSet(\''+id+'\',\'both_sides\',this)"></td>'+
           '<td style="white-space:nowrap"><input class="lab-in" style="width:36px" value="'+escAttr(r.per_each||1)+'" onchange="ruleSet(\''+id+'\',\'per_each\',this)"> per '+
             '<select '+sel+' onchange="ruleSet(\''+id+'\',\'per\',this)">'+opt(WeldRules.PER,r.per)+'</select></td>'+
           '<td><b>'+b.total+'</b> <span class="src">'+(r.per==="elbow"?'job total':'on '+b.drawings+' drawing'+(b.drawings===1?'':'s'))+'</span>'+
-            (b.missing?'<div style="color:var(--ylw);font-weight:600;font-size:11.5px">'+b.missing+' drawing'+(b.missing===1?'':'s')+' not counted</div>':'')+'</td>'+
-          '<td><button class="applybtn" style="background:#9aa6b2;padding:1px 7px" title="Remove" onclick="ruleDel(\''+id+'\')">✕</button></td></tr>';
+            (b.missing?'<div style="color:var(--ylw);font-weight:600;font-size:11.5px">'+b.missing+' drawing'+(b.missing===1?'':'s')+' not counted</div>':'')+'</td></tr>';
       });
-      html+='</tbody></table>';
+      html+='</tbody></table></div>';
       // Per drawing: the pieces each count comes from, so any number can be traced and corrected.
       const sheets=[]; const by={};
       arr(R.rows).forEach(function(r,idx){ if(!r||r.deleted||!(Number(r.quantity)>0)||r.fitting_type!=null||WeldRules.compKey(r.component)!==WeldRules.compKey(comp)) return;
