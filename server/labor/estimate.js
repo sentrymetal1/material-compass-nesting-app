@@ -620,7 +620,9 @@ function estimateTakeoff(takeoff, ctx) {
   const ruleCover = new Set();
   priced.filter((x) => x.w.from_rule && x.w.source_sheet).forEach((x) => (x.w.cover_forms || []).forEach((f) => ruleCover.add(sheetKey(x.w.source_sheet) + '|' + f)));
   const rctx = Object.assign({}, ctx || {}, { weldSheets, ruleCover });
-  for (const row of (takeoff && takeoff.rows) || []) add(row.component, estimateRow(row, rctx));
+  // A row flagged _rail is inside its component's per-foot handrail rate (takeoffLabor.js) — it stays
+  // on the take-off for weight, load-out and drawing counts but gets no member-by-member hours.
+  for (const row of (takeoff && takeoff.rows) || []) if (!row._rail) add(row.component, estimateRow(row, rctx));
   for (const x of weldRes) add(x.w.component, x.res);
   const features = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
   for (const f of features) add(f.component, estimateFeature(f, rctx, matOfSheet));

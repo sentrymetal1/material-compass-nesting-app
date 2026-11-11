@@ -120,7 +120,7 @@ function registerLaborRoutes(app) {
       const id = shopId(req);
       const profile = id ? shop.load(id) : null;
       res.json({ ok: true, labor: laborForTakeoff({ rows: b.rows, fittings: b.fittings, welds: b.welds, features: b.features, extras: b.extras,
-        weld_rules: b.weld_rules, drawing_counts: b.drawing_counts }, profile, b.job_type) });
+        weld_rules: b.weld_rules, drawing_counts: b.drawing_counts, labor_methods: b.labor_methods }, profile, b.job_type) });
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
 

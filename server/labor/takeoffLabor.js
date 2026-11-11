@@ -19,6 +19,8 @@ const shop = require('./shop');
 const pm = require('./processModel');
 const { typeForLine } = require('./laborTypes');
 const WeldRules = require('../takeoff/public/weld-rules');   // shared with the review page
+const Rail = require('../takeoff/public/rail-pricing');      // shared with the review page
+const { catalog } = require('./components');
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const unitsOf = (x) => Math.max(1, Math.round(Number(x && x.units) || 1));
@@ -69,12 +71,84 @@ function laborForTakeoff(takeoff, profile, jobType) {
   }
   const multOfSheet = (x) => sheetMult[compKey(x.component) + '|' + String(x.source_sheet || '').trim().toUpperCase()] || 1;
   const scaleQty = (r) => { const m = multOf(r); return Object.assign({}, r, { quantity: Number(r.quantity) * m, units: compUnits[compKey(r.component)] || 1 }); };
-  const rows = rawRows.map(scaleQty);
-  const fittings = rawFittings.map(scaleQty);
-  const welds = rawWelds.map((w) => Object.assign({}, w, { count: Number(w.count) * multOfSheet(w) }));
+
+  // HANDRAIL BY THE FOOT (rail-pricing.js, Mark 2026-11-11). A component priced per foot has its
+  // rail pieces, its fittings and the welds that only join rail taken out of the member-by-member
+  // estimate — the shop's hr/ft covers cutting, fitting and welding them — and gets cut / fit / weld
+  // lines of feet × that rate instead. Plates, brackets and their welds stay priced on top.
+  const methods = (takeoff && takeoff.labor_methods) || {};
+  const rail = {};
+  for (const r of rawRows) {
+    const lk = Rail.compKey(r.component); if (lk in rail) continue;
+    const m = Rail.methodOf({ labor_methods: methods }, r.component);
+    if (m.mode !== 'per_ft') { rail[lk] = null; continue; }
+    const sheets = Rail.sheetsOf({ rows: rawRows }, r.component, m);
+    rail[lk] = { name: compKey(r.component), method: m, sheets, bySheet: Object.fromEntries(sheets.map((s) => [Rail.sheetKey(s.sheet), s])),
+      dropped: { pieces: 0, fittings: 0, welds: 0 } };
+  }
+  const railOf = (x) => rail[Rail.compKey(x && x.component)] || null;
+  const railSheet = (x) => { const c = railOf(x); return c ? c.bySheet[Rail.sheetKey(x.source_sheet)] : null; };
+  const isRail = (r) => { const c = railOf(r); return !!c && Rail.covers(r, railSheet(r)); };
+
+  // Covered rows still go in (weight, load-out, drawing count) — flagged so they get no member hours.
+  const rows = rawRows.map((r) => { const s = scaleQty(r); if (isRail(r)) { s._rail = true; railOf(r).dropped.pieces++; } return s; });
+  const fittings = rawFittings.filter((f) => { if (railOf(f)) { railOf(f).dropped.fittings++; return false; } return true; }).map(scaleQty);
+  const welds = rawWelds.filter((w) => {
+    const c = railOf(w); if (!c) return true;
+    // An AI-read schedule weld or a typical weld that only joins rail is inside the per-foot rate.
+    if (!w.from_rule || Rail.weldCovered(w.joins, railSheet(w))) { c.dropped.welds++; return false; }
+    return true;
+  }).map((w) => Object.assign({}, w, { count: Number(w.count) * multOfSheet(w) }));
   const features = rawFeatures.map((f) => Object.assign({}, f, { count: Number(f.count) * multOfSheet(f) }));
   const extras = (takeoff && takeoff.extras) || {};
   const est = estimateTakeoff({ rows, fittings, welds, features, extras }, ctx);
+
+  // The per-foot lines. Feet are job feet (each drawing × how many times it is built), carried per
+  // unit like every other line so the mapping below multiplies them back the same way.
+  const railInfo = {};
+  const railComps = Object.values(rail).filter(Boolean);
+  if (railComps.length) {
+    const P = ctx.model, G = P.general;
+    const cat = Object.fromEntries(catalog((profile && profile.rates) || {}, P, P.materials).map((c) => [c.key, c]));
+    for (const c of railComps) {
+      const comp = est.components[c.name] || (est.components[c.name] = { hours: Object.fromEntries(BUCKETS.map((b) => [b, 0])), lines: [], missing: [] });
+      const cu = compUnits[c.name] || 1;
+      // The rail's material: the most pieces among the rail it covers (stainless rail → the stainless rate).
+      const tally = {};
+      for (const r of rawRows) if (railOf(r) === c && isRail(r)) { const k = pm.materialKey(r.material_type, r.specification); tally[k] = (tally[k] || 0) + Number(r.quantity); }
+      const mat = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || 'CS';
+      const byStd = {};
+      let coveredLb = 0;
+      for (const r of rows) if (r._rail && railOf(r) === c) { const p = rowPounds(r); if (p != null) coveredLb += p * cu; }
+      for (const s of c.sheets) {
+        s.mult = multOfSheet({ component: c.name, source_sheet: s.sheet });
+        if (s.feet_from === 'none') comp.missing.push({ what: 'feet of rail — drawing ' + s.sheet, reason: 'no top rail labelled on this drawing — type its feet on the Labor tab' });
+        if (s.feet > 0) byStd[s.std] = (byStd[s.std] || 0) + s.feet * s.mult;
+      }
+      const add = [], rates = {};
+      for (const [std, jobFt] of Object.entries(byStd)) {
+        const label = Rail.STD_SET[std], row = cat[std];
+        const cell = row && ((row.by_material || {})[mat] || (row.by_material || {}).CS);
+        if (!cell || cell.value == null) { comp.missing.push({ what: 'Handrail ' + label + ' — ' + Math.round(jobFt) + ' ft', reason: 'no hr/ft for it in your Labor setup' }); continue; }
+        const rate = cell.value, mine = cell.source === 'yours';
+        rates[std] = { label, rate, source: cell.source, ref: mine ? 'your Labor setup' : 'library: ' + (cell.ref || row.library_ref || ''), feet: r2(jobFt), hours: r2(rate * jobFt) };
+        const ft = jobFt / cu;
+        for (const [bucket, share, verb] of [['Cutting_Hrs', G.share_cut.value, 'cut'], ['Assy_Hrs', G.share_fit.value, 'fit'], ['Weld_Hrs', G.share_weld.value, 'weld']]) {
+          if (!(share > 0)) continue;
+          add.push({ bucket, hours: rate * share * ft, units: ft, unit_label: 'ft of rail', per_unit: rate * share,
+            what: 'Handrail ' + label + ' — ' + verb + ' (' + Math.round(share * 100) + '% of ' + rate.toFixed(3).replace(/0+$/, '') + ' hr/ft)',
+            standard: std, source_ref: rate + ' hr/ft of rail (' + rates[std].ref + ') × ' + Math.round(share * 100) + '% ' + verb + ' share (Labor setup cut/fit/weld split)',
+            derived: !mine && !!cell.derived, note: mine ? null : 'library rate — put your own in Labor setup → Handrail', rail: true });
+        }
+      }
+      for (const l of add) comp.hours[l.bucket] += l.hours;
+      comp.lines = add.concat(comp.lines);
+      railInfo[c.name] = { material: mat, units: cu, rates, covered_lb: Math.round(coveredLb), dropped: c.dropped, auto: !!c.method.auto,
+        total_ft: r2(c.sheets.reduce((a, s) => a + (s.feet > 0 ? s.feet * s.mult : 0), 0) * cu),
+        sheets: c.sheets.map((s) => ({ sheet: s.sheet, feet: s.feet, feet_from: s.feet_from, top_ft: s.top_ft, top_pieces: s.top_pieces,
+          std: s.std, std_auto: s.std_auto, std_from: s.std_from, kick: s.kick, mult: s.mult, covered: s.covered, on_top: s.on_top })) };
+    }
+  }
   // What a rule could not count (pieces not labelled, no length) is listed, never zero-filled.
   for (const m of ruled.missing) {
     const comp = Object.keys(est.components).find((n) => n.trim().toLowerCase() === WeldRules.compKey(m.component || '')) ||
@@ -119,6 +193,7 @@ function laborForTakeoff(takeoff, profile, jobType) {
         from_drawing: !!l.from_drawing,
       })),
       missing: c.missing,
+      rail: railInfo[name] || null,
     };
   });
 

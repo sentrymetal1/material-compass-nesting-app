@@ -115,13 +115,39 @@ test('a weld schedule that cannot be measured keeps the drawing\'s assumed welds
 test('a drawing built twice doubles its own rows, not the whole component', () => {
   const { laborForTakeoff } = require('./takeoffLabor');
   const row = (sheet, q) => ({ form_type: 'Pipe', material_type: 'Carbon Steel', size: '1-1/2" SCH 40 (STD)', length_ft: 4, quantity: 1, component: 'Handrail', source_sheet: sheet, disposition: 'fabricate', sheet_qty: q, units: q });
-  const hrs = (rows) => laborForTakeoff({ rows }, null).components.find((c) => c.name === 'Handrail');
+  const hrs = (rows) => laborForTakeoff({ rows, labor_methods: { handrail: { mode: 'member' } } }, null).components.find((c) => c.name === 'Handrail');
   const one = hrs([row('A', 1), row('B', 1)]);
   const mixed = hrs([row('A', 1), row('B', 2)]);
   const sum = (c) => c.items.reduce((a, i) => a + i.hours, 0);
   assert.strictEqual(mixed.units, 1, 'one handrail, not two');
   // B's second copy adds work, but the component is not doubled (that was ×1.9 with learning).
   assert.ok(sum(mixed) > sum(one) * 1.1 && sum(mixed) < sum(one) * 1.6, 'B built twice adds one drawing of work: ' + sum(one) + ' -> ' + sum(mixed));
+});
+
+test('handrail by the foot: top-rail feet × the shop hr/ft; plates on top; a drawing with no top rail is listed', () => {
+  const { laborForTakeoff } = require('./takeoffLabor');
+  const base = { material_type: 'Carbon Steel', component: 'Handrail', disposition: 'fabricate', units: 1, sheet_qty: 1 };
+  const pipe = (sheet, role, ft, q) => Object.assign({ form_type: 'Pipe', size: '1-1/2" SCH 40 (STD)', length_ft: ft, quantity: q || 1, source_sheet: sheet, role }, base);
+  const rows = [
+    pipe('A', 'top_rail', 10), pipe('A', 'post', 3.5, 2), pipe('A', 'mid_rail', 9),
+    Object.assign({ form_type: 'Bar - Flat', size: '4 x 1/4', length_ft: 10, quantity: 1, source_sheet: 'A', role: 'toe_plate' }, base),
+    Object.assign({ form_type: 'Plate', size: '3/8', length_ft: 0.5, width_ft: 0.5, quantity: 2, source_sheet: 'A', role: 'base_plate' }, base),
+    Object.assign(pipe('B', 'top_rail', 6), { units: 2, sheet_qty: 2 }),
+    pipe('C', 'post', 3.5),
+  ];
+  const profile = { rates: { handrail_pipe_2_kick: 0.6 } };   // the shop's own rate
+  const c = laborForTakeoff({ rows }, profile).components.find((x) => x.name === 'Handrail');
+  const rail = c.items.filter((i) => /^Handrail /.test(i.what));
+  const kick = rail.filter((i) => /kickplate/.test(i.what)).reduce((a, i) => a + i.hours, 0);
+  assert.ok(Math.abs(kick - 10 * 0.6) < 0.01, 'A: 10 ft × the shop 0.6 hr/ft, split cut/fit/weld: ' + kick);
+  const two = rail.filter((i) => /2-line —/.test(i.what));
+  assert.ok(two.length && two.every((i) => Math.abs(i.qty - 12) < 1e-9), 'B: no toe plate → 2-line, 6 ft built twice = 12 ft: ' + two.map((i) => i.qty));
+  assert.ok(c.items.some((i) => /Plate/.test(i.what)), 'base plates still priced on top');
+  assert.ok(!c.items.some((i) => /Pipe/.test(i.what) && !/^Handrail /.test(i.what)), 'no pipe priced member by member');
+  assert.ok(c.missing.some((m) => /drawing C/.test(m.what)), 'C has no top rail: listed, not guessed');
+  assert.strictEqual(c.rail.rates.handrail_pipe_2_kick.source, 'yours');
+  const member = laborForTakeoff({ rows, labor_methods: { handrail: { mode: 'member' } } }, profile).components.find((x) => x.name === 'Handrail');
+  assert.ok(!member.rail && member.items.some((i) => /Pipe/.test(i.what)), 'member by member when the estimator picks it');
 });
 
 test('no reference joint: pipe butt and socket welds by the weld-time method', () => {

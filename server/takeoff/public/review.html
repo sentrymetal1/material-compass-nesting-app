@@ -3,6 +3,7 @@
 <head>
   <script src="/takeoff/mc-token.js"></script>
   <script src="/takeoff/weld-rules.js"></script>
+  <script src="/takeoff/rail-pricing.js"></script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AI Take-off — Project Review</title>
@@ -311,7 +312,7 @@
     const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
                 superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[], check:R.check||null, checked_v1:!!R.checked_v1,
                 fittings_written:R.fittings_written||[], welds:R.welds||[], features:R.features||[], labor_extras:R.labor_extras||null,
-                weld_rules:R.weld_rules||[], drawing_counts:R.drawing_counts||{}, labels_at:R.labels_at||null };
+                weld_rules:R.weld_rules||[], drawing_counts:R.drawing_counts||{}, labels_at:R.labels_at||null, labor_methods:R.labor_methods||null };
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
@@ -713,13 +714,14 @@
       .concat(t.welds.map(function(w){ return [w.component,w.source_sheet,w.joint,w.groove,w.size_in,w.length_in,w.all_around,w.around_member,w.count,w.both_sides,w.pitch,w.position,w.field_weld]; }))
       .concat(t.features.map(function(x){ return [x.component,x.source_sheet,x.feature,x.count,x.member,x.diameter_in,x.thickness_in,x.double,x.length_ft,x.pretension]; }))
       // Job choices count only once set, so a take-off from before them is not shown as changed.
-      .concat(R.labor_extras&&Object.keys(R.labor_extras).length?[["extras",JSON.stringify(R.labor_extras)]]:[]));
+      .concat(R.labor_extras&&Object.keys(R.labor_extras).length?[["extras",JSON.stringify(R.labor_extras)]]:[])
+      .concat(R.labor_methods&&Object.keys(R.labor_methods).length?[["methods",JSON.stringify(R.labor_methods)]]:[]));
   }
   async function labFetch(R, jobType){
     const t=labLive(R);
     const r=await fetch(RAILWAY_URL+"/api/labor/estimate",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({manufacturer_id:params.manufacturer_id||"", job_type:jobType||"", rows:t.rows, fittings:t.fittings, welds:t.welds, features:t.features, extras:R.labor_extras||{},
-        weld_rules:arr(R.weld_rules).filter(function(x){ return x && !x.deleted; }), drawing_counts:R.drawing_counts||{}})});
+        weld_rules:arr(R.weld_rules).filter(function(x){ return x && !x.deleted; }), drawing_counts:R.drawing_counts||{}, labor_methods:R.labor_methods||{}})});
     const j=await r.json().catch(function(){ return null; });
     if(!r.ok||!j||!j.ok) throw new Error((j&&j.error)||("server said "+r.status));
     return j.labor;
@@ -745,7 +747,7 @@
       const written=arr(R2.labor&&R2.labor.written);
       R2.labor={ job_type:jt, sig:labSig(R2), fetched:new Date().toISOString(), edited:false, server:labSnapshot(x), written:written,
         components:arr(x.components).map(function(c){
-          return { name:c.name, units:c.units, tons:c.tons, learning:c.learning||null, held:false, missing:arr(c.missing),
+          return { name:c.name, units:c.units, tons:c.tons, learning:c.learning||null, held:false, missing:arr(c.missing), rail:c.rail||null,
             items:arr(c.items).map(function(i){ return Object.assign({},i,{auto:i.hours}); }) };
         }) };
       saveResult(R2);
@@ -854,6 +856,48 @@
   function laborAddComp(){ labEdit(function(L){ L.components.push({name:"Other work", units:1, tons:0, held:false, missing:[], items:[{what:"", bucket:"Fab_Hrs", hours:0, entered:true}]}); }); }
   function laborCompName(ci,v){ labEdit(function(L){ L.components[ci].name=String(v||"").trim().slice(0,120)||L.components[ci].name; }); }
 
+  // ---- HANDRAIL BY THE FOOT (rail-pricing.js) — Mark 2026-11-11: "handrail should be priced per foot
+  // how it is in the setup". Per component: priced member by member, or feet of rail × the shop's
+  // Handrail hr/ft. Feet and rail type per drawing are counted from the labelled pieces and can be
+  // typed over; any change re-works the hours so the lines below always show the sum.
+  function railMethods(R,comp){ R.labor_methods=Object.assign({},R.labor_methods||{}); const k=RailPricing.compKey(comp);
+    const m=Object.assign({},R.labor_methods[k]||RailPricing.methodOf(R,comp)); delete m.auto; m.sheets=Object.assign({},m.sheets||{}); R.labor_methods[k]=m; return m; }
+  function railMode(ci,mode){ const R=loadResult(); const c=R.labor&&R.labor.components[ci]; if(!c) return;
+    railMethods(R,c.name).mode=mode; saveResult(R); laborCalc(true); }
+  function railSheetSet(ci,sheet,key,el){ const R=loadResult(); const c=R.labor&&R.labor.components[ci]; if(!c) return;
+    const m=railMethods(R,c.name), sk=RailPricing.sheetKey(sheet), o=Object.assign({},m.sheets[sk]||{});
+    if(key==="feet"){ const v=String(el.value).trim(); if(v===""){ delete o.feet; } else { const n=parseFrac(v); if(n==null||n<0){ render(); return; } o.feet=n; } }
+    else { if(el.value) o.std=el.value; else delete o.std; }
+    m.sheets[sk]=o; saveResult(R); laborCalc(true); }
+  function railHtml(R,c,ci){
+    const x=c.rail; if(!x) return "";
+    const sel='style="font-size:12px;padding:1px 3px;border:1px solid #dfe5ec;border-radius:5px"';
+    const rates=Object.keys(x.rates||{}).map(function(k){ const r=x.rates[k];
+      return '<b>'+esc(r.label)+'</b>: '+labFmt(r.feet,1)+' ft × '+r.rate+' hr/ft = <b>'+labFmt(r.hours,1)+' hrs</b> <span class="src">('+(r.source==="yours"?'your rate':'library rate — put your own in Shop labor setup → Handrail')+')</span>'; }).join('<br>');
+    const lbft=x.total_ft>0&&x.covered_lb>0?x.covered_lb/x.total_ft:null;
+    const d=x.dropped||{};
+    let h='<tr class="lab-item"><td colspan="5"><details style="font-size:12.5px"><summary style="cursor:pointer"><b>Rail priced by the foot</b> — '+labFmt(x.total_ft,1)+' ft of rail. '+
+      'The rate covers '+(d.pieces||0)+' rail pieces'+(d.fittings?', '+d.fittings+' fittings':'')+(d.welds?' and '+d.welds+' rail welds':'')+
+      '; plates, brackets and their welds are priced on top in the lines below. <span style="color:var(--blue)">Feet by drawing ▸</span></summary>'+
+      '<div style="margin:6px 0">'+rates+'</div>'+
+      (lbft?'<div class="src" style="margin-bottom:6px">Check: the rail it covers weighs '+labFmt(x.covered_lb,0)+' lb = '+labFmt(lbft,1)+' lb per ft of rail (the library rate assumes 8 lb/ft, 12 with a kickplate).</div>':'')+
+      '<div style="overflow-x:auto"><table><thead><tr><th>Drawing</th><th class="num">Top rail counted</th><th class="num">Feet of rail</th><th>Rail type</th><th class="num">Built</th><th class="num">Pieces in rate / on top</th></tr></thead><tbody>'+
+      arr(x.sheets).slice().sort(function(a,b){ return String(a.sheet).localeCompare(String(b.sheet),undefined,{numeric:true}); }).map(function(s){
+        const sh=escAttr(s.sheet), none=s.feet_from==="none";
+        return '<tr><td><b>'+esc(s.sheet)+'</b></td>'+
+          '<td class="num">'+(s.top_pieces?labFmt(s.top_ft,1)+' ft <span class="src">('+s.top_pieces+' pc)</span>':'<span style="color:var(--ylw);font-weight:600">none labelled</span>')+'</td>'+
+          '<td class="num"><input class="lab-in" style="width:62px'+(none?';border-color:var(--ylw)':'')+'" placeholder="type ft" value="'+(none?'':escAttr(labFmt(s.feet,1)))+'" title="'+(s.feet_from==="typed"?'typed — clear it to go back to the counted top rail':'counted from the top rail pieces — type to change')+'" onchange="railSheetSet('+ci+',\''+sh+'\',\'feet\',this)">'+
+            (s.feet_from==="typed"?' <span class="src">typed</span>':'')+'</td>'+
+          '<td><select '+sel+' onchange="railSheetSet('+ci+',\''+sh+'\',\'std\',this)">'+RailPricing.STDS.map(function(o){
+              return '<option value="'+(o[0]===s.std_auto?'':o[0])+'"'+(o[0]===s.std?' selected':'')+'>'+esc(o[1])+(o[0]===s.std_auto?' (auto)':'')+'</option>'; }).join("")+'</select></td>'+
+          '<td class="num">'+(s.mult>1?'× '+s.mult:'1')+'</td>'+
+          '<td class="num">'+s.covered+' / '+s.on_top+'</td></tr>';
+      }).join("")+'</tbody></table></div>'+
+      '<div class="src" style="margin-top:4px">Feet come from the top-rail pieces (Welds tab → Label pieces sets which piece is which). "Auto" type is 2-line + kickplate when the drawing has a flat-bar toe plate.</div>'+
+      '</details></td></tr>';
+    return h;
+  }
+
   function laborCardHtml(R){
     const L=R.labor;
     const setupUrl=RAILWAY_URL+"/takeoff/labor-setup.html?manufacturer_id="+encodeURIComponent(params.manufacturer_id||"")+
@@ -884,9 +928,14 @@
         '<input class="lab-in txt" style="font-weight:700;background:transparent;border-color:transparent;width:auto;min-width:160px" value="'+escAttr(c.name)+'" onchange="laborCompName('+ci+',this.value)">'+
         (c.units>1?' <span class="grp-units">× '+c.units+' units</span>':'')+
         (c.learning?' <span class="grp-meta" title="Repeat units get faster: '+Math.round(c.learning.pct*100)+'% per doubling (Shop labor setup)">learning: '+labFmt(c.learning.factor,2)+'× one unit</span>':'')+
-        (c.tons?' <span class="grp-meta">'+labFmt(c.tons,2)+' t</span>':'')+'</td>'+
+        (c.tons?' <span class="grp-meta">'+labFmt(c.tons,2)+' t</span>':'')+
+        (c.name!=="Whole job" && typeof RailPricing!=="undefined"
+          ? ' <select style="font-size:11.5px;padding:1px 3px;border:1px solid #dfe5ec;border-radius:5px;margin-left:6px" title="How this component\'s shop hours are worked out" onchange="railMode('+ci+',this.value)">'+
+              '<option value="member"'+(c.rail?'':' selected')+'>priced member by member</option>'+
+              '<option value="per_ft"'+(c.rail?' selected':'')+'>handrail — per ft (Labor setup)</option></select>' : '')+'</td>'+
         '<td style="text-align:right"><input class="lab-in" value="'+labFmt(tot,1)+'" onchange="laborComp('+ci+',this.value)" title="Change this and the items below scale with it"></td>'+
-        '<td style="white-space:nowrap;font-size:12px"><label title="Hold keeps this component fixed when the job total changes"><input type="checkbox"'+(c.held?' checked':'')+' onchange="laborHold('+ci+',this.checked)"> Hold</label></td></tr>';
+        '<td style="white-space:nowrap;font-size:12px"><label title="Hold keeps this component fixed when the job total changes"><input type="checkbox"'+(c.held?' checked':'')+' onchange="laborHold('+ci+',this.checked)"> Hold</label></td></tr>'+
+        railHtml(R,c,ci);
       const itemRow=function(it,ii){
         const what = it.entered
           ? '<input class="lab-in txt" placeholder="what the work is" value="'+escAttr(it.what)+'" onchange="laborItemText('+ci+','+ii+',\'what\',this.value)">'
@@ -933,6 +982,9 @@
     }).join("");
     return head+
       (stale?'<div class="lab-stale">The BOM has changed since these hours were worked out. <button class="applybtn" onclick="laborCalc(true)">Recalculate</button></div>':'')+
+      // Hours worked out before handrail was priced by the foot: say so rather than show old numbers as current.
+      (!stale && typeof RailPricing!=="undefined" && L.components.some(function(c){ return !c.rail && c.name!=="Whole job" && RailPricing.methodOf(R,c.name).mode==="per_ft"; })
+        ?'<div class="lab-stale">Handrail is now priced by the foot from your Labor setup — these hours were worked out member by member. <button class="applybtn" onclick="laborCalc(true)">Recalculate</button></div>':'')+
       (LAB_ERR?'<div style="color:var(--red);font-size:12.5px;margin-bottom:8px">'+esc(LAB_ERR)+'</div>':'')+
       '<div class="lab-top">'+
         '<div><label>Job total, hrs</label><input class="lab-in big" value="'+labFmt(job,1)+'" onchange="laborJob(this.value)" title="Change this and every component not on Hold scales with it"></div>'+
@@ -1099,7 +1151,9 @@
           '<td style="white-space:nowrap"><input class="lab-in" style="width:36px" value="'+escAttr(r.per_each||1)+'" onchange="ruleSet(\''+id+'\',\'per_each\',this)"> per '+
             '<select '+sel+' onchange="ruleSet(\''+id+'\',\'per\',this)">'+opt(WeldRules.PER,r.per)+'</select></td>'+
           '<td><b>'+b.total+'</b> <span class="src">'+(r.per==="elbow"?'job total':'on '+b.drawings+' drawing'+(b.drawings===1?'':'s'))+'</span>'+
-            (b.missing?'<div style="color:var(--ylw);font-weight:600;font-size:11.5px">'+b.missing+' drawing'+(b.missing===1?'':'s')+' not counted</div>':'')+'</td></tr>';
+            (b.missing?'<div style="color:var(--ylw);font-weight:600;font-size:11.5px">'+b.missing+' drawing'+(b.missing===1?'':'s')+' not counted</div>':'')+
+            (typeof RailPricing!=="undefined" && RailPricing.methodOf(R,comp).mode==="per_ft" && RailPricing.weldCovered(WeldRules.joinsOf(r),{std:"handrail_pipe_2_kick"})
+              ?'<div style="color:var(--mut);font-size:11.5px">in the handrail per-ft rate — not priced again</div>':'')+'</td></tr>';
       });
       html+='</tbody></table></div>';
       // Per drawing: the pieces each count comes from, so any number can be traced and corrected.

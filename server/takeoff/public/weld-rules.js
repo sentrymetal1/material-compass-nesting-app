@@ -116,7 +116,7 @@
       out.welds.push(Object.assign({
         joint: rule.joint || "fillet", size_in: num(rule.size_in), both_sides: !!rule.both_sides, position: rule.position || "flat",
         count: count, component: rule.component, source_sheet: sheet || "", confidence: 1,
-        symbol: label + " — " + basis, from_rule: rule.id || true, cover_forms: Object.keys(forms)
+        symbol: label + " — " + basis, from_rule: rule.id || true, cover_forms: Object.keys(forms), joins: joinsOf(rule)
       }, L));
     };
 
@@ -161,6 +161,6 @@
     return res;
   }
 
-  var api = { ROLES: ROLES, PER: PER, handrailPreset: handrailPreset, expandRule: expandRule, expandAll: expandAll, sheetKey: sheetKey, compKey: compKey, formFam: formFam };
+  var api = { ROLES: ROLES, PER: PER, handrailPreset: handrailPreset, joinsOf: joinsOf, expandRule: expandRule, expandAll: expandAll, sheetKey: sheetKey, compKey: compKey, formFam: formFam };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.WeldRules = api;
 })(typeof window !== "undefined" ? window : this);
