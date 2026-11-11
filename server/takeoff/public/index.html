@@ -185,9 +185,9 @@
     .addc:hover { border-color:var(--blue); background:#f0f6fc; }
     .comp .ddesc { font-size:11px; color:#8893a0; margin:2px 0 0 4px; }
     /* Drawings as chips — a compact grid instead of one full-width picker per drawing. */
-    .comp .dgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(92px, 1fr)); gap:5px; margin-top:6px; }
+    .comp .dgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(92px, 1fr)); gap:9px 5px; margin-top:9px; }
     .comp .dchip { display:flex; align-items:center; gap:2px; background:#fff; border:1px solid #d9e0e8;
-                   border-radius:6px; padding:1px 1px 1px 2px; min-width:0; }
+                   border-radius:6px; padding:1px 1px 1px 2px; min-width:0; position:relative; }
     .comp .dchip:hover { border-color:#b9c7d8; }
     .comp .dnum { border:0; background:transparent; font:inherit; font-size:12px; font-weight:700; color:#1f3a5f;
                   cursor:pointer; padding:3px 5px; text-align:left; flex:1; min-width:0; overflow:hidden;
@@ -213,8 +213,10 @@
                   padding:1px 6px; white-space:nowrap; font-weight:600; display:inline-flex; align-items:center; gap:3px;
                   flex:0 0 auto; }
     .comp .dqty.ai { color:#8a4b09; background:#fff7ed; border-color:#fcd9a8; }
-    .comp .dqb { flex:0 0 auto; font-size:10.5px; font-weight:700; color:#2c5c96; background:#e3eefa;
-                 border:1px solid #c7dbf1; border-radius:8px; padding:0 5px; white-space:nowrap; cursor:help; }
+    /* A badge on the chip's top edge, so it takes no width from the drawing number (Mark: "10…"). */
+    .comp .dqb { position:absolute; top:-8px; right:18px; font-size:9.5px; line-height:14px; font-weight:700;
+                 color:#2c5c96; background:#e3eefa; border:1px solid #c7dbf1; border-radius:7px; padding:0 5px;
+                 white-space:nowrap; cursor:help; pointer-events:auto; }
     .comp .dqb.ai { color:#8a4b09; background:#fff1df; border-color:#fcd9a8; }
     .comp .rdone { flex:0 0 auto; font:inherit; font-size:12px; font-weight:700; color:#fff; background:var(--blue);
                    border:0; border-radius:6px; padding:5px 10px; cursor:pointer; white-space:nowrap; }
@@ -627,7 +629,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.78 (2026-11-11)";   // scope pills, how-it-gets-made, drawing qty
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.79 (2026-11-11)";   // scope pills, how-it-gets-made, drawing qty
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
