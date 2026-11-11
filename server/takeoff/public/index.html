@@ -629,7 +629,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.79 (2026-11-11)";   // scope pills, how-it-gets-made, drawing qty
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.80 (2026-11-11)";   // scope pills, how-it-gets-made, drawing qty
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -3674,11 +3674,27 @@
           : "") +
         (unitsAsk
           ? '<label class="pfunits"><input type="checkbox" id="pfUnitsOk" /> ' +
-              (atOne.length === tree.length
-                ? "This job builds <b>one</b> of each component"
-                : "This job builds <b>one</b> of " + escHtml(atOne.map((c) => c.component).join(", "))) +
-              ". <span>If the job builds more, change the count above. The BOM, labor and per-unit " +
-              "prices are all figured from it.</span></label>"
+              // Say the component count AND the drawing quantities inside it, so a "2 ea" drawing is
+              // visibly counted (Mark 2026-11-11: "one of each component" left that unsaid).
+              (atOne.length <= 3
+                ? "This job builds <b>1</b> " + escHtml(atOne.map((c) => c.component).join(", 1 "))
+                : atOne.length === tree.length
+                  ? "This job builds <b>1</b> of each component"
+                  : "This job builds <b>1</b> of " + escHtml(atOne.map((c) => c.component).join(", "))) +
+              (function () {
+                const multi = [];
+                atOne.forEach((c) => (c.drawings || []).forEach((n) => { if (qtyOf(n) > 1) multi.push({ n: n, q: qtyOf(n) }); }));
+                if (!multi.length) return "";
+                const sameQ = multi.every((m) => m.q === multi[0].q);
+                return ". Inside it, drawing" + (multi.length === 1 ? " " : "s ") +
+                  (sameQ
+                    ? escHtml(multi.map((m) => m.n).join(multi.length === 2 ? " and " : ", ")) + (multi.length === 1 ? " is" : " are") +
+                      " needed <b>" + multi[0].q + "</b> each"
+                    : multi.map((m) => escHtml(m.n) + " × <b>" + m.q + "</b>").join(", ")) +
+                  " — already counted";
+              })() +
+              ". <span>Only change the count above if the job builds more than one of a whole component. The BOM, " +
+              "labor and per-unit prices are all figured from these counts.</span></label>"
           : "") +
         (blockers.length
           ? '<div class="pfalt"><a href="#" id="goCancel">close and resolve them above</a></div>'
