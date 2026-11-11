@@ -98,6 +98,20 @@ test('take-off estimate: hours per component, sources named, gaps listed', () =>
   assert.ok(!est.components.Grating, 'buyout carries no shop hours');
 });
 
+test('a weld schedule that cannot be measured keeps the drawing\'s assumed welds', () => {
+  const rows = [{ form_type: 'Plate', material_type: 'Carbon Steel', size: '3/8"', length_ft: 0.5, width_ft: 0.67, quantity: 4, component: 'Handrail', source_sheet: '10053', disposition: 'fabricate' }];
+  const plain = estimateTakeoff({ rows }, {}).components.Handrail.hours.Weld_Hrs;
+  assert.ok(plain > 0, 'plates carry an assumed perimeter weld');
+  // A typical-weld note with no length and no member: nothing to price, so the assumption stays.
+  const blank = estimateTakeoff({ rows, welds: [{ joint: 'fillet', size_in: 0.1875, all_around: true, around_member: '', count: 4, component: 'Handrail', source_sheet: '10053' }] }, {});
+  assert.strictEqual(blank.components.Handrail.hours.Weld_Hrs, plain, 'assumed weld kept');
+  assert.ok(blank.components.Handrail.missing.length > 0, 'the unmeasured weld is still listed');
+  // Once it names its member it prices, and replaces the assumption.
+  const measured = estimateTakeoff({ rows, welds: [{ joint: 'fillet', size_in: 0.1875, all_around: true, around_member: 'Pipe 1-1/2" SCH 40 (STD)', count: 4, component: 'Handrail', source_sheet: '10053' }] }, {});
+  assert.ok(measured.components.Handrail.lines.some((l) => l.from_drawing), 'priced from the drawing');
+  assert.ok(!measured.components.Handrail.lines.some((l) => /weld Plate/.test(l.what)), 'assumed plate weld dropped');
+});
+
 test('no reference joint: pipe butt and socket welds by the weld-time method', () => {
   const est = estimateTakeoff({ rows: [], fittings: [
     { fitting_type: 'Elbow', end_type: 'Butt Weld', size: '4"', schedule_or_class: 'SCH 40', quantity: 1, component: 'P' },

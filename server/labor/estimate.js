@@ -597,8 +597,6 @@ function estimateTakeoff(takeoff, ctx) {
     comp.missing.push(...res.missing);
   };
   const welds = ((takeoff && takeoff.welds) || []).filter(liveWeld);
-  const weldSheets = new Set(welds.map((w) => sheetKey(w.source_sheet)).filter(Boolean));
-  const rctx = Object.assign({}, ctx || {}, { weldSheets });
   // A weld's material is the main material of the fabricated rows on its drawing and component.
   const matOfSheet = (w) => {
     const tally = {};
@@ -609,8 +607,14 @@ function estimateTakeoff(takeoff, ctx) {
     }
     return Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || null;
   };
+  // A drawing's assumed welds are dropped only when its schedule actually PRICES. MCP-10013
+  // (2026-11-11): five drawings had typical-weld notes with no length or member, so nothing on them
+  // could be measured — and they were left with no welding hours at all instead of the assumptions.
+  const weldRes = welds.map((w) => ({ w, res: estimateWeld(w, ctx || {}, matOfSheet) }));
+  const weldSheets = new Set(weldRes.filter((x) => x.res.lines.length).map((x) => sheetKey(x.w.source_sheet)).filter(Boolean));
+  const rctx = Object.assign({}, ctx || {}, { weldSheets });
   for (const row of (takeoff && takeoff.rows) || []) add(row.component, estimateRow(row, rctx));
-  for (const w of welds) add(w.component, estimateWeld(w, rctx, matOfSheet));
+  for (const x of weldRes) add(x.w.component, x.res);
   const features = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
   for (const f of features) add(f.component, estimateFeature(f, rctx, matOfSheet));
   // Work that follows from each component's own lines (setup, straightening, weld code, stainless
