@@ -46,6 +46,7 @@ test('the run applies the confirmed quantity before multiplying', () => {
 test('the intake page shows the quantity, warns, and sends it', () => {
   const html = fs.readFileSync(path.join(__dirname, 'public/index.html'), 'utf8');
   assert.match(html, /function dqtyBox\(/);
+  assert.match(html, /class="dqb/, 'chips lost their compact "N ea" tag');
   assert.match(html, /drawQtyNotice\(\) \+ cards/, 'the notice above the components is gone');
   assert.match(html, /drawing_qty: drawingQtyPayload\(\)/, 'the run no longer sends drawing quantities');
   assert.match(html, /seedDrawQty\(detected\)/, 'the quick read no longer fills the chips');

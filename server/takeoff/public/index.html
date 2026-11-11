@@ -213,6 +213,9 @@
                   padding:1px 6px; white-space:nowrap; font-weight:600; display:inline-flex; align-items:center; gap:3px;
                   flex:0 0 auto; }
     .comp .dqty.ai { color:#8a4b09; background:#fff7ed; border-color:#fcd9a8; }
+    .comp .dqb { flex:0 0 auto; font-size:10.5px; font-weight:700; color:#2c5c96; background:#e3eefa;
+                 border:1px solid #c7dbf1; border-radius:8px; padding:0 5px; white-space:nowrap; cursor:help; }
+    .comp .dqb.ai { color:#8a4b09; background:#fff1df; border-color:#fcd9a8; }
     .comp .rdone { flex:0 0 auto; font:inherit; font-size:12px; font-weight:700; color:#fff; background:var(--blue);
                    border:0; border-radius:6px; padding:5px 10px; cursor:pointer; white-space:nowrap; }
     .comp .rdone:hover { filter:brightness(.93); }
@@ -1775,7 +1778,11 @@
               escAttr((desc ? desc + " — " : "") + "click to change, rename or delete") + '">' + escHtml(g.number) + "</button>" +
             (g.ids.length > 1 ? '<span class="dmul" title="' + g.ids.length + " drawing records on the project carry this number — " +
               'usually one per sheet. All are included.">×' + g.ids.length + "</span>" : "") +
-            (qtyOf(g.number) > 1 ? dqtyBox(g.number) : "") +
+            // On the chip just a small "2 ea" tag — the full box doesn't fit the grid cell (it covered
+            // the drawing number). Click the number to open the row and change it.
+            (qtyOf(g.number) > 1 ? '<span class="dqb' + ((drawQty[_norm(g.number)] || {}).src === "ai" ? " ai" : "") +
+              '" title="' + escAttr("Drawing " + g.number + " is needed " + qtyOf(g.number) + " times per unit. Click the number to change it.") +
+              '">' + qtyOf(g.number) + " ea</span>" : "") +
             '<button type="button" class="xbtn" data-k="dxg" data-ci="' + ci + '" data-ids="' + escAttr(g.ids.join(",")) +
               '" title="Leave out of this take-off">✕</button></span>';
         }).join("");
