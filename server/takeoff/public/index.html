@@ -213,6 +213,9 @@
                   padding:1px 6px; white-space:nowrap; font-weight:600; display:inline-flex; align-items:center; gap:3px;
                   flex:0 0 auto; }
     .comp .dqty.ai { color:#8a4b09; background:#fff7ed; border-color:#fcd9a8; }
+    .comp .rdone { flex:0 0 auto; font:inherit; font-size:12px; font-weight:700; color:#fff; background:var(--blue);
+                   border:0; border-radius:6px; padding:5px 10px; cursor:pointer; white-space:nowrap; }
+    .comp .rdone:hover { filter:brightness(.93); }
     /* Wide enough for 3 digits plus the browser's up/down arrows (Mark: "the number field is too small"). */
     .comp .dqty input { width:52px; min-width:52px; border:1px solid #cfdcec; border-radius:5px; background:#fff;
                         font-size:12.5px; font-weight:700; color:#1f2a36; font-family:inherit; text-align:center;
@@ -1787,7 +1790,14 @@
               ? editCell("drawing", d.id, d.number, ci, di)
               : '<select data-k="dsel" data-ci="' + ci + '" data-di="' + di + '">' +
                   drawOptions(c.cid, d && d.id, used) + "</select>";
-          return '<div class="drow">' + cell + (d && d.id && d.number ? dqtyBox(d.number) : "") + rowBtns("drawing", ci, di, d && d.id) + "</div>" +
+          // An opened chip gets its own "✓ Done" right on the row, back into the grid. (Mark: the
+          // only way back was a small link at the bottom of the card, so ✕ got pressed instead —
+          // and ✕ leaves the drawing out of the run.)
+          const openKey = _norm(d && d.number);
+          const rowDone = (d && d.id && openKey && drawOpen[c.cid + "|" + openKey])
+            ? '<button type="button" class="rdone" data-k="dclose1" data-ci="' + ci + '" data-key="' + escAttr(openKey) +
+              '" title="Close this drawing back into the list. Nothing is left out.">✓ Done</button>' : "";
+          return '<div class="drow">' + cell + (d && d.id && d.number ? dqtyBox(d.number) : "") + rowDone + rowBtns("drawing", ci, di, d && d.id) + "</div>" +
             (desc ? '<div class="ddesc">' + escHtml(desc) + "</div>" : "");
         }).join("");
         const ccell = (creating && creating.ci === ci && creating.di == null)
@@ -1881,6 +1891,9 @@
         const num = t.getAttribute("data-num") || "";
         drawQty[_norm(num)] = { qty: q, src: "user", why: "" };
         saveDrawQty();
+        // Setting the quantity is the job done: close the row back into the grid, where the chip now
+        // shows "qty N ea".
+        Object.keys(drawOpen).forEach((x) => { if (x.slice(x.indexOf("|") + 1) === _norm(num)) delete drawOpen[x]; });
         renderScope();
         setScopeStatus("Drawing <b>" + escHtml(num) + "</b> is now <b>" + q + " ea</b> per unit. The take-off multiplies its material by " + q + ".");
         return;
@@ -2006,6 +2019,7 @@
         Object.keys(drawOpen).forEach((x) => { if (x.indexOf(scope[ci].cid + "|") === 0) delete drawOpen[x]; });
         renderScope(); return;
       }
+      if (k === "dclose1") { delete drawOpen[scope[ci].cid + "|" + btn.getAttribute("data-key")]; renderScope(); return; }
       if (k === "dxg") {                                         // a chip: every record with that number
         const ids = String(btn.getAttribute("data-ids") || "").split(",").filter(Boolean);
         ids.forEach((id) => { excluded.d[id] = 1; });
