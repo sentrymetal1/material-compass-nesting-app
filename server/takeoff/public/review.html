@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.89 · 2026-11-12 · costs priced by weight take Qty from the weight";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.90 · 2026-11-12 · Summary amounts save and total (fix), commas";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1347,10 +1347,12 @@
     if(kind==="line"){ const l=S.lines[key]||{}, row=el.closest&&el.closest("tr");
       // the line's other box follows: Qty / $ each → $ total, $ total → $ each
       const other=row&&row.querySelector(field==="total"?'input[data-f="unit_amt"]':'input[data-f="total"]');
-      if(other && other!==el){ const v=field==="total"?l.unit_amt:l.total; other.value=v==null?"":Math.round(v*100)/100; } }
+      if(other && other!==el){ other.value=field==="total"?sumNum(l.unit_amt,4):sumNum(l.total,2,2); } }
     set("sumTileMat",sumMoney(T.matTot||null)); set("sumTileOut",sumMoney(T.outTot||null)); set("sumTileJob",sumMoney(T.grand||null));
     set("sumMatTot",sumMoney(T.matTot||null));
   }
+  // Numbers in the Summary boxes with thousands commas (Mark 2026-11-12); typed commas are stripped on read.
+  function sumNum(v,maxD,minD){ return v==null||v===""||!Number.isFinite(Number(v))?"":Number(v).toLocaleString(undefined,{minimumFractionDigits:minD||0,maximumFractionDigits:maxD}); }
   function sumMoney(n){ return n==null?"—":"$"+Number(n).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}); }
   // Every total on the Summary, from the take-off and its cost_summary — the card and the live update both use it.
   function sumCalc(R){
@@ -1431,7 +1433,7 @@
     const order=T.order, mats=T.mats, matTot=T.matTot, matPriced=T.matPriced;
     const matRows=order.map(function(m,mi){ const x=mats[m];
       return '<tr><td>'+esc(m)+'</td><td class="num">'+Math.round(x.lb).toLocaleString()+' lb'+(x.miss?' <span class="src">(+'+x.miss+' unweighed)</span>':'')+'</td>'+
-        '<td class="num">'+inp(x.rate,"sumMatRate(\''+escAttr(m)+'\',this)",64,"$/lb","sumLive(\'mat\',\''+escAttr(m)+'\',\'\',this)")+'</td><td class="num"><b id="sumMat'+mi+'">'+money(x.amt)+'</b></td></tr>'; }).join("")+
+        '<td class="num">'+inp(x.rate!=null?x.rate:null,"sumMatRate('"+escAttr(m)+"',this)",64,"$/lb","sumLive('mat','"+escAttr(m)+"','',this)")+'</td><td class="num"><b id="sumMat'+mi+'">'+money(x.amt)+'</b></td></tr>'; }).join("")+
       (order.length>1?'<tr><td><b>Total</b></td><td class="num"><b>'+Math.round(order.reduce(function(a,m){ return a+mats[m].lb; },0)).toLocaleString()+' lb</b></td><td></td><td class="num"><b id="sumMatTot">'+money(matTot||null)+'</b></td></tr>':'');
     // LABOR — hours by type from the Labor tab × the shop's rates.
     const L=R.labor; const hrs={}; Object.keys(LAB_BUCKET).forEach(function(b){ hrs[b]=0; });
@@ -1459,10 +1461,10 @@
             :'<b>'+esc(label)+'</b>')+
           (h?'<div style="font-size:11.5px;'+(flag?'color:var(--ylw);font-weight:600':'color:var(--mut)')+'">'+(flag?'⚠ ':'')+esc(h.why)+'</div>':'')+'</td>'+
         '<td>'+statusSel(k,l.status)+'</td>'+
-        '<td class="num" style="white-space:nowrap">'+inp(qty,"sumLine(\''+k+'\',\'qty\',this)",70,"","sumLive(\'line\',\''+k+'\',\'qty\',this)","qty")+' '+
+        '<td class="num" style="white-space:nowrap">'+inp(sumNum(qty,2),"sumLine('"+k+"','qty',this)",70,"","sumLive('line','"+k+"','qty',this)","qty")+' '+
           '<input class="lab-in txt" style="width:52px" value="'+escAttr(l.unit||unit||"")+'" onchange="sumLine(\''+k+'\',\'unit\',this)"></td>'+
-        '<td class="num">'+inp(l.unit_amt!=null?Math.round(l.unit_amt*10000)/10000:null,"sumLine(\''+k+'\',\'unit_amt\',this)",70,"$ each","sumLive(\'line\',\''+k+'\',\'unit_amt\',this)","unit_amt")+'</td>'+
-        '<td class="num">'+inp(l.total!=null?Math.round(l.total*100)/100:null,"sumLine(\''+k+'\',\'total\',this)",86,"$ total","sumLive(\'line\',\''+k+'\',\'total\',this)","total")+'</td>'+
+        '<td class="num">'+inp(sumNum(l.unit_amt,4),"sumLine('"+k+"','unit_amt',this)",70,"$ each","sumLive('line','"+k+"','unit_amt',this)","unit_amt")+'</td>'+
+        '<td class="num">'+inp(sumNum(l.total,2,2),"sumLine('"+k+"','total',this)",86,"$ total","sumLive('line','"+k+"','total',this)","total")+'</td>'+
         '<td><input class="lab-in txt" style="width:150px" placeholder="supplier, quote #, note" value="'+escAttr(l.note||"")+'" onchange="sumLine(\''+k+'\',\'note\',this)"></td></tr>';
     };
     const outRows=COST_CATS.map(function(c){ return outRow(c[0],c[1],c[2],H[c[0]],false); }).join("")+
