@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.94 · 2026-11-12 · markup + quote preview; outside costs → project page reminder";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.95 · 2026-11-12 · labor not marked up";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1297,7 +1297,8 @@
   // submittal goes to the project page"). One % for the job; Material, Shop labor and Outside costs
   // each take it unless given their own. A preview of the quote — the project page stays the quote of
   // record once nesting and confirmed outside prices are in.
-  const MU_CATS=[["material","Material"],["labor","Shop labor"],["outside","Outside costs"]];
+  // Labor is never marked up (Mark 11-12): the shop labor rate is already the sell rate.
+  const MU_CATS=[["material","Material"],["labor","Shop labor",true],["outside","Outside costs"]];
   function muPct(S,cat){ const m=S.markup||{}; const v=m[cat]!=null?m[cat]:m.all; return v!=null&&Number.isFinite(Number(v))?Number(v):null; }
   function sumMuApply(S,cat,value){ S.markup=S.markup||{}; const v=String(value).replace(/[%,\s]/g,"");
     if(v===""){ delete S.markup[cat]; return true; } const n=Number(v); if(!Number.isFinite(n)) return false; S.markup[cat]=n; return true; }
@@ -1448,7 +1449,7 @@
     const keys=COST_CATS.map(function(c){ return c[0]; }).concat(Object.keys(S.lines).filter(function(k){ return S.lines[k]&&S.lines[k].extra; }));
     let outTot=0; keys.forEach(function(k){ const l=S.lines[k]||{}; if(l.status==="include" && l.total!=null) outTot+=Number(l.total)||0; });
     const cost={material:matTot, labor:rates?labTot:0, outside:outTot}, mu={}, sell={}; let muTot=0;
-    MU_CATS.forEach(function(c){ const p=muPct(S,c[0]); mu[c[0]]=p!=null?cost[c[0]]*p/100:0; sell[c[0]]=cost[c[0]]+mu[c[0]]; muTot+=mu[c[0]]; });
+    MU_CATS.forEach(function(c){ const p=c[2]?null:muPct(S,c[0]); mu[c[0]]=p!=null?cost[c[0]]*p/100:0; sell[c[0]]=cost[c[0]]+mu[c[0]]; muTot+=mu[c[0]]; });
     const grand=matTot+(rates?labTot:0)+outTot;
     return { mats:mats, order:order, matTot:matTot, matPriced:matPriced, hrs:hrs, labH:labH, labTot:rates?labTot:null, outTot:outTot, grand:grand,
       cost:cost, mu:mu, sell:sell, muTot:muTot, quote:grand+muTot };
@@ -1624,8 +1625,8 @@
             (own&&cat!=="all"?' <span class="pillbtn" title="Back to the job markup" onclick="sumMuReset(\''+cat+'\')">↺</span>':''); };
         const allP=muPct(S,"all");
         return '<div style="overflow-x:auto;margin:0 0 12px"><table style="max-width:720px"><thead><tr><th>Markup</th><th class="num">Cost</th><th class="num">Markup %</th><th class="num">Markup $</th><th class="num">Quote</th></tr></thead><tbody>'+
-          '<tr style="background:#f6f9fd"><td><b>Job markup</b> <span class="src">— every line below uses it unless given its own</span></td><td></td><td class="num">'+pin("all","%")+'</td><td></td><td></td></tr>'+
-          MU_CATS.map(function(c){ return '<tr><td>'+c[1]+'</td><td class="num" id="sumMuCost_'+c[0]+'">'+money(T.cost[c[0]])+'</td><td class="num">'+pin(c[0],allP!=null?String(allP):"%")+'</td>'+
+          '<tr style="background:#f6f9fd"><td><b>Job markup</b> <span class="src">— material and outside costs use it unless given their own</span></td><td></td><td class="num">'+pin("all","%")+'</td><td></td><td></td></tr>'+
+          MU_CATS.map(function(c){ return '<tr><td>'+c[1]+(c[2]?' <span class="src">— no markup; your labor rate is the sell rate</span>':'')+'</td><td class="num" id="sumMuCost_'+c[0]+'">'+money(T.cost[c[0]])+'</td><td class="num">'+(c[2]?'<span class="src">—</span>':pin(c[0],allP!=null?String(allP):"%"))+'</td>'+
             '<td class="num" id="sumMu_'+c[0]+'">'+money(T.mu[c[0]])+'</td><td class="num"><b id="sumSell_'+c[0]+'">'+money(T.sell[c[0]])+'</b></td></tr>'; }).join("")+
           '<tr class="wt-total"><td><b>Total</b></td><td class="num"><b id="sumCostTot">'+money(T.grand)+'</b></td><td></td><td class="num"><b id="sumMuTot">'+money(T.muTot)+'</b></td><td class="num"><b id="sumSellTot">'+money(T.quote)+'</b></td></tr>'+
           '</tbody></table></div>';
