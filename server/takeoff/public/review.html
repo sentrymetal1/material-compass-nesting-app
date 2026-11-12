@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.90 · 2026-11-12 · Summary amounts save and total (fix), commas";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.91 · 2026-11-12 · Weight check: project total, drawing weights, mm lengths, double counts";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -394,7 +394,8 @@
   let SCOPE_EDIT = false;    // Scope of Work: edit mode (add/edit/remove write-ups)
   let REVISE_ATTACHMENTS = [];  // reference docs attached to "Tell the AI to revise" [{kind,name,media_type?,data?,text?}]
   let ACCOUNT = null;           // {balance, price:{premium,basic}} — prepaid meter (Phase 0 visual)
-  let PROJECT_SCOPE = null;     // {components:[{id,name}], drawings:[{id,number}]} from Zoho; null until fetched
+  let PROJECT_HEAD = null;      // the project header from project-scope: number, name, total_weight (the project's BOM weight)
+  let PROJECT_SCOPE = null;    // {components:[{id,name}], drawings:[{id,number}]} from Zoho; null until fetched
   let SCOPE_FETCH_DONE = false; // true once the project-scope fetch resolves (distinguish "loading" from "none entered")
   let RECON = { component:null, drawing:null };  // last reconcile() result per kind; index-keyed action handlers read this
 
@@ -424,7 +425,7 @@
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/"+encodeURIComponent(params.project_id));
       const d=await r.json();
-      if(d&&d.ok){ PROJECT_SCOPE={components:arr(d.components),drawings:arr(d.drawings)}; showProjectHeader(d.project); }
+      if(d&&d.ok){ PROJECT_SCOPE={components:arr(d.components),drawings:arr(d.drawings)}; PROJECT_HEAD=d.project||null; showProjectHeader(d.project); }
     }catch(e){ /* non-fatal — panel shows a soft notice */ }
     SCOPE_FETCH_DONE=true; render();
   }
@@ -3244,6 +3245,7 @@
           (R.cost_usd!=null?'<span class="chip" title="What the AI charged to read the drawings for this take-off (including any drawings added later). Questions and edits afterwards are in the AI cost total at the top.">💲 AI read $'+Number(R.cost_usd).toFixed(2)+'</span>':'')+
           (gaps.length?'<span class="chip">◷ '+gaps.length+' gaps</span>':'')+
         '</div></div></div>'+
+      weightCheckHtml(R, WT, FW)+
 
       // tabs — one area of the review at a time; the header above and the dock below stay put
       tabStripHtml(R, fab, gaps, conflicts)+
@@ -3746,6 +3748,79 @@
   // The weight at the top: the BOM total (the same number as the foot of the Material tab), plus
   // fittings as their own figure when there are any. The AI's rough estimate shows only when no row
   // can be weighed yet.
+  // ---- WEIGHT CHECK — the take-off's total against what the job is known to weigh -----------------
+  // Mark 2026-11-12: "This should not be an issue if the system totals the BOM weights and matches it
+  // with what AI estimated. This is the safest way of quoting drawings." MCP-10013 came out 7,196 lb
+  // against a 6,627 lb project BOM: one pipe read at 97.6" when its own note said 1274 mm (50.2"), and
+  // two drawings built twice counted four times. Neither drawing printed a weight, so nothing caught it.
+  // Three checks, always on screen: the project's own BOM weight (or a total typed in), each drawing's
+  // printed weight, and lengths that disagree with the millimetres written beside them.
+  // A row whose length matches none of the "NNNN mm" figures in its own note.
+  function noteMmMismatch(r){
+    const note=String(r&&r.note||""), L=Number(r&&r.length_ft)||0; if(!(L>0)) return null;
+    // Members only, and only figures long enough to be a cut length: on plates and short stubs a
+    // "76 mm" is a hole spacing or a width, not the length.
+    if(/plate|sheet/i.test(String(r.form_type||""))) return null;
+    const mm=[]; note.replace(/(\d{2,5}(?:\.\d+)?)\s*mm\b/gi,function(_,n){ if(Number(n)>=150) mm.push(Number(n)); return _; });
+    if(!mm.length) return null;
+    const inL=L*12;
+    if(mm.some(function(n){ return Math.abs(n/25.4-inL)<=Math.max(0.25,inL*0.02); })) return null;
+    return {mm:mm[0], note_in:mm[0]/25.4, row_in:inL};
+  }
+  function setExpectedWeight(el){
+    const v=String(el.value).replace(/[,\s]|lbs?/gi,""); const n=v===""?null:Number(v);
+    if(n!=null && !(n>0)) { render(); return; }
+    const R=loadResult(); if(n==null) delete R.expected_weight_lb; else R.expected_weight_lb=n; saveResult(R); render();
+  }
+  function weightCheckHtml(R, WT, FW){
+    if(!(WT && WT.lb>0)) return "";
+    const live=arr(R.rows).filter(function(r){ return r && !r.deleted && Number(r.quantity)>0; });
+    const tk=WT.lb;
+    const pct=function(a,b){ return b>0?(a-b)/b*100:0; };
+    const sgn=function(p){ return (p>0?'+':'')+Math.round(p)+'%'; };
+    const line=function(ok,html){ return '<div style="margin:3px 0;font-size:12.5px;line-height:1.5">'+(ok===true?'<span style="color:var(--grn);font-weight:700">✓</span> ':ok===false?'<span style="color:var(--red);font-weight:700">⚠</span> ':'<span style="color:var(--ylw);font-weight:700">◷</span> ')+html+'</div>'; };
+    let bad=0, html="";
+    // 1. The project's total weight (its BOM — PROJECT WT on the project page), or one typed in.
+    const pw=PROJECT_HEAD&&Number(PROJECT_HEAD.total_weight)>0?Number(PROJECT_HEAD.total_weight):null;
+    const ew=Number(R.expected_weight_lb)>0?Number(R.expected_weight_lb):null;
+    const ref=ew||pw, refLbl=ew?'the total you entered':'the project\'s BOM (PROJECT WT)';
+    const typed='<input class="lab-in" style="width:90px" placeholder="type lb" value="'+(ew?escAttr(Math.round(ew).toLocaleString()):'')+'" onchange="setExpectedWeight(this)" title="The job\'s known total weight — from the drawing set, the customer, or your own BOM. Clear it to use the project\'s BOM weight.">';
+    if(ref){ const p=pct(tk,ref), ok=Math.abs(p)<=3; if(!ok) bad++;
+      html+=line(ok,'<b>Take-off '+fmtLb(tk)+' lb</b> vs '+refLbl+' <b>'+fmtLb(ref)+' lb</b>: '+
+        (ok?'within 3%':'<b style="color:var(--red)">'+sgn(p)+' ('+(tk>ref?'+':'−')+fmtLb(Math.abs(tk-ref))+' lb)</b> — find the rows that make up the difference before pricing')+
+        ' <span class="src">· expected total</span> '+typed+(ew&&pw?' <span class="src">(project BOM: '+fmtLb(pw)+' lb)</span>':''));
+    } else html+=line(null,'<b>Take-off '+fmtLb(tk)+' lb.</b> The project has no BOM weight yet to check it against — type the job\'s known total weight '+typed+' lb (drawing set, customer, or your own count).');
+    // 2. Each drawing's printed weight against its rows.
+    const ds=arr((R.synopsis||{}).drawing_scope), wu=(R.synopsis||{}).weight_unit;
+    const bySheet={}; live.forEach(function(r){ const k=String(r.source_sheet||"").trim(); if(!k) return; const w=rowWeight(r); bySheet[k]=(bySheet[k]||0)+(w?w.total:0); });
+    const sheets=Object.keys(bySheet);
+    let pr=0, tkp=0; const off=[], none=[];
+    sheets.forEach(function(sh){ const d=ds.find(function(x){ return x && x.stated_weight && Number(x.stated_weight.value)>0 && sameSheet(x.sheet,sh); });
+      if(!d){ none.push(sh); return; }
+      const kg=/kg/i.test(String(d.stated_weight.unit||(wu&&wu.unit)||"")), lb=Number(d.stated_weight.value)*(kg?2.20462:1);
+      pr+=lb; tkp+=bySheet[sh]; const p=pct(bySheet[sh],lb); if(Math.abs(p)>15) off.push(sh+' '+sgn(p)); });
+    const noneLb=none.reduce(function(a,sh){ return a+bySheet[sh]; },0);
+    if(sheets.length-none.length>0){ const p=pct(tkp,pr), ok=!off.length&&Math.abs(p)<=10; if(!ok) bad++;
+      html+=line(ok,(sheets.length-none.length)+' of '+sheets.length+' drawings print a weight: printed '+fmtLb(pr)+' lb, take-off '+fmtLb(tkp)+' lb ('+sgn(p)+')'+
+        (off.length?' · <b style="color:var(--red)">off by more than 15%: '+esc(off.join(', '))+'</b>':'')); }
+    if(none.length){ none.sort(function(a,b){ return a.localeCompare(b,undefined,{numeric:true}); });
+      html+=line(null,'<b>'+none.length+' drawing'+(none.length===1?'':'s')+' ('+fmtLb(noneLb)+' lb) not checked</b> — no printed weight was read: '+esc(none.slice(0,14).join(', '))+(none.length>14?'…':'')+
+        '. Paste their weights on the By drawing tab, or rely on the project total above.'); }
+    // 3. Lengths that disagree with the millimetres in their own note.
+    const mis=live.map(function(r){ return {r:r, m:noteMmMismatch(r)}; }).filter(function(x){ return x.m; });
+    if(mis.length){ bad++;
+      const ex=mis.slice(0,6).map(function(x){ return esc((x.r.member_mark||x.r.size||"row")+' on '+(x.r.source_sheet||'?'))+': '+(Math.round(x.m.row_in*10)/10)+'" but the note says '+x.m.mm+' mm = '+(Math.round(x.m.note_in*10)/10)+'"'; });
+      html+=line(false,'<b style="color:var(--red)">'+mis.length+' row'+(mis.length===1?'':'s')+' with a length that does not match its own note</b> — '+ex.join(' · ')+(mis.length>6?' …':'')); }
+    // 4. Built more than once AND a Qty that already says it covers the assemblies: counted twice.
+    // 10058/10059 (2 each) read "4 REQ'D (2 assy)" into Qty and then were multiplied by 2 again.
+    const dbl=live.filter(function(r){ return Math.round(Number(r.units)||1)>1 && /\(\s*\d+\s*assy|\d+\s*assy\b|assemblies\)|x\s*\d+\s*assy/i.test(String(r.note||"")); });
+    if(dbl.length){ bad++;
+      const sh={}; dbl.forEach(function(r){ sh[r.source_sheet]=Math.round(Number(r.units)||1); });
+      html+=line(false,'<b style="color:var(--red)">'+dbl.length+' row'+(dbl.length===1?'':'s')+' may be counted twice</b> — drawing'+(Object.keys(sh).length===1?' ':'s ')+esc(Object.keys(sh).map(function(k){ return k+' (built '+sh[k]+'×)'; }).join(', '))+
+        ': the Qty already says it covers the assemblies, and it is multiplied by the number built again. Keep Qty per ONE assembly.'); }
+    return '<div class="card" id="weightCheck" style="border-color:'+(bad?'#f3c2bd':'#cfe6d3')+'"><div class="body" style="padding:10px 16px;background:'+(bad?'#fdf3f2':'#f3faf4')+'">'+
+      '<div style="font-weight:700;font-size:13px;margin-bottom:2px">⚖ Weight check '+(bad?'<span style="color:var(--red)">— '+bad+' to look at before quoting</span>':'<span style="color:var(--grn)">— the take-off matches</span>')+'</div>'+html+'</div></div>';
+  }
   function weightChipHtml(WT, FW, t){
     if(WT.lb>0){
       const miss=WT.miss?' <span title="'+WT.miss+' BOM row'+(WT.miss===1?'':'s')+' without a weight, not counted">(+'+WT.miss+' ?)</span>':'';

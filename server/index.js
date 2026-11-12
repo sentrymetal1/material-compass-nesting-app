@@ -280,6 +280,11 @@ async function projectHeader(pid, token, base) {
                      p['MFG_Client_Form.Client_Company_Name'] || '').trim(),
       due: String(p.Quote_Due_Date || '').replace(/\s+\d{1,2}:\d{2}.*$/, '').replace(/,(\S)/, ', $1').trim(),
       manufacture: String((m && (m.ID || m.zc_display_value)) || m || ''),
+      // The project's own BOM weight (the PROJECT WT on the project page), so the take-off can check
+      // its total against it (Mark 2026-11-12: "Add the total weight of the project to the AI Take
+      // Off as a check"). 0 = no BOM on the project yet.
+      total_weight: Number(String(p.Project_Total_Weight || '').replace(/,/g, '')) || 0,
+      fittings_weight: Number(String(p.Total_BOM_Fittings_Weight || '').replace(/,/g, '')) || 0,
     };
     _projHeaderCache.set(String(pid), { t: Date.now(), v });
     return v;
