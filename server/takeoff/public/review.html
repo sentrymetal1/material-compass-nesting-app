@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.93 · 2026-11-12 · Weight check fixes in place; labor rates per job";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.94 · 2026-11-12 · markup + quote preview; outside costs → project page reminder";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1293,6 +1293,64 @@
       .catch(function(e){ SUM_RATES_ERR=e.message; render(); });
   }
   function sumState(R){ const s=R.cost_summary&&typeof R.cost_summary==="object"?R.cost_summary:{}; s.lines=s.lines||{}; s.mat_rate=s.mat_rate||{}; s.lab_rate=s.lab_rate||{}; return s; }
+  // MARKUP (Mark 2026-11-12: "I would like to show mark-up on the AI Take-Off. But the final quote and
+  // submittal goes to the project page"). One % for the job; Material, Shop labor and Outside costs
+  // each take it unless given their own. A preview of the quote — the project page stays the quote of
+  // record once nesting and confirmed outside prices are in.
+  const MU_CATS=[["material","Material"],["labor","Shop labor"],["outside","Outside costs"]];
+  function muPct(S,cat){ const m=S.markup||{}; const v=m[cat]!=null?m[cat]:m.all; return v!=null&&Number.isFinite(Number(v))?Number(v):null; }
+  function sumMuApply(S,cat,value){ S.markup=S.markup||{}; const v=String(value).replace(/[%,\s]/g,"");
+    if(v===""){ delete S.markup[cat]; return true; } const n=Number(v); if(!Number.isFinite(n)) return false; S.markup[cat]=n; return true; }
+  // OUTSIDE COSTS → THE PROJECT PAGE (Mark 2026-11-12: "attempt or at least alert the project page of
+  // the outsourcing — either by inputting in the outsource rows or letting the user know this needs to
+  // be included"). Until the take-off writes Item Sourcing rows itself, it lists them exactly as the
+  // project's Item Sourcing Take-Off wants them — Category of Item spelled the way the project's
+  // totals workflow matches it (an unmatched spelling drops out of the category totals; see
+  // feedback_outsource_category_taxonomies) — and keeps reminding until they are marked entered, and
+  // again if they change afterwards.
+  const PROJ_CAT={ galvanize:"Galvanize", blast_paint:"Blast / Paint", fasteners:"Fasteners", trucking:"Trucking", detailing:"Detailing",
+    inspection:"Inspection", installation:"Installation / Rigging", grating:"Grating", decking:"Decking", machining:"Machining", fittings:"Fittings", other:"Miscellaneous" };
+  function projOutLines(R){
+    const S=sumState(R), out=[];
+    COST_CATS.map(function(c){ return c[0]; }).concat(Object.keys(S.lines).filter(function(k){ return S.lines[k]&&S.lines[k].extra; })).forEach(function(k){
+      const l=S.lines[k]; if(!l || l.status!=="include") return;
+      const c=COST_CATS.find(function(x){ return x[0]===k; });
+      out.push({ key:k, category:PROJ_CAT[k]||"Miscellaneous", description:(c?c[1]:(l.label||"Other"))+(l.note?" — "+l.note:""),
+        qty:l.qty!=null?Number(l.qty):null, unit:l.unit||(c?c[2]:"lot"), unit_amt:l.unit_amt!=null?Number(l.unit_amt):null, total:l.total!=null?Number(l.total):null });
+    });
+    return out;
+  }
+  function projOutSig(list){ return JSON.stringify(list.map(function(x){ return [x.category,x.description,x.qty,x.unit_amt,x.total]; })); }
+  function projOutMark(on){ sumEdit(function(S){ if(on){ S.project_entered={at:new Date().toISOString(), sig:projOutSig(projOutLines(loadResult()))}; } else delete S.project_entered; }); }
+  function projOutCopy(){
+    const list=projOutLines(loadResult());
+    const tsv=["Category of Item\tDescription\tQTY\tUnit\tUnit Amount\tTotal Amt"].concat(list.map(function(x){ return [x.category,x.description,x.qty==null?"":x.qty,x.unit,x.unit_amt==null?"":Math.round(x.unit_amt*10000)/10000,x.total==null?"":Math.round(x.total*100)/100].join("\t"); })).join("\n");
+    const done=function(){ const m=document.getElementById("projOutMsg"); if(m) m.textContent="✓ copied — paste into a spreadsheet or keep it beside the project page"; };
+    try{ navigator.clipboard.writeText(tsv).then(done,function(){ window.prompt("Copy:",tsv); }); }catch(e){ window.prompt("Copy:",tsv); }
+  }
+  function projOutState(R){ const list=projOutLines(R), e=sumState(R).project_entered;
+    return { list:list, state:!list.length?"none":!e?"todo":e.sig===projOutSig(list)?"done":"changed", at:e&&e.at }; }
+  function projOutPanelHtml(R){
+    const P=projOutState(R); if(P.state==="none") return "";
+    const warn=P.state!=="done", money=sumMoney;
+    const tot=P.list.reduce(function(a,x){ return a+(x.total||0); },0), noAmt=P.list.filter(function(x){ return x.total==null; }).length;
+    return '<div style="border:1px solid '+(warn?'#f0cf7f':'#cfe6d3')+';background:'+(warn?'#fff8e6':'#f3faf4')+';border-radius:8px;padding:10px 12px;margin:0 0 16px">'+
+      '<div style="font-weight:700;font-size:13px">'+(P.state==="todo"?'⚠ These outside costs are not on the project page yet'
+        :P.state==="changed"?'⚠ Outside costs changed since they were entered on the project page'
+        :'✓ Outside costs entered on the project page <span class="src" style="font-weight:400">'+esc(String(P.at||"").slice(0,10))+'</span>')+'</div>'+
+      '<div class="src" style="margin:3px 0 6px;font-size:12px">Project page → <b>Subcontract and Item Details</b> → <b>Item Sourcing Take-Off</b>: one row each, at cost (the project adds its own markup). '+
+        'Type <b>Category of Item</b> exactly as shown — the project totals only count these spellings.'+(noAmt?' <b style="color:var(--ylw)">'+noAmt+' still need an amount.</b>':'')+'</div>'+
+      '<table style="max-width:820px"><thead><tr><th>Category of Item</th><th>Description</th><th class="num">QTY</th><th class="num">Unit Amount</th><th class="num">Total Amt</th></tr></thead><tbody>'+
+        P.list.map(function(x){ return '<tr><td><b>'+esc(x.category)+'</b></td><td>'+esc(x.description)+'</td><td class="num">'+(x.qty!=null?sumNum(x.qty,2)+' '+esc(x.unit):'—')+'</td>'+
+          '<td class="num">'+(x.unit_amt!=null?'$'+sumNum(x.unit_amt,4):'—')+'</td><td class="num"><b>'+(x.total!=null?'$'+sumNum(x.total,2,2):'<span style="color:var(--ylw)">no amount</span>')+'</b></td></tr>'; }).join("")+
+        '<tr class="wt-total"><td colspan="4"><b>Total outside, at cost</b></td><td class="num"><b>'+money(tot)+'</b></td></tr></tbody></table>'+
+      '<div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
+        '<span class="pillbtn" style="margin-left:0" onclick="projOutCopy()">📋 Copy the list</span>'+
+        '<label style="font-size:12.5px"><input type="checkbox"'+(P.state==="done"?' checked':'')+' onchange="projOutMark(this.checked)"> Entered on the project page</label>'+
+        '<span class="src" id="projOutMsg"></span></div></div>';
+  }
+  function sumMu(cat,el){ sumEdit(function(S){ sumMuApply(S,cat,el.value); }); }
+  function sumMuReset(cat){ sumEdit(function(S){ if(S.markup) delete S.markup[cat]; }); }
   function sumLabApply(S,b,value){ const v=String(value).replace(/[$,\s]|\/h(r)?/gi,""); if(v===""){ delete S.lab_rate[b]; return true; } const n=Number(v); if(!(n>=0)) return false; S.lab_rate[b]=n; return true; }
   function sumLabRate(b,el){ sumEdit(function(S){ sumLabApply(S,b,el.value); }); }
   function sumLabReset(b){ sumEdit(function(S){ delete S.lab_rate[b]; }); }
@@ -1350,7 +1408,7 @@
   // screen change — a full redraw would take the cursor out of the box. The save still happens on change.
   function sumLive(kind,key,field,el){
     const R=loadResult(); R.cost_summary=sumState(R); const S=R.cost_summary;
-    const ok = kind==="mat" ? sumMatApply(S,key,el.value) : kind==="rate" ? sumLabApply(S,key,el.value) : sumApply(S,key,field,el.value,sumHintQty(R,key));
+    const ok = kind==="mat" ? sumMatApply(S,key,el.value) : kind==="rate" ? sumLabApply(S,key,el.value) : kind==="mu" ? sumMuApply(S,key,el.value) : sumApply(S,key,field,el.value,sumHintQty(R,key));
     if(!ok) return;
     const T=sumCalc(R), set=function(id,v){ const e=document.getElementById(id); if(e) e.textContent=v; };
     T.order.forEach(function(m,i){ set("sumMat"+i, sumMoney(T.mats[m].amt)); });
@@ -1362,6 +1420,10 @@
     set("sumMatTot",sumMoney(T.matTot||null));
     Object.keys(T.hrs).forEach(function(b){ const r=labRateOf(b); set("sumLab_"+b, r!=null?sumMoney(T.hrs[b]*r):"—"); });
     set("sumLabTot",sumMoney(T.labTot)); set("sumTileLab",sumMoney(T.labTot));
+    MU_CATS.forEach(function(c){ set("sumMuCost_"+c[0],sumMoney(T.cost[c[0]])); set("sumMu_"+c[0],sumMoney(T.mu[c[0]])); set("sumSell_"+c[0],sumMoney(T.sell[c[0]]));
+      const p=muPct(S,c[0]), pe=document.getElementById("sumMuPct_"+c[0]); if(pe && pe!==el && S.markup && S.markup[c[0]]==null) pe.placeholder=p!=null?String(p):"%"; });
+    set("sumMuTot",sumMoney(T.muTot)); set("sumSellTot",sumMoney(T.quote)); set("sumCostTot",sumMoney(T.grand));
+    set("sumTileMu",sumMoney(T.muTot||null)); set("sumTileQuote",sumMoney(T.quote||null));
   }
   // Numbers in the Summary boxes with thousands commas (Mark 2026-11-12); typed commas are stripped on read.
   function sumNum(v,maxD,minD){ return v==null||v===""||!Number.isFinite(Number(v))?"":Number(v).toLocaleString(undefined,{minimumFractionDigits:minD||0,maximumFractionDigits:maxD}); }
@@ -1385,7 +1447,11 @@
     Object.keys(hrs).forEach(function(b){ if(!(hrs[b]>0.005)) return; labH+=hrs[b]; const r=labRateOf(b); if(r!=null) labTot+=hrs[b]*r; });
     const keys=COST_CATS.map(function(c){ return c[0]; }).concat(Object.keys(S.lines).filter(function(k){ return S.lines[k]&&S.lines[k].extra; }));
     let outTot=0; keys.forEach(function(k){ const l=S.lines[k]||{}; if(l.status==="include" && l.total!=null) outTot+=Number(l.total)||0; });
-    return { mats:mats, order:order, matTot:matTot, matPriced:matPriced, hrs:hrs, labH:labH, labTot:rates?labTot:null, outTot:outTot, grand:matTot+(rates?labTot:0)+outTot };
+    const cost={material:matTot, labor:rates?labTot:0, outside:outTot}, mu={}, sell={}; let muTot=0;
+    MU_CATS.forEach(function(c){ const p=muPct(S,c[0]); mu[c[0]]=p!=null?cost[c[0]]*p/100:0; sell[c[0]]=cost[c[0]]+mu[c[0]]; muTot+=mu[c[0]]; });
+    const grand=matTot+(rates?labTot:0)+outTot;
+    return { mats:mats, order:order, matTot:matTot, matPriced:matPriced, hrs:hrs, labH:labH, labTot:rates?labTot:null, outTot:outTot, grand:grand,
+      cost:cost, mu:mu, sell:sell, muTot:muTot, quote:grand+muTot };
   }
   function sumAddOther(){ sumEdit(function(S){ const k="x"+Math.random().toString(36).slice(2,8); S.lines[k]={label:"", unit:"lot", status:"include", extra:true}; }); }
   function sumDelOther(k){ sumEdit(function(S){ delete S.lines[k]; }); }
@@ -1468,7 +1534,8 @@
   // Open reminders: a likely cost with no answer yet. Shown as the tab's badge.
   function sumOpen(R){ const S=sumState(R), H=sumHints(R);
     return COST_CATS.filter(function(c){ const l=S.lines[c[0]]||{}; return H[c[0]].likely && !l.status; }).length +
-      Object.keys(S.lines).filter(function(k){ const l=S.lines[k]; return l && l.from_work && l.status==="include" && l.total==null; }).length; }
+      Object.keys(S.lines).filter(function(k){ const l=S.lines[k]; return l && l.from_work && l.status==="include" && l.total==null; }).length +
+      (/todo|changed/.test(projOutState(R).state)?1:0); }
 
   function summaryCardHtml(R){
     sumLoadRates();
@@ -1546,11 +1613,28 @@
         tile("Shop labor",money(rates?labTot:null),labFmt(labH,1)+' h'+(rates?'':SUM_RATES_ERR?' · rates: '+esc(SUM_RATES_ERR):' · reading your rates…'),"sumTileLab")+
         tile("Outside costs",money(outTot||null),open?'<span style="color:var(--ylw);font-weight:600">'+open+' to answer</span>':'all answered',"sumTileOut")+
         tile("Job cost",money(grand||null),'before markup',"sumTileJob")+
+        tile("Markup",money(T.muTot||null),muPct(S,"all")!=null?muPct(S,"all")+'% job markup':'set below',"sumTileMu")+
+        tile("Quote",money(T.quote||null),'preview — rounded &amp; submitted on the project page',"sumTileQuote")+
       '</div>'+
+      // Cost → markup → quote, by kind of cost. The job % fills every line; a line can have its own.
+      (function(){
+        const pin=function(cat,ph){ const own=S.markup&&S.markup[cat]!=null;
+          return '<input class="lab-in" id="sumMuPct_'+cat+'" style="width:56px" placeholder="'+escAttr(ph)+'" value="'+(own?escAttr(S.markup[cat]):'')+'"'+
+            ' oninput="sumLive(\'mu\',\''+cat+'\',\'\',this)" onchange="sumMu(\''+cat+'\',this)"> %'+
+            (own&&cat!=="all"?' <span class="pillbtn" title="Back to the job markup" onclick="sumMuReset(\''+cat+'\')">↺</span>':''); };
+        const allP=muPct(S,"all");
+        return '<div style="overflow-x:auto;margin:0 0 12px"><table style="max-width:720px"><thead><tr><th>Markup</th><th class="num">Cost</th><th class="num">Markup %</th><th class="num">Markup $</th><th class="num">Quote</th></tr></thead><tbody>'+
+          '<tr style="background:#f6f9fd"><td><b>Job markup</b> <span class="src">— every line below uses it unless given its own</span></td><td></td><td class="num">'+pin("all","%")+'</td><td></td><td></td></tr>'+
+          MU_CATS.map(function(c){ return '<tr><td>'+c[1]+'</td><td class="num" id="sumMuCost_'+c[0]+'">'+money(T.cost[c[0]])+'</td><td class="num">'+pin(c[0],allP!=null?String(allP):"%")+'</td>'+
+            '<td class="num" id="sumMu_'+c[0]+'">'+money(T.mu[c[0]])+'</td><td class="num"><b id="sumSell_'+c[0]+'">'+money(T.sell[c[0]])+'</b></td></tr>'; }).join("")+
+          '<tr class="wt-total"><td><b>Total</b></td><td class="num"><b id="sumCostTot">'+money(T.grand)+'</b></td><td></td><td class="num"><b id="sumMuTot">'+money(T.muTot)+'</b></td><td class="num"><b id="sumSellTot">'+money(T.quote)+'</b></td></tr>'+
+          '</tbody></table></div>';
+      })()+
       (open?'<div class="lab-stale" style="margin-bottom:10px">'+open+' cost'+(open===1?'':'s')+' below '+(open===1?'looks':'look')+' likely on this job but '+(open===1?'has':'have')+' no answer yet. Enter an amount, or mark '+(open===1?'it':'them')+' not needed or by others.</div>':'')+
       '<h3 style="font-size:14px;margin:6px 0">Outside costs</h3>'+
       '<div style="overflow-x:auto"><table><thead><tr><th>Cost — and what on this take-off points to it</th><th>Answer</th><th class="num">Qty</th><th class="num">$ each</th><th class="num">$ total</th><th>Note</th></tr></thead><tbody>'+outRows+'</tbody></table></div>'+
       '<div style="margin:6px 0 14px"><span class="pillbtn" style="margin-left:0" onclick="sumAddOther()">+ add another cost</span></div>'+
+      projOutPanelHtml(R)+
       '<h3 style="font-size:14px;margin:6px 0">Material <span class="lt" style="font-weight:400;font-size:12px;color:var(--mut)">— fabricated steel by weight; real prices come from nesting and supplier quotes</span></h3>'+
       '<table><thead><tr><th>Material</th><th class="num">Weight</th><th class="num">$/lb</th><th class="num">$</th></tr></thead><tbody>'+(matRows||'<tr><td colspan="4" style="color:var(--mut)">No fabricated rows.</td></tr>')+'</tbody></table>'+
       '<h3 style="font-size:14px;margin:14px 0 6px">Shop labor <span class="lt" style="font-weight:400;font-size:12px;color:var(--mut)">— hours from the Labor tab × your labor rates</span></h3>'+
