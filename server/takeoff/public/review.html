@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.87 · 2026-11-12 · fit-up counts as Fabrication (switchable)";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.88 · 2026-11-12 · Summary totals update as you type";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1289,24 +1289,64 @@
   function sumEdit(fn){ const R=loadResult(); R.cost_summary=sumState(R); fn(R.cost_summary); saveResult(R); render(); }
   // Qty × $ each = $ total, like the labor lines: editing Qty or $ each recomputes the total; editing
   // the total works $ each back from the Qty. The Qty the take-off suggests is adopted once priced.
+  // One edit to one line, on the state given — shared by the save (on change) and the live total
+  // (on every keystroke). false = not a number; nothing changes.
+  function sumApply(S,key,field,value,hq){
+    const l=Object.assign({},S.lines[key]||{});
+    if(field==="status"){ l.status=value||""; }
+    else if(field==="note"){ l.note=String(value||"").slice(0,200); }
+    else if(field==="unit"){ l.unit=String(value||"").slice(0,20); }
+    else { const v=String(value).replace(/[$,\s]/g,""); const n=v===""?null:Number(v);
+      if(n!=null && !(n>=0)) return false;
+      if(l.qty==null && hq!=null && field!=="qty") l.qty=hq;
+      if(field==="total"){ l.total=n; if(n!=null && Number(l.qty)>0) l.unit_amt=n/Number(l.qty); }
+      else {
+        l[field]=n;
+        if(field==="unit_amt" && n!=null && l.qty==null) l.qty=1;
+        if(Number(l.qty)>0 && l.unit_amt!=null) l.total=Number(l.qty)*Number(l.unit_amt);
+      }
+      if(l.total!=null && l.total>0 && !l.status) l.status="include"; }
+    S.lines[key]=l; return true;
+  }
+  function sumMatApply(S,mat,value){ const v=String(value).replace(/[$,\s]/g,""); if(v===""){ delete S.mat_rate[mat]; return true; } const n=Number(v); if(!(n>=0)) return false; S.mat_rate[mat]=n; return true; }
   function sumLine(key,field,el){
     const hq=((sumHints(loadResult())[key])||{}).qty;
-    sumEdit(function(S){ const l=Object.assign({},S.lines[key]||{});
-      if(field==="status"){ l.status=el.value||""; }
-      else if(field==="note"){ l.note=String(el.value||"").slice(0,200); }
-      else if(field==="unit"){ l.unit=String(el.value||"").slice(0,20); }
-      else { const v=String(el.value).replace(/[$,\s]/g,""); const n=v===""?null:Number(v);
-        if(n!=null && !(n>=0)){ render(); return; }
-        if(l.qty==null && hq!=null && field!=="qty") l.qty=hq;
-        if(field==="total"){ l.total=n; if(n!=null && Number(l.qty)>0) l.unit_amt=n/Number(l.qty); }
-        else {
-          l[field]=n;
-          if(field==="unit_amt" && n!=null && l.qty==null) l.qty=1;
-          if(Number(l.qty)>0 && l.unit_amt!=null) l.total=Number(l.qty)*Number(l.unit_amt);
-        }
-        if(l.total!=null && l.total>0 && !l.status) l.status="include"; }
-      S.lines[key]=l; }); }
-  function sumMatRate(mat,el){ sumEdit(function(S){ const v=String(el.value).replace(/[$,\s]/g,""); if(v===""){ delete S.mat_rate[mat]; return; } const n=Number(v); if(n>=0) S.mat_rate[mat]=n; }); }
+    sumEdit(function(S){ if(!sumApply(S,key,field,el.value,hq)) return; }); }
+  function sumMatRate(mat,el){ sumEdit(function(S){ sumMatApply(S,mat,el.value); }); }
+  // Live totals while typing (Mark 2026-11-12: "can this be totaled and the quote adjusted in real
+  // time?"). The edit goes onto a copy, the totals are worked out from it, and only the numbers on
+  // screen change — a full redraw would take the cursor out of the box. The save still happens on change.
+  function sumLive(kind,key,field,el){
+    const R=loadResult(); R.cost_summary=sumState(R); const S=R.cost_summary;
+    const ok = kind==="mat" ? sumMatApply(S,key,el.value) : sumApply(S,key,field,el.value,((sumHints(R)[key])||{}).qty);
+    if(!ok) return;
+    const T=sumCalc(R), set=function(id,v){ const e=document.getElementById(id); if(e) e.textContent=v; };
+    T.order.forEach(function(m,i){ set("sumMat"+i, sumMoney(T.mats[m].amt)); });
+    if(kind==="line"){ const l=S.lines[key]||{}, row=el.closest&&el.closest("tr");
+      // the line's other box follows: Qty / $ each → $ total, $ total → $ each
+      const other=row&&row.querySelector(field==="total"?'input[data-f="unit_amt"]':'input[data-f="total"]');
+      if(other && other!==el){ const v=field==="total"?l.unit_amt:l.total; other.value=v==null?"":Math.round(v*100)/100; } }
+    set("sumTileMat",sumMoney(T.matTot||null)); set("sumTileOut",sumMoney(T.outTot||null)); set("sumTileJob",sumMoney(T.grand||null));
+    set("sumMatTot",sumMoney(T.matTot||null));
+  }
+  function sumMoney(n){ return n==null?"—":"$"+Number(n).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}); }
+  // Every total on the Summary, from the take-off and its cost_summary — the card and the live update both use it.
+  function sumCalc(R){
+    const S=sumState(R);
+    const live=function(r){ return r && !r.deleted && Number(r.quantity)>0; };
+    const mats={}, order=[];
+    arr(R.rows).filter(function(r){ return live(r) && String(r.disposition||"fabricate").toLowerCase()==="fabricate"; }).forEach(function(r){
+      const m=String(r.material_type||"(no material)"); if(!mats[m]){ mats[m]={lb:0,miss:0}; order.push(m); } const w=rowWeight(r); if(w) mats[m].lb+=w.total; else mats[m].miss++; });
+    let matTot=0, matPriced=true;
+    order.forEach(function(m){ const x=mats[m]; x.rate=S.mat_rate[m]; x.amt=x.rate!=null?x.lb*x.rate:null; if(x.amt!=null) matTot+=x.amt; else matPriced=false; });
+    const hrs={}; Object.keys(LAB_BUCKET).forEach(function(b){ hrs[b]=0; });
+    if(R.labor) R.labor.components.forEach(function(c){ arr(c.items).forEach(function(i){ if(hrs[i.bucket]!=null) hrs[i.bucket]+=Number(i.hours)||0; }); });
+    const rates=SUM_RATES&&SUM_RATES.rates; let labH=0, labTot=0;
+    Object.keys(hrs).forEach(function(b){ if(!(hrs[b]>0.005)) return; labH+=hrs[b]; const r=labRateOf(b); if(r!=null) labTot+=hrs[b]*r; });
+    const keys=COST_CATS.map(function(c){ return c[0]; }).concat(Object.keys(S.lines).filter(function(k){ return S.lines[k]&&S.lines[k].extra; }));
+    let outTot=0; keys.forEach(function(k){ const l=S.lines[k]||{}; if(l.status==="include" && l.total!=null) outTot+=Number(l.total)||0; });
+    return { mats:mats, order:order, matTot:matTot, matPriced:matPriced, hrs:hrs, labH:labH, labTot:rates?labTot:null, outTot:outTot, grand:matTot+(rates?labTot:0)+outTot };
+  }
   function sumAddOther(){ sumEdit(function(S){ const k="x"+Math.random().toString(36).slice(2,8); S.lines[k]={label:"", unit:"lot", status:"include", extra:true}; }); }
   function sumDelOther(k){ sumEdit(function(S){ delete S.lines[k]; }); }
   function sumLabel(k,el){ sumEdit(function(S){ S.lines[k]=Object.assign({},S.lines[k]||{}, {label:String(el.value||"").slice(0,80)}); }); }
@@ -1360,17 +1400,16 @@
   function summaryCardHtml(R){
     sumLoadRates();
     const S=sumState(R), H=sumHints(R);
-    const money=function(n){ return n==null?"—":"$"+Number(n).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}); };
-    const inp=function(v,on,w,ph){ return '<input class="lab-in" style="width:'+(w||70)+'px" placeholder="'+(ph||"")+'" value="'+escAttr(v==null?"":v)+'" onchange="'+on+'">'; };
+    const money=sumMoney, T=sumCalc(R);
+    // on change = save and redraw; on input = live totals (sumLive), the cursor stays put
+    const inp=function(v,on,w,ph,live,f){ return '<input class="lab-in" style="width:'+(w||70)+'px" placeholder="'+(ph||"")+'" value="'+escAttr(v==null?"":v)+'"'+
+      (f?' data-f="'+f+'"':'')+(live?' oninput="'+live+'"':'')+' onchange="'+on+'">'; };
     // MATERIAL — weight by material, $ only when the estimator gives a $/lb.
-    const live=function(r){ return r && !r.deleted && Number(r.quantity)>0; };
-    const fab=arr(R.rows).filter(function(r){ return live(r) && String(r.disposition||"fabricate").toLowerCase()==="fabricate"; });
-    const mats={}, order=[];
-    fab.forEach(function(r){ const m=String(r.material_type||"(no material)"); if(!mats[m]){ mats[m]={lb:0,miss:0}; order.push(m); } const w=rowWeight(r); if(w) mats[m].lb+=w.total; else mats[m].miss++; });
-    let matTot=0, matPriced=true;
-    const matRows=order.map(function(m){ const x=mats[m], rate=S.mat_rate[m]; const amt=rate!=null?x.lb*rate:null; if(amt!=null) matTot+=amt; else matPriced=false;
+    const order=T.order, mats=T.mats, matTot=T.matTot, matPriced=T.matPriced;
+    const matRows=order.map(function(m,mi){ const x=mats[m];
       return '<tr><td>'+esc(m)+'</td><td class="num">'+Math.round(x.lb).toLocaleString()+' lb'+(x.miss?' <span class="src">(+'+x.miss+' unweighed)</span>':'')+'</td>'+
-        '<td class="num">'+inp(rate,"sumMatRate(\''+escAttr(m)+'\',this)",64,"$/lb")+'</td><td class="num"><b>'+money(amt)+'</b></td></tr>'; }).join("");
+        '<td class="num">'+inp(x.rate,"sumMatRate(\''+escAttr(m)+'\',this)",64,"$/lb","sumLive(\'mat\',\''+escAttr(m)+'\',\'\',this)")+'</td><td class="num"><b id="sumMat'+mi+'">'+money(x.amt)+'</b></td></tr>'; }).join("")+
+      (order.length>1?'<tr><td><b>Total</b></td><td class="num"><b>'+Math.round(order.reduce(function(a,m){ return a+mats[m].lb; },0)).toLocaleString()+' lb</b></td><td></td><td class="num"><b id="sumMatTot">'+money(matTot||null)+'</b></td></tr>':'');
     // LABOR — hours by type from the Labor tab × the shop's rates.
     const L=R.labor; const hrs={}; Object.keys(LAB_BUCKET).forEach(function(b){ hrs[b]=0; });
     if(L) L.components.forEach(function(c){ arr(c.items).forEach(function(i){ if(hrs[i.bucket]!=null) hrs[i.bucket]+=Number(i.hours)||0; }); });
@@ -1396,23 +1435,23 @@
             :'<b>'+esc(label)+'</b>')+
           (h?'<div style="font-size:11.5px;'+(flag?'color:var(--ylw);font-weight:600':'color:var(--mut)')+'">'+(flag?'⚠ ':'')+esc(h.why)+'</div>':'')+'</td>'+
         '<td>'+statusSel(k,l.status)+'</td>'+
-        '<td class="num" style="white-space:nowrap">'+inp(qty,"sumLine(\''+k+'\',\'qty\',this)",70)+' '+
+        '<td class="num" style="white-space:nowrap">'+inp(qty,"sumLine(\''+k+'\',\'qty\',this)",70,"","sumLive(\'line\',\''+k+'\',\'qty\',this)","qty")+' '+
           '<input class="lab-in txt" style="width:52px" value="'+escAttr(l.unit||unit||"")+'" onchange="sumLine(\''+k+'\',\'unit\',this)"></td>'+
-        '<td class="num">'+inp(l.unit_amt!=null?Math.round(l.unit_amt*10000)/10000:null,"sumLine(\''+k+'\',\'unit_amt\',this)",70,"$ each")+'</td>'+
-        '<td class="num">'+inp(l.total!=null?Math.round(l.total*100)/100:null,"sumLine(\''+k+'\',\'total\',this)",86,"$ total")+'</td>'+
+        '<td class="num">'+inp(l.unit_amt!=null?Math.round(l.unit_amt*10000)/10000:null,"sumLine(\''+k+'\',\'unit_amt\',this)",70,"$ each","sumLive(\'line\',\''+k+'\',\'unit_amt\',this)","unit_amt")+'</td>'+
+        '<td class="num">'+inp(l.total!=null?Math.round(l.total*100)/100:null,"sumLine(\''+k+'\',\'total\',this)",86,"$ total","sumLive(\'line\',\''+k+'\',\'total\',this)","total")+'</td>'+
         '<td><input class="lab-in txt" style="width:150px" placeholder="supplier, quote #, note" value="'+escAttr(l.note||"")+'" onchange="sumLine(\''+k+'\',\'note\',this)"></td></tr>';
     };
     const outRows=COST_CATS.map(function(c){ return outRow(c[0],c[1],c[2],H[c[0]],false); }).join("")+
       Object.keys(S.lines).filter(function(k){ return S.lines[k]&&S.lines[k].extra; }).map(function(k){ return outRow(k,"","lot",null,true); }).join("");
     const grand=matTot+labTot+outTot;
-    const tile=function(lbl,v,sub){ return '<div style="flex:1;min-width:150px;border:1px solid #e3e8ef;border-radius:8px;padding:8px 12px;background:#fafbfd">'+
-      '<div style="font-size:11.5px;color:var(--mut)">'+lbl+'</div><div style="font-size:20px;font-weight:700;color:#1f3a5f">'+v+'</div>'+(sub?'<div class="src" style="font-size:11.5px">'+sub+'</div>':'')+'</div>'; };
-    return '<div class="card" id="summaryCard"><h2>🧾 Job summary <span class="lt">— every cost on this job, before markup</span></h2><div class="body">'+
+    const tile=function(lbl,v,sub,id){ return '<div style="flex:1;min-width:150px;border:1px solid #e3e8ef;border-radius:8px;padding:8px 12px;background:#fafbfd">'+
+      '<div style="font-size:11.5px;color:var(--mut)">'+lbl+'</div><div'+(id?' id="'+id+'"':'')+' style="font-size:20px;font-weight:700;color:#1f3a5f">'+v+'</div>'+(sub?'<div class="src" style="font-size:11.5px">'+sub+'</div>':'')+'</div>'; };
+    return '<div class="card" id="summaryCard"><h2>🧾 Job summary <span class="lt">— every cost on this job, before markup; totals update as you type</span></h2><div class="body">'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'+
-        tile("Material",money(matTot||null),matPriced?'':'enter a $/lb below to price it')+
+        tile("Material",money(matTot||null),matPriced?'':'enter a $/lb below to price it',"sumTileMat")+
         tile("Shop labor",money(rates?labTot:null),labFmt(labH,1)+' h'+(rates?'':SUM_RATES_ERR?' · rates: '+esc(SUM_RATES_ERR):' · reading your rates…'))+
-        tile("Outside costs",money(outTot||null),open?'<span style="color:var(--ylw);font-weight:600">'+open+' to answer</span>':'all answered')+
-        tile("Job cost",money(grand||null),'before markup')+
+        tile("Outside costs",money(outTot||null),open?'<span style="color:var(--ylw);font-weight:600">'+open+' to answer</span>':'all answered',"sumTileOut")+
+        tile("Job cost",money(grand||null),'before markup',"sumTileJob")+
       '</div>'+
       (open?'<div class="lab-stale" style="margin-bottom:10px">'+open+' cost'+(open===1?'':'s')+' below '+(open===1?'looks':'look')+' likely on this job but '+(open===1?'has':'have')+' no answer yet. Enter an amount, or mark '+(open===1?'it':'them')+' not needed or by others.</div>':'')+
       '<h3 style="font-size:14px;margin:6px 0">Outside costs</h3>'+
