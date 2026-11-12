@@ -13,7 +13,8 @@
 //  a number (see the AI-counts-need-an-anchor rule). So:
 //    rolled members (beam/channel/tee/angle) — "welded frame member, square
 //        cut and welded all around", per piece, banded by depth (Sentry 1997).
-//        That is cut + fit + weld in ONE figure, so it lands in Assy_Hrs;
+//        That is cut + fit + weld in ONE figure, split by the shop's cut/fit/weld
+//        shares (fit-up goes to Fab_Hrs — see FIT_BUCKET);
 //    plate — burning the perimeter, per piece, banded by thickness;
 //    every row with a weight — unloading, storing and loading out, per ton;
 //    butt-weld fittings — one joint per weld end, hours from the SHOP's
@@ -32,6 +33,12 @@ const { toNumber, rolledShapeLbPerFt, plateLbPerSqFt, structuralLbPerFt, pipeSec
 // The Sentry frame-member rows are written for welded skid/frame work — the bulk of this shop's
 // jobs. A bolted building frame would use the 'Framed member complete' rows instead; that choice
 // belongs to the shop form, so it is a setting here rather than a guess.
+// Fitting and tacking parts up FOR WELDING is fabrication — "Fabrication is normally the dominant
+// field for fabrication projects. Fit & Assembly is more for after fabrication, if the parts are to
+// be assembled, or fabrication checks fitting parts together" (Mark 2026-11-12). So fit-up lands in
+// Fab_Hrs; Assy_Hrs keeps assembly work (bolting, PEMs, trial fits). The two are interchangeable on
+// the Labor tab, line by line.
+const FIT_BUCKET = 'Fab_Hrs';
 const DEFAULTS = {
   memberMethod: /^Welded frame member - square cut and welded all around$/,
   plateCutProcess: 'Oxy-Fuel',
@@ -203,7 +210,7 @@ function estimateRow(row, ctx) {
           !!proxy || scaled), { process: procKey || null, material: mat }));
       };
       part('Cutting_Hrs', G.share_cut.value, f.cut, (f.cut_process ? procLabel(f.cut_process).toLowerCase() + ' cut' : 'cut'), f.cut_process, f.cut_missing);
-      part('Assy_Hrs', G.share_fit.value, f.fit, 'fit', null, null);
+      part(FIT_BUCKET, G.share_fit.value, f.fit, 'fit', null, null);
       if (!scheduled(c, row)) part('Weld_Hrs', G.share_weld.value, f.weld, (f.weld_process ? procLabel(f.weld_process).split(' ')[0] + ' weld' : 'weld'), f.weld_process, f.weld_missing);
       if (f.substituted.length) out.missing.push({ what: label, reason: 'routed process not in your shop, used ' + f.substituted.join(', ') + ' — check your routing' });
     }
@@ -237,7 +244,7 @@ function estimateRow(row, ctx) {
     // processes scale it by the weld model.
     if (len > 0 && w > 0 && t > 0) {
       const fitF = (P.fit_factor[mat] || { value: 1 }).value;
-      out.lines.push(Object.assign(modelLine('Assy_Hrs', G.fit_hr_piece.value * fitF * qty, qty, 'pcs', 'fit & tack ' + label, 'FIT-CLIP-TACK',
+      out.lines.push(Object.assign(modelLine(FIT_BUCKET, G.fit_hr_piece.value * fitF * qty, qty, 'pcs', 'fit & tack ' + label, 'FIT-CLIP-TACK',
         G.fit_hr_piece.value + ' hr/pc (' + (G.fit_hr_piece.source === 'yours' ? 'yours' : 'Sentry 1997 clip fit-up') + ')' + (fitF !== 1 ? ' × ' + fitF + ' for ' + matLabel : ''),
         'clip fit-up rate applied per plate', true), { material: mat }));
       const leg = Math.min(0.75, Math.max(0.1875, t >= 0.5 ? 0.375 : t));
@@ -628,7 +635,7 @@ function estimateTakeoff(takeoff, ctx) {
   const VERB = { Cutting_Hrs: 'cut', Assy_Hrs: 'fit', Weld_Hrs: 'weld', Fab_Hrs: 'fab', CNC_Hrs: 'cnc', Inspection_Hrs: 'inspect', Misc_Hrs: 'misc' };
   const byStd = (l) => String(l.standard || 'other').toLowerCase().replace(/^code-.*/, 'weld_code').replace(/-/g, '_');
   for (const row of (takeoff && takeoff.rows) || []) if (!row._rail) add(row.component, tag(estimateRow(row, rctx), (l) =>
-    l.bucket === 'Labor_Hrs' ? 'handling' : (libraryForm(row.form_type) === 'Plate' ? 'plate_' : 'member_') + (VERB[l.bucket] || 'other')));
+    l.bucket === 'Labor_Hrs' ? 'handling' : (libraryForm(row.form_type) === 'Plate' ? 'plate_' : 'member_') + (/^fit\b/.test(l.what) ? 'fit' : (VERB[l.bucket] || 'other'))));
   for (const x of weldRes) add(x.w.component, tag(x.res, (l) => /^preheat/.test(l.what) ? 'preheat' : l.bucket === 'Inspection_Hrs' ? 'nde' : l.bucket === 'Fab_Hrs' ? 'weld_prep' : (x.w.from_rule ? 'weld_typical' : 'weld_drawing')));
   const features = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
   for (const f of features) add(f.component, tag(estimateFeature(f, rctx, matOfSheet), () => 'feat_' + String(f.feature || 'other').toLowerCase()));
@@ -660,4 +667,4 @@ function estimateTakeoff(takeoff, ctx) {
 }
 
 const JOB_COMPONENT = 'Whole job';
-module.exports = { JOB_COMPONENT, estimateFeature, componentExtras, jobLines, estimateTakeoff, estimateRow, estimateFitting, estimateWeld, perimeterIn, memberDepth, rowPounds, WELD_ENDS, DEFAULTS };
+module.exports = { JOB_COMPONENT, estimateFeature, componentExtras, jobLines, estimateTakeoff, estimateRow, estimateFitting, estimateWeld, perimeterIn, memberDepth, rowPounds, WELD_ENDS, DEFAULTS, FIT_BUCKET };

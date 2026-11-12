@@ -33,6 +33,7 @@ const TYPES = [
   { code: 'FIT_LAYOUT',   bucket: 'Assy_Hrs',    label: 'Layout' },
   { code: 'FIT_TACK',     bucket: 'Assy_Hrs',    label: 'Fit & tack' },
   { code: 'FIT_BOLT',     bucket: 'Assy_Hrs',    label: 'Bolting / hardware' },
+  { code: 'FAB_FIT',      bucket: 'Fab_Hrs',     label: 'Fit-up for welding' },   // fitting parts to weld them is fabrication (Mark 2026-11-12)
   { code: 'FAB_GRIND',    bucket: 'Fab_Hrs',     label: 'Grinding' },
   { code: 'FAB_DRILL',    bucket: 'Fab_Hrs',     label: 'Drilling / punching' },
   { code: 'FAB_FORM',     bucket: 'Fab_Hrs',     label: 'Forming (brake, roll)' },
@@ -85,6 +86,7 @@ function typeForLine(l) {
     (bucket === 'Weld_Hrs' && /\btig\b/.test(what) ? 'WELD_TIG' : null) ||
     (bucket === 'Weld_Hrs' && /\bstick\b|\bsmaw\b/.test(what) ? 'WELD_STICK' : null) ||
     (bucket === 'Assy_Hrs' && /layout/.test(what) ? 'FIT_LAYOUT' : null) ||
+    (bucket === 'Fab_Hrs' && /^fit\b|\bfit\b.*\(\d+% of/.test(what) ? 'FAB_FIT' : null) ||
     BUCKET_DEFAULT[bucket] || 'MISC';
 }
 

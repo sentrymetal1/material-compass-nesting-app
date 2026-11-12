@@ -13,7 +13,7 @@
 //
 //  Keller 40778 is why both are shown: bottom-up ~17 hr/ton, actual ~103.
 // =============================================================================
-const { estimateTakeoff, rowPounds } = require('./estimate');
+const { estimateTakeoff, rowPounds, FIT_BUCKET } = require('./estimate');
 const { BUCKETS } = require('./standards');
 const shop = require('./shop');
 const pm = require('./processModel');
@@ -133,7 +133,7 @@ function laborForTakeoff(takeoff, profile, jobType) {
         const rate = cell.value, mine = cell.source === 'yours';
         rates[std] = { label, rate, source: cell.source, ref: mine ? 'your Labor setup' : 'library: ' + (cell.ref || row.library_ref || ''), feet: r2(jobFt), hours: r2(rate * jobFt) };
         const ft = jobFt / cu;
-        for (const [bucket, share, verb] of [['Cutting_Hrs', G.share_cut.value, 'cut'], ['Assy_Hrs', G.share_fit.value, 'fit'], ['Weld_Hrs', G.share_weld.value, 'weld']]) {
+        for (const [bucket, share, verb] of [['Cutting_Hrs', G.share_cut.value, 'cut'], [FIT_BUCKET, G.share_fit.value, 'fit'], ['Weld_Hrs', G.share_weld.value, 'weld']]) {
           if (!(share > 0)) continue;
           add.push({ bucket, hours: rate * share * ft, units: ft, unit_label: 'ft of rail', per_unit: rate * share,
             what: 'Handrail ' + label + ' — ' + verb + ' (' + Math.round(share * 100) + '% of ' + rate.toFixed(3).replace(/0+$/, '') + ' hr/ft)',

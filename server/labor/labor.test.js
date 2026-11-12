@@ -83,14 +83,18 @@ test('take-off estimate: hours per component, sources named, gaps listed', () =>
   }, { pipeAnchors: [{ size: '4"', schedule: 'SCH 40', hours: 2 }] });
 
   const skid = est.components.Skid;
-  assert.ok(skid.hours.Assy_Hrs > 0, 'channel frame members');
+  assert.ok(skid.hours.Fab_Hrs > 0, 'channel frame members — fit-up is fabrication');
+  assert.ok(!(skid.hours.Assy_Hrs > 0), 'nothing here is assembly after fabrication');
+  const fits = skid.lines.filter((l) => /^fit\b/.test(l.what));
+  assert.ok(fits.length && fits.every((l) => l.bucket === 'Fab_Hrs'), 'member and plate fit-up land in Fabrication');
+  assert.ok(fits.every((l) => /_fit$/.test(l.op)), 'and still group as fit work on the Work pills: ' + fits.map((l) => l.op));
   assert.ok(skid.hours.Cutting_Hrs > 0, 'plate burning');
   assert.ok(skid.hours.Labor_Hrs > 0, 'handling by weight');
   const joint = skid.lines.find((l) => l.standard === 'PIPE-JOINT');
   assert.strictEqual(joint.hours, 8, '2 elbows x 2 ends x 2 hrs from the shop anchor');
   assert.ok(skid.lines.every((l) => l.standard && l.source_ref), 'every hour names its source');
   // Gaps are filled from library rows, and every filled line says it was derived and why.
-  const tube = skid.lines.find((l) => /Tube/.test(l.what) && l.bucket === 'Assy_Hrs');
+  const tube = skid.lines.find((l) => /Tube/.test(l.what) && /^fit\b/.test(l.what));
   assert.ok(tube && tube.derived && /Angle|Channel/.test(tube.note), 'tube priced from a stand-in welded-frame row, marked derived');
   assert.ok(skid.lines.some((l) => /weld Plate/.test(l.what) && l.derived && /perimeter/.test(l.note)), 'plate weld along the perimeter, marked as an assumption');
   assert.ok(skid.lines.some((l) => /Tube/.test(l.what) && /^handle/.test(l.what)), 'tube is weighed now, so it gets handling');
