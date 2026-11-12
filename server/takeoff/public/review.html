@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.88 · 2026-11-12 · Summary totals update as you type";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.89 · 2026-11-12 · costs priced by weight take Qty from the weight";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1295,9 +1295,12 @@
     const l=Object.assign({},S.lines[key]||{});
     if(field==="status"){ l.status=value||""; }
     else if(field==="note"){ l.note=String(value||"").slice(0,200); }
-    else if(field==="unit"){ l.unit=String(value||"").slice(0,20); }
+    else if(field==="unit"){ const was=sumWeightDiv(sumUnitOf(key,l)); l.unit=String(value||"").slice(0,20);
+      // off a weight unit: the weight was never a typed Qty, so it goes (the new unit needs its own)
+      if(was && !sumWeightDiv(l.unit) && !l.qty_typed){ delete l.qty; if(l.unit_amt!=null) delete l.total; } }
     else { const v=String(value).replace(/[$,\s]/g,""); const n=v===""?null:Number(v);
       if(n!=null && !(n>=0)) return false;
+      if(field==="qty"){ if(n!=null) l.qty_typed=true; else delete l.qty_typed; }
       if(l.qty==null && hq!=null && field!=="qty") l.qty=hq;
       if(field==="total"){ l.total=n; if(n!=null && Number(l.qty)>0) l.unit_amt=n/Number(l.qty); }
       else {
@@ -1309,8 +1312,27 @@
     S.lines[key]=l; return true;
   }
   function sumMatApply(S,mat,value){ const v=String(value).replace(/[$,\s]/g,""); if(v===""){ delete S.mat_rate[mat]; return true; } const n=Number(v); if(!(n>=0)) return false; S.mat_rate[mat]=n; return true; }
+  // A cost priced by weight (unit lb, cwt or ton) takes its Qty from the take-off's weight — galvanizing
+  // from the galvanized rows, anything else from all the fabricated steel — and keeps following it when
+  // the BOM changes, unless a Qty is typed (Mark 2026-11-12: "for any outside costs with weight, apply
+  // that amount to QTY").
+  function sumWeightDiv(u){ u=String(u||"").trim().toLowerCase().replace(/\.$/,""); return (u==="lb"||u==="lbs")?1:u==="cwt"?100:(u==="ton"||u==="tons")?2000:0; }
+  function sumUnitOf(key,l){ const c=COST_CATS.find(function(x){ return x[0]===key; }); return (l&&l.unit)||(c?c[2]:"lot"); }
+  function sumWeightQty(R,key,l,H){
+    const d=sumWeightDiv(sumUnitOf(key,l)); if(!d) return null;
+    H=H||sumHints(R); const h=H[key];
+    const lb=(key==="galvanize"&&h&&h.qty!=null)?h.qty:H._lb;
+    return lb>0?Math.round(lb/d*100)/100:null;
+  }
+  function sumWeightSync(R,S,H){
+    H=H||sumHints(R);
+    Object.keys(S.lines).forEach(function(k){ const l=S.lines[k]; if(!l||l.qty_typed) return;
+      const q=sumWeightQty(R,k,l,H); if(q==null||l.qty===q) return;
+      l.qty=q; if(l.unit_amt!=null) l.total=q*Number(l.unit_amt); });
+  }
+  function sumHintQty(R,key){ const S=sumState(R), H=sumHints(R), w=sumWeightQty(R,key,S.lines[key],H); return w!=null?w:((H[key])||{}).qty; }
   function sumLine(key,field,el){
-    const hq=((sumHints(loadResult())[key])||{}).qty;
+    const hq=sumHintQty(loadResult(),key);
     sumEdit(function(S){ if(!sumApply(S,key,field,el.value,hq)) return; }); }
   function sumMatRate(mat,el){ sumEdit(function(S){ sumMatApply(S,mat,el.value); }); }
   // Live totals while typing (Mark 2026-11-12: "can this be totaled and the quote adjusted in real
@@ -1318,7 +1340,7 @@
   // screen change — a full redraw would take the cursor out of the box. The save still happens on change.
   function sumLive(kind,key,field,el){
     const R=loadResult(); R.cost_summary=sumState(R); const S=R.cost_summary;
-    const ok = kind==="mat" ? sumMatApply(S,key,el.value) : sumApply(S,key,field,el.value,((sumHints(R)[key])||{}).qty);
+    const ok = kind==="mat" ? sumMatApply(S,key,el.value) : sumApply(S,key,field,el.value,sumHintQty(R,key));
     if(!ok) return;
     const T=sumCalc(R), set=function(id,v){ const e=document.getElementById(id); if(e) e.textContent=v; };
     T.order.forEach(function(m,i){ set("sumMat"+i, sumMoney(T.mats[m].amt)); });
@@ -1332,7 +1354,7 @@
   function sumMoney(n){ return n==null?"—":"$"+Number(n).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}); }
   // Every total on the Summary, from the take-off and its cost_summary — the card and the live update both use it.
   function sumCalc(R){
-    const S=sumState(R);
+    const S=sumState(R); sumWeightSync(R,S);
     const live=function(r){ return r && !r.deleted && Number(r.quantity)>0; };
     const mats={}, order=[];
     arr(R.rows).filter(function(r){ return live(r) && String(r.disposition||"fabricate").toLowerCase()==="fabricate"; }).forEach(function(r){
@@ -1374,6 +1396,7 @@
     const tons=all.lb/2000, ex=R.labor_extras||{};
     const n0=function(x){ return Math.round(x).toLocaleString(); };
     return {
+      _lb: Math.round(all.lb),          // all fabricated steel, lb — the Qty of any cost priced by weight
       galvanize: galvRows.length ? {likely:true, qty:Math.round(g.lb), why:galvRows.length+" galvanized row"+(galvRows.length===1?"":"s")+" — "+n0(g.lb)+" lb"+(g.miss?" (+"+g.miss+" unweighed)":"")+(finish==="galv"?" · job finish is galvanize":"")}
         : /galvan|hdg|hot[\s-]*dip/.test(txt) ? {likely:true, why:"the specs / notes mention galvanizing, but no row is marked galvanized"} : {why:"no galvanized rows"},
       blast_paint: finish==="paint" ? {likely:true, qty:Math.round(all.lb), why:"job finish is paint / prime — "+n0(all.lb)+" lb of steel"}
@@ -1429,7 +1452,8 @@
       if(tot!=null) outTot+=tot;
       if(!h && l.from_work) h={likely:true, why:"sent outside on the Labor tab — enter its price"};
       const flag=(h&&h.likely&&!l.status) || (l.from_work && l.status==="include" && l.total==null); if(flag) open++;
-      const qty=l.qty!=null?l.qty:(h&&h.qty!=null&&!l.status?h.qty:null);
+      const wq=sumWeightQty(R,k,l,H);
+      const qty=l.qty!=null?l.qty:wq!=null?wq:(h&&h.qty!=null&&!l.status?h.qty:null);
       return '<tr class="lab-item"'+(l.status==="none"||l.status==="by_others"?' style="opacity:.55"':'')+'>'+
         '<td>'+(extra?'<button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove this cost" onclick="sumDelOther(\''+k+'\')">✕</button> <input class="lab-in txt" style="width:150px" placeholder="what the cost is" value="'+escAttr(l.label||"")+'" onchange="sumLabel(\''+k+'\',this)">'
             :'<b>'+esc(label)+'</b>')+
