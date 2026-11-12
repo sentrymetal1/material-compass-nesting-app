@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.91 · 2026-11-12 · Weight check: project total, drawing weights, mm lengths, double counts";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.92 · 2026-11-12 · outside costs can supply material (off Material $)";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1359,11 +1359,15 @@
   function sumCalc(R){
     const S=sumState(R); sumWeightSync(R,S);
     const live=function(r){ return r && !r.deleted && Number(r.quantity)>0; };
-    const mats={}, order=[];
-    arr(R.rows).filter(function(r){ return live(r) && String(r.disposition||"fabricate").toLowerCase()==="fabricate"; }).forEach(function(r){
-      const m=String(r.material_type||"(no material)"); if(!mats[m]){ mats[m]={lb:0,miss:0}; order.push(m); } const w=rowWeight(r); if(w) mats[m].lb+=w.total; else mats[m].miss++; });
+    const mats={}, order=[], sup=suppliedRows(R,S);
+    arr(R.rows).forEach(function(r,i){ if(!(live(r) && String(r.disposition||"fabricate").toLowerCase()==="fabricate")) return;
+      const m=String(r.material_type||"(no material)"); if(!mats[m]){ mats[m]={lb:0,miss:0,sup_lb:0,sup_by:{}}; order.push(m); } const w=rowWeight(r);
+      if(!w){ mats[m].miss++; return; }
+      mats[m].lb+=w.total;
+      if(sup[i]!=null){ mats[m].sup_lb+=w.total; mats[m].sup_by[sup[i]]=(mats[m].sup_by[sup[i]]||0)+w.total; } });
     let matTot=0, matPriced=true;
-    order.forEach(function(m){ const x=mats[m]; x.rate=S.mat_rate[m]; x.amt=x.rate!=null?x.lb*x.rate:null; if(x.amt!=null) matTot+=x.amt; else matPriced=false; });
+    // $ on the steel the shop buys: the weight less what outside lines supply.
+    order.forEach(function(m){ const x=mats[m]; x.buy_lb=Math.max(0,x.lb-x.sup_lb); x.rate=S.mat_rate[m]; x.amt=x.rate!=null?x.buy_lb*x.rate:null; if(x.amt!=null) matTot+=x.amt; else matPriced=false; });
     const hrs={}; Object.keys(LAB_BUCKET).forEach(function(b){ hrs[b]=0; });
     if(R.labor) R.labor.components.forEach(function(c){ arr(c.items).forEach(function(i){ if(hrs[i.bucket]!=null) hrs[i.bucket]+=Number(i.hours)||0; }); });
     const rates=SUM_RATES&&SUM_RATES.rates; let labH=0, labTot=0;
@@ -1375,6 +1379,38 @@
   function sumAddOther(){ sumEdit(function(S){ const k="x"+Math.random().toString(36).slice(2,8); S.lines[k]={label:"", unit:"lot", status:"include", extra:true}; }); }
   function sumDelOther(k){ sumEdit(function(S){ delete S.lines[k]; }); }
   function sumLabel(k,el){ sumEdit(function(S){ S.lines[k]=Object.assign({},S.lines[k]||{}, {label:String(el.value||"").slice(0,80)}); }); }
+  // MATERIAL SUPPLIED WITH OUTSIDE WORK (Mark 2026-11-12: "Material for the cope posts is part of the
+  // 7,216 — how should we remedy this?"). An outside line can say which steel the vendor supplies — by
+  // size or by piece type. Those pounds leave the Material $ (they are paid for in that line) but stay
+  // in the weight: the shop still handles, galvanizes and ships them, and the weight check still has
+  // to match the drawings. A row supplied by two lines is taken off once.
+  function supplyKeys(r){
+    const k=["size:"+String(r.form_type||"")+" "+String(r.size||"")];
+    if(r.role) k.push("role:"+r.role);
+    if(r.member_mark) k.push("mark:"+String(r.member_mark).trim().toLowerCase());
+    return k;
+  }
+  function supplyGroups(R){
+    const live=arr(R.rows).filter(function(r){ return r && !r.deleted && Number(r.quantity)>0 && String(r.disposition||"fabricate").toLowerCase()==="fabricate"; });
+    const g={};
+    live.forEach(function(r){ const w=rowWeight(r), lb=w?w.total:0;
+      supplyKeys(r).forEach(function(k){ if(/^mark:/.test(k)) return;
+        if(!g[k]) g[k]={key:k, lb:0, rows:0, label:/^role:/.test(k)?String(k.slice(5)).replace(/_/g," ")+"s (by label)":k.slice(5)};
+        g[k].lb+=lb; g[k].rows++; }); });
+    return Object.keys(g).map(function(k){ return g[k]; }).sort(function(a,b){ return (/^size/.test(a.key)?0:1)-(/^size/.test(b.key)?0:1) || b.lb-a.lb; });
+  }
+  // The rows each included outside line supplies, deduplicated: {idx -> line key}.
+  function suppliedRows(R,S){
+    const want=[]; Object.keys(S.lines).forEach(function(k){ const l=S.lines[k]; if(l && l.status==="include" && arr(l.supplies).length) want.push([k,l.supplies]); });
+    const out={}; if(!want.length) return out;
+    arr(R.rows).forEach(function(r,i){ if(!r || r.deleted || !(Number(r.quantity)>0)) return; const ks=supplyKeys(r);
+      for(const [k,sup] of want){ if(sup.some(function(s){ return ks.indexOf(s)>-1; })){ out[i]=k; break; } } });
+    return out;
+  }
+  const SUPPLY_OPEN={};   // which "supplies material" lists are open, kept across redraws
+  function sumSupply(k,gi,el){ SUPPLY_OPEN[k]=true; const g=supplyGroups(loadResult())[gi]; if(g) sumSupply2(k,g.key,el); }
+  function sumSupply2(k,key,el){ sumEdit(function(S){ const l=Object.assign({},S.lines[k]||{}); const s=arr(l.supplies).filter(function(x){ return x!==key; });
+    if(el.checked) s.push(key); l.supplies=s; if(!s.length) delete l.supplies; S.lines[k]=l; }); }
 
   // What on this take-off points to each outside cost: { why, qty, likely }.
   function sumHints(R){
@@ -1433,7 +1469,10 @@
     // MATERIAL — weight by material, $ only when the estimator gives a $/lb.
     const order=T.order, mats=T.mats, matTot=T.matTot, matPriced=T.matPriced;
     const matRows=order.map(function(m,mi){ const x=mats[m];
-      return '<tr><td>'+esc(m)+'</td><td class="num">'+Math.round(x.lb).toLocaleString()+' lb'+(x.miss?' <span class="src">(+'+x.miss+' unweighed)</span>':'')+'</td>'+
+      const supTxt=Object.keys(x.sup_by).map(function(k){ const l=S.lines[k]||{}, c=COST_CATS.find(function(cc){ return cc[0]===k; });
+        return '<div class="src" style="font-size:11.5px">− '+Math.round(x.sup_by[k]).toLocaleString()+' lb supplied with '+esc(l.label||(c?c[1]:k))+'</div>'; }).join("");
+      return '<tr><td>'+esc(m)+'</td><td class="num">'+Math.round(x.lb).toLocaleString()+' lb'+(x.miss?' <span class="src">(+'+x.miss+' unweighed)</span>':'')+
+        (x.sup_lb>0?supTxt+'<div style="font-size:12px;font-weight:600">= '+Math.round(x.buy_lb).toLocaleString()+' lb to buy</div>':'')+'</td>'+
         '<td class="num">'+inp(x.rate!=null?x.rate:null,"sumMatRate('"+escAttr(m)+"',this)",64,"$/lb","sumLive('mat','"+escAttr(m)+"','',this)")+'</td><td class="num"><b id="sumMat'+mi+'">'+money(x.amt)+'</b></td></tr>'; }).join("")+
       (order.length>1?'<tr><td><b>Total</b></td><td class="num"><b>'+Math.round(order.reduce(function(a,m){ return a+mats[m].lb; },0)).toLocaleString()+' lb</b></td><td></td><td class="num"><b id="sumMatTot">'+money(matTot||null)+'</b></td></tr>':'');
     // LABOR — hours by type from the Labor tab × the shop's rates.
@@ -1450,6 +1489,17 @@
     let outTot=0, open=0;
     const statusSel=function(k,st){ return '<select style="font-size:12px;padding:1px 3px;border:1px solid #dfe5ec;border-radius:5px" onchange="sumLine(\''+k+'\',\'status\',this)">'+
       [["","— not answered —"],["include","include (outside)"],["in_house","in house (Labor tab)"],["by_others","by others / not in scope"],["none","not needed"]].map(function(o){ return '<option value="'+o[0]+'"'+(String(st||"")===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select>'; };
+    // "Supplies material": which steel this outside line brings, so it is not bought twice.
+    const SG=supplyGroups(R);
+    const supplyPickHtml=function(k,l){
+      const cur=arr(l.supplies); if(!SG.length) return "";
+      const lb=SG.filter(function(g){ return cur.indexOf(g.key)>-1; });
+      return '<details style="margin-top:3px;font-size:11.5px"'+(SUPPLY_OPEN[k]?' open':'')+' ontoggle="SUPPLY_OPEN[\''+k+'\']=this.open"><summary style="cursor:pointer;color:var(--blue)">'+
+          (cur.length?'supplies material: '+esc(lb.map(function(g){ return g.label; }).join(", ")):'supplies material? ▸')+'</summary>'+
+        '<div class="src" style="margin:3px 0">Tick the steel this line brings — it comes off the Material $ (still counted in the weight).</div>'+
+        SG.map(function(g,gi){ return '<label style="display:block;white-space:nowrap"><input type="checkbox"'+(cur.indexOf(g.key)>-1?' checked':'')+
+          ' onchange="sumSupply(\''+k+'\','+gi+',this)"> '+esc(g.label)+' <span class="src">'+Math.round(g.lb).toLocaleString()+' lb</span></label>'; }).join("")+'</details>';
+    };
     const outRow=function(k,label,unit,h,extra){
       const l=S.lines[k]||{}, on=l.status==="include", tot=on&&l.total!=null?Number(l.total):null;
       if(tot!=null) outTot+=tot;
@@ -1460,7 +1510,8 @@
       return '<tr class="lab-item"'+(l.status==="none"||l.status==="by_others"?' style="opacity:.55"':'')+'>'+
         '<td>'+(extra?'<button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove this cost" onclick="sumDelOther(\''+k+'\')">✕</button> <input class="lab-in txt" style="width:150px" placeholder="what the cost is" value="'+escAttr(l.label||"")+'" onchange="sumLabel(\''+k+'\',this)">'
             :'<b>'+esc(label)+'</b>')+
-          (h?'<div style="font-size:11.5px;'+(flag?'color:var(--ylw);font-weight:600':'color:var(--mut)')+'">'+(flag?'⚠ ':'')+esc(h.why)+'</div>':'')+'</td>'+
+          (h?'<div style="font-size:11.5px;'+(flag?'color:var(--ylw);font-weight:600':'color:var(--mut)')+'">'+(flag?'⚠ ':'')+esc(h.why)+'</div>':'')+
+          (on?supplyPickHtml(k,l):'')+'</td>'+
         '<td>'+statusSel(k,l.status)+'</td>'+
         '<td class="num" style="white-space:nowrap">'+inp(sumNum(qty,2),"sumLine('"+k+"','qty',this)",70,"","sumLive('line','"+k+"','qty',this)","qty")+' '+
           '<input class="lab-in txt" style="width:52px" value="'+escAttr(l.unit||unit||"")+'" onchange="sumLine(\''+k+'\',\'unit\',this)"></td>'+
