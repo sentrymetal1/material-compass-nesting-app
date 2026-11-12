@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.92 · 2026-11-12 · outside costs can supply material (off Material $)";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.93 · 2026-11-12 · Weight check fixes in place; labor rates per job";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1175,6 +1175,12 @@
   }
   // The shop's $/hr for a labor type (All_Manufacture_Labor_Rates via /api/takeoff/labor-rates), or null.
   function labRateOf(b){
+    // A rate typed on the Summary for this job wins over the shop's (Mark 2026-11-12: "want to be able
+    // to adjust the rates as well").
+    try{ const o=((loadResult().cost_summary||{}).lab_rate||{})[b]; if(o!=null && Number.isFinite(Number(o))) return Number(o); }catch(e){}
+    return labShopRateOf(b);
+  }
+  function labShopRateOf(b){
     const rates=SUM_RATES&&SUM_RATES.rates, stems=(SUM_RATES&&SUM_RATES.stems)||{};
     if(!rates) return null; const r=rates[stems[b]||String(b||"").replace(/_Hrs$/,"")];
     return r!=null&&Number.isFinite(Number(r))?Number(r):null;
@@ -1286,7 +1292,10 @@
       .then(function(j){ if(j&&j.ok){ SUM_RATES=j; } else SUM_RATES_ERR=(j&&j.error)||"could not read labor rates"; render(); })
       .catch(function(e){ SUM_RATES_ERR=e.message; render(); });
   }
-  function sumState(R){ const s=R.cost_summary&&typeof R.cost_summary==="object"?R.cost_summary:{}; s.lines=s.lines||{}; s.mat_rate=s.mat_rate||{}; return s; }
+  function sumState(R){ const s=R.cost_summary&&typeof R.cost_summary==="object"?R.cost_summary:{}; s.lines=s.lines||{}; s.mat_rate=s.mat_rate||{}; s.lab_rate=s.lab_rate||{}; return s; }
+  function sumLabApply(S,b,value){ const v=String(value).replace(/[$,\s]|\/h(r)?/gi,""); if(v===""){ delete S.lab_rate[b]; return true; } const n=Number(v); if(!(n>=0)) return false; S.lab_rate[b]=n; return true; }
+  function sumLabRate(b,el){ sumEdit(function(S){ sumLabApply(S,b,el.value); }); }
+  function sumLabReset(b){ sumEdit(function(S){ delete S.lab_rate[b]; }); }
   function sumEdit(fn){ const R=loadResult(); R.cost_summary=sumState(R); fn(R.cost_summary); saveResult(R); render(); }
   // Qty × $ each = $ total, like the labor lines: editing Qty or $ each recomputes the total; editing
   // the total works $ each back from the Qty. The Qty the take-off suggests is adopted once priced.
@@ -1341,7 +1350,7 @@
   // screen change — a full redraw would take the cursor out of the box. The save still happens on change.
   function sumLive(kind,key,field,el){
     const R=loadResult(); R.cost_summary=sumState(R); const S=R.cost_summary;
-    const ok = kind==="mat" ? sumMatApply(S,key,el.value) : sumApply(S,key,field,el.value,sumHintQty(R,key));
+    const ok = kind==="mat" ? sumMatApply(S,key,el.value) : kind==="rate" ? sumLabApply(S,key,el.value) : sumApply(S,key,field,el.value,sumHintQty(R,key));
     if(!ok) return;
     const T=sumCalc(R), set=function(id,v){ const e=document.getElementById(id); if(e) e.textContent=v; };
     T.order.forEach(function(m,i){ set("sumMat"+i, sumMoney(T.mats[m].amt)); });
@@ -1351,6 +1360,8 @@
       if(other && other!==el){ other.value=field==="total"?sumNum(l.unit_amt,4):sumNum(l.total,2,2); } }
     set("sumTileMat",sumMoney(T.matTot||null)); set("sumTileOut",sumMoney(T.outTot||null)); set("sumTileJob",sumMoney(T.grand||null));
     set("sumMatTot",sumMoney(T.matTot||null));
+    Object.keys(T.hrs).forEach(function(b){ const r=labRateOf(b); set("sumLab_"+b, r!=null?sumMoney(T.hrs[b]*r):"—"); });
+    set("sumLabTot",sumMoney(T.labTot)); set("sumTileLab",sumMoney(T.labTot));
   }
   // Numbers in the Summary boxes with thousands commas (Mark 2026-11-12); typed commas are stripped on read.
   function sumNum(v,maxD,minD){ return v==null||v===""||!Number.isFinite(Number(v))?"":Number(v).toLocaleString(undefined,{minimumFractionDigits:minD||0,maximumFractionDigits:maxD}); }
@@ -1481,9 +1492,14 @@
     const rates=SUM_RATES&&SUM_RATES.rates, stems=(SUM_RATES&&SUM_RATES.stems)||{};
     let labH=0, labTot=0;
     const labRows=Object.keys(LAB_BUCKET).filter(function(b){ return hrs[b]>0.005; }).map(function(b){
-      const rate=rates?rates[stems[b]||b.replace(/_Hrs$/,"")]:null, amt=rate!=null?hrs[b]*rate:null; labH+=hrs[b]; if(amt!=null) labTot+=amt;
-      const est=SUM_RATES&&arr(SUM_RATES.estimated).indexOf(stems[b])>-1;
-      return '<tr><td>'+LAB_BUCKET[b]+'</td><td class="num">'+labFmt(hrs[b],1)+' h</td><td class="num">'+(rate!=null?'$'+labFmt(rate,2)+'/h'+(est?' <span class="src" title="This rate is not on your labor rates report; the average of the others is used">avg</span>':''):'—')+'</td><td class="num"><b>'+money(amt)+'</b></td></tr>'; }).join("");
+      const rate=rates?labRateOf(b):null, shop=rates?labShopRateOf(b):null, amt=rate!=null?hrs[b]*rate:null; labH+=hrs[b]; if(amt!=null) labTot+=amt;
+      const est=SUM_RATES&&arr(SUM_RATES.estimated).indexOf(stems[b])>-1, own=S.lab_rate[b]!=null;
+      // The rate is this job's to change; ↺ goes back to the shop's rate.
+      return '<tr><td>'+LAB_BUCKET[b]+'</td><td class="num">'+labFmt(hrs[b],1)+' h</td><td class="num" style="white-space:nowrap">'+
+        (rates?'$ '+inp(rate!=null?sumNum(rate,2,2):null,"sumLabRate('"+b+"',this)",70,"$/h","sumLive('rate','"+b+"','',this)")+' /h'+
+          (own?' <span class="pillbtn" title="Back to your shop rate" onclick="sumLabReset(\''+b+'\')">↺</span><div class="src" style="font-size:11px">this job · shop $'+labFmt(shop,2)+'</div>'
+            :(est?' <span class="src" title="This rate is not on your labor rates report; the average of the others is used">avg</span>':''))
+          :'—')+'</td><td class="num"><b id="sumLab_'+b+'">'+money(amt)+'</b></td></tr>'; }).join("");
     const labStale=L && L.sig!==labSig(R);
     // OUTSIDE COSTS — one line per category, plus any the estimator adds.
     let outTot=0, open=0;
@@ -1527,7 +1543,7 @@
     return '<div class="card" id="summaryCard"><h2>🧾 Job summary <span class="lt">— every cost on this job, before markup; totals update as you type</span></h2><div class="body">'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'+
         tile("Material",money(matTot||null),matPriced?'':'enter a $/lb below to price it',"sumTileMat")+
-        tile("Shop labor",money(rates?labTot:null),labFmt(labH,1)+' h'+(rates?'':SUM_RATES_ERR?' · rates: '+esc(SUM_RATES_ERR):' · reading your rates…'))+
+        tile("Shop labor",money(rates?labTot:null),labFmt(labH,1)+' h'+(rates?'':SUM_RATES_ERR?' · rates: '+esc(SUM_RATES_ERR):' · reading your rates…'),"sumTileLab")+
         tile("Outside costs",money(outTot||null),open?'<span style="color:var(--ylw);font-weight:600">'+open+' to answer</span>':'all answered',"sumTileOut")+
         tile("Job cost",money(grand||null),'before markup',"sumTileJob")+
       '</div>'+
@@ -1540,7 +1556,7 @@
       '<h3 style="font-size:14px;margin:14px 0 6px">Shop labor <span class="lt" style="font-weight:400;font-size:12px;color:var(--mut)">— hours from the Labor tab × your labor rates</span></h3>'+
       (labStale?'<div class="lab-stale">The BOM changed since the labor was worked out — recalculate on the Labor tab.</div>':'')+
       (L?'<table><thead><tr><th>Type</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">$</th></tr></thead><tbody>'+(labRows||'<tr><td colspan="4" style="color:var(--mut)">No hours yet.</td></tr>')+
-          '<tr><td><b>Total</b></td><td class="num"><b>'+labFmt(labH,1)+' h</b></td><td></td><td class="num"><b>'+money(rates?labTot:null)+'</b></td></tr></tbody></table>'
+          '<tr><td><b>Total</b></td><td class="num"><b>'+labFmt(labH,1)+' h</b></td><td></td><td class="num"><b id="sumLabTot">'+money(rates?labTot:null)+'</b></td></tr></tbody></table>'
         :'<div class="src">Labor has not been worked out yet — open the Labor tab.</div>')+
       '</div></div>';
   }
@@ -3808,7 +3824,7 @@
   // printed weight, and lengths that disagree with the millimetres written beside them.
   // A row whose length matches none of the "NNNN mm" figures in its own note.
   function noteMmMismatch(r){
-    const note=String(r&&r.note||""), L=Number(r&&r.length_ft)||0; if(!(L>0)) return null;
+    const note=String(r&&r.note||""), L=Number(r&&r.length_ft)||0; if(!(L>0) || r.mm_ok) return null;
     // Members only, and only figures long enough to be a cut length: on plates and short stubs a
     // "76 mm" is a hole spacing or a width, not the length.
     if(/plate|sheet/i.test(String(r.form_type||""))) return null;
@@ -3817,6 +3833,36 @@
     const inL=L*12;
     if(mm.some(function(n){ return Math.abs(n/25.4-inL)<=Math.max(0.25,inL*0.02); })) return null;
     return {mm:mm[0], note_in:mm[0]/25.4, row_in:inL};
+  }
+  // RESOLVING the weight check, item by item (Mark 2026-11-12: "How am I to correct this for the weight
+  // check? Should there be a resolve or enter a field?"). Each fix changes the take-off rows the same way
+  // an edit on the BOM would (recompute, save), and keeps what it replaced so it can be seen; "keep as
+  // is" records that someone looked, and the item stops counting.
+  let WC_OPEN={};
+  function wcToggle(k,el){ WC_OPEN[k]=el.open; }
+  function wcRowsDo(fn){ const R=loadResult(); fn(R); recomputeCsv(R); saveResult(R); render(); }
+  // Length → the millimetres written in the row's own note.
+  function wcFixLength(i){ wcRowsDo(function(R){ const r=R.rows[i], m=r&&noteMmMismatch(r); if(!m) return;
+    r.length_was_ft=r.length_ft; r.length_ft=Math.round(m.mm/304.8*10000)/10000; r.length_fixed="note "+m.mm+" mm"; }); }
+  function wcFixAllLengths(){ wcRowsDo(function(R){ arr(R.rows).forEach(function(r){ if(!r||r.deleted) return; const m=noteMmMismatch(r); if(!m) return;
+    r.length_was_ft=r.length_ft; r.length_ft=Math.round(m.mm/304.8*10000)/10000; r.length_fixed="note "+m.mm+" mm"; }); }); }
+  function wcKeepLength(i){ wcRowsDo(function(R){ if(R.rows[i]) R.rows[i].mm_ok=true; }); }
+  // Counted twice → Qty per ONE assembly (the number built stays on the drawing).
+  function wcIsDouble(r){ return r && !r.deleted && Number(r.quantity)>0 && !r.dbl_ok && Math.round(Number(r.units)||1)>1 && /\(\s*\d+\s*assy|\d+\s*assy\b|assemblies\)|x\s*\d+\s*assy/i.test(String(r.note||"")); }
+  function wcFixDouble(sheet){ wcRowsDo(function(R){ arr(R.rows).forEach(function(r){ if(!wcIsDouble(r) || (sheet && !sameSheet(r.source_sheet,sheet))) return;
+    const u=Math.max(1,Math.round(Number(r.units)||1)); r.qty_was=r.quantity; r.quantity=Math.max(1,Math.round(Number(r.quantity)/u)); r.qty_per_unit=r.quantity; r.quantity_total=r.quantity*u; r.dbl_ok=true; }); }); }
+  function wcKeepDouble(sheet){ wcRowsDo(function(R){ arr(R.rows).forEach(function(r){ if(wcIsDouble(r) && (!sheet || sameSheet(r.source_sheet,sheet))) r.dbl_ok=true; }); }); }
+  // A drawing off its printed weight: looked at and accepted.
+  function wcAcceptDrawing(sheet){ const R=loadResult(); const d=arr((R.synopsis||{}).drawing_scope).find(function(x){ return x && x.stated_weight && sameSheet(x.sheet,sheet); });
+    if(d){ d.weight_ok=true; saveResult(R); render(); } }
+  // A drawing with no printed weight read: type it here.
+  function wcSetDrawingWeight(sheet,el){
+    const v=Number(String(el.value).replace(/[,\s]|lbs?|kgs?/gi,"")); if(!(v>0)) return;
+    const R=loadResult(); R.synopsis=R.synopsis||{}; R.synopsis.drawing_scope=arr(R.synopsis.drawing_scope);
+    const unit=((document.getElementById("wcUnit")||{}).value)||"lb";
+    let d=R.synopsis.drawing_scope.find(function(x){ return x && sameSheet(x.sheet,sheet); });
+    if(!d){ d={sheet:sheet,included:[],excluded:[]}; R.synopsis.drawing_scope.push(d); }
+    d.stated_weight={value:v,unit:unit,source:"entered"}; saveResult(R); render();
   }
   function setExpectedWeight(el){
     const v=String(el.value).replace(/[,\s]|lbs?/gi,""); const n=v===""?null:Number(v);
@@ -3844,31 +3890,45 @@
     // 2. Each drawing's printed weight against its rows.
     const ds=arr((R.synopsis||{}).drawing_scope), wu=(R.synopsis||{}).weight_unit;
     const bySheet={}; live.forEach(function(r){ const k=String(r.source_sheet||"").trim(); if(!k) return; const w=rowWeight(r); bySheet[k]=(bySheet[k]||0)+(w?w.total:0); });
-    const sheets=Object.keys(bySheet);
-    let pr=0, tkp=0; const off=[], none=[];
+    const sheets=Object.keys(bySheet).sort(function(a,b){ return a.localeCompare(b,undefined,{numeric:true}); });
+    const q=function(s){ return escAttr(String(s)).replace(/'/g,"\\'"); };
+    const btn=function(txt,on,title,grey){ return ' <span class="pillbtn" style="margin-left:4px'+(grey?';color:#7a8692':'')+'" title="'+escAttr(title||"")+'" onclick="'+on+'">'+txt+'</span>'; };
+    const box=function(k,summary,body){ return '<details style="margin:2px 0 4px 20px;font-size:12px"'+(WC_OPEN[k]?' open':'')+' ontoggle="wcToggle(\''+k+'\',this)"><summary style="cursor:pointer;color:var(--blue)">'+summary+'</summary><div style="margin:4px 0 2px">'+body+'</div></details>'; };
+    let pr=0, tkp=0, accepted=0; const off=[], none=[];
     sheets.forEach(function(sh){ const d=ds.find(function(x){ return x && x.stated_weight && Number(x.stated_weight.value)>0 && sameSheet(x.sheet,sh); });
       if(!d){ none.push(sh); return; }
       const kg=/kg/i.test(String(d.stated_weight.unit||(wu&&wu.unit)||"")), lb=Number(d.stated_weight.value)*(kg?2.20462:1);
-      pr+=lb; tkp+=bySheet[sh]; const p=pct(bySheet[sh],lb); if(Math.abs(p)>15) off.push(sh+' '+sgn(p)); });
+      pr+=lb; tkp+=bySheet[sh]; const p=pct(bySheet[sh],lb);
+      if(Math.abs(p)>15){ if(d.weight_ok) accepted++; else off.push({sh:sh, p:p, lb:lb, tk:bySheet[sh]}); } });
     const noneLb=none.reduce(function(a,sh){ return a+bySheet[sh]; },0);
     if(sheets.length-none.length>0){ const p=pct(tkp,pr), ok=!off.length&&Math.abs(p)<=10; if(!ok) bad++;
       html+=line(ok,(sheets.length-none.length)+' of '+sheets.length+' drawings print a weight: printed '+fmtLb(pr)+' lb, take-off '+fmtLb(tkp)+' lb ('+sgn(p)+')'+
-        (off.length?' · <b style="color:var(--red)">off by more than 15%: '+esc(off.join(', '))+'</b>':'')); }
-    if(none.length){ none.sort(function(a,b){ return a.localeCompare(b,undefined,{numeric:true}); });
-      html+=line(null,'<b>'+none.length+' drawing'+(none.length===1?'':'s')+' ('+fmtLb(noneLb)+' lb) not checked</b> — no printed weight was read: '+esc(none.slice(0,14).join(', '))+(none.length>14?'…':'')+
-        '. Paste their weights on the By drawing tab, or rely on the project total above.'); }
+        (off.length?' · <b style="color:var(--red)">'+off.length+' off by more than 15%</b>':'')+(accepted?' <span class="src">· '+accepted+' accepted</span>':''));
+      if(off.length) html+=box("off",'check them ▸',
+        '<div class="src" style="margin-bottom:3px">Open the drawing on the By drawing tab and compare its rows with the parts list. Fix the rows there; or accept the difference if the printed weight leaves something out.</div>'+
+        off.map(function(o){ return '<div><b>'+esc(o.sh)+'</b>: printed '+fmtLb(o.lb)+' lb, take-off '+fmtLb(o.tk)+' lb <b style="color:var(--red)">'+sgn(o.p)+'</b>'+
+          btn('open','setTab(\'drawings\')','Go to the By drawing tab')+btn('accept','wcAcceptDrawing(\''+q(o.sh)+'\')','Looked at it — the difference is right',true)+'</div>'; }).join("")); }
+    if(none.length){
+      html+=line(null,'<b>'+none.length+' drawing'+(none.length===1?'':'s')+' ('+fmtLb(noneLb)+' lb) not checked</b> — no printed weight was read. Type each drawing\'s weight below, or rely on the project total above.');
+      html+=box("none",'enter their weights ▸',
+        '<div style="margin-bottom:4px">Weights printed in <select id="wcUnit" style="font-size:12px"><option value="kg"'+(/kg/i.test(String(wu&&wu.unit||""))?' selected':'')+'>kg</option><option value="lb"'+(/kg/i.test(String(wu&&wu.unit||""))?'':' selected')+'>lb</option></select> — each is checked as soon as it is typed.</div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:4px 14px">'+none.map(function(sh){ return '<label style="white-space:nowrap"><b>'+esc(sh)+'</b> <input class="lab-in" style="width:70px" placeholder="weight" onchange="wcSetDrawingWeight(\''+q(sh)+'\',this)"> <span class="src">take-off '+fmtLb(bySheet[sh])+' lb</span></label>'; }).join("")+'</div>'); }
     // 3. Lengths that disagree with the millimetres in their own note.
-    const mis=live.map(function(r){ return {r:r, m:noteMmMismatch(r)}; }).filter(function(x){ return x.m; });
+    const mis=[]; arr(R.rows).forEach(function(r,i){ if(!r||r.deleted||!(Number(r.quantity)>0)) return; const m=noteMmMismatch(r); if(m) mis.push({r:r, m:m, i:i}); });
     if(mis.length){ bad++;
-      const ex=mis.slice(0,6).map(function(x){ return esc((x.r.member_mark||x.r.size||"row")+' on '+(x.r.source_sheet||'?'))+': '+(Math.round(x.m.row_in*10)/10)+'" but the note says '+x.m.mm+' mm = '+(Math.round(x.m.note_in*10)/10)+'"'; });
-      html+=line(false,'<b style="color:var(--red)">'+mis.length+' row'+(mis.length===1?'':'s')+' with a length that does not match its own note</b> — '+ex.join(' · ')+(mis.length>6?' …':'')); }
+      html+=line(false,'<b style="color:var(--red)">'+mis.length+' row'+(mis.length===1?'':'s')+' with a length that does not match its own note</b>'+
+        btn('use the note\'s mm for all '+mis.length,'wcFixAllLengths()','Set each length to the millimetres written in its note'));
+      html+=box("mm",'see them ▸',mis.map(function(x){ return '<div><b>'+esc(x.r.member_mark||x.r.size||"row")+'</b> on '+esc(x.r.source_sheet||'?')+' ('+esc(x.r.size||"")+', qty '+esc(x.r.quantity)+'): length '+(Math.round(x.m.row_in*10)/10)+'" — note says '+x.m.mm+' mm = <b>'+(Math.round(x.m.note_in*10)/10)+'"</b>'+
+        btn('use '+(Math.round(x.m.note_in*10)/10)+'"','wcFixLength('+x.i+')','Set the length to the note\'s millimetres')+btn('keep '+(Math.round(x.m.row_in*10)/10)+'"','wcKeepLength('+x.i+')','The length is right; the note is about something else',true)+'</div>'; }).join("")); }
     // 4. Built more than once AND a Qty that already says it covers the assemblies: counted twice.
     // 10058/10059 (2 each) read "4 REQ'D (2 assy)" into Qty and then were multiplied by 2 again.
-    const dbl=live.filter(function(r){ return Math.round(Number(r.units)||1)>1 && /\(\s*\d+\s*assy|\d+\s*assy\b|assemblies\)|x\s*\d+\s*assy/i.test(String(r.note||"")); });
+    const dbl=live.filter(wcIsDouble);
     if(dbl.length){ bad++;
-      const sh={}; dbl.forEach(function(r){ sh[r.source_sheet]=Math.round(Number(r.units)||1); });
-      html+=line(false,'<b style="color:var(--red)">'+dbl.length+' row'+(dbl.length===1?'':'s')+' may be counted twice</b> — drawing'+(Object.keys(sh).length===1?' ':'s ')+esc(Object.keys(sh).map(function(k){ return k+' (built '+sh[k]+'×)'; }).join(', '))+
-        ': the Qty already says it covers the assemblies, and it is multiplied by the number built again. Keep Qty per ONE assembly.'); }
+      const sh={}; dbl.forEach(function(r){ const k=String(r.source_sheet||"?"); sh[k]=sh[k]||{u:Math.round(Number(r.units)||1),n:0}; sh[k].n++; });
+      html+=line(false,'<b style="color:var(--red)">'+dbl.length+' row'+(dbl.length===1?'':'s')+' may be counted twice</b> — the Qty already says it covers the assemblies, and it is multiplied by the number built again.'+
+        btn('Qty per ONE assembly on all','wcFixDouble()','Divide each Qty by the number built'));
+      html+=box("dbl",'by drawing ▸',Object.keys(sh).map(function(k){ return '<div><b>'+esc(k)+'</b> (built '+sh[k].u+'×): '+sh[k].n+' row'+(sh[k].n===1?'':'s')+
+        btn('Qty ÷ '+sh[k].u,'wcFixDouble(\''+q(k)+'\')','Divide each Qty on this drawing by the number built')+btn('keep','wcKeepDouble(\''+q(k)+'\')','The Qty is per one assembly already',true)+'</div>'; }).join("")); }
     return '<div class="card" id="weightCheck" style="border-color:'+(bad?'#f3c2bd':'#cfe6d3')+'"><div class="body" style="padding:10px 16px;background:'+(bad?'#fdf3f2':'#f3faf4')+'">'+
       '<div style="font-weight:700;font-size:13px;margin-bottom:2px">⚖ Weight check '+(bad?'<span style="color:var(--red)">— '+bad+' to look at before quoting</span>':'<span style="color:var(--grn)">— the take-off matches</span>')+'</div>'+html+'</div></div>';
   }
