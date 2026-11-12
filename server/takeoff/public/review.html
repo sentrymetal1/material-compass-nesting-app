@@ -199,7 +199,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.84 · 2026-11-11 · handrail per ft + Summary tab";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.85 · 2026-11-11 · Work pills on the Labor tab";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -748,8 +748,11 @@
       R2.labor={ job_type:jt, sig:labSig(R2), fetched:new Date().toISOString(), edited:false, server:labSnapshot(x), written:written,
         components:arr(x.components).map(function(c){
           return { name:c.name, units:c.units, tons:c.tons, learning:c.learning||null, held:false, missing:arr(c.missing), rail:c.rail||null,
-            items:arr(c.items).map(function(i){ return Object.assign({},i,{auto:i.hours}); }) };
+            items:arr(c.items).map(function(i){ return Object.assign({},i,{auto:i.hours, auto_qty:i.qty}); }) };
         }) };
+      // The Work pills (in house / outside / not needed, and any rate or qty changed for this job)
+      // are kept outside the hours, so a recalculation re-applies them instead of losing them.
+      workApplyAll(R2);
       saveResult(R2);
     }catch(e){ LAB_ERR=e.message; }
     LAB_LOADING=false; render();
@@ -929,13 +932,9 @@
         (c.units>1?' <span class="grp-units">× '+c.units+' units</span>':'')+
         (c.learning?' <span class="grp-meta" title="Repeat units get faster: '+Math.round(c.learning.pct*100)+'% per doubling (Shop labor setup)">learning: '+labFmt(c.learning.factor,2)+'× one unit</span>':'')+
         (c.tons?' <span class="grp-meta">'+labFmt(c.tons,2)+' t</span>':'')+
-        (c.name!=="Whole job" && typeof RailPricing!=="undefined"
-          ? ' <select style="font-size:11.5px;padding:1px 3px;border:1px solid #dfe5ec;border-radius:5px;margin-left:6px" title="How this component\'s shop hours are worked out" onchange="railMode('+ci+',this.value)">'+
-              '<option value="member"'+(c.rail?'':' selected')+'>priced member by member</option>'+
-              '<option value="per_ft"'+(c.rail?' selected':'')+'>handrail — per ft (Labor setup)</option></select>' : '')+'</td>'+
+'</td>'+
         '<td style="text-align:right"><input class="lab-in" value="'+labFmt(tot,1)+'" onchange="laborComp('+ci+',this.value)" title="Change this and the items below scale with it"></td>'+
-        '<td style="white-space:nowrap;font-size:12px"><label title="Hold keeps this component fixed when the job total changes"><input type="checkbox"'+(c.held?' checked':'')+' onchange="laborHold('+ci+',this.checked)"> Hold</label></td></tr>'+
-        railHtml(R,c,ci);
+        '<td style="white-space:nowrap;font-size:12px"><label title="Hold keeps this component fixed when the job total changes"><input type="checkbox"'+(c.held?' checked':'')+' onchange="laborHold('+ci+',this.checked)"> Hold</label></td></tr>';
       const itemRow=function(it,ii){
         const what = it.entered
           ? '<input class="lab-in txt" placeholder="what the work is" value="'+escAttr(it.what)+'" onchange="laborItemText('+ci+','+ii+',\'what\',this.value)">'
@@ -1007,6 +1006,197 @@
       '<div style="margin-top:10px;font-size:12px"><span class="pillbtn" style="margin-left:0" onclick="laborAddComp()">+ add a component</span>'+
         ' <span class="pillbtn" onclick="laborCalc(true)">↻ recalculate from standards</span></div>'+
       '</div></div>';
+  }
+
+  // ---- WORK — the kinds of work on each component, as pills (Mark approved 2026-11-11) -----------
+  // "I like how the other pills work… you can click on them and they change or are not included."
+  // Every labor line carries an op (estimate.js): rail, burn plates, weld plates, drill holes… Each op
+  // is ONE line here: a pill (In house → Outside → Not needed), the shop standard it was priced from,
+  // and Qty × Rate = Hours, any of which can be changed for this job. Outside puts the work on the
+  // Summary as an outside cost to price; Not needed takes its hours off. Choices live in R.work, not
+  // in the hours, so Recalculate re-applies them. The line-by-line hours stay below for detail.
+  const WORK_LABEL={ member_cut:"Cut members", member_fit:"Fit members", member_weld:"Weld members", member_other:"Other member work",
+    plate_cut:"Burn / cut plates", plate_fit:"Fit plates", plate_weld:"Weld plates", plate_other:"Other plate work",
+    weld_typical:"Typical welds", weld_drawing:"Welds from the drawings", weld_prep:"Weld prep (bevel, back-gouge)", preheat:"Preheat", nde:"NDE / weld testing",
+    fitting_welds:"Pipe fitting welds", feat_hole:"Drill holes", feat_cope:"Copes", feat_notch:"Notches", feat_miter:"Mitres", feat_bend:"Bends",
+    feat_brake:"Press-brake bends", feat_roll:"Rolling", feat_bolt:"Bolting", handling:"Handling", straighten:"Straighten after welding",
+    weld_code:"Weld-code premium", grind_flush:"Grind welds flush", polish:"Polish", job_setup:"Set up & tear down", qc_docs:"QC paperwork",
+    detail:"Shop drawings / detailing", cnc_prog:"CNC programming", loadout:"Load out & crating", crane:"Crane picks", test:"Pressure / leak tests" };
+  // Outside work lands on the Summary under its own category where there is one, else as its own line.
+  const WORK_CAT={ detail:"detailing", nde:"inspection", test:"inspection", loadout:"trucking" };
+  const WORK_STATES=[["in","In house"],["out","Outside"],["no","Not needed"]];
+  function workLabel(op){ if(/^rail:/.test(op)) return "Rail, "+((typeof RailPricing!=="undefined"&&RailPricing.STD_SET[op.slice(5)])||"pipe")+" — cut, fit & weld";
+    return WORK_LABEL[op]||String(op||"other work").replace(/^feat_/,"").replace(/_/g," "); }
+  const wKey=function(name){ return String(name||"").trim().toLowerCase(); };
+  function workOf(R){ R.work=R.work&&typeof R.work==="object"?R.work:{}; return R.work; }
+  // The op groups of one component, from its live and parked lines (parked = switched off).
+  function workGroups(c){
+    const all=arr(c.items).concat(arr(c.parked)), by={}, order=[];
+    all.forEach(function(i){ if(i.entered||!i.op) return; if(!by[i.op]){ by[i.op]=[]; order.push(i.op); } by[i.op].push(i); });
+    const rank=function(op){ return /^rail:/.test(op)?0:op.indexOf("member_")===0?1:op.indexOf("plate_")===0?2:op.indexOf("weld")===0||op==="fitting_welds"?3:op.indexOf("feat_")===0?4:5; };
+    order.sort(function(a,b){ return rank(a)-rank(b); });
+    return order.map(function(op){ const its=by[op];
+      const units={}; its.forEach(function(i){ units[i.unit_label||""]=1; });
+      const one=Object.keys(units).length===1 && its.every(function(i){ return Number(i.auto_qty!=null?i.auto_qty:i.qty)>0; });
+      const autoH=its.reduce(function(a,i){ return a+(Number(i.auto!=null?i.auto:i.hours)||0); },0);
+      // The same quantity split over cut / fit / weld lines (the rail: 729 ft each) is ONE quantity, so
+      // qty is summed within each labor type and the largest taken — never added across types.
+      const qOf=function(pick){ const by={}; its.forEach(function(i){ by[i.bucket]=(by[i.bucket]||0)+(Number(pick(i))||0); });
+        return Math.max.apply(null,[0].concat(Object.keys(by).map(function(b){ return by[b]; }))); };
+      const autoQ=one?qOf(function(i){ return i.auto_qty!=null?i.auto_qty:i.qty; }):null;
+      const h=its.reduce(function(a,i){ return a+(Number(i.hours)||0); },0);
+      const q=one?qOf(function(i){ return i.qty; }):null;
+      return { op:op, items:its, unit:one?Object.keys(units)[0]:"", single:one, autoH:autoH, autoQ:autoQ, hours:h, qty:q };
+    });
+  }
+  // Apply one component's choices: overrides from the standard values (never compounding), then park
+  // what is outside or not needed. Lines typed in by hand are never touched.
+  function workApplyComp(c, ch){
+    ch=ch||{};
+    workGroups(c).forEach(function(g){
+      const s=ch[g.op]||{};
+      const reset=function(i){ if(i.auto!=null){ i.hours=i.auto; if(i.auto_qty!=null) i.qty=i.auto_qty; const q=Number(i.qty); i.each=q>0?i.hours/q:i.hours; } };
+      if(g.single && (s.rate!=null || s.qty!=null) && g.autoQ>0 && g.autoH>0){
+        const Q=s.qty!=null?s.qty:g.autoQ, E=s.rate!=null?s.rate:g.autoH/g.autoQ, k=Q/g.autoQ, f=(Q*E)/g.autoH;
+        g.items.forEach(function(i){ if(i.auto==null) return; i.qty=Number(i.auto_qty)*k; i.hours=Math.round(i.auto*f*100)/100; i.each=i.qty>0?i.hours/i.qty:i.hours; });
+      } else if(s.hours!=null && g.autoH>0){
+        g.items.forEach(function(i){ if(i.auto==null) return; reset(i); i.hours=Math.round(i.auto*(s.hours/g.autoH)*100)/100; const q=Number(i.qty); i.each=q>0?i.hours/q:i.hours; });
+      } else if(s.reset){ g.items.forEach(reset); }
+    });
+    const off=function(i){ const s=i.op&&ch[i.op]; return !!(s && (s.where==="out"||s.where==="no")); };
+    const all=arr(c.items).concat(arr(c.parked));
+    c.items=all.filter(function(i){ return !off(i); }); c.parked=all.filter(off);
+    // Straightening and the weld-code premium are a share of the welding: when welding is switched off
+    // or re-rated, they follow it (unless their own hours were changed).
+    const weldNow=c.items.reduce(function(a,i){ return a+(i.bucket==="Weld_Hrs"&&i.op!=="weld_code"?(Number(i.hours)||0):0); },0);
+    c.items.forEach(function(i){
+      if((i.op!=="straighten"&&i.op!=="weld_code") || i.auto==null || !(Number(i.auto_qty)>0) || (ch[i.op]||{}).hours!=null) return;
+      i.qty=Math.round(weldNow*100)/100; i.hours=Math.round(i.auto/Number(i.auto_qty)*weldNow*100)/100; i.each=i.qty>0?i.hours/i.qty:0;
+    });
+  }
+  function workApplyAll(R){
+    const W=workOf(R); if(!R.labor) return;
+    arr(R.labor.components).forEach(function(c){ workApplyComp(c, W[wKey(c.name)]); });
+    workSyncSummary(R);
+  }
+  // Outside work → its Summary line, kept in step: added when sent outside, removed when brought back.
+  function workSyncSummary(R){
+    const W=workOf(R); R.cost_summary=sumState(R); const lines=R.cost_summary.lines;
+    const want={};
+    arr(R.labor&&R.labor.components).forEach(function(c){
+      workGroups(c).forEach(function(g){ const s=(W[wKey(c.name)]||{})[g.op]; if(!s||s.where!=="out") return;
+        const cat=WORK_CAT[g.op];
+        if(cat){ const l=lines[cat]=Object.assign({},lines[cat]||{}); if(!l.status) l.status="include"; return; }
+        const k="w:"+wKey(c.name)+"|"+g.op; want[k]=1;
+        if(!lines[k]) lines[k]={extra:true, from_work:true, label:c.name+" — "+workLabel(g.op), unit:g.unit||"lot", qty:g.single?Math.round(g.autoQ*100)/100:null, status:"include"};
+      });
+    });
+    Object.keys(lines).forEach(function(k){ if(lines[k]&&lines[k].from_work&&!want[k]) delete lines[k]; });
+  }
+  function workEdit(ci,op,fn){
+    const R=loadResult(); if(!R.labor) return; const c=R.labor.components[ci]; if(!c) return;
+    const W=workOf(R), k=wKey(c.name); W[k]=Object.assign({},W[k]||{}); W[k][op]=Object.assign({},W[k][op]||{});
+    fn(W[k][op]);
+    workApplyComp(c, W[k]); workSyncSummary(R); R.labor.edited=true; saveResult(R); render();
+  }
+  function workCycle(ci,op){ workEdit(ci,op,function(s){ const cur=s.where||"in"; s.where=cur==="in"?"out":cur==="out"?"no":"in"; }); }
+  function workNum(ci,op,field,el){
+    const v=String(el.value).replace(/[$,\s]/g,""); const n=v===""?null:Number(v);
+    if(n!=null && !(n>=0)){ render(); return; }
+    workEdit(ci,op,function(s){
+      if(field==="hours"){ s.hours=n; delete s.rate; delete s.qty; }
+      else { s[field]=n; delete s.hours; }
+      if(s.hours==null && s.rate==null && s.qty==null){ s.reset=true; delete s.hours; delete s.rate; delete s.qty; } else delete s.reset;
+    });
+  }
+  function workBack(ci,op){ workEdit(ci,op,function(s){ delete s.rate; delete s.qty; delete s.hours; s.reset=true; }); }
+  // A rail rate changed here can become the shop's standard (Labor setup → Handrail), for every job.
+  async function workSaveStd(std,v){
+    const lbl=(typeof RailPricing!=="undefined"&&RailPricing.STD_SET[std])||std;
+    if(!(v>0)) return;
+    if(!(await mcConfirm("Save "+v+" hr/ft as your shop's standard for pipe rail, "+lbl+"? Every take-off from now on uses it (Shop labor setup → Handrail).",{title:"Shop labor",okText:"Save as my standard",cancelText:"Just this job"}))) return;
+    try{
+      const q="?manufacturer_id="+encodeURIComponent(params.manufacturer_id||"");
+      const g=await fetch(RAILWAY_URL+"/api/labor/shop"+q).then(function(r){ return r.json(); });
+      if(!g||!g.ok) throw new Error((g&&g.error)||"could not read your setup");
+      const s=g.shop, rates=Object.assign({}, s.rates||{}); rates[std]=v;
+      const p=await fetch(RAILWAY_URL+"/api/labor/shop",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({manufacturer_id:params.manufacturer_id, settings:s.settings, rates:rates, model:s.model, pipe_anchors:s.pipe_anchors, reference_jobs:s.reference_jobs})}).then(function(r){ return r.json(); });
+      if(!p||!p.ok) throw new Error((p&&p.error)||"save failed");
+      // The job no longer needs its own override: the standard now says the same.
+      const R=loadResult(); const W=workOf(R);
+      Object.keys(W).forEach(function(k){ const s2=W[k]["rail:"+std]; if(s2){ delete s2.rate; s2.reset=true; } }); saveResult(R);
+      await mcAlert("Saved — "+v+" hr/ft is now your standard for "+lbl+".",{title:"Shop labor"});
+      laborCalc(false);
+    }catch(e){ await mcAlert("Could not save your standard: "+e.message,{title:"Shop labor"}); }
+  }
+  // Finish for the whole job — the costs most often forgotten. Writes the Summary lines directly.
+  function workFinish(cat,st){ sumEdit(function(S){ const l=Object.assign({},S.lines[cat]||{}); l.status=l.status===st?"":st; S.lines[cat]=l; }); }
+  function workAddLine(ci){ labEdit(function(L){ L.components[ci].items.push({what:"", bucket:"Fab_Hrs", hours:0, qty:1, each:0, entered:true}); }); }
+
+  let WELDS_OPEN=false;
+  function workPill(where,onclick,title){
+    const st={in:"background:#e7f6ec;color:#1e7b3c;border-color:#9ad3ad",out:"background:#e8f0fb;color:#1f5fa8;border-color:#9fbde6",
+      no:"background:#f1f3f5;color:#7a8692;border-color:#d5dbe1;text-decoration:line-through",und:"background:#fff6e0;color:#a26a00;border-color:#f0cf7f"}[where]||"";
+    const txt={in:"In house",out:"Outside",no:"Not needed",und:"Not decided"}[where]||where;
+    return '<span onclick="'+onclick+'" title="'+escAttr(title||"Click to change")+'" style="cursor:pointer;user-select:none;display:inline-block;min-width:78px;text-align:center;padding:2px 9px;border:1px solid;border-radius:999px;font-size:12px;font-weight:600;'+st+'">'+txt+'</span>';
+  }
+  function workCardHtml(R){
+    const L=R.labor; if(!L||!arr(L.components).length) return "";
+    const W=workOf(R), S=sumState(R), H=sumHints(R);
+    const setupUrl=RAILWAY_URL+"/takeoff/labor-setup.html?manufacturer_id="+encodeURIComponent(params.manufacturer_id||"")+(window.MC_TOKEN?"&t="+encodeURIComponent(window.MC_TOKEN):"");
+    const fmtE=function(e){ return e>0&&e<0.1?labFmt(e,4):labFmt(e,2); };
+    let html='<div class="card" id="workCard"><h2>🛠 Work on this job <span class="lt">— click a pill: In house → Outside → Not needed. Rates are your shop standards; change any for this job.</span></h2><div class="body">';
+    // Finish first: the job-wide outside costs that are easiest to forget.
+    const fin=function(cat,label,opts){ const l=S.lines[cat]||{}, h=H[cat]||{};
+      return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:3px 0"><b style="min-width:120px">'+esc(label)+'</b>'+
+        opts.map(function(o){ const on=l.status===o[0]; return '<span onclick="workFinish(\''+cat+'\',\''+o[0]+'\')" style="cursor:pointer;padding:2px 9px;border:1px solid '+(on?'#1f5fa8':'#d5dbe1')+';border-radius:999px;font-size:12px;font-weight:600;'+(on?'background:#e8f0fb;color:#1f5fa8':'color:#7a8692')+'">'+o[1]+'</span>'; }).join("")+
+        (!l.status && h.likely?' <span style="font-size:11.5px;color:var(--ylw);font-weight:600">⚠ not decided — '+esc(h.why)+'</span>':' <span class="src" style="font-size:11.5px">'+esc(h.why||"")+'</span>')+'</div>'; };
+    html+='<div style="padding:8px 10px;border:1px solid #e3e8ef;border-radius:8px;background:#fafbfd;margin-bottom:12px">'+
+      '<div style="font-size:12px;color:var(--mut);margin-bottom:4px">FINISH — for the whole job; outside costs are priced on the Summary tab</div>'+
+      fin("galvanize","Galvanizing",[["include","Outside"],["none","Not needed"]])+
+      fin("blast_paint","Blast & paint",[["in_house","In house"],["include","Outside"],["none","Not needed"]])+'</div>';
+    L.components.forEach(function(c,ci){
+      const ch=W[wKey(c.name)]||{}, groups=workGroups(c);
+      const tot=labComp(c), entered=arr(c.items).map(function(it,ii){ return [it,ii]; }).filter(function(x){ return x[0].entered; });
+      html+='<div style="display:flex;align-items:baseline;gap:10px;margin:10px 0 4px;flex-wrap:wrap"><b style="font-size:15px">'+esc(c.name)+'</b>'+
+        (c.rail?'<span class="src">'+labFmt(c.rail.total_ft,0)+' ft of rail</span>':'')+
+        (c.name!=="Whole job" && typeof RailPricing!=="undefined"
+          ? '<span style="font-size:12px">Priced: '+
+              '<span onclick="'+(c.rail?'':'railMode('+ci+',\'per_ft\')')+'" style="cursor:pointer;padding:1px 8px;border:1px solid '+(c.rail?'#1f5fa8':'#d5dbe1')+';border-radius:999px;'+(c.rail?'background:#e8f0fb;color:#1f5fa8;font-weight:600':'color:#7a8692')+'">per foot of rail</span> '+
+              '<span onclick="'+(c.rail?'railMode('+ci+',\'member\')':'')+'" style="cursor:pointer;padding:1px 8px;border:1px solid '+(!c.rail?'#1f5fa8':'#d5dbe1')+';border-radius:999px;'+(!c.rail?'background:#e8f0fb;color:#1f5fa8;font-weight:600':'color:#7a8692')+'">piece by piece</span></span>' : '')+
+        '<span style="margin-left:auto;font-weight:700">'+labFmt(tot,1)+' h</span></div>';
+      html+='<div style="overflow-x:auto"><table><thead><tr><th style="width:96px"></th><th>Work</th><th>Your standard</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Hours</th><th></th></tr></thead><tbody>';
+      groups.forEach(function(g){
+        const s=ch[g.op]||{}, where=s.where||"in", off=where!=="in";
+        const first=g.items[0]||{};
+        const rate=g.single&&g.qty>0?g.hours/g.qty:null, autoRate=g.single&&g.autoQ>0?g.autoH/g.autoQ:null;
+        const changed=s.rate!=null||s.qty!=null||s.hours!=null;
+        const railStd=/^rail:/.test(g.op)?g.op.slice(5):null, rr=railStd&&c.rail&&c.rail.rates&&c.rail.rates[railStd];
+        const stdTxt = rr ? labFmt(rr.rate,3).replace(/0+$/,"")+' hr/ft <span class="src">('+(rr.source==="yours"?'your standard':'library — not yet yours')+')</span>'
+          : '<span class="src" title="'+escAttr(first.source_ref||"")+'">'+esc(String(first.source_ref||first.standard||"").slice(0,70))+(String(first.source_ref||"").length>70?'…':'')+'</span>';
+        const num=function(field,v,w,ph){ return '<input class="lab-in" style="width:'+(w||64)+'px"'+(off?' disabled':'')+' placeholder="'+(ph||"")+'" value="'+escAttr(v==null?"":v)+'" onchange="workNum('+ci+',\''+escAttr(g.op)+'\',\''+field+'\',this)">'; };
+        html+='<tr class="lab-item"'+(off?' style="opacity:.6"':'')+'><td>'+workPill(where,'workCycle('+ci+',\''+escAttr(g.op)+'\')')+'</td>'+
+          '<td><b>'+esc(workLabel(g.op))+'</b> <span class="src" style="font-size:11px">'+g.items.length+' line'+(g.items.length===1?'':'s')+'</span>'+
+            (where==="out"?'<div style="font-size:11.5px;color:#1f5fa8">sent outside — price it on the Summary tab</div>':'')+'</td>'+
+          '<td style="font-size:12px">'+stdTxt+'</td>'+
+          '<td class="num" style="white-space:nowrap">'+(g.single?num("qty",labFmt(g.qty,g.qty%1?1:0),64)+' <span class="src" style="font-size:11px">'+esc(g.unit)+'</span>':'<span class="src" title="mixed units — change the hours">mixed</span>')+'</td>'+
+          '<td class="num" style="white-space:nowrap">'+(g.single&&rate!=null?num("rate",fmtE(rate),70)+(changed&&autoRate!=null&&Math.abs(rate-autoRate)>0.0005?'<div class="src" style="font-size:11px">standard '+fmtE(autoRate)+'</div>':''):'')+'</td>'+
+          '<td class="num">'+num("hours",labFmt(off?0:g.hours,1),66)+'</td>'+
+          '<td style="white-space:nowrap">'+(changed?'<span class="pillbtn" style="margin-left:0" title="Back to the standard" onclick="workBack('+ci+',\''+escAttr(g.op)+'\')">↺</span>':'')+
+            (railStd&&rate!=null&&rr&&Math.abs(rate-rr.rate)>0.0005?' <span class="pillbtn" title="Make this rate your shop standard for every job" onclick="workSaveStd(\''+railStd+'\','+(Math.round(rate*10000)/10000)+')">★ my standard</span>':'')+'</td></tr>';
+      });
+      entered.forEach(function(x){ const it=x[0], ii=x[1];
+        html+='<tr class="lab-item"><td>'+workPill("in","",'Added by you')+'</td>'+
+          '<td colspan="2"><input class="lab-in txt" style="width:260px" placeholder="what the work is" value="'+escAttr(it.what||"")+'" onchange="laborItemText('+ci+','+ii+',\'what\',this)"></td>'+
+          '<td></td><td></td><td class="num"><input class="lab-in" style="width:66px" value="'+labFmt(it.hours,1)+'" onchange="laborItem('+ci+','+ii+',this.value)"></td>'+
+          '<td><button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove" onclick="laborDelItem('+ci+','+ii+')">✕</button></td></tr>'; });
+      html+='<tr><td colspan="7"><span class="pillbtn" style="margin-left:0" onclick="workAddLine('+ci+')">+ add work</span></td></tr></tbody></table></div>';
+      if(c.rail) html+='<table style="margin-top:2px"><tbody>'+railHtml(R,c,ci)+'</tbody></table>';
+    });
+    html+='<div class="src" style="margin-top:8px;font-size:12px">Your standards live in '+
+      '<a href="'+escAttr(setupUrl)+'" target="_blank" style="color:var(--blue);font-weight:600;text-decoration:none">Shop labor setup ↗</a>. A rate changed here is for this job only, unless you click ★ my standard.</div>';
+    return html+'</div></div>';
   }
 
   // ---- SUMMARY — every cost on the job in one place (Mark, 2026-11-11) -------------------------
@@ -1101,7 +1291,8 @@
   }
   // Open reminders: a likely cost with no answer yet. Shown as the tab's badge.
   function sumOpen(R){ const S=sumState(R), H=sumHints(R);
-    return COST_CATS.filter(function(c){ const l=S.lines[c[0]]||{}; return H[c[0]].likely && !l.status; }).length; }
+    return COST_CATS.filter(function(c){ const l=S.lines[c[0]]||{}; return H[c[0]].likely && !l.status; }).length +
+      Object.keys(S.lines).filter(function(k){ const l=S.lines[k]; return l && l.from_work && l.status==="include" && l.total==null; }).length; }
 
   function summaryCardHtml(R){
     sumLoadRates();
@@ -1130,11 +1321,12 @@
     // OUTSIDE COSTS — one line per category, plus any the estimator adds.
     let outTot=0, open=0;
     const statusSel=function(k,st){ return '<select style="font-size:12px;padding:1px 3px;border:1px solid #dfe5ec;border-radius:5px" onchange="sumLine(\''+k+'\',\'status\',this)">'+
-      [["","— not answered —"],["include","include"],["by_others","by others / not in scope"],["none","not needed"]].map(function(o){ return '<option value="'+o[0]+'"'+(String(st||"")===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select>'; };
+      [["","— not answered —"],["include","include (outside)"],["in_house","in house (Labor tab)"],["by_others","by others / not in scope"],["none","not needed"]].map(function(o){ return '<option value="'+o[0]+'"'+(String(st||"")===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select>'; };
     const outRow=function(k,label,unit,h,extra){
       const l=S.lines[k]||{}, on=l.status==="include", tot=on&&l.total!=null?Number(l.total):null;
       if(tot!=null) outTot+=tot;
-      const flag=h&&h.likely&&!l.status; if(flag) open++;
+      if(!h && l.from_work) h={likely:true, why:"sent outside on the Labor tab — enter its price"};
+      const flag=(h&&h.likely&&!l.status) || (l.from_work && l.status==="include" && l.total==null); if(flag) open++;
       const qty=l.qty!=null?l.qty:(h&&h.qty!=null&&!l.status?h.qty:null);
       return '<tr class="lab-item"'+(l.status==="none"||l.status==="by_others"?' style="opacity:.55"':'')+'>'+
         '<td>'+(extra?'<button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove this cost" onclick="sumDelOther(\''+k+'\')">✕</button> <input class="lab-in txt" style="width:150px" placeholder="what the cost is" value="'+escAttr(l.label||"")+'" onchange="sumLabel(\''+k+'\',this)">'
@@ -1495,10 +1687,11 @@
   // (chat + Approve) stay. Switching only shows and hides panes — no re-render — so the BOM
   // editor iframe, a half-typed edit and every id other code looks up survive a tab change.
   // The chosen tab is remembered per project for this browser tab.
-  const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["welds","Welds & features"],["labor","Labor"],["summary","Summary"],["ai","Ask the AI"]];
+  const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["labor","Labor"],["summary","Summary"],["ai","Ask the AI"]];
   function tabKey(){ return "mc_review_tab_"+(params.project_id||"sample"); }
   let TAB=(function(){ try{ return sessionStorage.getItem(tabKey())||"overview"; }catch(e){ return "overview"; } })();
   function setTab(t){
+    if(t==="welds") t="labor";   // Welds & features now lives at the foot of the Labor tab
     if(!TABS.some(function(x){ return x[0]===t; })) t="overview";
     TAB=t; try{ sessionStorage.setItem(tabKey(),t); }catch(e){}
     applyTab();
@@ -3017,11 +3210,13 @@
       // what each addendum changed, original vs reissue
       '<div class="tabpane" data-tab="addenda">'+addendaHtml(R)+'</div>'+
 
-      // the weld schedule read off the drawings — welding hours come from it
-      '<div class="tabpane" data-tab="welds">'+typicalWeldsCardHtml(R)+weldsCardHtml(R)+featuresCardHtml(R)+'</div>'+
-
-      // shop labor — hours for this take-off, at job / component / item level
-      '<div class="tabpane" data-tab="labor">'+laborCardHtml(R)+'</div>'+
+      // shop labor: the Work pills first (what is done, where, at what rate), then the hours line by
+      // line, then — folded away, for checking — the welds and features read off the drawings.
+      '<div class="tabpane" data-tab="labor">'+workCardHtml(R)+laborCardHtml(R)+
+        '<details class="card" style="padding:10px 16px"'+(WELDS_OPEN?' open':'')+' ontoggle="WELDS_OPEN=this.open"><summary style="cursor:pointer;font-weight:600;color:var(--mut)">Show what was read off the drawings — welds, holes, bends (for checking)'+
+          ((weldProblems(R).length+featureProblems(R).length)?' <span class="tbadge warn">'+(weldProblems(R).length+featureProblems(R).length)+' to check</span>':'')+'</summary>'+
+          typicalWeldsCardHtml(R)+weldsCardHtml(R)+featuresCardHtml(R)+'</details>'+
+      '</div>'+
 
       // every cost on the job: material, labor $, and the outside costs it is easy to forget
       '<div class="tabpane" data-tab="summary">'+summaryCardHtml(R)+'</div>'+

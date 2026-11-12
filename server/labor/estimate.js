@@ -622,10 +622,16 @@ function estimateTakeoff(takeoff, ctx) {
   const rctx = Object.assign({}, ctx || {}, { weldSheets, ruleCover });
   // A row flagged _rail is inside its component's per-foot handrail rate (takeoffLabor.js) — it stays
   // on the take-off for weight, load-out and drawing counts but gets no member-by-member hours.
-  for (const row of (takeoff && takeoff.rows) || []) if (!row._rail) add(row.component, estimateRow(row, rctx));
-  for (const x of weldRes) add(x.w.component, x.res);
+  // Every line carries an op — the kind of work it is — so the review's Work pills can group, switch
+  // off, send outside or re-rate each kind of work as one (Mark 2026-11-11).
+  const tag = (res, fn) => { for (const l of res.lines) if (!l.op) l.op = fn(l); return res; };
+  const VERB = { Cutting_Hrs: 'cut', Assy_Hrs: 'fit', Weld_Hrs: 'weld', Fab_Hrs: 'fab', CNC_Hrs: 'cnc', Inspection_Hrs: 'inspect', Misc_Hrs: 'misc' };
+  const byStd = (l) => String(l.standard || 'other').toLowerCase().replace(/^code-.*/, 'weld_code').replace(/-/g, '_');
+  for (const row of (takeoff && takeoff.rows) || []) if (!row._rail) add(row.component, tag(estimateRow(row, rctx), (l) =>
+    l.bucket === 'Labor_Hrs' ? 'handling' : (libraryForm(row.form_type) === 'Plate' ? 'plate_' : 'member_') + (VERB[l.bucket] || 'other')));
+  for (const x of weldRes) add(x.w.component, tag(x.res, (l) => /^preheat/.test(l.what) ? 'preheat' : l.bucket === 'Inspection_Hrs' ? 'nde' : l.bucket === 'Fab_Hrs' ? 'weld_prep' : (x.w.from_rule ? 'weld_typical' : 'weld_drawing')));
   const features = ((takeoff && takeoff.features) || []).filter((f) => f && !f.deleted && Number(f.count) > 0);
-  for (const f of features) add(f.component, estimateFeature(f, rctx, matOfSheet));
+  for (const f of features) add(f.component, tag(estimateFeature(f, rctx, matOfSheet), () => 'feat_' + String(f.feature || 'other').toLowerCase()));
   // Work that follows from each component's own lines (setup, straightening, weld code, stainless
   // finish), then the whole job once (setup, paperwork, drawings, programming, load-out, cranes, tests).
   const P = (ctx && ctx.model) || PM_DEFAULT;
@@ -633,15 +639,15 @@ function estimateTakeoff(takeoff, ctx) {
   const allRows = (takeoff && takeoff.rows) || [];
   for (const [name, comp] of Object.entries(components)) {
     const mine = allRows.filter((r) => (String(r.component || '').trim() || '(no component)') === name);
-    for (const l of componentExtras(comp, mine, P, extras)) { comp.hours[l.bucket] += l.hours; comp.lines.push(l); }
+    for (const l of componentExtras(comp, mine, P, extras)) { l.op = l.op || byStd(l); comp.hours[l.bucket] += l.hours; comp.lines.push(l); }
   }
   const jl = jobLines(allRows, P, extras);
-  if (jl.length) { const jc = bucketFor(JOB_COMPONENT); for (const l of jl) { jc.hours[l.bucket] += l.hours; jc.lines.push(l); } }
+  if (jl.length) { const jc = bucketFor(JOB_COMPONENT); for (const l of jl) { l.op = l.op || byStd(l); jc.hours[l.bucket] += l.hours; jc.lines.push(l); } }
   // An elbow whose welds a typical-weld rule prices is not priced again here as butt-weld joints.
   const elbowComps = (ctx && ctx.elbowComps) || {};
   for (const f of (takeoff && takeoff.fittings) || []) {
     if (elbowComps[String(f.component || '').trim().toLowerCase()] && /elbow/i.test(String(f.fitting_type || ''))) continue;
-    add(f.component, estimateFitting(f, ctx));
+    add(f.component, tag(estimateFitting(f, ctx), () => 'fitting_welds'));
   }
 
   let total = 0, missing = 0;

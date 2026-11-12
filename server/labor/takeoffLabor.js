@@ -138,7 +138,7 @@ function laborForTakeoff(takeoff, profile, jobType) {
           add.push({ bucket, hours: rate * share * ft, units: ft, unit_label: 'ft of rail', per_unit: rate * share,
             what: 'Handrail ' + label + ' — ' + verb + ' (' + Math.round(share * 100) + '% of ' + rate.toFixed(3).replace(/0+$/, '') + ' hr/ft)',
             standard: std, source_ref: rate + ' hr/ft of rail (' + rates[std].ref + ') × ' + Math.round(share * 100) + '% ' + verb + ' share (Labor setup cut/fit/weld split)',
-            derived: !mine && !!cell.derived, note: mine ? null : 'library rate — put your own in Labor setup → Handrail', rail: true });
+            derived: !mine && !!cell.derived, note: mine ? null : 'library rate — put your own in Labor setup → Handrail', rail: true, op: 'rail:' + std });
         }
       }
       for (const l of add) comp.hours[l.bucket] += l.hours;
@@ -190,7 +190,7 @@ function laborForTakeoff(takeoff, profile, jobType) {
         derived: !!l.derived, note: l.note || null,
         // The detail under the broad bucket (MIG, TIG, plasma, band saw…), laborTypes.js.
         labor_type: typeForLine(l), process: l.process || null, material: l.material || null,
-        from_drawing: !!l.from_drawing,
+        from_drawing: !!l.from_drawing, op: l.op || null, rail: !!l.rail,
       })),
       missing: c.missing,
       rail: railInfo[name] || null,
