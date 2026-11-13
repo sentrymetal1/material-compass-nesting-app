@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.98 · 2026-11-12 · part-type picker; mixed-size + mark-label checks";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.99 · 2026-11-13 · outside costs handed off at Approve (no entered tick)";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1335,21 +1335,20 @@
     return { list:list, state:!list.length?"none":!e?"todo":e.sig===projOutSig(list)?"done":"changed", at:e&&e.at }; }
   function projOutPanelHtml(R){
     const P=projOutState(R); if(P.state==="none") return "";
-    const warn=P.state!=="done", money=sumMoney;
-    const tot=P.list.reduce(function(a,x){ return a+(x.total||0); },0), noAmt=P.list.filter(function(x){ return x.total==null; }).length;
-    return '<div style="border:1px solid '+(warn?'#f0cf7f':'#cfe6d3')+';background:'+(warn?'#fff8e6':'#f3faf4')+';border-radius:8px;padding:10px 12px;margin:0 0 16px">'+
-      '<div style="font-weight:700;font-size:13px">'+(P.state==="todo"?'⚠ These outside costs are not on the project page yet'
-        :P.state==="changed"?'⚠ Outside costs changed since they were entered on the project page'
-        :'✓ Outside costs entered on the project page <span class="src" style="font-weight:400">'+esc(String(P.at||"").slice(0,10))+'</span>')+'</div>'+
-      '<div class="src" style="margin:3px 0 6px;font-size:12px">Project page → <b>Subcontract and Item Details</b> → <b>Item Sourcing Take-Off</b>: one row each, at cost (the project adds its own markup). '+
-        'Type <b>Category of Item</b> exactly as shown — the project totals only count these spellings.'+(noAmt?' <b style="color:var(--ylw)">'+noAmt+' still need an amount.</b>':'')+'</div>'+
+    // Mark 11-13: "the process is after approval then you can fill out the rest of the tabs in the project page" —
+    // so no "entered" tick here: these go to the project after Approve & Submit (Load button there, or typed in).
+    const money=sumMoney, noAmt=P.list.filter(function(x){ return x.total==null; }).length;
+    const tot=P.list.reduce(function(a,x){ return a+(x.total||0); },0);
+    return '<div style="border:1px solid #cfdcec;background:#f6f9fd;border-radius:8px;padding:10px 12px;margin:0 0 16px">'+
+      '<div style="font-weight:700;font-size:13px">Outside costs for the project page <span class="src" style="font-weight:400">— '+P.list.length+' line'+(P.list.length===1?'':'s')+', '+money(tot)+' at cost</span></div>'+
+      '<div class="src" style="margin:3px 0 6px;font-size:12px">After <b>Approve &amp; Submit</b>, on the project page → <b>Subcontract and Item Details</b>: tick <b>Load AI take-off outside costs</b> and these land in the Item Sourcing Take-Off as rows with no supplier yet, at cost (the project adds its own markup). '+
+        'Typing them instead? Use <b>Category of Item</b> exactly as shown — the project totals only count these spellings.'+(noAmt?' <b style="color:var(--ylw)">'+noAmt+' still need an amount.</b>':'')+'</div>'+
       '<table style="max-width:820px"><thead><tr><th>Category of Item</th><th>Description</th><th class="num">QTY</th><th class="num">Unit Amount</th><th class="num">Total Amt</th></tr></thead><tbody>'+
         P.list.map(function(x){ return '<tr><td><b>'+esc(x.category)+'</b></td><td>'+esc(x.description)+'</td><td class="num">'+(x.qty!=null?sumNum(x.qty,2)+' '+esc(x.unit):'—')+'</td>'+
           '<td class="num">'+(x.unit_amt!=null?'$'+sumNum(x.unit_amt,4):'—')+'</td><td class="num"><b>'+(x.total!=null?'$'+sumNum(x.total,2,2):'<span style="color:var(--ylw)">no amount</span>')+'</b></td></tr>'; }).join("")+
         '<tr class="wt-total"><td colspan="4"><b>Total outside, at cost</b></td><td class="num"><b>'+money(tot)+'</b></td></tr></tbody></table>'+
       '<div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
         '<span class="pillbtn" style="margin-left:0" onclick="projOutCopy()">📋 Copy the list</span>'+
-        '<label style="font-size:12.5px"><input type="checkbox"'+(P.state==="done"?' checked':'')+' onchange="projOutMark(this.checked)"> Entered on the project page</label>'+
         '<span class="src" id="projOutMsg"></span></div></div>';
   }
   function sumMu(cat,el){ sumEdit(function(S){ sumMuApply(S,cat,el.value); }); }
@@ -1558,8 +1557,7 @@
   // Open reminders: a likely cost with no answer yet. Shown as the tab's badge.
   function sumOpen(R){ const S=sumState(R), H=sumHints(R);
     return COST_CATS.filter(function(c){ const l=S.lines[c[0]]||{}; return H[c[0]].likely && !l.status; }).length +
-      Object.keys(S.lines).filter(function(k){ const l=S.lines[k]; return l && l.from_work && l.status==="include" && l.total==null; }).length +
-      (/todo|changed/.test(projOutState(R).state)?1:0); }
+      Object.keys(S.lines).filter(function(k){ const l=S.lines[k]; return l && l.from_work && l.status==="include" && l.total==null; }).length; }
 
   function summaryCardHtml(R){
     sumLoadRates();
@@ -4909,10 +4907,13 @@
       let wtLb=0;
       if(typeof rowWeight==="function") arr(R.rows).forEach(function(x){ if(x.deleted) return; const w=rowWeight(x); if(w&&w.total) wtLb+=w.total; });
       const wt={lb:wtLb};
+      const po=projOutLines(R), poTot=po.reduce(function(a,x){ return a+(x.total||0); },0);
       if(!(await mcConfirm("Approve & submit this take-off to the project?\n\n"+
           nRows+" BOM row"+(nRows===1?"":"s")+(nFit?" · "+nFit+" fitting line"+(nFit===1?"":"s"):"")+
           (wt&&wt.lb?" · "+Math.round(wt.lb).toLocaleString("en-US")+" lb":"")+
-          "\n\nThis writes the bill of material, labor and quote clarifications onto the project.",
+          "\n\nThis writes the bill of material, labor and quote clarifications onto the project."+
+          (po.length?"\n\nThen on the project page: "+po.length+" outside cost"+(po.length===1?"":"s")+" ($"+Math.round(poTot).toLocaleString("en-US")+" at cost) — "+
+            "Subcontract and Item Details → tick \"Load AI take-off outside costs\".":""),
           {title:"Approve & Submit",okText:"Yes, submit",cancelText:"Not yet"}))) return;
     }
     // Soft-gate: if the drawings reference components not on the project, they'll import with a
@@ -5091,7 +5092,12 @@
         if(bad.length) li+='<div class="src" style="margin-left:14px">'+bad.slice(0,6).map(function(b){ return '• '+esc(b.what)+' — '+esc(b.why); }).join('<br>')+(bad.length>6?'<br>…':'')+'</div>';
         return li+'</li>';
       })()+
-      '<li><b>Buyout</b> → outsource / RFQ subform <span class="src">(WIRE)</span></li>'+
+      (function(){
+        const po=projOutLines(loadResult()); if(!po.length) return '<li><b>Outside costs</b> → <span class="src">none included on the Summary tab</span></li>';
+        const tot=po.reduce(function(a,x){ return a+(x.total||0); },0);
+        return '<li><b>Outside costs</b> → '+po.length+' line'+(po.length===1?'':'s')+', '+sumMoney(tot)+' at cost, ready for the project. '+
+          '<b>Next:</b> project page → Subcontract and Item Details → tick <b>Load AI take-off outside costs</b>, then save.</li>';
+      })()+
       '<li><b>Scope of Work</b> → project record <span class="src">(WIRE: Save_Scope_Of_Work)</span></li>'+
       (function(){
         const n=arr(loadResult().quote_notes).filter(function(x){ return x.include && noteText(x); }).length;
