@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.97 · 2026-11-12 · supplies-material picker on buyout lines only";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.98 · 2026-11-12 · part-type picker; mixed-size + mark-label checks";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1464,21 +1464,41 @@
   // size or by piece type. Those pounds leave the Material $ (they are paid for in that line) but stay
   // in the weight: the shop still handles, galvanizes and ships them, and the weight check still has
   // to match the drawings. A row supplied by two lines is taken off once.
+  // PART TYPES — one standard name for each job a piece does (the AI labels them; engine.js LABEL_ROLES).
+  // Mark 11-12: "what are any of these label categories supposed to be?" — so every list says it in words.
+  const ROLE_NAMES={ post:["Posts","vertical uprights"], top_rail:["Top rails","the handrail along the top"],
+    mid_rail:["Mid rails","the rail(s) between top and bottom"], bottom_rail:["Bottom rails","the lowest rail"],
+    rail:["Other rail runs","returns, wall rails and other runs"], picket:["Pickets","infill balusters"],
+    stub:["Pipe stubs","short pipe pieces between fittings, returns and ends"], toe_plate:["Toe plates","kick plate / flat bar at the walking surface"],
+    base_plate:["Base plates","bear on or bolt to the structure"], connection_plate:["Connection plates","join a member to a base plate or the structure"],
+    gusset:["Gussets","stiffeners"], bracket:["Brackets & clips",""], other:["Other labelled pieces",""] };
+  function roleName(role){ return (ROLE_NAMES[role]||[String(role||"").replace(/_/g," ")])[0]; }
+  function stockOf(r){ return (String(r.form_type||"")+" "+String(r.size||"")).trim(); }
+  // A row's form family, for "this line is named plate but takes pipe".
+  function famOfRow(r){ const f=String(r.form_type||"").toLowerCase();
+    return /plate/.test(f)?"plate":/pipe/.test(f)?"pipe":/tube|hss/.test(f)?"tube":/bar/.test(f)?"bar":/angle/.test(f)?"angle":/beam/.test(f)?"beam":/channel/.test(f)?"channel":/grat/.test(f)?"grating":(f||"other"); }
   function supplyKeys(r){
-    const k=["size:"+String(r.form_type||"")+" "+String(r.size||"")];
-    if(r.role) k.push("role:"+r.role);
+    const k=["size:"+String(r.form_type||"")+" "+String(r.size||"")];   // older ticks (by stock size) still match
+    if(r.role) k.push("role:"+r.role); else k.push("nolabel:"+stockOf(r));
     if(r.member_mark) k.push("mark:"+String(r.member_mark).trim().toLowerCase());
     return k;
   }
+  // ONE list, by part type, each showing the stock it is cut from — no second list by size to double up with.
+  // Pieces with no part type are listed by their stock. A part type cut from more than one size is flagged.
   function supplyGroups(R){
     const live=arr(R.rows).filter(function(r){ return r && !r.deleted && Number(r.quantity)>0 && String(r.disposition||"fabricate").toLowerCase()==="fabricate"; });
     const g={};
-    live.forEach(function(r){ const w=rowWeight(r), lb=w?w.total:0;
-      supplyKeys(r).forEach(function(k){ if(/^mark:/.test(k)) return;
-        if(!g[k]) g[k]={key:k, lb:0, rows:0, label:/^role:/.test(k)?String(k.slice(5)).replace(/_/g," ")+"s (by label)":k.slice(5)};
-        g[k].lb+=lb; g[k].rows++; }); });
-    return Object.keys(g).map(function(k){ return g[k]; }).sort(function(a,b){ return (/^size/.test(a.key)?0:1)-(/^size/.test(b.key)?0:1) || b.lb-a.lb; });
+    live.forEach(function(r){ const w=rowWeight(r), lb=w?w.total:0, k=r.role?"role:"+r.role:"nolabel:"+stockOf(r), s=stockOf(r)||"(no size)";
+      if(!g[k]) g[k]={key:k, lb:0, rows:0, sizes:{}, labelled:!!r.role,
+        label:r.role?roleName(r.role):s, desc:r.role?((ROLE_NAMES[r.role]||[])[1]||""):"no part type"};
+      g[k].lb+=lb; g[k].rows++; g[k].sizes[s]=(g[k].sizes[s]||0)+lb; });
+    return Object.keys(g).map(function(k){ const x=g[k]; x.mixed=Object.keys(x.sizes).length>1; return x; })
+      .sort(function(a,b){ return (a.labelled?0:1)-(b.labelled?0:1) || b.lb-a.lb; });
   }
+  // What a line's name says it brings: "Plasma Cut Plate" → plate. Empty = the name says nothing (no warning).
+  const LINE_FORM_WORDS=[[/plate|plasma|burn|laser|water\s*jet/i,["plate"]],[/pipe/i,["pipe"]],[/tube|hss/i,["tube"]],[/\bbar\b|flat/i,["bar"]],
+    [/angle/i,["angle"]],[/beam/i,["beam"]],[/channel/i,["channel"]],[/grat/i,["grating"]],[/post|rail|stub|handrail/i,["pipe","tube"]]];
+  function lineForms(name){ const out={}; LINE_FORM_WORDS.forEach(function(w){ if(w[0].test(String(name||""))) w[1].forEach(function(f){ out[f]=1; }); }); return out; }
   // The rows each included outside line supplies, deduplicated: {idx -> line key}.
   function suppliedRows(R,S){
     const want=[]; Object.keys(S.lines).forEach(function(k){ const l=S.lines[k]; if(l && l.status==="include" && arr(l.supplies).length) want.push([k,l.supplies]); });
@@ -1489,6 +1509,7 @@
   }
   const SUPPLY_OPEN={};   // which "supplies material" lists are open, kept across redraws
   function sumSupply(k,gi,el){ SUPPLY_OPEN[k]=true; const g=supplyGroups(loadResult())[gi]; if(g) sumSupply2(k,g.key,el); }
+  function sumSupplyKey(k,i,el){ SUPPLY_OPEN[k]=true; const l=sumState(loadResult()).lines[k]; const key=arr(l&&l.supplies)[i]; if(key) sumSupply2(k,key,el); }
   function sumSupply2(k,key,el){ sumEdit(function(S){ const l=Object.assign({},S.lines[k]||{}); const s=arr(l.supplies).filter(function(x){ return x!==key; });
     if(el.checked) s.push(key); l.supplies=s; if(!s.length) delete l.supplies; S.lines[k]=l; }); }
 
@@ -1576,7 +1597,7 @@
     const statusSel=function(k,st){ return '<select style="font-size:12px;padding:1px 3px;border:1px solid #dfe5ec;border-radius:5px" onchange="sumLine(\''+k+'\',\'status\',this)">'+
       [["","— not answered —"],["include","include (outside)"],["in_house","in house (Labor tab)"],["by_others","by others / not in scope"],["none","not needed"]].map(function(o){ return '<option value="'+o[0]+'"'+(String(st||"")===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select>'; };
     // "Supplies material": which steel this outside line brings, so it is not bought twice.
-    const SG=supplyGroups(R);
+    const SG=supplyGroups(R), SUP_ROWS=suppliedRows(R,S);
     // Only buyouts can bring steel (Mark 11-12: "why is material under trucking / delivery?").
     // Services — trucking, galvanizing, paint, detailing, inspection, installation, fasteners — never do.
     // A line that already has a tick keeps the picker so it can be cleared.
@@ -1584,12 +1605,23 @@
     const supplyPickHtml=function(k,l){
       const cur=arr(l.supplies); if(!SG.length) return "";
       if(!SUPPLY_LINES[k] && !l.extra && !cur.length) return "";
-      const lb=SG.filter(function(g){ return cur.indexOf(g.key)>-1; });
+      const on=SG.filter(function(g){ return cur.indexOf(g.key)>-1; });
+      const legacy=cur.map(function(key,i){ return {key:key,i:i}; }).filter(function(x){ return /^size:/.test(x.key); });
+      // The steel this line actually takes, by form — and any form its name does not cover.
+      const named=lineForms(l.label||(COST_CATS.find(function(c){ return c[0]===k; })||[])[1]);
+      const took={}; Object.keys(SUP_ROWS).forEach(function(i){ if(SUP_ROWS[i]!==k) return; const r=R.rows[i], w=rowWeight(r); const f=famOfRow(r); took[f]=(took[f]||0)+(w?w.total:0); });
+      const odd=Object.keys(named).length?Object.keys(took).filter(function(f){ return !named[f] && took[f]>=1; }):[];
+      const sizesTxt=function(g){ const ks=Object.keys(g.sizes).sort(function(a,b){ return g.sizes[b]-g.sizes[a]; });
+        return ks.map(function(s){ return esc(s)+(ks.length>1?' <span class="src">'+Math.round(g.sizes[s]).toLocaleString()+' lb</span>':''); }).join(' · '); };
       return '<details style="margin-top:3px;font-size:11.5px"'+(SUPPLY_OPEN[k]?' open':'')+' ontoggle="SUPPLY_OPEN[\''+k+'\']=this.open"><summary style="cursor:pointer;color:var(--blue)">'+
-          (cur.length?'supplies material: '+esc(lb.map(function(g){ return g.label; }).join(", ")):'supplies material? ▸')+'</summary>'+
-        '<div class="src" style="margin:3px 0">Tick the steel this line brings — it comes off the Material $ (still counted in the weight).</div>'+
-        SG.map(function(g,gi){ return '<label style="display:block;white-space:nowrap"><input type="checkbox"'+(cur.indexOf(g.key)>-1?' checked':'')+
-          ' onchange="sumSupply(\''+k+'\','+gi+',this)"> '+esc(g.label)+' <span class="src">'+Math.round(g.lb).toLocaleString()+' lb</span></label>'; }).join("")+'</details>';
+          (cur.length?'supplies: '+esc(on.map(function(g){ return g.label; }).concat(legacy.map(function(x){ return x.key.slice(5); })).join(", ")):'supplies material? ▸')+'</summary>'+
+        '<div class="src" style="margin:3px 0;white-space:normal;max-width:330px">Tick the parts this supplier brings already cut or bought. Their steel comes off Material $ (the weight still counts them for galvanizing, trucking and the weight check).</div>'+
+        SG.map(function(g,gi){ return '<label style="display:block;margin:2px 0;white-space:normal;max-width:340px"><input type="checkbox"'+(cur.indexOf(g.key)>-1?' checked':'')+
+          ' onchange="sumSupply(\''+k+'\','+gi+',this)"> <b>'+esc(g.label)+'</b> <span class="src">'+Math.round(g.lb).toLocaleString()+' lb'+(g.desc?' — '+esc(g.desc):'')+'</span>'+
+          (g.labelled?'<div class="src" style="margin-left:20px">'+sizesTxt(g)+(g.mixed?' <span style="color:var(--ylw);font-weight:600" title="One part type cut from more than one size — see the Weight check">⚠ mixed sizes</span>':'')+'</div>':'')+'</label>'; }).join("")+
+        (legacy.length?'<div class="src" style="margin-top:4px">Ticked on an older list, by stock size:</div>'+legacy.map(function(x){ return '<label style="display:block"><input type="checkbox" checked onchange="sumSupplyKey(\''+k+'\','+x.i+',this)"> '+esc(x.key.slice(5))+' <span class="src">(untick if the part types above cover it)</span></label>'; }).join(""):'')+
+        '</details>'+
+        (odd.length?'<div style="font-size:11.5px;color:var(--red);font-weight:600;white-space:normal;max-width:330px">⚠ Named “'+esc(l.label||k)+'” but takes '+odd.map(function(f){ return Math.round(took[f]).toLocaleString()+' lb of '+f; }).join(' and ')+' — untick those parts unless this supplier really brings them.</div>':'');
     };
     const outRow=function(k,label,unit,h,extra){
       const l=S.lines[k]||{}, on=l.status==="include", tot=on&&l.total!=null?Number(l.total):null;
@@ -1735,6 +1767,15 @@
       const R2=loadResult(); const key=function(s,m){ return WeldRules.sheetKey(s)+"|"+String(m||"").trim().toLowerCase(); };
       const role={}; arr(d.pieces).forEach(function(p){ role[key(p.source_sheet,p.member_mark)]=p.role; });
       let hit=0; arr(R2.rows).forEach(function(x){ const k=key(x.source_sheet,x.member_mark); if(role[k]){ x.role=role[k]; hit++; } });
+      // Same mark + same size = the same part: where the drawings were labelled in separate batches and one mark
+      // came back two ways (p277 post/stub), the clear majority wins. A tie is left for the Weight check to ask.
+      (function(){ const by={}; arr(R2.rows).forEach(function(x){ if(!x||x.deleted||!x.role||!x.member_mark) return;
+          const k=String(x.member_mark).trim().toLowerCase()+"|"+String(x.size||""); (by[k]=by[k]||[]).push(x); });
+        // Only a change of kind (post vs rail piece vs plate) — a mid rail here and a stub there can both be right.
+        Object.keys(by).forEach(function(k){ const n={}; by[k].forEach(function(x){ n[x.role]=(n[x.role]||0)+1; });
+          const rs=Object.keys(n).sort(function(a,b){ return n[b]-n[a]; }); if(rs.length<2 || n[rs[0]]===n[rs[1]]) return;
+          const top=rs[0], kind=roleKind(top);
+          by[k].forEach(function(x){ if(roleKind(x.role)!==kind){ x.role_was=x.role; x.role=top; } }); }); })();
       R2.drawing_counts=Object.assign({}, R2.drawing_counts||{});
       arr(d.drawings).forEach(function(c){ R2.drawing_counts[String(c.source_sheet)]={pipe_joints:Number(c.pipe_joints)||0, elbows:c.elbows!=null?Number(c.elbows):null,
         confidence:c.confidence!=null?Number(c.confidence):null, note:c.note||""}; });
@@ -3944,6 +3985,38 @@
   function wcFixDouble(sheet){ wcRowsDo(function(R){ arr(R.rows).forEach(function(r){ if(!wcIsDouble(r) || (sheet && !sameSheet(r.source_sheet,sheet))) return;
     const u=Math.max(1,Math.round(Number(r.units)||1)); r.qty_was=r.quantity; r.quantity=Math.max(1,Math.round(Number(r.quantity)/u)); r.qty_per_unit=r.quantity; r.quantity_total=r.quantity*u; r.dbl_ok=true; }); }); }
   function wcKeepDouble(sheet){ wcRowsDo(function(R){ arr(R.rows).forEach(function(r){ if(wcIsDouble(r) && (!sheet || sameSheet(r.source_sheet,sheet))) r.dbl_ok=true; }); }); }
+  // ONE PART TYPE, MORE THAN ONE SIZE (MCP-10013: 22 posts read XS, 13 read STD where the drawing's own row
+  // never printed the schedule; Mark: "All posts are 1-1/2" SCH 80 (XS)"). Per component + part type + form.
+  function wcMixedGroups(R){
+    const g={}; arr(R.rows).forEach(function(r,i){ if(!r||r.deleted||!(Number(r.quantity)>0)||!r.role||r.size_ok) return;
+      const k=String(r.component||"")+"|"+r.role+"|"+famOfRow(r); if(!g[k]) g[k]={key:k, comp:r.component||"", role:r.role, sizes:{}};
+      const s=String(r.size||""), w=rowWeight(r); g[k].sizes[s]=g[k].sizes[s]||{n:0,lb:0,sheets:{}}; g[k].sizes[s].n++; g[k].sizes[s].lb+=w?w.total:0;
+      if(r.source_sheet) g[k].sizes[s].sheets[r.source_sheet]=1; });
+    return Object.keys(g).map(function(k){ return g[k]; }).filter(function(x){ return Object.keys(x.sizes).length>1; });
+  }
+  function wcMixedFix(gi,size){ const G=wcMixedGroups(loadResult())[gi]; if(!G) return;
+    wcRowsDo(function(R){ arr(R.rows).forEach(function(r){ if(!r||r.deleted||String(r.component||"")+"|"+r.role+"|"+famOfRow(r)!==G.key) return;
+      if(String(r.size||"")!==size){ r.size_was=r.size; r.size=size; r.size_fixed="made "+size+" with the other "+roleName(r.role).toLowerCase(); } r.size_ok=true; }); }); }
+  function wcMixedKeep(gi){ const G=wcMixedGroups(loadResult())[gi]; if(!G) return;
+    wcRowsDo(function(R){ arr(R.rows).forEach(function(r){ if(r&&!r.deleted&&String(r.component||"")+"|"+r.role+"|"+famOfRow(r)===G.key) r.size_ok=true; }); }); }
+  // ONE MARK, DIFFERENT KINDS OF PART (p277: "post" on 8079/8080, "stub" on 8071/8072). Same mark + same size = the same
+  // piece. A straight piece can honestly be a mid rail in one assembly and a stub in another, so only a change of KIND
+  // is asked about: upright (post/picket) vs rail piece vs plate.
+  const ROLE_KIND={post:"upright",picket:"upright",top_rail:"rail",mid_rail:"rail",bottom_rail:"rail",rail:"rail",stub:"rail",
+    toe_plate:"plate",base_plate:"plate",connection_plate:"plate",gusset:"plate",bracket:"plate"};
+  function roleKind(role){ return ROLE_KIND[role]||role; }
+  function wcMarkRoleGroups(R){
+    const g={}; arr(R.rows).forEach(function(r){ if(!r||r.deleted||!(Number(r.quantity)>0)||!r.role||!r.member_mark||r.role_ok) return;
+      const k=String(r.member_mark).trim().toLowerCase()+"|"+String(r.size||""); if(!g[k]) g[k]={key:k, mark:String(r.member_mark).trim(), size:r.size||"", roles:{}};
+      g[k].roles[r.role]=g[k].roles[r.role]||[]; g[k].roles[r.role].push(String(r.source_sheet||"?")); });
+    return Object.keys(g).map(function(k){ return g[k]; }).filter(function(x){
+      const kinds={}; Object.keys(x.roles).forEach(function(r){ kinds[roleKind(r)]=1; }); return Object.keys(kinds).length>1; });
+  }
+  function wcMarkRoleFix(gi,role){ const G=wcMarkRoleGroups(loadResult())[gi]; if(!G) return;
+    wcRowsDo(function(R){ arr(R.rows).forEach(function(r){ if(r&&!r.deleted&&r.member_mark&&String(r.member_mark).trim().toLowerCase()+"|"+String(r.size||"")===G.key){
+      if(r.role!==role){ r.role_was=r.role; r.role=role; } r.role_ok=true; } }); }); }
+  function wcMarkRoleKeep(gi){ const G=wcMarkRoleGroups(loadResult())[gi]; if(!G) return;
+    wcRowsDo(function(R){ arr(R.rows).forEach(function(r){ if(r&&!r.deleted&&r.member_mark&&String(r.member_mark).trim().toLowerCase()+"|"+String(r.size||"")===G.key) r.role_ok=true; }); }); }
   // A drawing off its printed weight: looked at and accepted.
   function wcAcceptDrawing(sheet){ const R=loadResult(); const d=arr((R.synopsis||{}).drawing_scope).find(function(x){ return x && x.stated_weight && sameSheet(x.sheet,sheet); });
     if(d){ d.weight_ok=true; saveResult(R); render(); } }
@@ -4021,6 +4094,24 @@
         btn('Qty per ONE assembly on all','wcFixDouble()','Divide each Qty by the number built'));
       html+=box("dbl",'by drawing ▸',Object.keys(sh).map(function(k){ return '<div><b>'+esc(k)+'</b> (built '+sh[k].u+'×): '+sh[k].n+' row'+(sh[k].n===1?'':'s')+
         btn('Qty ÷ '+sh[k].u,'wcFixDouble(\''+q(k)+'\')','Divide each Qty on this drawing by the number built')+btn('keep','wcKeepDouble(\''+q(k)+'\')','The Qty is per one assembly already',true)+'</div>'; }).join("")); }
+    // 5. One part mark labelled as two different kinds of part — settle these first: they decide what a "post" is below.
+    const mr=wcMarkRoleGroups(R);
+    if(mr.length){
+      html+=line(null,'<b>'+mr.length+' part mark'+(mr.length===1?'':'s')+' labelled as two kinds of part</b> — the same mark and size is the same piece. Settle these first; they decide the part types below, the labor and the “supplies material” ticks.');
+      html+=box("markrole",'pick one ▸',mr.map(function(x,gi){ const rs=Object.keys(x.roles).sort(function(a,b){ return x.roles[b].length-x.roles[a].length; });
+        return '<div style="margin:3px 0"><b>'+esc(x.mark)+'</b> <span class="src">'+esc(x.size)+'</span>: '+rs.map(function(r){ return esc(roleName(r))+' on '+esc(x.roles[r].join(", ")); }).join(' · ')+
+          '<br>'+rs.map(function(r){ return btn('all '+esc(roleName(r).toLowerCase()),'wcMarkRoleFix('+gi+',\''+r+'\')','Label every '+x.mark+' as '+roleName(r).toLowerCase()); }).join("")+
+          btn('keep both','wcMarkRoleKeep('+gi+')','They really are different parts',true)+'</div>'; }).join("")); }
+    // 6. One part type cut from more than one size — usually a schedule the drawing did not print on that row.
+    const mx=wcMixedGroups(R);
+    if(mx.length){ bad++;
+      html+=line(false,'<b style="color:var(--red)">'+mx.length+' part type'+(mx.length===1?'':'s')+' with mixed sizes</b> — e.g. some posts XS and some STD. Usually one drawing\'s parts list did not print the schedule. Pick the size they all are, or keep them if the drawings really differ.');
+      html+=box("mixed",'pick the size ▸',mx.map(function(x,gi){ const ss=Object.keys(x.sizes).sort(function(a,b){ return x.sizes[b].n-x.sizes[a].n; });
+        return '<div style="margin:3px 0"><b>'+esc(roleName(x.role))+'</b>'+(x.comp?' <span class="src">('+esc(x.comp)+')</span>':'')+': '+
+          ss.map(function(s){ const sh=Object.keys(x.sizes[s].sheets).sort(function(a,b){ return a.localeCompare(b,undefined,{numeric:true}); });
+            return esc(s)+' <span class="src">'+x.sizes[s].n+' row'+(x.sizes[s].n===1?'':'s')+', '+fmtLb(x.sizes[s].lb)+' lb, on '+esc(sh.length>4?sh.slice(0,4).join(", ")+"…":sh.join(", "))+'</span>'; }).join(' · ')+
+          '<br>'+ss.map(function(s){ return btn('all '+esc(s),'wcMixedFix('+gi+',\''+q(s)+'\')','Set every '+roleName(x.role).toLowerCase()+' row in this component to '+s); }).join("")+
+          btn('sizes are right','wcMixedKeep('+gi+')','The drawings really use different sizes',true)+'</div>'; }).join("")); }
     return '<div class="card" id="weightCheck" style="border-color:'+(bad?'#f3c2bd':'#cfe6d3')+'"><div class="body" style="padding:10px 16px;background:'+(bad?'#fdf3f2':'#f3faf4')+'">'+
       '<div style="font-weight:700;font-size:13px;margin-bottom:2px">⚖ Weight check '+(bad?'<span style="color:var(--red)">— '+bad+' to look at before quoting</span>':'<span style="color:var(--grn)">— the take-off matches</span>')+'</div>'+html+'</div></div>';
   }

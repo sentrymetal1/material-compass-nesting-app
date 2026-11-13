@@ -511,6 +511,12 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "PIPE NOTATION: the only wall designations are STD (SCH 40), XS (SCH 80) and XXS. A digit run into the schedule belongs to the SIZE: " +
     "'PIPE 1-1/2\"STD', '1-1/22STD' or a line-wrapped '1-1/' + '2STD' is 1-1/2\" STD (SCH 40) — there is no '2STD' or 'double standard' schedule, " +
     "so never raise it as a question or conflict. (Amrize 2026-10-11: '2STD' became a decision and was quoted as XS.)\n" +
+    "PIPE SCHEDULE NOT PRINTED ON A ROW: never default it to STD silently. Take it, in this order, from the drawing's own general notes or " +
+    "material legend, then from the SAME part mark on another drawing, then from the same kind of part (posts, rails) elsewhere in the set. " +
+    "Say which in the row's note ('XS per mark p281 on 8075'). Only if nothing in the set states it, use STD, set confidence ≤ 0.6 and note " +
+    "'schedule not stated — assumed STD'. (MCP-10013 2026-11-12: 13 posts on 10066–10079 came out STD; every post on the job was XS.)\n" +
+    "SAME MARK, SAME PART: a part mark that appears on several drawings is one part — give it the same form, size and schedule everywhere " +
+    "unless a drawing plainly shows otherwise.\n" +
     "METRIC DRAWINGS: lengths are in FEET in your output. Convert millimetres by dividing by 304.8 (1 ft = 304.8 mm; 6414 mm = 21.04 ft, NOT 210.4). " +
     "Where the drawing also gives a bracketed imperial value like [13-1 5/16], use it. A flat bar given in mm as FB<thickness>x<width> " +
     "(e.g. FB6.35x101.6) is thickness x width converted to inches (1/4 x 4) — never write the width twice. " +
@@ -1688,7 +1694,8 @@ async function labelPieces(opts) {
       (batches.length > 1 ? "Only part of the drawing set is attached to this request (part " + (b + 1) + " of " + batches.length +
         "). Label ONLY the drawings you can see; leave the others out.\n\n" : "") +
       "For every drawing you can see: give each listed piece its role, and count the welded pipe-to-pipe joints in one assembly. " +
-      "Use the marks exactly as listed. Submit via submit_labels." });
+      "Use the marks exactly as listed. A mark that appears on several drawings is the same part: give it the same role on every drawing " +
+      "(a 1055 mm XS pipe that is a post on one drawing is a post on all of them). Submit via submit_labels." });
     const resp = await anthropic.messages.create({
       model: model.id, max_tokens: 16000,
       system: "You are Material Compass AI, reading steel fabrication drawings for a shop estimator. You label pieces that " +
