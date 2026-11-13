@@ -85,8 +85,7 @@ if(input.Load_Takeoff_Outside == true)
 
 ## Block 2 — NEW workflow "Load Take-off Outside Costs": MCP_Customer_Project_Form › Load of the form › Edited (its own workflow; leave Load Tabs and Fields alone)
 
-Shows the AI take-off's outside costs as a table in `Note_Takeoff_Outside`, which sits **under** the Item Sourcing Take-Off subform.
-One row per take-off line, then whether that category is on this project yet. Hidden when the take-off has no outside costs.
+Working on MCP-10013 2026-11-13. Builds the table in `Note_Takeoff_Outside` (under the Item Sourcing Take-Off subform) every time the project opens in Edit.
 
 ```
 // ---- AI take-off outside costs, as a table under Item Sourcing Take-Off -> Note_Takeoff_Outside ----
@@ -98,7 +97,7 @@ if(input.ID != null)
 		url :"https://material-compass-nesting-app-production.up.railway.app/api/takeoff/project-outside/" + input.ID
 		type :GET
 	];
-	toMap = toResp.toString().toMap();
+	toMap = ifnull(toResp,"").toString().toMap();
 	toLines = toMap.get("lines");
 	if(toLines != null && toLines.size() > 0)
 	{
@@ -153,12 +152,19 @@ if(input.ID != null)
 			uTxt = "-";
 			if(u != "" && u != "null")
 			{
-				uTxt = "$" + u;
+				if(u.toDecimal() < 1)
+				{
+					uTxt = "$" + u;
+				}
+				else
+				{
+					uTxt = "$" + utility.format_currency(u.toDecimal());
+				}
 			}
 			tTxt = "<span style='color:#b26a00'>no amount</span>";
 			if(t != "" && t != "null")
 			{
-				tTxt = utility.format_currency(t.toDecimal());
+				tTxt = "$" + utility.format_currency(t.toDecimal());
 				tkTot = tkTot + t.toDecimal();
 			}
 			// status once per category (on its first line)
@@ -176,20 +182,20 @@ if(input.ID != null)
 				}
 				else if(diff < 1 && diff > -1)
 				{
-					st = "<span style='color:#2e7d32'>matches - " + utility.format_currency(pj) + "</span>";
+					st = "<span style='color:#2e7d32'>matches - $" + utility.format_currency(pj) + "</span>";
 				}
 				else
 				{
-					st = "<span style='color:#555555'>" + utility.format_currency(pj) + " on project</span>";
+					st = "<span style='color:#555555'>$" + utility.format_currency(pj) + " on project</span>";
 				}
 			}
 			h = h + "<tr><td style='" + td + "'><b>" + c + "</b></td><td style='" + td + "'>" + d + "</td><td align='right' style='" + td + "'>" + qTxt + "</td><td align='right' style='" + td + "'>" + uTxt + "</td><td align='right' style='" + td + "'>" + tTxt + "</td><td style='" + td + "'>" + st + "</td></tr>";
 		}
-		h = h + "<tr><td colspan='4' style='padding:6px 10px'><b>Total outside, at cost</b></td><td align='right' style='padding:6px 10px'><b>" + utility.format_currency(tkTot) + "</b></td><td></td></tr>";
+		h = h + "<tr><td colspan='4' style='padding:6px 10px'><b>Total outside, at cost</b></td><td align='right' style='padding:6px 10px'><b>$" + utility.format_currency(tkTot) + "</b></td><td></td></tr>";
 		h = h + "</table>";
 		if(missing > 0)
 		{
-			h = h + "<div style='color:#b26a00;margin-top:6px'><b>" + missing + " categor" + if(missing == 1,"y","ies") + " not on this project yet.</b> Tick <b>Load AI take-off outside costs</b> above to add them, then save.</div>";
+			h = h + "<div style='color:#b26a00;margin-top:6px'><b>" + missing + " categor" + if(missing == 1,"y","ies") + " not on this project yet.</b> Tick <b>Load Takeoff Outside</b> above to add them, then save.</div>";
 		}
 		if(openEst > 0)
 		{
@@ -199,9 +205,14 @@ if(input.ID != null)
 		input.Note_Takeoff_Outside = h;
 	}
 }
-// Hidden at load — the form never opens on MISC ITEM SOURCING; the Tabs workflow (Block 3) shows them there.
-hide Note_Takeoff_Outside;
-hide Load_Takeoff_Outside;
+if(showTo)
+{
+	show Note_Takeoff_Outside;
+}
+else
+{
+	hide Note_Takeoff_Outside;
+}
 ```
 
 ## Block 3 — your existing tab-switch workflow: MCP_Customer_Project_Form › User input of `Tabs`
