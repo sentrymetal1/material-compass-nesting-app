@@ -1,9 +1,9 @@
 # AI take-off outside costs → project page
 
-Form: **MCP_Customer_Project_Form**, tab **Subcontract and Item Details** (the Item Sourcing Take-Off subform `Outsource_Details`).
+Form: **MCP_Customer_Project_Form**, tab **MISC ITEM SOURCING** (the `Tabs` choice) (the Item Sourcing Take-Off subform `Outsource_Details`).
 Server: `GET /api/takeoff/project-outside/<project ID>` (server/takeoff/projectOutside.js).
 
-## Fields to add (form builder, tab Subcontract and Item Details)
+## Fields to add (form builder, in the MISC ITEM SOURCING section)
 
 | Field type | Label | Link name | Where |
 |---|---|---|---|
@@ -199,8 +199,34 @@ if(input.ID != null)
 		input.Note_Takeoff_Outside = h;
 	}
 }
-if(!showTo)
+// Only on the MISC ITEM SOURCING tab (the form opens on another tab).
+if(!showTo || input.Tabs != "MISC ITEM SOURCING")
 {
 	hide Note_Takeoff_Outside;
 }
+if(input.Tabs != "MISC ITEM SOURCING")
+{
+	hide Load_Takeoff_Outside;
+}
+```
+
+## Block 3 — your existing tab-switch workflow: MCP_Customer_Project_Form › User input of `Tabs`
+
+Add the two new fields to the show/hide lists, so they appear on MISC ITEM SOURCING only.
+
+Inside the branch for **MISC ITEM SOURCING**:
+
+```
+show Load_Takeoff_Outside;
+if(ifnull(input.Note_Takeoff_Outside,"") != "")
+{
+	show Note_Takeoff_Outside;
+}
+```
+
+Inside **every other** tab branch (or once before the branches, if the workflow hides everything first):
+
+```
+hide Load_Takeoff_Outside;
+hide Note_Takeoff_Outside;
 ```
