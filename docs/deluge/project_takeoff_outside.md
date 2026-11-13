@@ -3,12 +3,12 @@
 Form: **MCP_Customer_Project_Form**, tab **Subcontract and Item Details** (the Item Sourcing Take-Off subform `Outsource_Details`).
 Server: `GET /api/takeoff/project-outside/<project ID>` (server/takeoff/projectOutside.js).
 
-## Fields to add (form builder, same tab, above the subform)
+## Fields to add (form builder, tab Subcontract and Item Details)
 
-| Field type | Label | Link name |
-|---|---|---|
-| Decision box | Load AI take-off outside costs | `Load_Takeoff_Outside` |
-| Add Notes | (leave blank) | `Note_Takeoff_Outside` |
+| Field type | Label | Link name | Where |
+|---|---|---|---|
+| Decision box | Load AI take-off outside costs | `Load_Takeoff_Outside` | ABOVE the Item Sourcing Take-Off subform |
+| Add Notes | (leave blank) | `Note_Takeoff_Outside` | directly BELOW the Item Sourcing Take-Off subform |
 
 ## Block 1 — Workflow: MCP_Customer_Project_Form › User input of `Load_Takeoff_Outside` (Created or Edited)
 
@@ -85,8 +85,11 @@ if(input.Load_Takeoff_Outside == true)
 
 ## Block 2 — Workflow: MCP_Customer_Project_Form › Load of the form (Edit) — add at the END of the existing OnLoad
 
+Shows the AI take-off's outside costs as a table in `Note_Takeoff_Outside`, which sits **under** the Item Sourcing Take-Off subform.
+One row per take-off line, then whether that category is on this project yet. Hidden when the take-off has no outside costs.
+
 ```
-// ---- AI take-off outside costs vs this project -> Note_Takeoff_Outside ----
+// ---- AI take-off outside costs, as a table under Item Sourcing Take-Off -> Note_Takeoff_Outside ----
 showTo = false;
 if(input.ID != null)
 {
@@ -100,22 +103,20 @@ if(input.ID != null)
 	if(toLines != null && toLines.size() > 0)
 	{
 		showTo = true;
+		// take-off total per category (two lines can share one, e.g. Miscellaneous)
 		tkAmt = Map();
-		tkOrder = List();
 		for each ln in toLines
 		{
 			c = ifnull(ln.get("category"),"Miscellaneous").toString();
-			if(!tkOrder.contains(c))
-			{
-				tkOrder.add(c);
-				tkAmt.put(c,0);
-			}
 			t = ifnull(ln.get("total"),"").toString();
+			tv = 0;
 			if(t != "" && t != "null")
 			{
-				tkAmt.put(c,tkAmt.get(c) + t.toDecimal());
+				tv = t.toDecimal();
 			}
+			tkAmt.put(c,ifnull(tkAmt.get(c),0) + tv);
 		}
+		// this project's rows per category
 		pjAmt = Map();
 		openEst = 0;
 		for each r in input.Outsource_Details
@@ -127,40 +128,72 @@ if(input.ID != null)
 				openEst = openEst + 1;
 			}
 		}
+		th = "padding:5px 10px;border-bottom:2px solid #c9d8ea;font-size:11px;color:#5a6b7d;text-transform:uppercase";
+		td = "padding:5px 10px;border-bottom:1px solid #e6edf5";
+		h = "<div style='border:1px solid #c9d8ea;border-radius:8px;padding:10px 12px;background:#f6f9fd;font-size:13px;margin-top:6px'>";
+		h = h + "<b>AI take-off outside costs</b> <span style='color:#5a6b7d'>- at cost, from the approved take-off</span>";
+		h = h + "<table style='border-collapse:collapse;margin-top:6px;font-size:13px;width:100%;background:#ffffff'>";
+		h = h + "<tr><th align='left' style='" + th + "'>Category of Item</th><th align='left' style='" + th + "'>Description</th><th align='right' style='" + th + "'>Qty</th><th align='right' style='" + th + "'>Unit Amount</th><th align='right' style='" + th + "'>Total Amt</th><th align='left' style='" + th + "'>On this project</th></tr>";
+		tkTot = 0;
 		missing = 0;
-		h = "<div style='border:1px solid #c9d8ea;border-radius:8px;padding:10px 12px;background:#f6f9fd;font-size:13px'>";
-		h = h + "<b>AI take-off outside costs vs this project</b>";
-		h = h + "<table style='border-collapse:collapse;margin-top:6px;font-size:13px'>";
-		h = h + "<tr><th align='left' style='padding:3px 14px 3px 0'>Category</th><th align='right' style='padding:3px 14px'>AI take-off</th><th align='right' style='padding:3px 14px'>On this project</th><th></th></tr>";
-		for each c in tkOrder
+		shown = List();
+		for each ln in toLines
 		{
-			tk = tkAmt.get(c).toDecimal();
-			pj = ifnull(pjAmt.get(c),0).toDecimal();
-			diff = pj - tk;
-			if(pj == 0)
+			c = ifnull(ln.get("category"),"Miscellaneous").toString();
+			d = ifnull(ln.get("description"),"").toString();
+			un = ifnull(ln.get("unit"),"").toString();
+			q = ifnull(ln.get("qty"),"").toString();
+			u = ifnull(ln.get("unit_amt"),"").toString();
+			t = ifnull(ln.get("total"),"").toString();
+			qTxt = "-";
+			if(q != "" && q != "null")
 			{
-				st = "<span style='color:#b26a00'><b>not entered</b></span>";
-				missing = missing + 1;
+				qTxt = q + " " + un;
 			}
-			else if(diff < 1 && diff > -1)
+			uTxt = "-";
+			if(u != "" && u != "null")
 			{
-				st = "<span style='color:#2e7d32'>matches</span>";
+				uTxt = "$" + u;
 			}
-			else
+			tTxt = "<span style='color:#b26a00'>no amount</span>";
+			if(t != "" && t != "null")
 			{
-				st = "<span style='color:#555555'>changed from the take-off</span>";
+				tTxt = utility.format_currency(t.toDecimal());
+				tkTot = tkTot + t.toDecimal();
 			}
-			tkTxt = if(tk == 0,"no amount yet",utility.format_currency(tk));
-			h = h + "<tr><td style='padding:3px 14px 3px 0'>" + c + "</td><td align='right' style='padding:3px 14px'>" + tkTxt + "</td><td align='right' style='padding:3px 14px'>" + utility.format_currency(pj) + "</td><td style='padding:3px 14px'>" + st + "</td></tr>";
+			// status once per category (on its first line)
+			st = "";
+			if(!shown.contains(c))
+			{
+				shown.add(c);
+				tk = tkAmt.get(c).toDecimal();
+				pj = ifnull(pjAmt.get(c),0).toDecimal();
+				diff = pj - tk;
+				if(pj == 0)
+				{
+					st = "<span style='color:#b26a00'><b>not entered</b></span>";
+					missing = missing + 1;
+				}
+				else if(diff < 1 && diff > -1)
+				{
+					st = "<span style='color:#2e7d32'>matches - " + utility.format_currency(pj) + "</span>";
+				}
+				else
+				{
+					st = "<span style='color:#555555'>" + utility.format_currency(pj) + " on project</span>";
+				}
+			}
+			h = h + "<tr><td style='" + td + "'><b>" + c + "</b></td><td style='" + td + "'>" + d + "</td><td align='right' style='" + td + "'>" + qTxt + "</td><td align='right' style='" + td + "'>" + uTxt + "</td><td align='right' style='" + td + "'>" + tTxt + "</td><td style='" + td + "'>" + st + "</td></tr>";
 		}
+		h = h + "<tr><td colspan='4' style='padding:6px 10px'><b>Total outside, at cost</b></td><td align='right' style='padding:6px 10px'><b>" + utility.format_currency(tkTot) + "</b></td><td></td></tr>";
 		h = h + "</table>";
 		if(missing > 0)
 		{
-			h = h + "<div style='color:#b26a00;margin-top:6px'><b>" + missing + " outside cost(s) from the take-off are not on this project.</b> Tick <b>Load AI take-off outside costs</b> to add them, then save.</div>";
+			h = h + "<div style='color:#b26a00;margin-top:6px'><b>" + missing + " categor" + if(missing == 1,"y","ies") + " not on this project yet.</b> Tick <b>Load AI take-off outside costs</b> above to add them, then save.</div>";
 		}
 		if(openEst > 0)
 		{
-			h = h + "<div style='margin-top:4px'>" + openEst + " row(s) are still AI take-off estimates with no supplier - confirm the supplier and price before submitting.</div>";
+			h = h + "<div style='margin-top:4px'>" + openEst + " row(s) above are still AI take-off estimates with no supplier - confirm the supplier and price before submitting.</div>";
 		}
 		h = h + "</div>";
 		input.Note_Takeoff_Outside = h;
