@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.96 · 2026-11-12 · outside costs snapshot for the project page";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.97 · 2026-11-12 · supplies-material picker on buyout lines only";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1577,8 +1577,13 @@
       [["","— not answered —"],["include","include (outside)"],["in_house","in house (Labor tab)"],["by_others","by others / not in scope"],["none","not needed"]].map(function(o){ return '<option value="'+o[0]+'"'+(String(st||"")===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select>'; };
     // "Supplies material": which steel this outside line brings, so it is not bought twice.
     const SG=supplyGroups(R);
+    // Only buyouts can bring steel (Mark 11-12: "why is material under trucking / delivery?").
+    // Services — trucking, galvanizing, paint, detailing, inspection, installation, fasteners — never do.
+    // A line that already has a tick keeps the picker so it can be cleared.
+    const SUPPLY_LINES={other:1,fittings:1,grating:1,decking:1,machining:1};
     const supplyPickHtml=function(k,l){
       const cur=arr(l.supplies); if(!SG.length) return "";
+      if(!SUPPLY_LINES[k] && !l.extra && !cur.length) return "";
       const lb=SG.filter(function(g){ return cur.indexOf(g.key)>-1; });
       return '<details style="margin-top:3px;font-size:11.5px"'+(SUPPLY_OPEN[k]?' open':'')+' ontoggle="SUPPLY_OPEN[\''+k+'\']=this.open"><summary style="cursor:pointer;color:var(--blue)">'+
           (cur.length?'supplies material: '+esc(lb.map(function(g){ return g.label; }).join(", ")):'supplies material? ▸')+'</summary>'+
