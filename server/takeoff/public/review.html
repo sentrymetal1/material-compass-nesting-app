@@ -217,7 +217,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.95 · 2026-11-12 · labor not marked up";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.96 · 2026-11-12 · outside costs snapshot for the project page";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -285,6 +285,8 @@
     if(result && params.project_id) result.__project = params.project_id;  // tag so it can't leak across projects
     window.TAKEOFF_RESULT = result;
     if(result && result.__demo) return;   // never persist demo/sample data (was polluting localStorage)
+    // The project page's "Load take-off outside costs" reads this snapshot (server/takeoff/projectOutside.js).
+    if(result && result.cost_summary){ try{ result.cost_summary.project_out=projOutLines(result); }catch(e){} }
     try { sessionStorage.setItem("takeoff_result", JSON.stringify(result)); } catch(e){}
     // Say so if the browser refuses its copy (usually: it has grown past the browser's storage limit).
     // The project save still runs, but closing the tab before it succeeds would lose the work.

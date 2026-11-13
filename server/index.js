@@ -9,6 +9,7 @@ const FormData = require('form-data');
 const { takeoffHandler, reviseHandler, chatHandler, indexHandler, askHandler, pricingHandler, inspectHandler, addendaHandler, repairHandler, labelPiecesHandler } = require('./takeoff/route');
 const takeoffSnap = require('./takeoff/snap');   // size matching shared with the post-run snapper
 const filestore = require('./filestore');        // the project's own copy of the drawings
+const projectOutside = require('./takeoff/projectOutside');   // take-off outside costs → project page
 const nestStore = require('./nestStore');        // a saved nesting run's stock pieces + cuts, one file per run
 const { SUPPLY_REPORT: STRUCT_STOCK_REPORT } = require('./structuralMatch');   // unfiltered structural stock report
 
@@ -1929,6 +1930,8 @@ app.post('/api/takeoff/save', async (req, res) => {
     }
     const recId = (zr.data && zr.data.data && zr.data.data.ID) || recKnown || null;
     if (recId && ids[project_id] !== String(recId)) { ids[project_id] = String(recId); saveTakeoffSavedIds(ids); }
+    // The project page's "Load take-off outside costs" reads this copy — no data-service call.
+    try { projectOutside.remember(filestore, project_id, typeof pkg === 'string' ? JSON.parse(pkg) : pkg); } catch (e) { /* best effort */ }
     // best-effort: set the relational lookup so the take-off relates to the project natively.
     // Done separately so a lookup rejection can never break the (text-keyed) save — and only when
     // the record is new; it never changes after that.
@@ -1947,34 +1950,57 @@ app.post('/api/takeoff/save', async (req, res) => {
   }
 });
 
+// The saved take-off package for a project: { found, package, updated_at, id } or { found:false, damaged? }.
+async function loadSavedTakeoff(project_id) {
+  const token = await getAccessToken();
+  const base = creatorApiBase();
+  let rec = null;
+  try {
+    const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID=="' + project_id + '")&limit=1', { headers: zohoHeaders(token) });
+    rec = q.data && q.data.data && q.data.data[0];
+  } catch (e) { /* no records */ }
+  if (rec && rec.ID) { const ids = takeoffSavedIds(); if (ids[project_id] !== String(rec.ID)) { ids[project_id] = String(rec.ID); saveTakeoffSavedIds(ids); } }
+  if (!rec || !rec.Package) return { found: false };
+  try {
+    let s = String(rec.Package);
+    if (s.indexOf('vol:') === 0) {   // overflowed to the Railway volume — see the save route
+      const v = filestore.readJson(s.slice(4), null);
+      if (!v || !v.package || String(v.project_id) !== String(project_id)) throw new Error('volume copy ' + s.slice(4) + ' missing');
+      s = String(v.package);
+    }
+    const pkg = JSON.parse(s.indexOf('gz:') === 0 ? zlib.gunzipSync(Buffer.from(s.slice(3), 'base64')).toString('utf8') : s);
+    return { found: true, package: pkg, updated_at: rec.Updated_At || null, id: rec.ID };
+  } catch (e) {
+    // Say so. Reporting a damaged save as "none" sent the page off to look elsewhere.
+    console.error('[takeoff] saved package for ' + project_id + ' does not parse (' + String(rec.Package).length + ' chars):', e.message);
+    return { found: false, damaged: true };
+  }
+}
+
+// AI take-off → project page: the included outside costs, shaped for the project's Item Sourcing
+// Take-Off rows (read by the project form's Deluge). Volume copy first; the saved package otherwise.
+app.get('/api/takeoff/project-outside/:project_id', async (req, res) => {
+  try {
+    const project_id = String(req.params.project_id || '');
+    if (!/^\d+$/.test(project_id)) return res.status(400).json({ ok: false, error: 'project_id required' });
+    const v = filestore.readJson(projectOutside.fileFor(project_id), null);
+    if (v && Array.isArray(v.lines) && String(v.project_id) === project_id) return res.json(projectOutside.reply(project_id, v.saved_at, v.lines));
+    const s = await loadSavedTakeoff(project_id);
+    if (!s.found) return res.json({ ok: true, found: false, count: 0, total: 0, no_amount: 0, lines: [] });
+    projectOutside.remember(filestore, project_id, s.package);
+    return res.json(projectOutside.reply(project_id, s.updated_at, projectOutside.outsideLines(s.package)));
+  } catch (err) {
+    console.error('takeoff project-outside error:', err.message || String(err));
+    return res.status(500).json({ ok: false, error: 'Could not read the take-off' });
+  }
+});
+
 // AI take-off LOAD — fetch the saved package for a project (for re-opening the take-off).
 app.get('/api/takeoff/saved/:project_id', async (req, res) => {
   try {
-    const project_id = req.params.project_id;
-    const token = await getAccessToken();
-    const base = creatorApiBase();
-    let rec = null;
-    try {
-      const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID=="' + project_id + '")&limit=1', { headers: zohoHeaders(token) });
-      rec = q.data && q.data.data && q.data.data[0];
-    } catch (e) { /* no records */ }
-    if (rec && rec.ID) { const ids = takeoffSavedIds(); if (ids[project_id] !== String(rec.ID)) { ids[project_id] = String(rec.ID); saveTakeoffSavedIds(ids); } }
-    if (!rec || !rec.Package) return res.json({ ok: true, found: false });
-    let pkg;
-    try {
-      let s = String(rec.Package);
-      if (s.indexOf('vol:') === 0) {   // overflowed to the Railway volume — see the save route
-        const v = filestore.readJson(s.slice(4), null);
-        if (!v || !v.package || String(v.project_id) !== String(project_id)) throw new Error('volume copy ' + s.slice(4) + ' missing');
-        s = String(v.package);
-      }
-      pkg = JSON.parse(s.indexOf('gz:') === 0 ? zlib.gunzipSync(Buffer.from(s.slice(3), 'base64')).toString('utf8') : s);
-    } catch (e) {
-      // Say so. Reporting a damaged save as "none" sent the page off to look elsewhere.
-      console.error('[takeoff] saved package for ' + project_id + ' does not parse (' + String(rec.Package).length + ' chars):', e.message);
-      return res.json({ ok: true, found: false, damaged: true });
-    }
-    return res.json({ ok: true, found: true, package: pkg, updated_at: rec.Updated_At || null, id: rec.ID });
+    const s = await loadSavedTakeoff(req.params.project_id);
+    if (!s.found) return res.json(s.damaged ? { ok: true, found: false, damaged: true } : { ok: true, found: false });
+    return res.json({ ok: true, found: true, package: s.package, updated_at: s.updated_at, id: s.id });
   } catch (err) {
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('takeoff load error:', detail);
