@@ -83,7 +83,7 @@ if(input.Load_Takeoff_Outside == true)
 }
 ```
 
-## Block 2 — Workflow: MCP_Customer_Project_Form › Load of the form (Edit) — add at the END of the existing OnLoad
+## Block 2 — NEW workflow "Load Take-off Outside Costs": MCP_Customer_Project_Form › Load of the form › Edited (its own workflow; leave Load Tabs and Fields alone)
 
 Shows the AI take-off's outside costs as a table in `Note_Takeoff_Outside`, which sits **under** the Item Sourcing Take-Off subform.
 One row per take-off line, then whether that category is on this project yet. Hidden when the take-off has no outside costs.
@@ -199,15 +199,9 @@ if(input.ID != null)
 		input.Note_Takeoff_Outside = h;
 	}
 }
-// Only on the MISC ITEM SOURCING tab (the form opens on another tab).
-if(!showTo || input.Tabs != "MISC ITEM SOURCING")
-{
-	hide Note_Takeoff_Outside;
-}
-if(input.Tabs != "MISC ITEM SOURCING")
-{
-	hide Load_Takeoff_Outside;
-}
+// Hidden at load — the form never opens on MISC ITEM SOURCING; the Tabs workflow (Block 3) shows them there.
+hide Note_Takeoff_Outside;
+hide Load_Takeoff_Outside;
 ```
 
 ## Block 3 — your existing tab-switch workflow: MCP_Customer_Project_Form › User input of `Tabs`
