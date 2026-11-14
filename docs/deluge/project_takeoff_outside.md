@@ -321,12 +321,26 @@ if(input.ID != null)
 			}
 			tkAmt.put(c,ifnull(tkAmt.get(c),0) + tv);
 		}
-		// this project's rows per category
+		// this project's SAVED rows per bucket - read from the database, not the form buffer
+		// (on load the buffer can come back empty), bucket from the row's Item Type, else its text
 		pjAmt = Map();
 		openEst = 0;
-		for each r in input.Outsource_Details
+		bucketOf = Map();
+		for each t2 in Project_Items_and_Subcontracting_Types[ID != 0]
 		{
-			c = ifnull(r.Category_of_Item,"").toString();
+			bucketOf.put(t2.ID.toString(),ifnull(t2.Category_of_Item,"Miscellaneous"));
+		}
+		for each r in Project_Outsource_Details_Form[MCP_Customer_Project_Form == input.ID]
+		{
+			c = "";
+			if(r.Item_Type != null)
+			{
+				c = ifnull(bucketOf.get(r.Item_Type.toString()),"");
+			}
+			if(c == "")
+			{
+				c = ifnull(r.Category_of_Item,"").toString();
+			}
 			pjAmt.put(c,ifnull(pjAmt.get(c),0) + ifnull(r.Total_Amount,0));
 			if(ifnull(r.Comments,"").startsWith("AI take-off estimate") && r.Subcontractor_Supplier == null)
 			{
@@ -374,7 +388,7 @@ if(input.ID != null)
 				tkTot = tkTot + t.toDecimal();
 			}
 			// status once per category (on its first line)
-			st = "";
+			st = "<span style='color:#8a96a3'>included in the " + c + " line above</span>";
 			if(!shown.contains(c))
 			{
 				shown.add(c);
