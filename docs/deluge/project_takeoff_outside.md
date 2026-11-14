@@ -108,6 +108,29 @@ if(input.Load_Takeoff_Outside == true)
 						one.put("total",ln.get("total"));
 						pl.add(one);
 					}
+					// shared-cost note on every row of a line split across components (field Allocation_Note)
+					allocTxt = "";
+					if(pl.size() > 1)
+					{
+						lt = ifnull(ln.get("total"),"").toString();
+						ltTxt = "";
+						if(lt != "" && lt != "null")
+						{
+							ltTxt = " $" + utility.format_currency(lt.toDecimal());
+						}
+						allocTxt = "Shared cost:" + ltTxt + " " + ifnull(ln.get("description"),"").toString() + ", split by " + ifnull(ln.get("split_basis"),"weight").toString() + ":";
+						for each pa in pl
+						{
+							pt = ifnull(pa.get("total"),"").toString();
+							ptTxt = "";
+							if(pt != "" && pt != "null")
+							{
+								ptTxt = " = $" + utility.format_currency(pt.toDecimal());
+							}
+							allocTxt = allocTxt + "
+" + ifnull(pa.get("component"),"").toString() + " " + ifnull(pa.get("pct"),"").toString() + "%" + ptTxt;
+						}
+					}
 					for each p in pl
 					{
 						row = MCP_Customer_Project_Form.Outsource_Details();
@@ -137,6 +160,7 @@ if(input.Load_Takeoff_Outside == true)
 							d = d + " - " + ifnull(p.get("pct"),"").toString() + "% share";
 						}
 						row.Description = d;
+						row.Allocation_Note = allocTxt;
 						row.Date_field = zoho.currentdate;
 						q = ifnull(p.get("qty"),"").toString();
 						if(q != "" && q != "null")
