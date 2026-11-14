@@ -1346,7 +1346,7 @@
     // Typed % for some components: the rest share what is left, by weight. Over 100 → scaled down.
     if(man){ const typed=names.filter(function(c){ return man[c]!=null&&Number(man[c])>=0; });
       if(typed.length){ const tsum=typed.reduce(function(a,c){ return a+Number(man[c]); },0), rest=names.filter(function(c){ return typed.indexOf(c)<0; });
-        const left=Math.max(0,100-tsum), rw=rest.reduce(function(a,c){ return a+w[c]; },0), scale=tsum>100?100/tsum:1;
+        const left=Math.max(0,100-tsum), rw=rest.reduce(function(a,c){ return a+w[c]; },0), scale=(tsum>100||!rest.length)&&tsum>0?100/tsum:1;
         parts=typed.map(function(c){ return {component:c, pct:Number(man[c])*scale/100}; })
           .concat(rest.map(function(c){ return {component:c, pct:left/100*(rw>0?w[c]/rw:1/rest.length)}; }));
         basis=rest.length&&left>0?"% typed, the rest by weight":"% typed"; } }
