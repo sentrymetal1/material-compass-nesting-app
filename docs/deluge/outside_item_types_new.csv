@@ -1,0 +1,25 @@
+Item Type,Category of Item,Code,Default Unit,Can Supply Material
+Plasma Cutting,Cutting,plasma_cut,lot,true
+Laser Cutting,Cutting,laser_cut,lot,true
+Oxy-Fuel Cutting,Cutting,oxy_cut,lot,true
+Waterjet Cutting,Cutting,waterjet_cut,lot,true
+Saw Cutting,Cutting,saw_cut,ea,true
+Shearing,Cutting,shear,lot,true
+Punching,Cutting,punch,ea,false
+Coping,Cutting,cope,ea,false
+Beam Drill / Saw Line,Cutting,beam_line,lot,true
+Press Brake Forming,Forming & Rolling,brake_form,lot,true
+Pipe & Tube Bending,Forming & Rolling,pipe_bend,ea,true
+Drilling & Tapping,Machining,drill_tap,ea,false
+Pipe Threading / Grooving / Beveling,Machining,pipe_end_prep,ea,false
+Outside Welding,Outside Welding & Fab,outside_weld,lot,false
+Outside Fabrication,Outside Welding & Fab,outside_fab,lot,true
+Heat Treating / Stress Relief,Heat Treat,heat_treat,lb,false
+Powder Coating,Paint & Coatings,powder_coat,sq ft,false
+Anodizing,Paint & Coatings,anodize,lot,false
+Plating,Paint & Coatings,plating,lot,false
+Passivation,Paint & Coatings,passivate,lot,false
+Valves,Fittings & Valves,valves,ea,true
+Engineering / PE Stamp,Engineering & Detailing,engineering,lot,false
+Hydro / Pressure Testing,Inspection & Testing,hydro_test,lot,false
+Rigging / Crane,Installation & Rigging,rigging,lot,false

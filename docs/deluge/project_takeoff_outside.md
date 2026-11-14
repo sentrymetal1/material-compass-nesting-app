@@ -10,10 +10,15 @@ Server: `GET /api/takeoff/project-outside/<project ID>` (server/takeoff/projectO
 | Decision box | Load AI take-off outside costs | `Load_Takeoff_Outside` | ABOVE the Item Sourcing Take-Off subform |
 | Add Notes | (leave blank) | `Note_Takeoff_Outside` | directly BELOW the Item Sourcing Take-Off subform |
 
-## Block 1 — Workflow: MCP_Customer_Project_Form › User input of `Load_Takeoff_Outside` (Created or Edited)
+## Block 1 — Load v3 (2026-11-14). Workflow "Load Take-off Outside Rows": NEW PROJECT SUBMITTAL › User input of `Load_Takeoff_Outside` (Created or Edited)
+
+Replaces v1/v2. Each take-off line now carries an Item Type **code** (server/takeoff/public/outside-types.js =
+the Zoho table *Project Items and Subcontracting Types*). The row gets that **Item Type** and its **Category of Item**
+(the bucket), so it lands in the right Outsource Total. Totals are recounted here because rows added by script do
+not fire the Outsource Recount workflows (docs/deluge/project_outsource_totals.md — same bucket → field map).
 
 ```
-// Load the AI take-off's outside costs into Item Sourcing Take-Off, supplier left blank.
+// ==== Load the AI take-off's outside costs into Item Sourcing Take-Off (v3: Item Type by code) ====
 if(input.Load_Takeoff_Outside == true)
 {
 	input.Load_Takeoff_Outside = false;
@@ -42,7 +47,7 @@ if(input.Load_Takeoff_Outside == true)
 				url :"https://material-compass-nesting-app-production.up.railway.app/api/takeoff/project-outside/" + input.ID
 				type :GET
 			];
-			respMap = resp.toString().toMap();
+			respMap = ifnull(resp,"").toString().toMap();
 			lines = respMap.get("lines");
 			if(lines == null || lines.size() == 0)
 			{
@@ -50,11 +55,36 @@ if(input.Load_Takeoff_Outside == true)
 			}
 			else
 			{
+				// Item Types by Code
+				typeId = Map();
+				typeCat = Map();
+				for each t in Project_Items_and_Subcontracting_Types[ID != 0]
+				{
+					if(ifnull(t.Code,"") != "")
+					{
+						typeId.put(t.Code,t.ID);
+						typeCat.put(t.Code,ifnull(t.Category_of_Item,"Miscellaneous"));
+					}
+				}
+				// the new rows, and their money by bucket
 				rows = Collection();
+				cat = Map();
+				grand = 0;
 				for each ln in lines
 				{
+					code = ifnull(ln.get("code"),"other").toString();
+					if(!typeId.containKey(code))
+					{
+						code = "other";
+					}
 					row = MCP_Customer_Project_Form.Outsource_Details();
-					row.Category_of_Item = ifnull(ln.get("category"),"Miscellaneous").toString();
+					b = "Miscellaneous";
+					if(typeId.containKey(code))
+					{
+						row.Item_Type = typeId.get(code);
+						b = typeCat.get(code);
+					}
+					row.Category_of_Item = b;
 					row.Description = ifnull(ln.get("description"),"").toString();
 					row.Date_field = zoho.currentdate;
 					row.Customer_Entry_Form = input.MANUFACTURE;
@@ -68,15 +98,91 @@ if(input.Load_Takeoff_Outside == true)
 					{
 						row.Unit_Amt = u.toDecimal();
 					}
-					t = ifnull(ln.get("total"),"").toString();
-					if(t != "" && t != "null")
+					amt = 0;
+					tt = ifnull(ln.get("total"),"").toString();
+					if(tt != "" && tt != "null")
 					{
-						row.Total_Amount = t.toDecimal();
+						amt = tt.toDecimal();
+						row.Total_Amount = amt;
 					}
 					row.Comments = "AI take-off estimate - confirm supplier and price (" + ifnull(ln.get("unit"),"").toString() + ")";
 					rows.insert(row);
+					cat.put(b,ifnull(cat.get(b),0) + amt);
+					grand = grand + amt;
+				}
+				// plus the rows already on the project (by their Item Type, else their text)
+				buckets = {"Cutting","Decking","Engineering & Detailing","Fasteners & Hardware","Fittings & Valves","Forming & Rolling","Freight","Galvanize","Grating","Heat Treat","Inspection & Testing","Installation & Rigging","Machining","Miscellaneous","Outside Welding & Fab","Paint & Coatings"};
+				bucketOf = Map();
+				for each t2 in Project_Items_and_Subcontracting_Types[ID != 0]
+				{
+					bucketOf.put(t2.ID.toString(),ifnull(t2.Category_of_Item,"Miscellaneous"));
+				}
+				for each r in input.Outsource_Details
+				{
+					amt = ifnull(r.Total_Amount,0);
+					if(amt != 0)
+					{
+						b = "";
+						if(r.Item_Type != null)
+						{
+							b = ifnull(bucketOf.get(r.Item_Type.toString()),"");
+						}
+						if(b == "")
+						{
+							b = ifnull(r.Category_of_Item,"").trim();
+						}
+						if(!buckets.contains(b))
+						{
+							b = "Miscellaneous";
+						}
+						cat.put(b,ifnull(cat.get(b),0) + amt);
+						grand = grand + amt;
+					}
 				}
 				input.Outsource_Details.insert(rows);
+				input.Outsource_Blast_Paint = ifnull(cat.get("Paint & Coatings"),0);
+				input.Outsource_Cutting = ifnull(cat.get("Cutting"),0);
+				input.Outsource_Decking = ifnull(cat.get("Decking"),0);
+				input.Outsource_Detailing = ifnull(cat.get("Engineering & Detailing"),0);
+				input.Outsource_Fasteners = ifnull(cat.get("Fasteners & Hardware"),0);
+				input.Outsource_Fittings = ifnull(cat.get("Fittings & Valves"),0);
+				input.Outsource_Forming_Rolling = ifnull(cat.get("Forming & Rolling"),0);
+				input.Outsource_Galvanize = ifnull(cat.get("Galvanize"),0);
+				input.Outsource_Grating = ifnull(cat.get("Grating"),0);
+				input.Outsource_Heat_Treat = ifnull(cat.get("Heat Treat"),0);
+				input.Outsource_Inspection = ifnull(cat.get("Inspection & Testing"),0);
+				input.Outsource_Installation = ifnull(cat.get("Installation & Rigging"),0);
+				input.Outsource_Machining = ifnull(cat.get("Machining"),0);
+				input.Outsource_Misc = ifnull(cat.get("Miscellaneous"),0);
+				input.Outsource_Outside_Welding_Fab = ifnull(cat.get("Outside Welding & Fab"),0);
+				input.Outsource_Trucking = ifnull(cat.get("Freight"),0);
+				input.Outsource_Total_Amount = grand;
+				for each otr in input.Outsource_Totals
+				{
+					if(otr.Project_Number_ID == input.ID)
+					{
+						otr.Blast_Paint = ifnull(cat.get("Paint & Coatings"),0);
+						otr.Cutting = ifnull(cat.get("Cutting"),0);
+						otr.Decking = ifnull(cat.get("Decking"),0);
+						otr.Detailing = ifnull(cat.get("Engineering & Detailing"),0);
+						otr.Fasteners = ifnull(cat.get("Fasteners & Hardware"),0);
+						otr.Fittings = ifnull(cat.get("Fittings & Valves"),0);
+						otr.Forming_Rolling = ifnull(cat.get("Forming & Rolling"),0);
+						otr.Galvanize = ifnull(cat.get("Galvanize"),0);
+						otr.Grating = ifnull(cat.get("Grating"),0);
+						otr.Heat_Treat = ifnull(cat.get("Heat Treat"),0);
+						otr.Inspection = ifnull(cat.get("Inspection & Testing"),0);
+						otr.Installation = ifnull(cat.get("Installation & Rigging"),0);
+						otr.Machining = ifnull(cat.get("Machining"),0);
+						otr.Other = ifnull(cat.get("Miscellaneous"),0);
+						otr.Outside_Welding_Fab = ifnull(cat.get("Outside Welding & Fab"),0);
+						otr.Trucking = ifnull(cat.get("Freight"),0);
+						otr.Total_Amount = grand;
+					}
+				}
+				input.Item_Sourcing_Amount = grand;
+				input.Total_Sourcing_Amount = grand;
+				input.TOTAL_PROJECT_AMOUNT = ifnull(input.Project_Material_Amount,0) + ifnull(input.Total_Labor_Amount,0) + grand;
 			}
 		}
 	}

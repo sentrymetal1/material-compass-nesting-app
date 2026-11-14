@@ -4,6 +4,7 @@
   <script src="/takeoff/mc-token.js"></script>
   <script src="/takeoff/weld-rules.js"></script>
   <script src="/takeoff/rail-pricing.js"></script>
+  <script src="/takeoff/outside-types.js"></script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AI Take-off — Project Review</title>
@@ -217,7 +218,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.100 · 2026-11-13 · project tab named MISC ITEM SOURCING";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.101 · 2026-11-14 · outside lines carry an Item Type";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1318,7 +1319,10 @@
     COST_CATS.map(function(c){ return c[0]; }).concat(Object.keys(S.lines).filter(function(k){ return S.lines[k]&&S.lines[k].extra; })).forEach(function(k){
       const l=S.lines[k]; if(!l || l.status!=="include") return;
       const c=COST_CATS.find(function(x){ return x[0]===k; });
-      out.push({ key:k, category:PROJ_CAT[k]||"Miscellaneous", description:(c?c[1]:(l.label||"Other"))+(l.note?" — "+l.note:""),
+      // Item Type by Code (outside-types.js = the Zoho "Project Items and Subcontracting Types" table);
+      // its bucket is the project row's Category of Item and the Outsource Totals column it lands in.
+      const code=OutsideTypes.codeOf(k,l), t=OutsideTypes.BY[code];
+      out.push({ key:k, code:code, item_type:t.name, category:t.bucket, description:(c?c[1]:(l.label||"Other"))+(l.note?" — "+l.note:""),
         qty:l.qty!=null?Number(l.qty):null, unit:l.unit||(c?c[2]:"lot"), unit_amt:l.unit_amt!=null?Number(l.unit_amt):null, total:l.total!=null?Number(l.total):null });
     });
     return out;
@@ -1365,6 +1369,7 @@
     const l=Object.assign({},S.lines[key]||{});
     if(field==="status"){ l.status=value||""; }
     else if(field==="note"){ l.note=String(value||"").slice(0,200); }
+    else if(field==="code"){ if(OutsideTypes.BY[value]) l.code=value; else delete l.code; }
     else if(field==="unit"){ const was=sumWeightDiv(sumUnitOf(key,l)); l.unit=String(value||"").slice(0,20);
       // off a weight unit: the weight was never a typed Qty, so it goes (the new unit needs its own)
       if(was && !sumWeightDiv(l.unit) && !l.qty_typed){ delete l.qty; if(l.unit_amt!=null) delete l.total; } }
@@ -1621,6 +1626,17 @@
         '</details>'+
         (odd.length?'<div style="font-size:11.5px;color:var(--red);font-weight:600;white-space:normal;max-width:330px">⚠ Named “'+esc(l.label||k)+'” but takes '+odd.map(function(f){ return Math.round(took[f]).toLocaleString()+' lb of '+f; }).join(' and ')+' — untick those parts unless this supplier really brings them.</div>':'');
     };
+    // An added line says WHAT the work is — one of the shop-wide Item Types (Mark 11-14: outside costs
+    // must land in the right project total; "Cope Posts" is Cutting, not Miscellaneous). Grouped by the
+    // total it lands in. Starts from a guess off the line's words; the pick is saved as l.code.
+    const typePickHtml=function(k,l){
+      const cur=OutsideTypes.codeOf(k,l), picked=!!(l.code&&OutsideTypes.BY[l.code]);
+      return '<div style="margin-top:3px;font-size:11.5px"><span class="src">type</span> <select style="font-size:11.5px;padding:1px 3px;border:1px solid '+(picked?'#dfe5ec':'#e0b252')+';border-radius:5px;max-width:230px"'+
+        ' title="Which kind of outside work this is — sets the project total it lands in" onchange="sumLine(\''+k+'\',\'code\',this)">'+
+        OutsideTypes.BUCKETS.map(function(b){ return '<optgroup label="'+escAttr(b)+'">'+OutsideTypes.TYPES.filter(function(t){ return t[2]===b; }).map(function(t){
+          return '<option value="'+t[0]+'"'+(t[0]===cur?' selected':'')+'>'+esc(t[1])+'</option>'; }).join("")+'</optgroup>'; }).join("")+
+        '</select>'+(picked?'':' <span class="src" style="color:var(--ylw)">guessed — confirm</span>')+'</div>';
+    };
     const outRow=function(k,label,unit,h,extra){
       const l=S.lines[k]||{}, on=l.status==="include", tot=on&&l.total!=null?Number(l.total):null;
       if(tot!=null) outTot+=tot;
@@ -1629,7 +1645,7 @@
       const wq=sumWeightQty(R,k,l,H);
       const qty=l.qty!=null?l.qty:wq!=null?wq:(h&&h.qty!=null&&!l.status?h.qty:null);
       return '<tr class="lab-item"'+(l.status==="none"||l.status==="by_others"?' style="opacity:.55"':'')+'>'+
-        '<td>'+(extra?'<button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove this cost" onclick="sumDelOther(\''+k+'\')">✕</button> <input class="lab-in txt" style="width:150px" placeholder="what the cost is" value="'+escAttr(l.label||"")+'" onchange="sumLabel(\''+k+'\',this)">'
+        '<td>'+(extra?'<button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove this cost" onclick="sumDelOther(\''+k+'\')">✕</button> <input class="lab-in txt" style="width:150px" placeholder="what the cost is" value="'+escAttr(l.label||"")+'" onchange="sumLabel(\''+k+'\',this)">'+typePickHtml(k,l)
             :'<b>'+esc(label)+'</b>')+
           (h?'<div style="font-size:11.5px;'+(flag?'color:var(--ylw);font-weight:600':'color:var(--mut)')+'">'+(flag?'⚠ ':'')+esc(h.why)+'</div>':'')+
           (on?supplyPickHtml(k,l):'')+'</td>'+

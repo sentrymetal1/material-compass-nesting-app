@@ -9,8 +9,8 @@
 //  Each take-off save writes a small copy to the Railway volume, so opening a project
 //  costs no data-service call.
 //
-//  Category strings MUST match the project's Outsource totals workflow exactly
-//  (Projects memory: feedback_outsource_category_taxonomies) — same table as review.html PROJ_CAT.
+//  Category = the Item Type's bucket (outside-types.js), which is the project row's Category of Item
+//  and the Outsource Totals column the recount workflow puts it in (docs/deluge/project_outsource_totals.md).
 // =============================================================================
 
 const COST_CATS = [
@@ -26,6 +26,7 @@ const PROJ_CAT = {
 };
 
 const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+const Types = require('./public/outside-types');   // shared with the review page
 const r2 = (v) => (v == null ? null : Math.round(v * 100) / 100);
 const r4 = (v) => (v == null ? null : Math.round(v * 10000) / 10000);
 
@@ -46,8 +47,16 @@ function outsideLines(pkg) {
         qty: num(l.qty), unit: l.unit || (c ? c[2] : 'lot'), unit_amt: num(l.unit_amt), total: num(l.total) });
     });
   }
-  return list.map((x) => ({
-    key: String(x.key || ''), category: String(x.category || 'Miscellaneous'), description: String(x.description || '').slice(0, 250),
+  // Item Type by Code (outside-types.js, the Zoho "Project Items and Subcontracting Types" table).
+  // Re-derived here too, so take-offs saved before codes existed still load with the right type.
+  const lines = S.lines || {};
+  return list.map((x) => {
+    const l = lines[x.key] || {};
+    const code = x.code && Types.BY[x.code] ? x.code : Types.codeOf(x.key, { code: l.code, label: l.label || x.description });
+    const t = Types.BY[code];
+    return { ...x, code, item_type: t.name, category: t.bucket };
+  }).map((x) => ({
+    key: String(x.key || ''), code: x.code, item_type: x.item_type, category: String(x.category || 'Miscellaneous'), description: String(x.description || '').slice(0, 250),
     qty: r2(num(x.qty)), unit: String(x.unit || ''), unit_amt: r4(num(x.unit_amt)), total: r2(num(x.total)),
   }));
 }
