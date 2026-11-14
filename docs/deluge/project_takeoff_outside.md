@@ -157,10 +157,13 @@ if(input.Load_Takeoff_Outside == true)
 				input.Outsource_Outside_Welding_Fab = ifnull(cat.get("Outside Welding & Fab"),0);
 				input.Outsource_Trucking = ifnull(cat.get("Freight"),0);
 				input.Outsource_Total_Amount = grand;
+				// the project's totals row - created if the project has none
+				foundTot = false;
 				for each otr in input.Outsource_Totals
 				{
 					if(otr.Project_Number_ID == input.ID)
 					{
+						foundTot = true;
 						otr.Blast_Paint = ifnull(cat.get("Paint & Coatings"),0);
 						otr.Cutting = ifnull(cat.get("Cutting"),0);
 						otr.Decking = ifnull(cat.get("Decking"),0);
@@ -179,6 +182,29 @@ if(input.Load_Takeoff_Outside == true)
 						otr.Trucking = ifnull(cat.get("Freight"),0);
 						otr.Total_Amount = grand;
 					}
+				}
+				if(foundTot == false)
+				{
+					nr = MCP_Customer_Project_Form.Outsource_Totals();
+					nr.Project_Number_ID = input.ID;
+					nr.Blast_Paint = ifnull(cat.get("Paint & Coatings"),0);
+					nr.Cutting = ifnull(cat.get("Cutting"),0);
+					nr.Decking = ifnull(cat.get("Decking"),0);
+					nr.Detailing = ifnull(cat.get("Engineering & Detailing"),0);
+					nr.Fasteners = ifnull(cat.get("Fasteners & Hardware"),0);
+					nr.Fittings = ifnull(cat.get("Fittings & Valves"),0);
+					nr.Forming_Rolling = ifnull(cat.get("Forming & Rolling"),0);
+					nr.Galvanize = ifnull(cat.get("Galvanize"),0);
+					nr.Grating = ifnull(cat.get("Grating"),0);
+					nr.Heat_Treat = ifnull(cat.get("Heat Treat"),0);
+					nr.Inspection = ifnull(cat.get("Inspection & Testing"),0);
+					nr.Installation = ifnull(cat.get("Installation & Rigging"),0);
+					nr.Machining = ifnull(cat.get("Machining"),0);
+					nr.Other = ifnull(cat.get("Miscellaneous"),0);
+					nr.Outside_Welding_Fab = ifnull(cat.get("Outside Welding & Fab"),0);
+					nr.Trucking = ifnull(cat.get("Freight"),0);
+					nr.Total_Amount = grand;
+					input.Outsource_Totals.insert(nr);
 				}
 				input.Item_Sourcing_Amount = grand;
 				input.Total_Sourcing_Amount = grand;
