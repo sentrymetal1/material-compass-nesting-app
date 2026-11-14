@@ -10,7 +10,7 @@ Server: `GET /api/takeoff/project-outside/<project ID>` (server/takeoff/projectO
 | Decision box | Load AI take-off outside costs | `Load_Takeoff_Outside` | ABOVE the Item Sourcing Take-Off subform |
 | Add Notes | (leave blank) | `Note_Takeoff_Outside` | directly BELOW the Item Sourcing Take-Off subform |
 
-## Block 1 — Load v3 (2026-11-14). Workflow "Load Take-off Outside Rows": NEW PROJECT SUBMITTAL › User input of `Load_Takeoff_Outside` (Created or Edited)
+## Block 1 — Load v4 (2026-11-14: one row per component, split by weight). Workflow "Load Take-off Outside Rows": NEW PROJECT SUBMITTAL › User input of `Load_Takeoff_Outside` (Created or Edited)
 
 Replaces v1/v2. Each take-off line now carries an Item Type **code** (server/takeoff/public/outside-types.js =
 the Zoho table *Project Items and Subcontracting Types*). The row gets that **Item Type** and its **Category of Item**
@@ -18,7 +18,7 @@ the Zoho table *Project Items and Subcontracting Types*). The row gets that **It
 not fire the Outsource Recount workflows (docs/deluge/project_outsource_totals.md — same bucket → field map).
 
 ```
-// ==== Load the AI take-off's outside costs into Item Sourcing Take-Off (v3: Item Type by code) ====
+// ==== Load the AI take-off's outside costs into Item Sourcing Take-Off (v4: Item Type by code, one row per component) ====
 if(input.Load_Takeoff_Outside == true)
 {
 	input.Load_Takeoff_Outside = false;
@@ -66,7 +66,13 @@ if(input.Load_Takeoff_Outside == true)
 						typeCat.put(t.Code,ifnull(t.Category_of_Item,"Miscellaneous"));
 					}
 				}
-				// the new rows, and their money by bucket
+				// this project's components, by name (the Component lookup is filtered to Project_LU == the row's project)
+				compId = Map();
+				for each pc in Project_Components_Form[Project_LU == input.ID]
+				{
+					compId.put(ifnull(pc.Project_Component,"").trim().toLowerCase(),pc.ID);
+				}
+				// the new rows - one per component the line applies to - and their money by bucket
 				rows = Collection();
 				cat = Map();
 				grand = 0;
@@ -77,38 +83,83 @@ if(input.Load_Takeoff_Outside == true)
 					{
 						code = "other";
 					}
-					row = MCP_Customer_Project_Form.Outsource_Details();
 					b = "Miscellaneous";
 					if(typeId.containKey(code))
 					{
-						row.Item_Type = typeId.get(code);
 						b = typeCat.get(code);
 					}
-					row.Category_of_Item = b;
-					row.Description = ifnull(ln.get("description"),"").toString();
-					row.Date_field = zoho.currentdate;
-					row.Customer_Entry_Form = input.MANUFACTURE;
-					q = ifnull(ln.get("qty"),"").toString();
-					if(q != "" && q != "null")
+					// its shares per component (from the take-off); none = one row, no component
+					pl = List();
+					rawParts = ln.get("parts");
+					if(rawParts != null)
 					{
-						row.QTY = q.toDecimal().round(0).toLong();
+						for each p0 in rawParts
+						{
+							pl.add(p0);
+						}
 					}
-					u = ifnull(ln.get("unit_amt"),"").toString();
-					if(u != "" && u != "null")
+					if(pl.size() == 0)
 					{
-						row.Unit_Amt = u.toDecimal();
+						one = Map();
+						one.put("component","");
+						one.put("pct",100);
+						one.put("qty",ln.get("qty"));
+						one.put("unit_amt",ln.get("unit_amt"));
+						one.put("total",ln.get("total"));
+						pl.add(one);
 					}
-					amt = 0;
-					tt = ifnull(ln.get("total"),"").toString();
-					if(tt != "" && tt != "null")
+					for each p in pl
 					{
-						amt = tt.toDecimal();
-						row.Total_Amount = amt;
+						row = MCP_Customer_Project_Form.Outsource_Details();
+						row.MCP_Customer_Project_Form = input.ID;
+						row.Customer_Entry_Form = input.MANUFACTURE;
+						if(typeId.containKey(code))
+						{
+							row.Item_Type = typeId.get(code);
+						}
+						row.Category_of_Item = b;
+						cn = ifnull(p.get("component"),"").toString().trim();
+						note = "";
+						if(cn != "")
+						{
+							if(compId.containKey(cn.toLowerCase()))
+							{
+								row.Component = compId.get(cn.toLowerCase());
+							}
+							else
+							{
+								note = " - component " + cn + " not found on this project, pick it";
+							}
+						}
+						d = ifnull(ln.get("description"),"").toString();
+						if(pl.size() > 1)
+						{
+							d = d + " - " + ifnull(p.get("pct"),"").toString() + "% share";
+						}
+						row.Description = d;
+						row.Date_field = zoho.currentdate;
+						q = ifnull(p.get("qty"),"").toString();
+						if(q != "" && q != "null")
+						{
+							row.QTY = q.toDecimal().round(0).toLong();
+						}
+						u = ifnull(p.get("unit_amt"),"").toString();
+						if(u != "" && u != "null")
+						{
+							row.Unit_Amt = u.toDecimal();
+						}
+						amt = 0;
+						tt = ifnull(p.get("total"),"").toString();
+						if(tt != "" && tt != "null")
+						{
+							amt = tt.toDecimal();
+							row.Total_Amount = amt;
+						}
+						row.Comments = "AI take-off estimate - confirm supplier and price (" + ifnull(ln.get("unit"),"").toString() + ")" + note;
+						rows.insert(row);
+						cat.put(b,ifnull(cat.get(b),0) + amt);
+						grand = grand + amt;
 					}
-					row.Comments = "AI take-off estimate - confirm supplier and price (" + ifnull(ln.get("unit"),"").toString() + ")";
-					rows.insert(row);
-					cat.put(b,ifnull(cat.get(b),0) + amt);
-					grand = grand + amt;
 				}
 				// plus the rows already on the project (by their Item Type, else their text)
 				buckets = {"Cutting","Decking","Engineering & Detailing","Fasteners & Hardware","Fittings & Valves","Forming & Rolling","Freight","Galvanize","Grating","Heat Treat","Inspection & Testing","Installation & Rigging","Machining","Miscellaneous","Outside Welding & Fab","Paint & Coatings"};

@@ -218,7 +218,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.101 · 2026-11-14 · outside lines carry an Item Type";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.102 · 2026-11-14 · outside costs split by component";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1314,6 +1314,58 @@
   // again if they change afterwards.
   const PROJ_CAT={ galvanize:"Galvanize", blast_paint:"Blast / Paint", fasteners:"Fasteners", trucking:"Trucking", detailing:"Detailing",
     inspection:"Inspection", installation:"Installation / Rigging", grating:"Grating", decking:"Decking", machining:"Machining", fittings:"Fittings", other:"Miscellaneous" };
+  // WHICH COMPONENTS AN OUTSIDE COST BELONGS TO (Mark 2026-11-14: "if a line item should include all
+  // components, some components, or just one component, as well as what percentage goes to each").
+  // The project's Item Sourcing row holds ONE component, so a line that covers several becomes one row
+  // per component, its amount split BY WEIGHT (Mark's choice) unless a % is typed. Defaults:
+  //   sent outside from one component's Labor tab -> that component;
+  //   a line that supplies parts -> the components those parts belong to, by their weight;
+  //   galvanizing -> the components with galvanized steel, by that weight;
+  //   anything else -> every component, by fabricated weight.
+  // l.comps (names ticked) and l.split_pct ({name: %}) override.
+  function outCompWeights(R,keep){ const w={};
+    arr(R.rows).forEach(function(r,i){ if(!r||r.deleted||!(Number(r.quantity)>0)||(keep&&!keep(r,i))) return;
+      const c=String(r.component||"").trim(); if(!c) return; const x=rowWeight(r); w[c]=(w[c]||0)+(x?x.total:0); });
+    return w; }
+  function outDefaultComps(R,S,k,l){
+    const fab=function(r){ return String(r.disposition||"fabricate").toLowerCase()==="fabricate"; };
+    const m=/^w:(.*)\|/.exec(k);
+    if(m){ const all=outCompWeights(R,null), c=Object.keys(all).find(function(n){ return wKey(n)===m[1]; });
+      if(c){ const o={}; o[c]=all[c]||1; return {basis:"the component it was sent outside from", w:o}; } }
+    if(arr(l.supplies).length){ const SR=suppliedRows(R,S), w=outCompWeights(R,function(r,i){ return SR[i]===k; });
+      if(Object.keys(w).length) return {basis:"the parts this line supplies", w:w}; }
+    if(k==="galvanize"){ const fin=jobFinish(R.synopsis), w=outCompWeights(R,function(r){ return fab(r)&&(r.galvanized||fin==="galv"); });
+      if(Object.keys(w).length) return {basis:"galvanized weight", w:w}; }
+    return {basis:"fabricated weight", w:outCompWeights(R,fab)};
+  }
+  function outSplit(R,S,k,l){
+    const d=outDefaultComps(R,S,k,l); let w=d.w, basis=d.basis;
+    if(Array.isArray(l.comps)&&l.comps.length){ const all=outCompWeights(R,null), o={}; l.comps.forEach(function(c){ o[c]=all[c]||0; }); w=o; basis="weight of the components picked"; }
+    const names=Object.keys(w); if(!names.length) return {basis:basis, parts:[]};
+    const man=l.split_pct&&typeof l.split_pct==="object"?l.split_pct:null; let parts=null;
+    // Typed % for some components: the rest share what is left, by weight. Over 100 → scaled down.
+    if(man){ const typed=names.filter(function(c){ return man[c]!=null&&Number(man[c])>=0; });
+      if(typed.length){ const tsum=typed.reduce(function(a,c){ return a+Number(man[c]); },0), rest=names.filter(function(c){ return typed.indexOf(c)<0; });
+        const left=Math.max(0,100-tsum), rw=rest.reduce(function(a,c){ return a+w[c]; },0), scale=tsum>100?100/tsum:1;
+        parts=typed.map(function(c){ return {component:c, pct:Number(man[c])*scale/100}; })
+          .concat(rest.map(function(c){ return {component:c, pct:left/100*(rw>0?w[c]/rw:1/rest.length)}; }));
+        basis=rest.length&&left>0?"% typed, the rest by weight":"% typed"; } }
+    if(!parts){ const t=names.reduce(function(a,c){ return a+w[c]; },0);
+      parts=names.map(function(c){ return {component:c, pct:t>0?w[c]/t:1/names.length}; }); }
+    return {basis:basis, parts:parts.filter(function(p){ return p.pct>0; }).sort(function(a,b){ return b.pct-a.pct; })};
+  }
+  // The line's amount and qty across its components. Amounts are rounded to the cent with the last
+  // share taking the remainder, so the rows add back to the line exactly. Weight/area units split their
+  // qty; lot / load / drawing keep it and split the price.
+  function outParts(x,sp){
+    const whole=/^(lot|lots|load|loads|drawing|drawings|)$/i.test(String(x.unit||"").trim());
+    let left=x.total; const n=sp.parts.length;
+    return sp.parts.map(function(p,i){
+      const t=x.total==null?null:(i===n-1?Math.round(left*100)/100:Math.round(x.total*p.pct*100)/100); if(t!=null) left-=t;
+      const q=x.qty==null?null:(whole||n===1?x.qty:Math.round(x.qty*p.pct*100)/100);
+      return {component:p.component, pct:Math.round(p.pct*1000)/10, qty:q, unit_amt:q>0&&t!=null?Math.round(t/q*10000)/10000:x.unit_amt, total:t};
+    });
+  }
   function projOutLines(R){
     const S=sumState(R), out=[];
     COST_CATS.map(function(c){ return c[0]; }).concat(Object.keys(S.lines).filter(function(k){ return S.lines[k]&&S.lines[k].extra; })).forEach(function(k){
@@ -1324,6 +1376,7 @@
       const code=OutsideTypes.codeOf(k,l), t=OutsideTypes.BY[code];
       out.push({ key:k, code:code, item_type:t.name, category:t.bucket, description:(c?c[1]:(l.label||"Other"))+(l.note?" — "+l.note:""),
         qty:l.qty!=null?Number(l.qty):null, unit:l.unit||(c?c[2]:"lot"), unit_amt:l.unit_amt!=null?Number(l.unit_amt):null, total:l.total!=null?Number(l.total):null });
+      const x=out[out.length-1], sp=outSplit(R,S,k,l); x.split_basis=sp.basis; x.parts=outParts(x,sp);
     });
     return out;
   }
@@ -1462,6 +1515,16 @@
   }
   function sumAddOther(){ sumEdit(function(S){ const k="x"+Math.random().toString(36).slice(2,8); S.lines[k]={label:"", unit:"lot", status:"include", extra:true}; }); }
   function sumDelOther(k){ sumEdit(function(S){ delete S.lines[k]; }); }
+  const APPLIES_OPEN={};
+  function sumComp(k,c,el){ APPLIES_OPEN[k]=true; const R=loadResult(), S=sumState(R), l=S.lines[k]||{};
+    const cur=outSplit(R,S,k,l).parts.map(function(p){ return p.component; });
+    sumEdit(function(S){ const x=Object.assign({},S.lines[k]||{}); const s=cur.filter(function(n){ return n!==c; }); if(el.checked) s.push(c);
+      x.comps=s; if(x.split_pct){ x.split_pct=Object.assign({},x.split_pct); if(!el.checked) delete x.split_pct[c]; if(!Object.keys(x.split_pct).length) delete x.split_pct; }
+      S.lines[k]=x; }); }
+  function sumCompPct(k,c,el){ APPLIES_OPEN[k]=true; const v=String(el.value).replace(/[%\s]/g,""), n=v===""?null:Number(v); if(n!=null&&!(n>=0)) return;
+    sumEdit(function(S){ const x=Object.assign({},S.lines[k]||{}); const p=Object.assign({},x.split_pct||{}); if(n==null) delete p[c]; else p[c]=n;
+      if(Object.keys(p).length) x.split_pct=p; else delete x.split_pct; S.lines[k]=x; }); }
+  function sumCompReset(k){ sumEdit(function(S){ const x=Object.assign({},S.lines[k]||{}); delete x.comps; delete x.split_pct; S.lines[k]=x; }); }
   function sumLabel(k,el){ sumEdit(function(S){ S.lines[k]=Object.assign({},S.lines[k]||{}, {label:String(el.value||"").slice(0,80)}); }); }
   // MATERIAL SUPPLIED WITH OUTSIDE WORK (Mark 2026-11-12: "Material for the cope posts is part of the
   // 7,216 — how should we remedy this?"). An outside line can say which steel the vendor supplies — by
@@ -1637,6 +1700,21 @@
           return '<option value="'+t[0]+'"'+(t[0]===cur?' selected':'')+'>'+esc(t[1])+'</option>'; }).join("")+'</optgroup>'; }).join("")+
         '</select>'+(picked?'':' <span class="src" style="color:var(--ylw)">guessed — confirm</span>')+'</div>';
     };
+    // "Applies to": the components this cost belongs to and each one's share (outSplit).
+    const appliesHtml=function(k,l){
+      const sp=outSplit(R,S,k,l), all=Object.keys(outCompWeights(R,null)); if(all.length<2 && sp.parts.length<2) return "";
+      const on={}; sp.parts.forEach(function(p){ on[p.component]=p; });
+      const man=l.split_pct&&typeof l.split_pct==="object"?l.split_pct:{};
+      const js=function(v){ return escAttr(String(v).replace(/\\/g,"\\\\").replace(/'/g,"\\'")); };
+      const summary=sp.parts.map(function(p){ return esc(p.component)+' '+(Math.round(p.pct*1000)/10)+'%'; }).join(' · ')||'no component';
+      return '<details style="margin-top:3px;font-size:11.5px"'+(APPLIES_OPEN[k]?' open':'')+' ontoggle="APPLIES_OPEN[\''+k+'\']=this.open"><summary style="cursor:pointer;color:var(--blue)">applies to: '+summary+'</summary>'+
+        '<div class="src" style="margin:3px 0;white-space:normal;max-width:340px">Split by '+esc(sp.basis)+'. Each component becomes its own row on the project page. Type a % to set the split yourself.</div>'+
+        all.map(function(c){ const p=on[c];
+          return '<label style="display:block;margin:2px 0"><input type="checkbox"'+(p?' checked':'')+' onchange="sumComp(\''+k+'\',\''+js(c)+'\',this)"> <b>'+esc(c)+'</b> '+
+            (p?'<input class="lab-in" style="width:46px" placeholder="'+(Math.round(p.pct*1000)/10)+'" value="'+(man[c]!=null?escAttr(man[c]):'')+'" onchange="sumCompPct(\''+k+'\',\''+js(c)+'\',this)"> %':'')+'</label>'; }).join("")+
+        ((l.comps||l.split_pct)?'<button class="applybtn" style="margin-top:3px;font-size:11px;padding:1px 8px" onclick="sumCompReset(\''+k+'\')">back to the default split</button>':'')+
+        '</details>';
+    };
     const outRow=function(k,label,unit,h,extra){
       const l=S.lines[k]||{}, on=l.status==="include", tot=on&&l.total!=null?Number(l.total):null;
       if(tot!=null) outTot+=tot;
@@ -1648,7 +1726,7 @@
         '<td>'+(extra?'<button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove this cost" onclick="sumDelOther(\''+k+'\')">✕</button> <input class="lab-in txt" style="width:150px" placeholder="what the cost is" value="'+escAttr(l.label||"")+'" onchange="sumLabel(\''+k+'\',this)">'+typePickHtml(k,l)
             :'<b>'+esc(label)+'</b>')+
           (h?'<div style="font-size:11.5px;'+(flag?'color:var(--ylw);font-weight:600':'color:var(--mut)')+'">'+(flag?'⚠ ':'')+esc(h.why)+'</div>':'')+
-          (on?supplyPickHtml(k,l):'')+'</td>'+
+          (on?supplyPickHtml(k,l)+appliesHtml(k,l):'')+'</td>'+
         '<td>'+statusSel(k,l.status)+'</td>'+
         '<td class="num" style="white-space:nowrap">'+inp(sumNum(qty,2),"sumLine('"+k+"','qty',this)",70,"","sumLive('line','"+k+"','qty',this)","qty")+' '+
           '<input class="lab-in txt" style="width:52px" value="'+escAttr(l.unit||unit||"")+'" onchange="sumLine(\''+k+'\',\'unit\',this)"></td>'+

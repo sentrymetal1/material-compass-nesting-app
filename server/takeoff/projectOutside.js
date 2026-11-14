@@ -58,6 +58,11 @@ function outsideLines(pkg) {
   }).map((x) => ({
     key: String(x.key || ''), code: x.code, item_type: x.item_type, category: String(x.category || 'Miscellaneous'), description: String(x.description || '').slice(0, 250),
     qty: r2(num(x.qty)), unit: String(x.unit || ''), unit_amt: r4(num(x.unit_amt)), total: r2(num(x.total)),
+    // Its share per component (review.html outSplit): one project row each. Empty on take-offs saved
+    // before the split existed — the project page then makes one row with no component.
+    split_basis: x.split_basis ? String(x.split_basis) : '',
+    parts: (Array.isArray(x.parts) ? x.parts : []).filter((p) => p && p.component).map((p) => ({ component: String(p.component).slice(0, 120),
+      pct: num(p.pct), qty: r2(num(p.qty)), unit_amt: r4(num(p.unit_amt)), total: r2(num(p.total)) })),
   }));
 }
 
