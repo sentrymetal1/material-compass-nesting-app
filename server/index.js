@@ -1984,7 +1984,7 @@ app.get('/api/takeoff/project-outside/:project_id', async (req, res) => {
     const project_id = String(req.params.project_id || '');
     if (!/^\d+$/.test(project_id)) return res.status(400).json({ ok: false, error: 'project_id required' });
     const v = filestore.readJson(projectOutside.fileFor(project_id), null);
-    if (v && Array.isArray(v.lines) && String(v.project_id) === project_id) return res.json(projectOutside.reply(project_id, v.saved_at, v.lines));
+    if (v && Array.isArray(v.lines) && String(v.project_id) === project_id) return res.json(projectOutside.reply(project_id, v.saved_at, projectOutside.outsideLines({ cost_summary: { project_out: v.lines } })));   // re-shaped, so copies saved before Item Type codes get them
     const s = await loadSavedTakeoff(project_id);
     if (!s.found) return res.json({ ok: true, found: false, count: 0, total: 0, no_amount: 0, lines: [] });
     projectOutside.remember(filestore, project_id, s.package);
