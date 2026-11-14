@@ -127,8 +127,7 @@ if(input.Load_Takeoff_Outside == true)
 							{
 								ptTxt = " = $" + utility.format_currency(pt.toDecimal());
 							}
-							allocTxt = allocTxt + "
-" + ifnull(pa.get("component"),"").toString() + " " + ifnull(pa.get("pct"),"").toString() + "%" + ptTxt;
+							allocTxt = allocTxt + "\n" + ifnull(pa.get("component"),"").toString() + " " + ifnull(pa.get("pct"),"").toString() + "%" + ptTxt;
 						}
 					}
 					for each p in pl
