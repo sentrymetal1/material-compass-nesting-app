@@ -136,7 +136,7 @@
 
 <script>
 (function () {
-  const VERSION = "v0.1 · 2026-11-15 · first release";   // bump on every push
+  const VERSION = "v0.2 · 2026-11-15 · history shows qty × price, MCP numbers";   // bump on every push
   console.log("Material Compass subcontractors.html " + VERSION);
   document.getElementById("foot").textContent = "Subcontractors " + VERSION;
 
@@ -203,11 +203,13 @@
     const h = (S.hist.by_sub || {})[x.id];
     if (!h) return '<span class="small">Not used on a priced project yet</span>';
     return Object.keys(h).map((tid) => {
-      const v = h[tid], t = S.typeById[tid], unit = t && t.unit ? " / " + t.unit : "";
-      return '<div class="hist"><b>' + esc(t ? t.name : "Other") + "</b>: " +
-        (v.last_unit != null ? money(v.last_unit) + unit + " last" : money(v.total) + " total") +
-        (v.avg_unit != null && v.jobs > 1 ? " · avg " + money(v.avg_unit) + unit : "") +
-        ' <span class="small">· ' + v.jobs + (v.jobs === 1 ? " job" : " jobs") + (v.last_project ? " · last " + esc(v.last_project) : "") + (v.last_date ? " " + v.last_date : "") + "</span></div>";
+      const v = h[tid], t = S.typeById[tid], L = v.last || {};
+      const qty = L.qty ? Number(L.qty).toLocaleString() : "";
+      const lastTxt = L.qty > 1 ? money(L.unit) + " × " + qty + " = " + money(L.total) : money(L.total);
+      return '<div class="hist"><b>' + esc(t ? t.name : "Other") + "</b>: last " + lastTxt +
+        (v.avg_unit != null ? " · avg " + money(v.avg_unit) + " each" : "") +
+        '<div class="small">' + v.jobs + (v.jobs === 1 ? " row" : " rows") + " · " + money(v.total) + " total" +
+        (L.project || L.date ? " · last " + esc([L.project, L.date].filter(Boolean).join(" ")) : "") + "</div></div>";
     }).join("");
   }
 

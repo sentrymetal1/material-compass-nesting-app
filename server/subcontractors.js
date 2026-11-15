@@ -99,33 +99,46 @@ function registerSubcontractors(app, deps) {
     return { subs, byId };
   }
 
-  // { subId: { typeId: { n, avg_unit, last_unit, last_date, last_project, unit_note } } } or null if no report.
-  async function history(byId) {
+  // MCP number per project id, for this shop (the row's project lookup only carries the record id).
+  const projNumbers = (shop) => cachedLookup('subc-proj-' + shop, 10 * 60 * 1000, async () => {
+    const m = {};
+    (await fetchAllZohoPages('/report/All_Projects?criteria=' + enc('(MANUFACTURE == ' + shop + ')'))).forEach((p) => { m[s(p.ID)] = s(p.Project_Quote_Number); });
+    return m;
+  });
+
+  // { available, by_sub: { subId: { typeId: { jobs, total, last{unit,qty,total,date,project}, avg_unit } } }, used: { subId: rows } }
+  // Rows are priced per lb, per sq ft, per load or as one lump sum, and nothing on the row says which.
+  // So the LAST price is shown as qty x unit = total, and an average only when the unit prices are
+  // alike (within 3x of each other); a mix of $0.60/lb and $4,125 lots has no meaningful average.
+  async function history(byId, shop) {
     let rows;
     try { rows = await fetchAllZohoPages('/report/' + ROW_REPORT); }
     catch (e) { return { available: false, reason: 'Price history needs the report ' + ROW_REPORT + '.' }; }
-    const out = {}, used = {};
+    let numbers = {};
+    try { numbers = await projNumbers(shop); } catch (e) {}
+    const acc = {}, used = {};
     for (const r of rows) {
       const sid = idOf(r.Subcontractor_Supplier);
       if (!byId[sid]) continue;
       used[sid] = (used[sid] || 0) + 1;
-      const tid = idOf(r.Item_Type) || 'none';
-      const qty = num(r.QTY), tot = num(r.Total_Amount), unit = num(r.Unit_Amt) || (qty ? tot / qty : 0);
+      const tot = num(r.Total_Amount);
       if (!(tot > 0)) continue;
-      const d = new Date(s(r.Date_field).replace(/,(\d)/, ', $1'));
-      const proj = r.MCP_Customer_Project_Form && typeof r.MCP_Customer_Project_Form === 'object'
-        ? s(r.MCP_Customer_Project_Form.Project_Quote_Number || r.MCP_Customer_Project_Form.zc_display_value) : '';
-      const h = ((out[sid] = out[sid] || {})[tid] = out[sid][tid] || { n: 0, sumUnit: 0, nUnit: 0, total: 0, last: null });
-      h.n++; h.total += tot;
-      if (unit > 0) { h.sumUnit += unit; h.nUnit++; }
-      const t = isNaN(d.getTime()) ? 0 : d.getTime();
-      if (!h.last || t >= h.last.t) h.last = { t, unit, total: tot, project: proj };
+      const qty = num(r.QTY), unit = num(r.Unit_Amt) || (qty ? tot / qty : 0);
+      const d = new Date(s(r.Date_field).replace(/,(d)/, ', $1'));
+      const pid = idOf(r.MCP_Customer_Project_Form);
+      const tid = idOf(r.Item_Type) || 'none';
+      ((acc[sid] = acc[sid] || {})[tid] = acc[sid][tid] || []).push({ t: isNaN(d.getTime()) ? 0 : d.getTime(), unit, qty, tot, project: numbers[pid] || '' });
     }
-    for (const sid of Object.keys(out)) for (const tid of Object.keys(out[sid])) {
-      const h = out[sid][tid];
-      out[sid][tid] = { jobs: h.n, total: r2(h.total), avg_unit: h.nUnit ? r2(h.sumUnit / h.nUnit) : null,
-        last_unit: h.last && h.last.unit ? r2(h.last.unit) : null,
-        last_date: h.last && h.last.t ? new Date(h.last.t).toISOString().slice(0, 10) : null, last_project: h.last ? h.last.project : '' };
+    const out = {};
+    for (const sid of Object.keys(acc)) for (const tid of Object.keys(acc[sid])) {
+      const L = acc[sid][tid].sort((a, b) => b.t - a.t), last = L[0];
+      const units = L.map((x) => x.unit).filter((u) => u > 0);
+      const lo = Math.min(...units), hi = Math.max(...units);
+      (out[sid] = out[sid] || {})[tid] = {
+        jobs: L.length, total: r2(L.reduce((a, x) => a + x.tot, 0)),
+        last: { unit: r2(last.unit), qty: last.qty, total: r2(last.tot), date: last.t ? new Date(last.t).toISOString().slice(0, 10) : null, project: last.project },
+        avg_unit: units.length > 1 && lo > 0 && hi / lo <= 3 ? r2(units.reduce((a, u) => a + u, 0) / units.length) : null,
+      };
     }
     return { available: true, by_sub: out, used };
   }
@@ -135,7 +148,7 @@ function registerSubcontractors(app, deps) {
       const shop = shopOf(req);
       if (!/^\d+$/.test(shop)) return res.status(400).json({ ok: false, error: 'Please reopen this page from Material Compass.' });
       const [t, { subs, byId }] = await Promise.all([types(), shopSubs(shop)]);
-      const hist = await history(byId);
+      const hist = await history(byId, shop);
       res.json({ ok: true, types: t, subs, history: hist });
     } catch (e) {
       console.error('[subcontractors] load', e.message);
@@ -210,7 +223,7 @@ function registerSubcontractors(app, deps) {
       const id = s((req.body || {}).id);
       const { byId } = await shopSubs(shop);
       if (!byId[id]) return res.status(404).json({ ok: false, error: 'That subcontractor is not on your list.' });
-      const hist = await history(byId);
+      const hist = await history(byId, shop);
       if (!hist.available) return res.status(409).json({ ok: false, error: 'Can\'t check whether projects use this company yet. Make it inactive instead.' });
       const base = creatorApiBase(), h = await H();
       if (hist.used[id]) {
