@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Subcontractors &amp; Item Suppliers</title>
+<!--
+  One shop's subcontractors and item suppliers. Plan: docs/SUBCONTRACTORS_PAGE_PLAN.md.
+  Opened from Material Compass as
+    /takeoff/subcontractors.html?manufacturer_id=<MFG record id>&t=<tenant token>
+  Reads/writes through /api/subcontractors (server/subcontractors.js), which edits the Zoho records.
+-->
+<script src="/takeoff/mc-dialog.js"></script>
+<script src="/takeoff/outside-types.js"></script>
+<style>
+  :root{--blue:#5F94CE;--ink:#1f2a37;--mut:#667;--line:#e3e6ea;--grn:#2e7d32;--grnbg:#e8f5e9;--ylw:#b45309;--ylwbg:#fff7ed;--red:#b91c1c;--redbg:#fdeeee;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:1200px;margin:0 auto;}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .brand{font-weight:800;font-size:16px;color:var(--blue);}
+  .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .appbar .sp{flex:1;}
+  .btn{font:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:7px 16px;cursor:pointer;}
+  .btn:hover{opacity:.92;} .btn:disabled{opacity:.5;cursor:default;}
+  .btn.ghost{background:#fff;color:var(--blue);border:1px solid #cdd3da;}
+  .btn.danger{background:#fff;color:var(--red);border:1px solid #f0c5c5;}
+  .lnk{font:inherit;font-size:12px;font-weight:600;color:var(--blue);background:none;border:0;cursor:pointer;padding:2px 0;}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:11px;font-size:14px;font-weight:600;display:none;background:var(--blue);}
+  .busy.show{display:block;} .busy.err{background:var(--red);} .busy.ok{background:var(--grn);}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;}
+  .filters{display:flex;gap:10px;align-items:center;padding:12px 16px;flex-wrap:wrap;}
+  input,select,textarea{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cdd3da;border-radius:6px;background:#fff;color:var(--ink);}
+  input:focus,select:focus,textarea:focus{border-color:var(--blue);outline:none;}
+  .filters input[type=search]{width:260px;}
+  .seg{display:inline-flex;border:1px solid #cdd3da;border-radius:6px;overflow:hidden;}
+  .seg button{font:inherit;font-size:12.5px;border:0;background:#fff;padding:6px 12px;cursor:pointer;color:#445;}
+  .seg button.on{background:#eaf2fb;color:#1f3a5f;font-weight:600;}
+  .count{font-size:12px;color:var(--mut);margin-left:auto;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);background:#fafbfc;}
+  td{padding:9px 10px;border-bottom:1px solid #f0f2f4;vertical-align:top;}
+  tr.sub:hover td{background:#f8fafd;cursor:pointer;}
+  tr.off td{color:#99a;}
+  .nm{font-weight:600;font-size:13.5px;}
+  .star{color:#e0a100;margin-right:4px;}
+  .tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;background:#eef3fa;color:#3d6ea8;margin:0 4px 4px 0;white-space:nowrap;}
+  .tag.off{background:#f1f1f1;color:#888;}
+  .small{font-size:12px;color:var(--mut);line-height:1.5;}
+  .hist{font-size:12px;line-height:1.5;}
+  .hist b{color:var(--ink);}
+  .empty{padding:30px;text-align:center;color:var(--mut);font-size:13.5px;}
+  .note{font-size:12.5px;color:var(--ylw);background:var(--ylwbg);border-radius:8px;padding:8px 12px;margin-bottom:12px;}
+  /* editor */
+  .ov{position:fixed;inset:0;background:rgba(29,36,48,.42);display:none;align-items:flex-start;justify-content:center;padding:30px 20px;overflow:auto;z-index:40;}
+  .ov.show{display:flex;}
+  .ed{background:#fff;border-radius:14px;width:100%;max-width:880px;box-shadow:0 18px 50px rgba(20,30,40,.28);}
+  .ed h3{margin:0;padding:14px 20px;border-bottom:1px solid var(--line);font-size:16px;background:#f7f9fc;border-radius:14px 14px 0 0;}
+  .ed .bd{padding:16px 20px;}
+  .ed .ft{display:flex;gap:10px;align-items:center;padding:12px 20px;border-top:1px solid var(--line);}
+  .ed .ft .sp{flex:1;}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 14px;}
+  .grid .w2{grid-column:span 2;} .grid .w3{grid-column:span 3;}
+  label.f{display:block;font-size:12px;font-weight:600;color:#445;}
+  label.f input,label.f textarea,label.f select{width:100%;margin-top:4px;}
+  .sec{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);font-weight:700;margin:16px 0 8px;}
+  .fam{font-size:11px;color:var(--mut);font-weight:700;margin:8px 0 4px;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{display:inline-flex;align-items:center;gap:5px;border:1px solid #cdd3da;border-radius:16px;padding:3px 10px;font-size:12.5px;cursor:pointer;background:#fff;user-select:none;}
+  .chip.on{background:#eaf2fb;border-color:var(--blue);color:#1f3a5f;font-weight:600;}
+  .tick{display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-right:18px;cursor:pointer;}
+  .reps td{padding:4px 4px;border-bottom:0;}
+  .reps input{width:100%;}
+  .reps .x{font:inherit;color:var(--mut);background:none;border:0;cursor:pointer;font-size:16px;}
+  .reps .x:hover{color:var(--red);}
+  .err{color:var(--red);font-size:12.5px;}
+  .foot{font-size:11px;color:#99a;text-align:right;margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="busy" id="busy"></div>
+<div class="wrap">
+  <div class="appbar">
+    <span class="brand">Material Compass</span>
+    <span class="page">Subcontractors &amp; Item Suppliers</span>
+    <span class="sp"></span>
+    <button class="btn" id="addBtn">+ Add subcontractor</button>
+  </div>
+  <div id="note"></div>
+  <div class="card">
+    <div class="filters">
+      <input type="search" id="q" placeholder="Search company, contact, email…" />
+      <select id="typeF"><option value="">All types of work</option></select>
+      <span class="seg" id="actF"><button data-v="active" class="on">Active</button><button data-v="all">All</button></span>
+      <span class="count" id="count"></span>
+    </div>
+    <table>
+      <thead><tr><th style="width:24%">Company</th><th style="width:24%">Types of work</th><th style="width:22%">Contact</th><th>Price history</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="foot" id="foot"></div>
+</div>
+
+<div class="ov" id="ov"><div class="ed">
+  <h3 id="edTitle">Subcontractor</h3>
+  <div class="bd">
+    <div class="grid">
+      <label class="f w2">Company name<input id="fName" /></label>
+      <div style="padding-top:20px"><label class="tick"><input type="checkbox" id="fActive" /> Active</label><label class="tick"><input type="checkbox" id="fPref" /> ★ Preferred</label></div>
+      <label class="f">Phone<input id="fPhone" /></label>
+      <label class="f">Email<input id="fEmail" /></label>
+      <label class="f">Website<input id="fWeb" /></label>
+      <label class="f w2">Street<input id="fA1" /></label>
+      <label class="f">Suite / unit<input id="fA2" /></label>
+      <label class="f">City<input id="fCity" /></label>
+      <label class="f">State<input id="fState" /></label>
+      <label class="f">ZIP<input id="fZip" /></label>
+      <label class="f w3">Notes<textarea id="fNotes" rows="2"></textarea></label>
+    </div>
+    <div class="sec">Types of work <span id="typeCnt" class="small" style="text-transform:none;letter-spacing:0;font-weight:400"></span></div>
+    <div id="typePick"></div>
+    <div class="sec">Contacts</div>
+    <table class="reps"><thead><tr><th>First</th><th>Last</th><th>Phone</th><th>Cell</th><th>Email</th><th title="Main contact">Main</th><th></th></tr></thead><tbody id="repRows"></tbody></table>
+    <button class="lnk" id="addRep">+ Add contact</button>
+    <div class="err" id="edErr"></div>
+  </div>
+  <div class="ft">
+    <button class="btn danger" id="delBtn">Delete</button>
+    <span class="sp"></span>
+    <button class="btn ghost" id="cancelBtn">Cancel</button>
+    <button class="btn" id="saveBtn">Save</button>
+  </div>
+</div></div>
+
+<script>
+(function () {
+  const VERSION = "v0.1 · 2026-11-15 · first release";   // bump on every push
+  console.log("Material Compass subcontractors.html " + VERSION);
+  document.getElementById("foot").textContent = "Subcontractors " + VERSION;
+
+  const qs = new URLSearchParams(location.search);
+  const MFG = qs.get("manufacturer_id") || qs.get("manufacture") || "";
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const money = (n) => n == null ? "" : "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const BUCKETS = (window.OutsideTypes && OutsideTypes.BUCKETS) || [];
+
+  let S = { types: [], typeById: {}, subs: [], hist: { available: false } }, filt = { q: "", type: "", act: "active" }, cur = null;
+
+  function busy(msg, kind) {
+    const b = $("busy");
+    b.className = "busy" + (msg ? " show" : "") + (kind ? " " + kind : "");
+    b.textContent = msg || "";
+    if (kind === "ok") setTimeout(() => busy(""), 1800);
+  }
+  async function api(path, body) {
+    const sep = path.indexOf("?") > -1 ? "&" : "?";
+    const r = await fetch("/api/subcontractors" + path + (body ? "" : sep + "manufacturer_id=" + encodeURIComponent(MFG)), body ? {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.assign({ manufacturer_id: MFG }, body)) } : undefined);
+    const j = await r.json().catch(() => ({ ok: false, error: "The server did not answer. Please try again." }));
+    if (!j.ok) throw new Error(j.error || "Something went wrong.");
+    return j;
+  }
+
+  // Types grouped by bucket, in the Outsource Totals order.
+  function grouped() {
+    const g = {};
+    S.types.forEach((t) => { (g[t.bucket] = g[t.bucket] || []).push(t); });
+    const order = BUCKETS.filter((b) => g[b]).concat(Object.keys(g).filter((b) => BUCKETS.indexOf(b) < 0));
+    return order.map((b) => ({ bucket: b, types: g[b].sort((x, y) => x.name.localeCompare(y.name)) }));
+  }
+
+  async function load() {
+    busy("Loading…");
+    try {
+      const j = await api("");
+      S.types = j.types; S.subs = j.subs; S.hist = j.history || { available: false };
+      S.typeById = {}; S.types.forEach((t) => { S.typeById[t.id] = t; });
+      const sel = $("typeF"), keep = sel.value;
+      sel.innerHTML = '<option value="">All types of work</option>' + grouped().map((g) =>
+        '<optgroup label="' + esc(g.bucket) + '">' + g.types.map((t) => '<option value="' + t.id + '">' + esc(t.name) + "</option>").join("") + "</optgroup>").join("");
+      sel.value = keep;
+      $("note").innerHTML = S.hist.available ? "" : '<div class="note">' + esc(S.hist.reason || "Price history is not available yet.") + "</div>";
+      busy("");
+      render();
+    } catch (e) { busy(e.message, "err"); $("rows").innerHTML = '<tr><td colspan="4" class="empty">' + esc(e.message) + "</td></tr>"; }
+  }
+
+  function match(x) {
+    if (filt.act === "active" && !x.active) return false;
+    if (filt.type && x.item_types.indexOf(filt.type) < 0) return false;
+    if (filt.q) {
+      const hay = [x.name, x.email, x.phone, x.notes].concat(x.reps.map((r) => r.first + " " + r.last + " " + r.email)).join(" ").toLowerCase();
+      if (hay.indexOf(filt.q.toLowerCase()) < 0) return false;
+    }
+    return true;
+  }
+
+  function histHtml(x) {
+    if (!S.hist.available) return '<span class="small">—</span>';
+    const h = (S.hist.by_sub || {})[x.id];
+    if (!h) return '<span class="small">Not used on a priced project yet</span>';
+    return Object.keys(h).map((tid) => {
+      const v = h[tid], t = S.typeById[tid], unit = t && t.unit ? " / " + t.unit : "";
+      return '<div class="hist"><b>' + esc(t ? t.name : "Other") + "</b>: " +
+        (v.last_unit != null ? money(v.last_unit) + unit + " last" : money(v.total) + " total") +
+        (v.avg_unit != null && v.jobs > 1 ? " · avg " + money(v.avg_unit) + unit : "") +
+        ' <span class="small">· ' + v.jobs + (v.jobs === 1 ? " job" : " jobs") + (v.last_project ? " · last " + esc(v.last_project) : "") + (v.last_date ? " " + v.last_date : "") + "</span></div>";
+    }).join("");
+  }
+
+  function render() {
+    const list = S.subs.filter(match).sort((a, b) => (b.preferred - a.preferred) || (b.active - a.active) || a.name.localeCompare(b.name));
+    $("count").textContent = list.length + " of " + S.subs.length;
+    if (!list.length) {
+      $("rows").innerHTML = '<tr><td colspan="4" class="empty">' + (S.subs.length ? "Nothing matches these filters." : "No subcontractors yet. Click “+ Add subcontractor”.") + "</td></tr>";
+      return;
+    }
+    $("rows").innerHTML = list.map((x) => {
+      const main = x.reps.find((r) => r.primary) || x.reps[0];
+      const types = x.item_types.map((id) => S.typeById[id]).filter(Boolean).map((t) => '<span class="tag">' + esc(t.name) + "</span>").join("") || '<span class="small">None picked</span>';
+      const addr = [x.address.city, x.address.state].filter(Boolean).join(", ");
+      return '<tr class="sub' + (x.active ? "" : " off") + '" data-id="' + esc(x.id) + '">' +
+        '<td><div class="nm">' + (x.preferred ? '<span class="star" title="Preferred">★</span>' : "") + esc(x.name) + (x.active ? "" : ' <span class="tag off">inactive</span>') + "</div>" +
+          '<div class="small">' + esc(addr) + (x.phone ? (addr ? " · " : "") + esc(x.phone) : "") + "</div></td>" +
+        "<td>" + types + "</td>" +
+        "<td>" + (main ? '<div>' + esc((main.first + " " + main.last).trim()) + '</div><div class="small">' + esc(main.email || main.phone || main.cell) + "</div>" +
+          (x.reps.length > 1 ? '<div class="small">+' + (x.reps.length - 1) + " more</div>" : "") : '<span class="small">' + esc(x.email || "No contact") + "</span>") + "</td>" +
+        "<td>" + histHtml(x) + "</td></tr>";
+    }).join("");
+  }
+
+  // ---- editor ----
+  function repRow(r, i) {
+    return '<tr data-i="' + i + '">' +
+      ["first", "last", "phone", "cell", "email"].map((k) => '<td><input data-k="' + k + '" value="' + esc(r[k]) + '" /></td>').join("") +
+      '<td style="text-align:center"><input type="radio" name="primary" data-k="primary"' + (r.primary ? " checked" : "") + " /></td>" +
+      '<td><button class="x" data-del="' + i + '" title="Remove contact">×</button></td></tr>';
+  }
+  function drawReps() { $("repRows").innerHTML = cur.reps.map((r, i) => r.remove ? "" : repRow(r, i)).join(""); }
+  function drawTypes() {
+    $("typePick").innerHTML = grouped().map((g) => '<div class="fam">' + esc(g.bucket) + '</div><div class="chips">' +
+      g.types.map((t) => '<span class="chip' + (cur.item_types.indexOf(t.id) > -1 ? " on" : "") + '" data-t="' + t.id + '">' + esc(t.name) + "</span>").join("") + "</div>").join("");
+    $("typeCnt").textContent = cur.item_types.length ? "· " + cur.item_types.length + " picked" : "· pick at least one";
+  }
+  function open(x) {
+    cur = JSON.parse(JSON.stringify(x || { id: "", name: "", item_types: filt.type ? [filt.type] : [], active: true, preferred: false,
+      phone: "", email: "", website: "", notes: "", address: {}, reps: [] }));
+    if (!cur.reps.length) cur.reps.push({ id: "", first: "", last: "", phone: "", cell: "", email: "", primary: true });
+    $("edTitle").textContent = x ? x.name : "New subcontractor";
+    $("fName").value = cur.name; $("fActive").checked = cur.active; $("fPref").checked = cur.preferred;
+    $("fPhone").value = cur.phone; $("fEmail").value = cur.email; $("fWeb").value = cur.website; $("fNotes").value = cur.notes;
+    const a = cur.address || {};
+    $("fA1").value = a.line1 || ""; $("fA2").value = a.line2 || ""; $("fCity").value = a.city || ""; $("fState").value = a.state || ""; $("fZip").value = a.zip || "";
+    $("delBtn").style.display = x ? "" : "none";
+    $("edErr").textContent = "";
+    drawTypes(); drawReps();
+    $("ov").classList.add("show");
+    $("fName").focus();
+  }
+  function close() { $("ov").classList.remove("show"); cur = null; }
+  function readReps() {
+    $("repRows").querySelectorAll("tr").forEach((tr) => {
+      const r = cur.reps[Number(tr.dataset.i)];
+      tr.querySelectorAll("input").forEach((inp) => { r[inp.dataset.k] = inp.type === "radio" ? inp.checked : inp.value.trim(); });
+    });
+  }
+
+  async function save() {
+    readReps();
+    const sub = { id: cur.id, name: $("fName").value.trim(), item_types: cur.item_types, active: $("fActive").checked, preferred: $("fPref").checked,
+      phone: $("fPhone").value, email: $("fEmail").value.trim(), website: $("fWeb").value.trim(), notes: $("fNotes").value,
+      address: { line1: $("fA1").value.trim(), line2: $("fA2").value.trim(), city: $("fCity").value.trim(), state: $("fState").value.trim(),
+        zip: $("fZip").value.trim(), country: (cur.address && cur.address.country) || "United States" } };
+    if (!sub.name) { $("edErr").textContent = "Company name is required."; return; }
+    if (!sub.item_types.length) { $("edErr").textContent = "Pick at least one type of work."; return; }
+    $("saveBtn").disabled = true; busy("Saving…");
+    try {
+      const j = await api("/save", { sub, reps: cur.reps });
+      close();
+      busy(j.problems && j.problems.length ? "Saved, but: " + j.problems.join("; ") : "Saved", j.problems && j.problems.length ? "err" : "ok");
+      await load();
+    } catch (e) { busy(""); $("edErr").textContent = e.message; }
+    finally { $("saveBtn").disabled = false; }
+  }
+  async function del() {
+    if (!(await mcConfirm("Delete " + cur.name + "? If it is used on a project it will be made inactive instead, so old projects keep it.", { danger: true, okText: "Delete" }))) return;
+    busy("Deleting…");
+    try {
+      const j = await api("/delete", { id: cur.id });
+      close();
+      busy(j.deactivated ? "Used on " + j.used_on + " project row(s), so it was made inactive instead." : "Deleted", j.deactivated ? "" : "ok");
+      if (j.deactivated) setTimeout(() => busy(""), 3500);
+      await load();
+    } catch (e) { busy(""); $("edErr").textContent = e.message; }
+  }
+
+  // ---- events (delegated; no inline handlers) ----
+  $("q").addEventListener("input", (e) => { filt.q = e.target.value.trim(); render(); });
+  $("typeF").addEventListener("change", (e) => { filt.type = e.target.value; render(); });
+  $("actF").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    filt.act = b.dataset.v; $("actF").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); render();
+  });
+  $("rows").addEventListener("click", (e) => {
+    const tr = e.target.closest("tr.sub"); if (!tr) return;
+    open(S.subs.find((x) => x.id === tr.dataset.id));
+  });
+  $("addBtn").addEventListener("click", () => open(null));
+  $("typePick").addEventListener("click", (e) => {
+    const c = e.target.closest(".chip"); if (!c) return;
+    const i = cur.item_types.indexOf(c.dataset.t);
+    if (i > -1) cur.item_types.splice(i, 1); else cur.item_types.push(c.dataset.t);
+    drawTypes();
+  });
+  $("repRows").addEventListener("click", (e) => {
+    const d = e.target.closest("[data-del]"); if (!d) return;
+    readReps();
+    const r = cur.reps[Number(d.dataset.del)];
+    if (r.id) r.remove = true; else cur.reps.splice(Number(d.dataset.del), 1);
+    drawReps();
+  });
+  $("addRep").addEventListener("click", () => {
+    readReps();
+    cur.reps.push({ id: "", first: "", last: "", phone: "", cell: "", email: "", primary: !cur.reps.some((r) => r.primary && !r.remove) });
+    drawReps();
+  });
+  $("saveBtn").addEventListener("click", save);
+  $("cancelBtn").addEventListener("click", close);
+  $("delBtn").addEventListener("click", del);
+  $("ov").addEventListener("click", (e) => { if (e.target === $("ov")) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && cur) close(); });
+
+  if (!MFG && !window.MC_TOKEN) { $("rows").innerHTML = '<tr><td colspan="4" class="empty">Please open this page from Material Compass.</td></tr>'; return; }
+  load();
+})();
+</script>
+</body>
+</html>

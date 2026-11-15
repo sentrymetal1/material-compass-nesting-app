@@ -142,15 +142,27 @@ if(input.Load_Takeoff_Outside == true)
 						row.Category_of_Item = b;
 						cn = ifnull(p.get("component"),"").toString().trim();
 						note = "";
-						if(cn != "")
+						compSet = false;
+						if(cn != "" && compId.containKey(cn.toLowerCase()))
 						{
-							if(compId.containKey(cn.toLowerCase()))
+							row.Component = compId.get(cn.toLowerCase());
+							compSet = true;
+						}
+						// Component is Mandatory (2026-11-15): one-component project = that component
+						if(compSet == false && compId.size() == 1)
+						{
+							row.Component = compId.get(compId.keys().get(0));
+							compSet = true;
+						}
+						if(compSet == false)
+						{
+							if(cn != "")
 							{
-								row.Component = compId.get(cn.toLowerCase());
+								note = " - component " + cn + " not found on this project, pick it";
 							}
 							else
 							{
-								note = " - component " + cn + " not found on this project, pick it";
+								note = " - pick the component this applies to";
 							}
 						}
 						d = ifnull(ln.get("description"),"").toString();

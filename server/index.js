@@ -4255,6 +4255,8 @@ require('./intel').registerIntel(app, { fetchAllZohoPages, cachedLookup,
   projectHeader: async (pid) => projectHeader(pid, await getAccessToken(), creatorApiBase()) });
 // ---- The take-off's labor hours onto the project (Project_Labor_Details_Form), on approve ----
 require('./labor/laborCommit').registerLaborCommit(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
+// ---- Subcontractors & item suppliers: one shop's list, edited off Zoho (docs/SUBCONTRACTORS_PAGE_PLAN.md) ----
+require('./subcontractors').registerSubcontractors(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages, cachedLookup });
 
 // ── ONE ROW, FOR DELUGE ─────────────────────────────────────────────────────────────────────
 // The project form's BOM subform cannot match a fitting to its catalog row, and the reason is
