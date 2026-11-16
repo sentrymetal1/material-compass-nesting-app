@@ -130,7 +130,8 @@ function registerTimeEntry(app, deps) {
 
   async function workOrders(shop) {
     const [wos, comps] = await Promise.all([
-      rows('/report/' + WO_REPORT + '?criteria=' + enc('(Manufacture_ID == ' + shop + ')')),
+      // Older WOs have the Manufacture lookup but no Manufacture_ID number, so match either.
+      rows('/report/' + WO_REPORT + '?criteria=' + enc('(Manufacture == ' + shop + ' || Manufacture_ID == ' + shop + ')')),
       rows('/report/' + COMP_REPORT + '?criteria=' + enc('(Customer_Entry_Form == ' + shop + ')')),
     ]);
     const byWo = {};
