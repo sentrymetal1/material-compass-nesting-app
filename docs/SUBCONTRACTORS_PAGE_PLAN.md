@@ -53,8 +53,13 @@ Phase 1 is a Railway page that edits the existing Zoho records. Later, the data 
 ## One-time data step — DONE 2026-11-15
 
 18 records: Item_Types = old single type, Active = true. Orphan rep Dan Mancuso (4111484000003617003) deleted. Backup in session scratchpad subcontractors_backup_2026-11-15.json.
-REST criteria `Item_Types == <id>` matches membership (tested). Project row filter given to Mark:
-`Item_Types == input.Item_Type && Manufacture == thisapp.GetCustomerID_Int() && Active == true`
+REST criteria `Item_Types == <id>` matches membership (tested).
+
+**Project row filter — LIVE and tested 2026-11-15** (set on Project_Outsource_Details_Form › Subcontractor_Supplier; the builder cannot pick a multi-select as a whole, so it matches the ID sub-field):
+`(Item_Types.ID == input.Item_Type) && (Manufacture.ID == thisapp.GetCustomerID_Int()) && (Active == true)`
+The old filter (`Project_Items_and_Subcontracting_Types.ID == input.Item_Type`) was still there at first, so new types picked on the page never showed.
+
+**Launcher — LIVE:** function `OpenSubcontractors(int Manufacture_ID)` (Default namespace). NEW PROJECT SUBMITTAL › Created or Edited › User input of Supplier Button (`Supplier_Button` radio, choice "Manage Subcontractors"): `thisapp.OpenSubcontractors(input.MANUFACTURE.toLong()); Supplier_Button.deselect(input.Supplier_Button);`. Old page Subcontract_and_Misc_Suppliers_Page no longer called; delete later.
 
 ### Original note
 
