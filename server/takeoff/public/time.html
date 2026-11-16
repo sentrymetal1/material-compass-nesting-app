@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Time Sheet</title>
+<!--
+  Weekly time sheet: actual hours per work order. Plan: docs/LABOR_TRACKING_PLAN.md.
+  Opened from Material Compass as
+    /takeoff/time.html?manufacturer_id=<MFG record id>&t=<tenant token>[&wo=<work order record id>]
+  Reads/writes through /api/labor-time (server/labor/timeEntry.js): one Actual Labor row per
+  employee x day x component x labor type, on the work order.
+-->
+<script src="/takeoff/mc-dialog.js"></script>
+<style>
+  :root{--blue:#5F94CE;--ink:#1f2a37;--mut:#667;--line:#e3e6ea;--grn:#2e7d32;--grnbg:#e8f5e9;--ylw:#b45309;--ylwbg:#fff7ed;--red:#b91c1c;--redbg:#fdeeee;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:1500px;margin:0 auto;}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .brand{font-weight:800;font-size:16px;color:var(--blue);}
+  .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .appbar .sp{flex:1;}
+  .btn{font:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:7px 16px;cursor:pointer;}
+  .btn:hover{opacity:.92;} .btn:disabled{opacity:.45;cursor:default;}
+  .btn.ghost{background:#fff;color:var(--blue);border:1px solid #cdd3da;}
+  .lnk{font:inherit;font-size:12.5px;font-weight:600;color:var(--blue);background:none;border:0;cursor:pointer;padding:2px 0;}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:11px;font-size:14px;font-weight:600;display:none;background:var(--blue);}
+  .busy.show{display:block;} .busy.err{background:var(--red);} .busy.ok{background:var(--grn);}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;}
+  .bar{display:flex;gap:10px;align-items:center;padding:12px 16px;flex-wrap:wrap;border-bottom:1px solid var(--line);}
+  .wk{font-weight:700;font-size:14px;min-width:230px;text-align:center;}
+  input,select{font:inherit;font-size:13px;padding:5px 7px;border:1px solid #cdd3da;border-radius:6px;background:#fff;color:var(--ink);}
+  input:focus,select:focus{border-color:var(--blue);outline:none;}
+  .seg{display:inline-flex;border:1px solid #cdd3da;border-radius:6px;overflow:hidden;}
+  .seg button{font:inherit;font-size:12.5px;border:0;background:#fff;padding:6px 12px;cursor:pointer;color:#445;}
+  .seg button.on{background:#eaf2fb;color:#1f3a5f;font-weight:600;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:8px 6px;border-bottom:1px solid var(--line);background:#fafbfc;white-space:nowrap;}
+  th.d,td.d{text-align:center;width:62px;}
+  th.d small{display:block;font-weight:400;letter-spacing:0;text-transform:none;}
+  th.wkend,td.wkend{background:#f7f8fa;}
+  td{padding:5px 6px;border-bottom:1px solid #f0f2f4;vertical-align:middle;}
+  td select{width:100%;}
+  td.d input{width:54px;text-align:center;padding:5px 2px;}
+  td.d input.has{background:#eef6ee;border-color:#9ccc9f;font-weight:600;}
+  td.tot,th.tot{text-align:right;font-weight:600;width:60px;}
+  .x{font:inherit;color:var(--mut);background:none;border:0;cursor:pointer;font-size:16px;}
+  .x:hover{color:var(--red);}
+  tr.sum td{background:#fafbfc;font-size:12px;color:#445;}
+  tr.sum td.d{font-weight:600;}
+  td.d.warn{color:var(--red);background:var(--redbg);}
+  .empty{padding:30px;text-align:center;color:var(--mut);font-size:13.5px;}
+  .note{font-size:12.5px;color:var(--ylw);background:var(--ylwbg);border-radius:8px;padding:8px 12px;margin:0 0 12px;}
+  .small{font-size:12px;color:var(--mut);}
+  .addrow{padding:10px 16px;display:flex;gap:16px;align-items:center;}
+  .foot{font-size:11px;color:#99a;text-align:right;margin-top:8px;}
+  .dirty{font-size:12px;color:var(--ylw);font-weight:600;}
+  /* employees */
+  .ov{position:fixed;inset:0;background:rgba(29,36,48,.42);display:none;align-items:flex-start;justify-content:center;padding:30px 20px;overflow:auto;z-index:40;}
+  .ov.show{display:flex;}
+  .ed{background:#fff;border-radius:14px;width:100%;max-width:900px;box-shadow:0 18px 50px rgba(20,30,40,.28);}
+  .ed h3{margin:0;padding:14px 20px;border-bottom:1px solid var(--line);font-size:16px;background:#f7f9fc;border-radius:14px 14px 0 0;}
+  .ed .bd{padding:12px 20px 16px;}
+  .ed .ft{display:flex;gap:10px;align-items:center;padding:12px 20px;border-top:1px solid var(--line);}
+  .ed .ft .sp{flex:1;}
+  .emp td{padding:4px 4px;}
+  .emp input{width:100%;}
+  .emp tr.off input{color:#99a;}
+  .err{color:var(--red);font-size:12.5px;margin-top:6px;}
+</style>
+</head>
+<body>
+<div class="busy" id="busy"></div>
+<div class="wrap">
+  <div class="appbar">
+    <span class="brand">Material Compass</span>
+    <span class="page">Time Sheet</span>
+    <span class="sp"></span>
+    <span class="dirty" id="dirty"></span>
+    <button class="btn ghost" id="empBtn">Employees</button>
+    <button class="btn" id="saveBtn" disabled>Save week</button>
+  </div>
+  <div id="note"></div>
+  <div class="card">
+    <div class="bar">
+      <button class="btn ghost" id="prevWk" title="Previous week">◀</button>
+      <span class="wk" id="wk"></span>
+      <button class="btn ghost" id="nextWk" title="Next week">▶</button>
+      <button class="lnk" id="thisWk">This week</button>
+      <span class="sp" style="flex:1"></span>
+      <span class="seg" id="viewF" style="display:none"><button data-v="wo" class="on" id="viewWo">This work order</button><button data-v="all">All work</button></span>
+    </div>
+    <table>
+      <thead id="head"></thead>
+      <tbody id="rows"><tr><td colspan="14" class="empty">Loading…</td></tr></tbody>
+    </table>
+    <div class="addrow">
+      <button class="lnk" id="addLine">+ Add line</button>
+      <button class="lnk" id="copyLast">Copy last week's lines</button>
+      <span class="small">Hours go on the work order at its labor rates. "Whole job" spreads them over the components by quoted labor.</span>
+    </div>
+  </div>
+  <div class="foot" id="foot"></div>
+</div>
+
+<div class="ov" id="ov"><div class="ed">
+  <h3>Employees</h3>
+  <div class="bd">
+    <table class="emp"><thead><tr><th>First</th><th>Last</th><th>Emp #</th><th>$/hr</th><th>Email</th><th>Active</th><th></th></tr></thead><tbody id="empRows"></tbody></table>
+    <button class="lnk" id="addEmp">+ Add employee</button>
+    <div class="err" id="empErr"></div>
+  </div>
+  <div class="ft"><span class="small">Inactive people stay on past weeks but are not offered for new lines.</span><span class="sp"></span><button class="btn ghost" id="empClose">Close</button></div>
+</div></div>
+
+<script>
+(function () {
+  const VERSION = "v0.1 · 2026-11-16 · weekly time sheet → work order actual labor";   // bump on every push
+  console.log("Material Compass time.html " + VERSION);
+  document.getElementById("foot").textContent = "Time Sheet " + VERSION;
+
+  const qs = new URLSearchParams(location.search);
+  const MFG = qs.get("manufacturer_id") || qs.get("manufacture") || "";
+  const WO = qs.get("wo") || "";
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const fmtH = (n) => n ? String(r2(n)) : "";
+  const BUCKET_NAME = { Cutting_Hrs: "Cutting", CNC_Hrs: "CNC", Assy_Hrs: "Fit & assemble", Fab_Hrs: "Fabrication",
+    Weld_Hrs: "Welding", Labor_Hrs: "Handling / labor", Inspection_Hrs: "Inspection", Misc_Hrs: "Misc." };
+
+  let S = null, lines = [], dirty = false, view = WO ? "wo" : "all", nid = 1;
+
+  function busy(msg, kind) {
+    const b = $("busy");
+    b.className = "busy" + (msg ? " show" : "") + (kind ? " " + kind : "");
+    b.textContent = msg || "";
+    if (kind === "ok") setTimeout(() => busy(""), 2200);
+  }
+  async function api(path, body) {
+    const sep = path.indexOf("?") > -1 ? "&" : "?";
+    const r = await fetch("/api/labor-time" + path + (body ? "" : sep + "manufacturer_id=" + encodeURIComponent(MFG)), body ? {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.assign({ manufacturer_id: MFG }, body)) } : undefined);
+    const j = await r.json().catch(() => ({ ok: false, error: "The server did not answer. Please try again." }));
+    if (!j.ok) { const e = new Error(j.error || "Something went wrong."); e.body = j; throw e; }
+    return j;
+  }
+  function setDirty(v) {
+    dirty = v;
+    $("saveBtn").disabled = !v;
+    $("dirty").textContent = v ? "Unsaved changes" : "";
+  }
+  window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+  const pretty = (iso) => { const [y, m, d] = iso.split("-").map(Number); return MON[m - 1] + " " + d; };
+  function addDays(iso, n) { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+  function localToday() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+
+  const woById = () => { const m = {}; S.work_orders.forEach((w) => { m[w.id] = w; }); return m; };
+
+  async function load(start, keepLinesFrom) {
+    busy("Loading…");
+    try {
+      const j = await api("/week?start=" + encodeURIComponent(start));
+      S = j;
+      lines = j.lines.map((L) => Object.assign({ uid: nid++ }, L, { hours: L.hours.slice() }));
+      if (keepLinesFrom) {
+        keepLinesFrom.forEach((L) => lines.push({ uid: nid++, employee: L.employee, wo: L.wo, component: L.component, code: L.code, entry: L.entry, hours: [0, 0, 0, 0, 0, 0, 0], note: "" }));
+      }
+      setDirty(!!(keepLinesFrom && keepLinesFrom.length));
+      $("wk").textContent = "Week of " + pretty(j.days[0]) + " – " + pretty(j.days[6]) + ", " + j.days[6].slice(0, 4);
+      if (WO) { $("viewF").style.display = ""; const w = woById()[WO]; $("viewWo").textContent = w ? w.number : "This work order"; }
+      const notes = [];
+      if (!j.employees.length) notes.push('No employees yet. Click <b>Employees</b> to add your crew first.');
+      if (!j.work_orders.some((w) => w.open)) notes.push("You have no open work orders, so there is nothing to put time on yet.");
+      $("note").innerHTML = notes.map((n) => '<div class="note">' + n + "</div>").join("");
+      busy("");
+      render();
+    } catch (e) { busy(e.message, "err"); $("rows").innerHTML = '<tr><td colspan="14" class="empty">' + esc(e.message) + "</td></tr>"; }
+  }
+
+  async function goWeek(start) {
+    if (dirty && !(await mcConfirm("You have unsaved hours on this week. Leave without saving?"))) return;
+    load(start);
+  }
+
+  function opts(list, val, blank) {
+    return (blank ? '<option value="">' + esc(blank) + "</option>" : "") +
+      list.map((o) => '<option value="' + esc(o.v) + '"' + (o.v === val ? " selected" : "") + ">" + esc(o.t) + "</option>").join("");
+  }
+  function empOpts(L) {
+    const list = S.employees.filter((e) => e.active || e.id === L.employee).map((e) => ({ v: e.id, t: e.name + (e.active ? "" : " (inactive)") }));
+    if (L.employee && !S.employees.some((e) => e.id === L.employee)) list.push({ v: L.employee, t: "(not on the list)" });
+    return opts(list, L.employee, "Pick employee…");
+  }
+  function woOpts(L) {
+    const list = S.work_orders.filter((w) => w.open || w.id === L.wo).map((w) => ({ v: w.id, t: w.label + (w.open ? "" : " (closed)") }));
+    return opts(list, L.wo, "Pick work order…");
+  }
+  function compOpts(L) {
+    const w = woById()[L.wo];
+    if (!w) return '<option value="">—</option>';
+    return opts([{ v: "", t: "Whole job" }].concat(w.components.map((c) => ({ v: c.id, t: c.name }))), L.component);
+  }
+  function typeOpts(L) {
+    const g = {};
+    S.types.forEach((t) => { (g[t.bucket] = g[t.bucket] || []).push(t); });
+    return Object.keys(BUCKET_NAME).filter((b) => g[b]).map((b) => '<optgroup label="' + esc(BUCKET_NAME[b]) + '">' +
+      g[b].map((t) => '<option value="' + t.code + '"' + (t.code === L.code ? " selected" : "") + ">" + esc(BUCKET_NAME[b] + " - " + t.label) + "</option>").join("") + "</optgroup>").join("");
+  }
+
+  const shown = () => lines.filter((L) => view === "all" || L.wo === WO);
+
+  function render() {
+    const today = localToday();
+    $("head").innerHTML = "<tr><th style=\"width:13%\">Employee</th><th style=\"width:19%\">Work order</th><th style=\"width:11%\">Component</th><th style=\"width:15%\">Labor type</th><th style=\"width:10%\">Entry</th>" +
+      S.days.map((d, i) => '<th class="d' + (i > 4 ? " wkend" : "") + '"' + (d === today ? ' style="color:var(--blue)"' : "") + ">" + DOW[i] + "<small>" + pretty(d) + "</small></th>").join("") +
+      '<th class="tot">Total</th><th></th></tr>';
+    const L = shown();
+    if (!L.length) {
+      $("rows").innerHTML = '<tr><td colspan="14" class="empty">No time entered for this week' + (view === "wo" ? " on this work order" : "") + '. Click <b>+ Add line</b>.</td></tr>';
+      return;
+    }
+    let html = L.map((x) => {
+      const tot = x.hours.reduce((a, h) => a + (Number(h) || 0), 0);
+      return '<tr data-u="' + x.uid + '">' +
+        '<td><select data-k="employee">' + empOpts(x) + "</select></td>" +
+        '<td><select data-k="wo">' + woOpts(x) + "</select></td>" +
+        '<td><select data-k="component">' + compOpts(x) + "</select></td>" +
+        '<td><select data-k="code">' + typeOpts(x) + "</select></td>" +
+        '<td><select data-k="entry">' + opts(S.entry_types.map((t) => ({ v: t, t })), x.entry) + "</select></td>" +
+        x.hours.map((h, i) => '<td class="d' + (i > 4 ? " wkend" : "") + '"><input data-d="' + i + '" inputmode="decimal" value="' + fmtH(h) + '"' + (h ? ' class="has"' : "") + " /></td>").join("") +
+        '<td class="tot">' + fmtH(tot) + '</td><td><button class="x" data-del="1" title="Remove line">×</button></td></tr>';
+    }).join("");
+    html += summary();
+    $("rows").innerHTML = html;
+  }
+
+  // Per employee: hours per day and week, from ALL lines (a day over 12 or a week over 40 is flagged).
+  function summary() {
+    const per = {};
+    lines.forEach((x) => {
+      if (!x.employee) return;
+      const p = per[x.employee] = per[x.employee] || [0, 0, 0, 0, 0, 0, 0];
+      x.hours.forEach((h, i) => { p[i] += Number(h) || 0; });
+    });
+    const names = {}; S.employees.forEach((e) => { names[e.id] = e.name; });
+    return Object.keys(per).sort((a, b) => (names[a] || "").localeCompare(names[b] || "")).map((id) => {
+      const p = per[id], wk = p.reduce((a, h) => a + h, 0);
+      return '<tr class="sum"><td colspan="5">' + esc(names[id] || "Employee") + " — all work</td>" +
+        p.map((h, i) => '<td class="d' + (h > 12 ? " warn" : "") + (i > 4 ? " wkend" : "") + '"' + (h > 12 ? ' title="More than 12 hours in a day"' : "") + ">" + fmtH(h) + "</td>").join("") +
+        '<td class="tot' + (wk > 40 ? " warn" : "") + '"' + (wk > 40 ? ' style="color:var(--red)" title="Over 40: ' + r2(wk - 40) + ' h overtime"' : "") + ">" + fmtH(wk) + "</td><td></td></tr>";
+    }).join("");
+  }
+
+  function lineOf(el) { const tr = el.closest("tr[data-u]"); return tr ? lines.find((x) => String(x.uid) === tr.dataset.u) : null; }
+
+  $("rows").addEventListener("change", (e) => {
+    const L = lineOf(e.target); if (!L) return;
+    const k = e.target.dataset.k;
+    if (k) {
+      L[k] = e.target.value;
+      if (k === "wo") L.component = "";
+      setDirty(true); render(); return;
+    }
+    if (e.target.dataset.d != null) {
+      const v = e.target.value.trim(), n = v === "" ? 0 : Number(v.replace(",", "."));
+      if (!(n >= 0 && n <= 24)) { mcAlert("Enter hours between 0 and 24."); e.target.value = fmtH(L.hours[+e.target.dataset.d]); return; }
+      L.hours[+e.target.dataset.d] = r2(n);
+      setDirty(true);
+      // Update in place (no re-render), so Tab keeps moving through the cells.
+      e.target.value = fmtH(L.hours[+e.target.dataset.d]);
+      e.target.classList.toggle("has", L.hours[+e.target.dataset.d] > 0);
+      const tr = e.target.closest("tr");
+      tr.querySelector("td.tot").textContent = fmtH(L.hours.reduce((a, h) => a + (Number(h) || 0), 0));
+      document.querySelectorAll("#rows tr.sum").forEach((r) => r.remove());
+      $("rows").insertAdjacentHTML("beforeend", summary());
+    }
+  });
+  // Enter moves down the same day column.
+  $("rows").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.target.dataset.d == null) return;
+    e.preventDefault();
+    const d = e.target.dataset.d, tr = e.target.closest("tr");
+    e.target.blur();
+    setTimeout(() => {
+      let n = document.querySelector('tr[data-u="' + tr.dataset.u + '"]');
+      n = n && n.nextElementSibling;
+      while (n && !n.dataset.u) n = n.nextElementSibling;
+      const inp = n && n.querySelector('input[data-d="' + d + '"]');
+      if (inp) { inp.focus(); inp.select(); }
+    }, 0);
+  });
+  $("rows").addEventListener("click", async (e) => {
+    if (!e.target.dataset.del) return;
+    const L = lineOf(e.target); if (!L) return;
+    const has = L.hours.some((h) => h > 0);
+    if (has && !(await mcConfirm("Remove this line and its hours? They come off the work order when you save."))) return;
+    lines = lines.filter((x) => x !== L); setDirty(true); render();
+  });
+
+  $("addLine").onclick = () => {
+    const last = shown().slice(-1)[0];
+    const firstOpen = S.work_orders.find((w) => w.open);
+    lines.push({ uid: nid++, employee: last ? last.employee : "", wo: WO || (last ? last.wo : (firstOpen ? firstOpen.id : "")),
+      component: "", code: last ? last.code : "WELD_MIG", entry: "Project Quote", hours: [0, 0, 0, 0, 0, 0, 0], note: "" });
+    render();
+    const sel = document.querySelector('tr[data-u="' + (nid - 1) + '"] select[data-k="employee"]');
+    if (sel) sel.focus();
+  };
+  $("copyLast").onclick = async () => {
+    try {
+      busy("Reading last week…");
+      const prev = await api("/week?start=" + encodeURIComponent(addDays(S.start, -7)));
+      busy("");
+      const have = new Set(lines.map((x) => [x.employee, x.wo, x.component, x.code, x.entry].join("|")));
+      const add = prev.lines.filter((x) => !have.has([x.employee, x.wo, x.component, x.code, x.entry].join("|")) &&
+        prev.work_orders.some((w) => w.id === x.wo && w.open));
+      if (!add.length) { mcAlert("Nothing new to copy from last week."); return; }
+      add.forEach((x) => lines.push({ uid: nid++, employee: x.employee, wo: x.wo, component: x.component, code: x.code, entry: x.entry, hours: [0, 0, 0, 0, 0, 0, 0], note: "" }));
+      setDirty(true); render();
+      busy(add.length + " line" + (add.length === 1 ? "" : "s") + " copied — enter this week's hours", "ok");
+    } catch (e) { busy(e.message, "err"); }
+  };
+
+  $("saveBtn").onclick = async () => {
+    const used = lines.filter((x) => x.hours.some((h) => h > 0));
+    const missing = used.find((x) => !x.employee || !x.wo || !x.code);
+    if (missing) { mcAlert("Every line with hours needs an employee, a work order and a labor type."); return; }
+    $("saveBtn").disabled = true;
+    busy("Saving…");
+    try {
+      const j = await api("/save", { start: S.start, lines: used.map((x) => ({ employee: x.employee, wo: x.wo, component: x.component, code: x.code, entry: x.entry, hours: x.hours, note: x.note || "" })) });
+      setDirty(false);
+      const d = j.done || {};
+      if (j.problems && j.problems.length) mcAlert("Saved, with problems:\n\n" + j.problems.join("\n"));
+      busy("Saved — " + (d.added || 0) + " added, " + (d.removed || 0) + " removed, " + (d.kept || 0) + " unchanged", "ok");
+      load(S.start);
+    } catch (e) { busy(""); $("saveBtn").disabled = false; mcAlert(e.message); }
+  };
+
+  $("prevWk").onclick = () => goWeek(addDays(S.start, -7));
+  $("nextWk").onclick = () => goWeek(addDays(S.start, 7));
+  $("thisWk").onclick = () => goWeek(localToday());
+  $("viewF").addEventListener("click", (e) => {
+    const v = e.target.dataset.v; if (!v) return;
+    view = v; [...$("viewF").children].forEach((b) => b.classList.toggle("on", b.dataset.v === v)); render();
+  });
+
+  // ---- employees ----
+  let emps = [];
+  function renderEmps() {
+    $("empRows").innerHTML = emps.map((e, i) => '<tr data-i="' + i + '"' + (e.active ? "" : ' class="off"') + ">" +
+      '<td><input data-f="first" value="' + esc(e.first) + '" /></td><td><input data-f="last" value="' + esc(e.last) + '" /></td>' +
+      '<td style="width:80px"><input data-f="number" value="' + esc(e.number) + '" /></td><td style="width:80px"><input data-f="rate" inputmode="decimal" value="' + esc(e.rate || "") + '" /></td>' +
+      '<td><input data-f="email" value="' + esc(e.email) + '" /></td>' +
+      '<td style="width:60px;text-align:center"><input type="checkbox" data-f="active"' + (e.active ? " checked" : "") + " /></td>" +
+      '<td style="width:70px"><button class="btn" data-save="1" style="padding:5px 10px"' + (e._dirty ? "" : " disabled") + ">Save</button></td></tr>").join("") ||
+      '<tr><td colspan="7" class="empty">No employees yet. Click <b>+ Add employee</b>.</td></tr>';
+  }
+  $("empBtn").onclick = () => { emps = S.employees.map((e) => Object.assign({}, e)); $("empErr").textContent = ""; renderEmps(); $("ov").classList.add("show"); };
+  $("empClose").onclick = async () => {
+    if (emps.some((e) => e._dirty) && !(await mcConfirm("Some employee changes are not saved. Close anyway?"))) return;
+    $("ov").classList.remove("show"); render();
+  };
+  $("addEmp").onclick = () => { emps.push({ id: "", first: "", last: "", number: "", rate: "", email: "", active: true, _dirty: true }); renderEmps();
+    const r = $("empRows").lastElementChild; r && r.querySelector("input").focus(); };
+  $("empRows").addEventListener("input", (e) => {
+    const tr = e.target.closest("tr[data-i]"); if (!tr) return;
+    const x = emps[+tr.dataset.i], f = e.target.dataset.f;
+    x[f] = f === "active" ? e.target.checked : e.target.value; x._dirty = true;
+    tr.querySelector("[data-save]").disabled = false;
+    if (f === "active") tr.classList.toggle("off", !x.active);
+  });
+  $("empRows").addEventListener("click", async (e) => {
+    if (!e.target.dataset.save) return;
+    const tr = e.target.closest("tr[data-i]"), x = emps[+tr.dataset.i];
+    $("empErr").textContent = "";
+    e.target.disabled = true;
+    try {
+      const j = await api("/employee", { employee: x });
+      S.employees = j.employees;
+      const keep = emps.filter((y) => y !== x && y._dirty && !y.id);
+      emps = S.employees.map((y) => Object.assign({}, y)).concat(keep);
+      renderEmps();
+    } catch (err) { $("empErr").textContent = err.message; e.target.disabled = false; }
+  });
+
+  if (!MFG && !window.MC_TOKEN) { $("rows").innerHTML = '<tr><td colspan="14" class="empty">Please open the time sheet from Material Compass.</td></tr>'; return; }
+  load(localToday());
+})();
+</script>
+</body>
+</html>

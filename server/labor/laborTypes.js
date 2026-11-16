@@ -50,12 +50,16 @@ const TYPES = [
   { code: 'CLEANUP',      bucket: 'Labor_Hrs',   label: 'Clean up' },
   { code: 'LOADOUT',      bucket: 'Labor_Hrs',   label: 'Loading out' },
   { code: 'CRANE',        bucket: 'Labor_Hrs',   label: 'Crane picks' },
+  { code: 'PACK',         bucket: 'Labor_Hrs',   label: 'Packaging' },
+  { code: 'SHIP',         bucket: 'Labor_Hrs',   label: 'Shipping' },
   { code: 'INSPECT',      bucket: 'Inspection_Hrs', label: 'Inspection' },
   { code: 'NDE',          bucket: 'Inspection_Hrs', label: 'Testing / NDE' },
   { code: 'TEST',         bucket: 'Inspection_Hrs', label: 'Pressure / leak test' },
   { code: 'DOCS',         bucket: 'Inspection_Hrs', label: 'QC paperwork' },
   { code: 'SETUP',        bucket: 'Misc_Hrs',    label: 'Job setup' },
   { code: 'DETAIL',       bucket: 'Misc_Hrs',    label: 'Shop drawings' },
+  { code: 'FIN_BLAST',    bucket: 'Misc_Hrs',    label: 'Blast' },     // in-house finishing (Zoho Labor_Type had Blast / Paint)
+  { code: 'FIN_PAINT',    bucket: 'Misc_Hrs',    label: 'Paint' },
   { code: 'MISC',         bucket: 'Misc_Hrs',    label: 'Other' },
 ];
 for (const t of TYPES) t.zoho = BUCKET_LABEL[t.bucket] + ' - ' + t.label;   // "Welding - TIG"
@@ -96,6 +100,11 @@ function codeFromZoho(text) {
   if (!s) return null;
   const exact = TYPES.find((t) => t.zoho.toLowerCase() === s);
   if (exact) return exact.code;
+  // The Zoho form's own original choices (Cutting - Saw, Lay Out, Handling…).
+  const OLD = { 'cutting - saw': 'CUT_BANDSAW', 'cutting - torch': 'CUT_OXY', 'cutting - oxy': 'CUT_OXY', drilling: 'FAB_DRILL',
+    'lay out': 'FIT_LAYOUT', fabrication: 'FAB_FIT', handling: 'HANDLE', 'clean up': 'CLEANUP', grinding: 'FAB_GRIND',
+    inspection: 'INSPECT', blast: 'FIN_BLAST', paint: 'FIN_PAINT', packaging: 'PACK', shipping: 'SHIP' };
+  if (OLD[s]) return OLD[s];
   const tail = s.split(/\s*-\s*/).pop();
   const byLabel = TYPES.find((t) => t.label.toLowerCase() === tail || t.label.toLowerCase().split(/[ /(]/)[0] === tail);
   return byLabel ? byLabel.code : null;
