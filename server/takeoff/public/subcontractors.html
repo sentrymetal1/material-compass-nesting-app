@@ -136,7 +136,7 @@
 
 <script>
 (function () {
-  const VERSION = "v0.2 · 2026-11-15 · history shows qty × price, MCP numbers";   // bump on every push
+  const VERSION = "v0.3 · 2026-11-15 · first contact defaults to main";   // bump on every push
   console.log("Material Compass subcontractors.html " + VERSION);
   document.getElementById("foot").textContent = "Subcontractors " + VERSION;
 
@@ -251,6 +251,8 @@
     cur = JSON.parse(JSON.stringify(x || { id: "", name: "", item_types: filt.type ? [filt.type] : [], active: true, preferred: false,
       phone: "", email: "", website: "", notes: "", address: {}, reps: [] }));
     if (!cur.reps.length) cur.reps.push({ id: "", first: "", last: "", phone: "", cell: "", email: "", primary: true });
+    // Older records have no main contact ticked: default the first one so a save always sets one.
+    if (!cur.reps.some((r) => r.primary)) cur.reps[0].primary = true;
     $("edTitle").textContent = x ? x.name : "New subcontractor";
     $("fName").value = cur.name; $("fActive").checked = cur.active; $("fPref").checked = cur.preferred;
     $("fPhone").value = cur.phone; $("fEmail").value = cur.email; $("fWeb").value = cur.website; $("fNotes").value = cur.notes;
