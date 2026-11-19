@@ -19,6 +19,8 @@ test('blank Invite_Status is an existing rep (Joined) and takes a seat', () => {
   assert.strictEqual(T.statusOf({}), 'Joined');
   assert.ok(T.takesSeat({}));
   assert.ok(!T.takesSeat({ Invite_Status: 'Cancelled' }));
+  assert.ok(!T.takesSeat({ Invite_Status: 'Cancel' }));
+  assert.strictEqual(T.statusOf({ Invite_Status: 'Cancel' }), 'Cancelled');
   assert.ok(!T.takesSeat({ Employee_Status: 'Delete Employee on Platform' }));
   assert.ok(T.takesSeat({ Invite_Status: 'Invited' }));
 });
@@ -53,4 +55,14 @@ test('email names the shop and the link', () => {
   assert.match(m.subject, /Black Rock Fabrication/);
   assert.ok(m.html.includes('https://x/join?i=1') && m.text.includes('https://x/join?i=1'));
   assert.ok(!/zoho/i.test(m.html));
+});
+
+test('default location: admin first, else any rep, else none', () => {
+  const reps = [
+    { Position: 'Estimator', Location: [{ ID: '222', zc_display_value: 'Yard' }] },
+    { Position: 'Administrator', Location: [{ ID: '111', zc_display_value: 'HQ' }] },
+  ];
+  assert.strictEqual(T.defaultLocation(reps), '111');
+  assert.strictEqual(T.defaultLocation([reps[0]]), '222');
+  assert.strictEqual(T.defaultLocation([{ Position: 'Administrator', Location: [] }]), '');
 });

@@ -11,7 +11,7 @@
 //    Company_Representatives (report All_Company_Representatives)
 //      Manufacture (shop), Name {first_name,last_name}, Email, Position, ACTIVE (YES/NO),
 //      Employee_Status (Keep / Pause / Delete Employee on Platform), Invite_Status
-//      (Invited / Joined / Cancelled; blank = a rep from before invites = Joined), Invite_Sent.
+//      (Invited / Joined / Cancel; blank = a rep from before invites = Joined), Invite_Sent.
 //
 //  The join link is signed with MC_TOKEN_SECRET: <rep id>.<expiry ms>.<sig>, 14 days. It names one
 //  rep record; the email on that record is who joins.
@@ -36,7 +36,8 @@ const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
 // ---------- pure helpers (tested) ----------------------------------------------------------
 function statusOf(r) {
   const st = s(r.Invite_Status);
-  if (st) return st;                         // Invited / Joined / Cancelled
+  if (/^cancel/i.test(st)) return 'Cancelled';   // the Zoho choice is "Cancel"
+  if (st) return st;                         // Invited / Joined
   return 'Joined';                           // reps from before invites
 }
 // A seat is taken by everyone not cancelled and not deleted from the platform.
@@ -75,6 +76,13 @@ function readJoinToken(tok, now) {
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return { error: 'bad_signature' };
   if ((now || Date.now()) > Number(m[2])) return { error: 'expired', repId: m[1] };
   return { repId: m[1], exp: Number(m[2]) };
+}
+// The location new reps get: the Administrator's, else any rep's. Location is a multi lookup.
+function defaultLocation(shopReps) {
+  const ids = (r) => (Array.isArray(r.Location) ? r.Location : (r.Location ? [r.Location] : [])).map(idOf).filter(Boolean);
+  const admin = shopReps.find((r) => /administrator/i.test(s(r.Position)) && ids(r).length);
+  const any = admin || shopReps.find((r) => ids(r).length);
+  return any ? ids(any)[0] : '';
 }
 // Zoho date-time: "Nov 18,2026 10:05:00"
 function zDateTime(d) {
@@ -202,6 +210,12 @@ function registerTeamInvites(app, deps) {
         ACTIVE: 'NO', Employee_Status: 'Keep Employee on Platform',
         Invite_Status: 'Invited', Invite_Sent: zDateTime(appNow()),
       };
+      // Like the reps made at registration: Admin_Email = the shop's main email, Location = the
+      // admin's location (first rep of the shop that has one).
+      const shop = await shopInfo(mfg);
+      if (shop.email) data.Admin_Email = shop.email;
+      const loc = defaultLocation(mine);
+      if (loc) data.Location = [loc];
       let id;
       if (chk.reuse) {
         id = s(chk.reuse.ID);
@@ -212,7 +226,6 @@ function registerTeamInvites(app, deps) {
         id = s(d.data && d.data.ID);
         if (d.code !== 3000 || !id) throw new Error('Zoho insert ' + JSON.stringify(d).slice(0, 300));
       }
-      const shop = await shopInfo(mfg);
       const mailErr = await sendInvite(req, shop, { id, first: s(b.first), email: lc(b.email), position: s(b.position) });
       res.json({ ok: true, id, emailed: !mailErr,
         warning: mailErr ? 'The invite was saved but the email did not send. Use Resend on their row.' : '' });
@@ -243,7 +256,7 @@ function registerTeamInvites(app, deps) {
   app.post('/api/team/cancel', async (req, res) => {
     try {
       const own = await ownInvite(req, res); if (!own) return;
-      await patchRep(s(own.rep.ID), { Invite_Status: 'Cancelled', ACTIVE: 'NO' });
+      await patchRep(s(own.rep.ID), { Invite_Status: 'Cancel', ACTIVE: 'NO' });   // Zoho radio choice text
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
@@ -300,4 +313,4 @@ function registerTeamInvites(app, deps) {
   });
 }
 
-module.exports = { registerTeamInvites, checkInvite, takesSeat, statusOf, makeJoinToken, readJoinToken, zDateTime, inviteEmail, CAP, POSITIONS };
+module.exports = { registerTeamInvites, defaultLocation, checkInvite, takesSeat, statusOf, makeJoinToken, readJoinToken, zDateTime, inviteEmail, CAP, POSITIONS };
