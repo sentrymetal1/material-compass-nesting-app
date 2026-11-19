@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Your Team</title>
+<!--
+  One shop's team: who is on Material Compass, pending invites, and inviting someone new.
+  Plan: docs/TEAM_INVITES_PLAN.md. Opened from Material Compass as
+    /takeoff/team.html?manufacturer_id=<MFG record id>&t=<tenant token>
+  Reads/writes through /api/team (server/team/invites.js).
+-->
+<script src="/takeoff/mc-dialog.js"></script>
+<style>
+  :root{--blue:#5F94CE;--ink:#1f2a37;--mut:#667;--line:#e3e6ea;--grn:#2e7d32;--grnbg:#e8f5e9;--ylw:#b45309;--ylwbg:#fff7ed;--red:#b91c1c;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:960px;margin:0 auto;}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+  .brand{font-weight:800;font-size:16px;color:var(--blue);}
+  .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;padding:16px 18px;}
+  h2{font-size:17px;margin:0 0 4px;}
+  .small{font-size:12.5px;color:var(--mut);line-height:1.5;}
+  .seats{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+  .bar{flex:1;min-width:180px;height:10px;background:#edf0f4;border-radius:6px;overflow:hidden;}
+  .bar i{display:block;height:100%;background:var(--blue);}
+  .btn{font:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:8px 16px;cursor:pointer;}
+  .btn:hover{opacity:.92;} .btn:disabled{opacity:.5;cursor:default;}
+  .lnk{font:inherit;font-size:12.5px;font-weight:600;color:var(--blue);background:none;border:0;cursor:pointer;padding:2px 6px;}
+  .lnk.red{color:var(--red);}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);}
+  td{padding:10px;border-bottom:1px solid #f0f2f4;vertical-align:middle;}
+  tr.off td{color:#99a;}
+  .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:10px;font-weight:600;}
+  .p-on{background:var(--grnbg);color:var(--grn);} .p-inv{background:var(--ylwbg);color:var(--ylw);} .p-off{background:#f1f1f1;color:#888;}
+  .form{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:12px;}
+  .form label{font-size:12px;color:var(--mut);display:block;margin-bottom:3px;}
+  input,select{font:inherit;font-size:13.5px;padding:7px 9px;border:1px solid #cdd3da;border-radius:6px;width:100%;}
+  input:focus,select:focus{border-color:var(--blue);outline:none;}
+  .full{grid-column:1 / -1;}
+  .note{font-size:12.5px;color:var(--ylw);background:var(--ylwbg);border-radius:8px;padding:9px 12px;margin-top:12px;}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:11px;font-size:14px;font-weight:600;display:none;background:var(--blue);}
+  .busy.show{display:block;} .busy.err{background:var(--red);} .busy.ok{background:var(--grn);}
+  .ver{font-size:11px;color:#99a;text-align:right;}
+</style>
+</head>
+<body>
+<div class="busy" id="busy"></div>
+<div class="wrap">
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">Your Team</span></div>
+
+  <div class="card">
+    <h2 id="title">Your team</h2>
+    <div class="small">Add the people in your shop who will use Material Compass. Each person gets their own login.
+      They get an email invite, and they can sign in once they accept it.</div>
+    <div class="seats" style="margin-top:12px">
+      <div class="bar"><i id="barFill" style="width:0"></i></div>
+      <div id="seatText" class="small" style="font-weight:600;color:var(--ink)"></div>
+    </div>
+  </div>
+
+  <div class="card" id="inviteCard">
+    <h2>Invite a team member</h2>
+    <div id="inviteForm">
+      <div class="form">
+        <div><label>First name</label><input id="fFirst" autocomplete="off"></div>
+        <div><label>Last name</label><input id="fLast" autocomplete="off"></div>
+        <div><label>Work email</label><input id="fEmail" type="email" autocomplete="off"></div>
+        <div><label>Position</label><select id="fPos"></select></div>
+      </div>
+      <div style="margin-top:14px"><button class="btn" id="sendBtn">Send invite</button></div>
+    </div>
+    <div id="capNote" class="note" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>People</h2>
+    <table><thead><tr><th>Name</th><th>Position</th><th>Email</th><th>Status</th><th></th></tr></thead>
+      <tbody id="rows"><tr><td colspan="5" class="small">Loading…</td></tr></tbody></table>
+  </div>
+  <div class="ver" id="ver"></div>
+</div>
+<script>
+const VERSION = "v0.1 · 2026-11-18 · team invites";
+document.getElementById("ver").textContent = VERSION;
+const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let DATA = null;
+
+function busy(msg, kind) {
+  const b = $("busy");
+  b.className = "busy" + (msg ? " show" : "") + (kind ? " " + kind : "");
+  b.textContent = msg || "";
+  if (kind) setTimeout(() => { if (b.textContent === msg) b.className = "busy"; }, 3500);
+}
+async function api(path, body) {
+  const r = await fetch(path + (body ? "" : (path.includes("?") ? "&" : "?") + "manufacturer_id=" + encodeURIComponent(MFG)), body ? {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(Object.assign({ manufacturer_id: MFG }, body)),
+  } : undefined);
+  let j = {};
+  try { j = await r.json(); } catch (e) { j = { ok: false, error: "Something went wrong. Please try again." }; }
+  return j;
+}
+function sentText(s) {
+  // "Nov 18,2026 09:05:07" -> "Nov 18"
+  const m = /^([A-Za-z]{3}) (\d{1,2}),/.exec(s || "");
+  return m ? m[1] + " " + Number(m[2]) : "";
+}
+function render() {
+  const d = DATA;
+  $("title").textContent = d.shop.name + ": your team";
+  const pct = Math.min(100, Math.round(d.used / d.cap * 100));
+  $("barFill").style.width = pct + "%";
+  $("seatText").textContent = d.used + " of " + d.cap + " seats used (early access includes " + d.cap + " people, you included)";
+  const full = d.used >= d.cap;
+  $("inviteForm").style.display = full ? "none" : "";
+  $("capNote").style.display = full ? "" : "none";
+  $("capNote").textContent = "All " + d.cap + " seats are in use. To free one, cancel a pending invite below. To add more seats, contact us.";
+  if (!$("fPos").options.length) {
+    $("fPos").innerHTML = '<option value="">Pick a position…</option>' + d.positions.map((p) => "<option>" + esc(p) + "</option>").join("");
+  }
+  $("rows").innerHTML = d.reps.length ? d.reps.map((r) => {
+    let pill, acts = "";
+    if (r.status === "Invited") {
+      pill = '<span class="pill p-inv">Invite sent' + (sentText(r.invite_sent) ? " " + esc(sentText(r.invite_sent)) : "") + "</span>";
+      acts = '<button class="lnk" data-act="resend" data-id="' + r.id + '">Resend</button><button class="lnk red" data-act="cancel" data-id="' + r.id + '">Cancel</button>';
+    } else if (r.status === "Cancelled") pill = '<span class="pill p-off">Invite cancelled</span>';
+    else if (/^pause/i.test(r.employee_status)) pill = '<span class="pill p-off">Paused</span>';
+    else if (/^delete/i.test(r.employee_status)) pill = '<span class="pill p-off">Removed</span>';
+    else pill = r.active ? '<span class="pill p-on">Active</span>' : '<span class="pill p-off">Not active</span>';
+    return '<tr class="' + (r.status === "Cancelled" ? "off" : "") + '"><td><b>' + esc(r.name) + "</b></td><td>" + esc(r.position) + "</td><td>" + esc(r.email) + "</td><td>" + pill + '</td><td style="text-align:right;white-space:nowrap">' + acts + "</td></tr>";
+  }).join("") : '<tr><td colspan="5" class="small">No one yet.</td></tr>';
+}
+async function load() {
+  const j = await api("/api/team");
+  if (!j.ok) { $("rows").innerHTML = '<tr><td colspan="5" class="small">' + esc(j.error || "Could not load your team.") + "</td></tr>"; return; }
+  DATA = j; render();
+}
+$("sendBtn").addEventListener("click", async () => {
+  const body = { first: $("fFirst").value.trim(), last: $("fLast").value.trim(), email: $("fEmail").value.trim(), position: $("fPos").value };
+  if (!body.first || !body.last) return mcAlert("Enter a first and last name.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) return mcAlert("Enter a valid email address.");
+  if (!body.position) return mcAlert("Pick a position.");
+  $("sendBtn").disabled = true; busy("Sending invite…");
+  const j = await api("/api/team/invite", body);
+  $("sendBtn").disabled = false;
+  if (!j.ok) { busy(""); return mcAlert(j.error || "The invite did not go out. Please try again."); }
+  busy(j.warning ? "" : "Invite sent to " + body.email, j.warning ? "" : "ok");
+  if (j.warning) mcAlert(j.warning);
+  ["fFirst", "fLast", "fEmail"].forEach((id) => { $(id).value = ""; }); $("fPos").value = "";
+  load();
+});
+$("rows").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button[data-act]"); if (!b) return;
+  const r = DATA.reps.find((x) => x.id === b.dataset.id); if (!r) return;
+  if (b.dataset.act === "cancel") {
+    if (!(await mcConfirm("Cancel " + r.name + "'s invite? The link in their email will stop working and the seat is freed.", { danger: true, okText: "Cancel invite", cancelText: "Keep it" }))) return;
+    busy("Cancelling…");
+    const j = await api("/api/team/cancel", { rep_id: r.id });
+    if (!j.ok) { busy(""); return mcAlert(j.error); }
+    busy("Invite cancelled", "ok"); load();
+  } else {
+    busy("Resending…");
+    const j = await api("/api/team/resend", { rep_id: r.id });
+    if (!j.ok) { busy(""); return mcAlert(j.error); }
+    busy("Invite sent again to " + r.email, "ok"); load();
+  }
+});
+load();
+</script>
+</body>
+</html>

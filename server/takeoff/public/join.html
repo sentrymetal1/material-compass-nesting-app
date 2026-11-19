@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Join your team on Material Compass</title>
+<!--
+  The invitee's page, opened from the invite email: /takeoff/join.html?i=<signed invite>.
+  No login and no shop token; the signed link is the proof (server/team/invites.js).
+  Accept sets the representative active; the platform then emails them to set a password.
+-->
+<style>
+  :root{--blue:#5286B4;--ink:#1f2a37;--mut:#667;--red:#b91c1c;--grn:#2e7d32;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;background:#eef2f7;color:var(--ink);min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:48px 18px;}
+  .card{background:#fff;border:1px solid #d9e2ec;border-radius:12px;max-width:520px;width:100%;overflow:hidden;box-shadow:0 8px 30px rgba(20,30,40,.08);}
+  .hd{padding:18px 26px;display:flex;align-items:center;gap:10px;}
+  .hd img{width:42px;height:42px;}
+  .hd span{font-family:Georgia,serif;font-size:17px;letter-spacing:4px;color:var(--blue);}
+  .band{background:var(--blue);color:#fff;padding:18px 26px;}
+  .band h1{font-size:20px;margin:0;}
+  .band div{font-size:13px;opacity:.92;margin-top:2px;}
+  .bd{padding:22px 26px;font-size:14.5px;line-height:1.6;}
+  .btn{font:inherit;font-size:15px;font-weight:700;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:12px 26px;cursor:pointer;}
+  .btn:disabled{opacity:.5;cursor:default;}
+  .mut{font-size:12.5px;color:var(--mut);}
+  .err{color:var(--red);font-weight:600;}
+  .ok{color:var(--grn);font-weight:700;font-size:16px;}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="hd"><img src="/brand/mc-compass.png" alt=""><span>MATERIAL COMPASS</span></div>
+  <div class="band"><h1 id="h">Your invite</h1><div id="sub"></div></div>
+  <div class="bd" id="bd">Checking your invite…</div>
+</div>
+<script>
+const I = new URLSearchParams(location.search).get("i") || "";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function done(email) {
+  $("bd").innerHTML = '<div class="ok">✓ You\'re on the team</div><p>Watch for a second email at <b>' + esc(email) +
+    '</b> to set your password. It can take a few minutes. Check your spam folder if you don\'t see it.</p>' +
+    '<p>After that, sign in at <a href="https://customer.materialcompassportal.com">customer.materialcompassportal.com</a>.</p>';
+}
+(async () => {
+  if (!I) { $("bd").innerHTML = '<span class="err">This link is not complete. Open it again from the invite email.</span>'; return; }
+  let j;
+  try { j = await (await fetch("/api/team/join?i=" + encodeURIComponent(I))).json(); } catch (e) { j = { ok: false, error: "Could not check your invite. Please try again." }; }
+  if (!j.ok) { $("bd").innerHTML = '<span class="err">' + esc(j.error) + "</span>"; return; }
+  $("h").textContent = "Join " + j.shop;
+  $("sub").textContent = "on Material Compass, as " + j.position;
+  if (j.joined) { done(j.email); return; }
+  $("bd").innerHTML = "<p>Hi " + esc(j.first) + ", " + esc(j.shop) + " has added you to their team.</p>" +
+    '<p><button class="btn" id="acc">Accept invite</button></p><p class="mut">For ' + esc(j.email) + ". Not you? Close this page.</p>";
+  $("acc").addEventListener("click", async () => {
+    $("acc").disabled = true; $("acc").textContent = "Joining…";
+    let r;
+    try {
+      r = await (await fetch("/api/team/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ i: I }) })).json();
+    } catch (e) { r = { ok: false, error: "Could not reach Material Compass. Please try again." }; }
+    if (!r.ok) { $("acc").disabled = false; $("acc").textContent = "Accept invite"; $("bd").insertAdjacentHTML("beforeend", '<p class="err">' + esc(r.error) + "</p>"); return; }
+    done(r.email);
+  });
+})();
+</script>
+</body>
+</html>
