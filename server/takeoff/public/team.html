@@ -84,7 +84,7 @@
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.1 · 2026-11-18 · team invites";
+const VERSION = "v0.2 · 2026-11-18 · spam-folder hint, replies go to the shop";
 document.getElementById("ver").textContent = VERSION;
 const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
 const $ = (id) => document.getElementById(id);
@@ -150,8 +150,8 @@ $("sendBtn").addEventListener("click", async () => {
   const j = await api("/api/team/invite", body);
   $("sendBtn").disabled = false;
   if (!j.ok) { busy(""); return mcAlert(j.error || "The invite did not go out. Please try again."); }
-  busy(j.warning ? "" : "Invite sent to " + body.email, j.warning ? "" : "ok");
-  if (j.warning) mcAlert(j.warning);
+  busy("");
+  mcAlert(j.warning || ("Invite sent to " + body.email + ". Ask them to check their spam or junk folder if it isn't in their inbox within a few minutes, and to mark it Not spam."));
   ["fFirst", "fLast", "fEmail"].forEach((id) => { $(id).value = ""; }); $("fPos").value = "";
   load();
 });
@@ -168,7 +168,7 @@ $("rows").addEventListener("click", async (ev) => {
     busy("Resending…");
     const j = await api("/api/team/resend", { rep_id: r.id });
     if (!j.ok) { busy(""); return mcAlert(j.error); }
-    busy("Invite sent again to " + r.email, "ok"); load();
+    busy(""); mcAlert("Invite sent again to " + r.email + ". Ask them to check their spam or junk folder too."); load();
   }
 });
 load();

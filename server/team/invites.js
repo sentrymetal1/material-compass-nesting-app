@@ -145,20 +145,25 @@ function registerTeamInvites(app, deps) {
     throw e;
   });
   const repsOfShop = (all, mfg) => all.filter((r) => idOf(r.Manufacture) === mfg);
-  async function shopName(mfg) {
+  // The shop's name and its main email (replies to an invite go to the shop, not to no_reply).
+  async function shopInfo(mfg) {
     try {
       const r = await axios.get(base() + '/report/' + MFG_REPORT + '/' + mfg, await hdr());
-      return s(r.data && r.data.data && r.data.data.Company_Name) || 'Your company';
-    } catch (e) { return 'Your company'; }
+      const d = (r.data && r.data.data) || {};
+      return { name: s(d.Company_Name) || 'Your company', email: EMAIL_RE.test(lc(d.Email)) ? lc(d.Email) : '' };
+    } catch (e) { return { name: 'Your company', email: '' }; }
   }
+  const shopName = async (mfg) => (await shopInfo(mfg)).name;
   async function patchRep(id, data) {
     const r = await axios.patch(base() + '/report/' + REP_REPORT + '/' + id, { data }, await hdr());
     if (r.data && r.data.code !== 3000) throw new Error('Zoho ' + JSON.stringify(r.data).slice(0, 300));
   }
   async function sendInvite(req, shop, rep) {
     const link = publicBase(req) + '/takeoff/join.html?i=' + enc(makeJoinToken(rep.id));
-    const m = inviteEmail(shop, rep, link);
-    const r = await mailer.send({ to: rep.email, subject: m.subject, html: m.html, text: m.text });
+    const m = inviteEmail(shop.name, rep, link);
+    const msg = { to: rep.email, subject: m.subject, html: m.html, text: m.text };
+    if (shop.email) msg.replyTo = shop.email;
+    const r = await mailer.send(msg);
     return r.ok ? null : (r.error || 'send failed');
   }
   const fail = (res, e, code) => {
@@ -205,7 +210,7 @@ function registerTeamInvites(app, deps) {
         id = s(d.data && d.data.ID);
         if (d.code !== 3000 || !id) throw new Error('Zoho insert ' + JSON.stringify(d).slice(0, 300));
       }
-      const shop = await shopName(mfg);
+      const shop = await shopInfo(mfg);
       const mailErr = await sendInvite(req, shop, { id, first: s(b.first), email: lc(b.email), position: s(b.position) });
       res.json({ ok: true, id, emailed: !mailErr,
         warning: mailErr ? 'The invite was saved but the email did not send. Use Resend on their row.' : '' });
@@ -227,7 +232,7 @@ function registerTeamInvites(app, deps) {
       const own = await ownInvite(req, res); if (!own) return;
       await patchRep(s(own.rep.ID), { Invite_Sent: zDateTime(appNow()) });
       const o = repOut(own.rep);
-      const mailErr = await sendInvite(req, await shopName(own.mfg), o);
+      const mailErr = await sendInvite(req, await shopInfo(own.mfg), o);
       if (mailErr) return res.status(502).json({ ok: false, error: 'The email did not send. Please try again in a few minutes.' });
       res.json({ ok: true });
     } catch (e) { fail(res, e); }
