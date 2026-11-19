@@ -1,5 +1,20 @@
 # Team invites: company-paid seats (plan, 2026-11-18)
 
+## DECIDED 2026-11-18 (supersedes the Stripe steps below for early access)
+- $1 early access is per COMPANY, not per person. The limited number of early-access subscribers counts shops.
+- Team seats are FREE during early access, capped at **3 representatives + the admin = 4 per shop**.
+  The same cap applies to suppliers when their side comes in.
+- Cap rule: Company_Representatives rows for the shop that are not Cancelled must be 4 or fewer
+  (the admin row counts). At the cap, Invite is replaced by "Contact us to add more seats".
+- So no Stripe work now: invite → email → Join → Active. The Stripe seat charge (steps 2–3 below) is added
+  at the Send-invite step when real pricing starts.
+- Form: MFG Company Representatives. Fields seen: Manufacture (lookup, required), Manufacture Bi Directional
+  Lookup, Location, Name, Position (single line), Email, Direct Phone Number, Extension, Mobile, ACTIVE (radio),
+  Employee Status (radio), Monthly Subscription, Account ID, Admin_Email, Admin Email.
+- New fields: Invite_Status (radio Invited / Joined / Cancelled; blank = existing rep = Joined), Invite_Sent (date-time).
+- Position stays single line in Zoho (keeps field references). The invite page offers only the fixed list.
+
+
 Mark's rules:
 - Nobody becomes an active representative without a paid seat. No workaround.
 - The company pays per seat (option b). The invitee does not pay.
