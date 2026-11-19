@@ -213,7 +213,7 @@ function registerTeamInvites(app, deps) {
       // Like the reps made at registration: Admin_Email = the shop's main email, Location = the
       // admin's location (first rep of the shop that has one).
       const shop = await shopInfo(mfg);
-      if (shop.email) data.Admin_Email = shop.email;
+      if (shop.email) { data.Admin_Email = shop.email; data.Admin_Email_Format = shop.email; }   // text field + the email field shown on the form
       const loc = defaultLocation(mine);
       if (loc) data.Location = [loc];
       let id;
