@@ -119,6 +119,8 @@ function inviteEmail(shopName, rep, link) {
     esc(shopName) + ' uses Material Compass for quoting, sourcing material and running work orders, and has added you to their team. ' +
     'Click below to accept. You will then get a second email to set your password.</td></tr>' +
     '<tr><td style="padding:4px 28px 22px" align="center"><a href="' + esc(link) + '" style="display:inline-block;background:' + BLUE + ';color:#fff;text-decoration:none;font-weight:700;padding:12px 26px;border-radius:6px;font-size:15px">Join ' + esc(shopName) + '</a></td></tr>' +
+    '<tr><td style="padding:0 28px 14px;font-size:12px;color:#7a8a99">Button not working? Copy this link into your browser:<br>' +
+    '<span style="color:#1f2d3d;word-break:break-all">' + esc(link) + '</span></td></tr>' +
     '<tr><td style="padding:0 28px 18px;font-size:12px;color:#7a8a99">This invite is for ' + esc(rep.email) + ' and expires in ' + INVITE_DAYS + ' days. ' +
     'If you were not expecting it, you can ignore this email.</td></tr>' +
     '<tr><td style="padding:12px 28px;background:#f4f6f8;font-size:11px;color:#7a8a99">Sent by Material Compass on behalf of ' + esc(shopName) + '.</td></tr>' +
