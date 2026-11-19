@@ -39,9 +39,10 @@ const I = new URLSearchParams(location.search).get("i") || "";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function done(email) {
-  $("bd").innerHTML = '<div class="ok">✓ You\'re on the team</div><p>Watch for a second email at <b>' + esc(email) +
-    '</b> to set your password. It can take a few minutes. Check your spam folder if you don\'t see it.</p>' +
-    '<p>After that, sign in at <a href="https://customer.materialcompassportal.com">customer.materialcompassportal.com</a>.</p>';
+  $("bd").innerHTML = '<div class="ok">✓ You&#39;re on the team</div>' +
+    '<p><b>Next:</b> watch for an email at <b>' + esc(email) + '</b> to set your password. Check your spam or junk folder too, and mark it Not spam so its link works.</p>' +
+    '<p>After you set your password, Material Compass activates your login. That is usually within an hour during business hours, and you will get an email when it is done.</p>' +
+    '<p>Then sign in at <a href="https://customer.materialcompassportal.com">customer.materialcompassportal.com</a>.</p>';
 }
 (async () => {
   if (!I) { $("bd").innerHTML = '<span class="err">This link is not complete. Open it again from the invite email.</span>'; return; }
