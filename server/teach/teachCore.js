@@ -144,7 +144,11 @@ function buildProposals(job) {
       proposals.push({ id: pid('sc'), type: 'scope', title: label, fields: { text: t }, source: srcOf(f, it.where), accept: true });
     }
   };
+  // Scope habits come from what the shop TOLD the customer (proposal) or was held to (spec). An
+  // estimate or job cost report lists cost lines, and read as scope they produced "Galvanizing (cost
+  // line present)"; their money is proposed below as outside costs instead.
   for (const f of files) {
+    if (!['proposal', 'specification', 'other'].includes(f.kind)) continue;
     const e = ex(f);
     habit('Includes', e.scope_included, f);
     habit('Excludes', e.scope_excluded, f);
@@ -153,13 +157,17 @@ function buildProposals(job) {
     habit('Spec requirement', e.requirements, f);
   }
 
-  // ---- outside costs ----
+  // ---- outside costs: the same cost on two documents (estimate + job cost) is one card, both sources ----
+  const ocSeen = {};
   for (const f of files) {
     for (const o of ex(f).outside_costs || []) {
       if (!s(o.what)) continue;
-      proposals.push({ id: pid('oc'), type: 'outside_cost', title: 'Outside cost',
+      const k = tkey(o.what).split(' ')[0] + '|' + (num(o.amount) || '');
+      if (ocSeen[k]) { ocSeen[k].source += ' · also ' + srcOf(f, o.where); if (!ocSeen[k].fields.vendor && s(o.vendor)) ocSeen[k].fields.vendor = s(o.vendor); continue; }
+      ocSeen[k] = { id: pid('oc'), type: 'outside_cost', title: 'Outside cost',
         fields: { what: s(o.what), vendor: s(o.vendor), amount: num(o.amount), unit: s(o.unit) || 'lot', date: s(ex(f).date).slice(0, 10) },
-        source: srcOf(f, o.where), accept: num(o.amount) != null });
+        source: srcOf(f, o.where), accept: num(o.amount) != null };
+      proposals.push(ocSeen[k]);
     }
   }
 

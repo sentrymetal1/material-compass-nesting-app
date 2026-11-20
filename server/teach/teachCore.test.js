@@ -64,3 +64,15 @@ test('files not read are ignored', () => {
   const { proposals } = T.buildProposals({ files: [{ name: 'x', kind: 'proposal', status: 'failed', extract: { tons: { value: 9, where: 'p1' } } }] });
   assert.strictEqual(proposals.length, 0);
 });
+
+test('scope only from proposal/spec; the same outside cost on two documents is one card', () => {
+  const { proposals } = T.buildProposals({ files: [
+    file('est.xlsx', 'estimate', { finish: [{ text: 'Galvanizing (cost line)', where: 'A18' }], outside_costs: [{ what: 'Galvanizing, 11,700 lb', vendor: 'Valley', amount: 4914, where: 'A18' }] }),
+    file('cost.csv', 'job_cost', { outside_costs: [{ what: 'Galvanizing', amount: 4914, where: 'line 8' }] }),
+    file('prop.pdf', 'proposal', { finish: [{ text: 'Hot-dip galvanized after fabrication', where: 'p.1' }] }),
+  ] });
+  assert.deepStrictEqual(proposals.filter((p) => p.type === 'scope').map((p) => p.fields.text), ['Hot-dip galvanized after fabrication']);
+  const oc = proposals.filter((p) => p.type === 'outside_cost');
+  assert.strictEqual(oc.length, 1);
+  assert.match(oc[0].source, /est\.xlsx · A18 · also cost\.csv · line 8/);
+});
