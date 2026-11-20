@@ -141,7 +141,10 @@ function buildProposals(job) {
     for (const it of list || []) {
       const t = s(it && it.text); if (!t) continue;
       const k = label + '|' + tkey(t); if (seen[k]) continue; seen[k] = 1;
-      proposals.push({ id: pid('sc'), type: 'scope', title: label, fields: { text: t }, source: srcOf(f, it.where), accept: true });
+      // "Includes" is mostly what THIS job was ("two platforms per S-101"), not a habit: opt in. Exclusions,
+      // finish, buyouts and spec requirements are how the shop works: opt out.
+      proposals.push({ id: pid('sc'), type: 'scope', title: label, fields: { text: t }, source: srcOf(f, it.where), accept: label !== 'Includes',
+        note: label === 'Includes' ? 'Tick only if your shop includes this on every job of this type.' : '' });
     }
   };
   // Scope habits come from what the shop TOLD the customer (proposal) or was held to (spec). An

@@ -76,3 +76,8 @@ test('scope only from proposal/spec; the same outside cost on two documents is o
   assert.strictEqual(oc.length, 1);
   assert.match(oc[0].source, /est\.xlsx · A18 · also cost\.csv · line 8/);
 });
+
+test('"Includes" starts unticked (job-specific), exclusions ticked', () => {
+  const { proposals } = T.buildProposals({ files: [file('p.pdf', 'proposal', { scope_included: [{ text: 'Two platforms per S-101', where: 'p1' }], scope_excluded: [{ text: 'Erection', where: 'p1' }] })] });
+  assert.deepStrictEqual(proposals.map((p) => [p.title, p.accept]), [['Includes', false], ['Excludes', true]]);
+});
