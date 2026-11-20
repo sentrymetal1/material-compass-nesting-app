@@ -158,8 +158,18 @@ console.log('Zoho Config:', { clientId: ZOHO.clientId ? ZOHO.clientId.substring(
 
 let cachedToken = null, tokenExpiry = 0, lastTokenError = null, tokenObtainedAt = null;
 
-async function getAccessToken(forceRefresh) {
-  if (!forceRefresh && cachedToken && Date.now() < tokenExpiry) return cachedToken;
+// One mint at a time. Without this, every request that arrives while there is no cached token
+// (startup, or just after the hourly expiry) mints its own: a page that reads 9 reports at once
+// minted 9 tokens, which trips Zoho's mint lockout ("too many requests continuously", ~10 min)
+// and makes Zoho revoke older tokens. Callers that arrive mid-mint wait for the same one.
+let tokenInFlight = null;
+function getAccessToken(forceRefresh) {
+  if (!forceRefresh && cachedToken && Date.now() < tokenExpiry) return Promise.resolve(cachedToken);
+  if (tokenInFlight) return tokenInFlight;
+  tokenInFlight = mintAccessToken().finally(() => { tokenInFlight = null; });
+  return tokenInFlight;
+}
+async function mintAccessToken() {
   try {
     const resp = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, { params: { refresh_token: ZOHO.refreshToken, client_id: ZOHO.clientId, client_secret: ZOHO.clientSecret, grant_type: 'refresh_token' } });
     if (resp.data.error) { lastTokenError = resp.data.error; cachedToken = null; tokenExpiry = 0; throw new Error('Zoho token error: ' + resp.data.error); }
@@ -4261,6 +4271,7 @@ require('./subcontractors').registerSubcontractors(app, { getAccessToken, creato
 require('./labor/timeEntry').registerTimeEntry(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./team/invites').registerTeamInvites(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./clients/importRoutes').registerClientImport(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
+require('./setup/checklist').registerSetupChecklist(app, { fetchAllZohoPages });
 
 // ── ONE ROW, FOR DELUGE ─────────────────────────────────────────────────────────────────────
 // The project form's BOM subform cannot match a fitting to its catalog row, and the reason is

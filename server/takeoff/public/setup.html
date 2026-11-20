@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Set up your shop</title>
+<!--
+  A new shop's setup checklist. Opened from Material Compass as
+    /takeoff/setup.html?manufacturer_id=<MFG record id>&t=<tenant token>
+  Status comes live from /api/setup/status (server/setup/checklist.js). Each step opens its page in a
+  new tab; this page refreshes itself when you come back to it.
+-->
+<script src="/takeoff/mc-dialog.js"></script>
+<style>
+  :root{--blue:#5F94CE;--ink:#1f2a37;--mut:#667;--line:#e3e6ea;--grn:#2e7d32;--grnbg:#e8f5e9;--ylw:#b45309;--ylwbg:#fff7ed;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:860px;margin:0 auto;}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+  .brand{font-weight:800;font-size:16px;color:var(--blue);}
+  .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;}
+  .head{padding:20px 22px;}
+  h1{font-size:21px;margin:0 0 4px;}
+  .small{font-size:12.5px;color:var(--mut);line-height:1.5;}
+  .prog{display:flex;align-items:center;gap:12px;margin-top:12px;}
+  .bar{flex:1;height:10px;background:#edf0f4;border-radius:6px;overflow:hidden;} .bar i{display:block;height:100%;background:var(--blue);transition:width .3s;}
+  .step{display:flex;gap:14px;padding:16px 22px;border-top:1px solid var(--line);align-items:flex-start;}
+  .ic{width:28px;height:28px;border-radius:50%;flex:0 0 28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;margin-top:1px;}
+  .ic.done{background:var(--grn);color:#fff;} .ic.partial{background:var(--ylwbg);color:var(--ylw);border:2px solid #f3c58b;}
+  .ic.todo{background:#fff;border:2px solid #c8d1dc;color:#8a96a3;} .ic.skip{background:#eef1f5;color:#8a96a3;border:2px dashed #c8d1dc;}
+  .ic.unknown{background:#fff;border:2px dashed #c8d1dc;color:#8a96a3;}
+  .body{flex:1;min-width:0;}
+  .t{font-weight:700;font-size:15px;} .t .req{font-size:11px;font-weight:600;color:var(--mut);margin-left:6px;}
+  .why{font-size:12.5px;color:var(--mut);margin-top:1px;}
+  .det{font-size:13px;margin-top:5px;} .det.partial{color:var(--ylw);}
+  .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;min-width:150px;}
+  .btn{font:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:8px 14px;cursor:pointer;text-decoration:none;display:inline-block;white-space:nowrap;}
+  .btn.ghost{background:#fff;color:var(--blue);border:1px solid #cdd3da;}
+  .lnk{font:inherit;font-size:12px;color:var(--mut);background:none;border:0;cursor:pointer;text-decoration:underline;padding:2px;}
+  .soon{font-size:11.5px;font-weight:600;color:#7a8a99;background:#f1f3f6;border-radius:10px;padding:3px 10px;white-space:nowrap;}
+  .ready{padding:18px 22px;border-top:1px solid var(--line);display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#f7fbf7;border-radius:0 0 12px 12px;}
+  .ready.no{background:#fafbfc;}
+  .ver{font-size:11px;color:#99a;text-align:right;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">Shop setup</span></div>
+  <div class="card" id="card">
+    <div class="head">
+      <h1 id="title">Set up your shop</h1>
+      <div class="small">Do these once, and your first project needs almost no typing. Each step opens in a new tab;
+        come back here and this list updates itself. Anything can be skipped and finished later.</div>
+      <div class="prog"><div class="bar"><i id="fill" style="width:0"></i></div><b id="count" style="font-size:13px"></b></div>
+    </div>
+    <div id="steps"><div class="step small">Checking your shop…</div></div>
+    <div class="ready no" id="ready"></div>
+  </div>
+  <div class="ver" id="ver"></div>
+</div>
+<script>
+const VERSION = "v0.1 · 2026-11-19 · setup checklist";
+document.getElementById("ver").textContent = VERSION;
+const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let DATA = null, loading = false;
+
+const ICON = { done: "✓", partial: "!", todo: "", skip: "–", unknown: "?" };
+function btn(a, ghost) {
+  if (!a || !a.url) return "";
+  return '<a class="btn' + (ghost ? " ghost" : "") + '" href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a.label) + "</a>";
+}
+function render() {
+  const d = DATA;
+  $("title").textContent = "Set up " + d.shop.name;
+  $("fill").style.width = Math.round(d.done / d.total * 100) + "%";
+  $("count").textContent = d.done + " of " + d.total + " done";
+  $("steps").innerHTML = d.steps.map((st, n) => {
+    const state = st.skipped ? "skip" : st.status;
+    const acts = (st.soon && !st.action ? '<span class="soon">Coming soon</span>' : "") + btn(st.action, st.status === "done") + btn(st.action2, true) +
+      (st.can_skip ? '<button class="lnk" data-skip="' + st.key + '" data-on="' + (st.skipped ? "0" : "1") + '">' + (st.skipped ? "Undo skip" : "Skip for now") + "</button>" : "");
+    return '<div class="step"><div class="ic ' + state + '">' + (ICON[state] || (n + 1)) + '</div><div class="body"><div class="t">' + esc(st.title) +
+      (st.required ? '<span class="req">needed to quote</span>' : "") + '</div><div class="why">' + esc(st.why) + '</div><div class="det ' + (st.status === "partial" ? "partial" : "") + '">' +
+      (st.skipped ? "Skipped for now. " : "") + esc(st.detail) + '</div></div><div class="acts">' + acts + "</div></div>";
+  }).join("");
+  const r = $("ready");
+  r.className = "ready" + (d.ready ? "" : " no");
+  r.innerHTML = d.ready
+    ? '<div style="flex:1"><b>You\'re ready to quote.</b><div class="small">Your profile and clients are in. Steps not done yet can be finished any time from here.</div></div><a class="btn" href="' + esc(d.first_project) + '" target="_top">Start your first project →</a>'
+    : '<div class="small" style="flex:1">Finish (or skip) the steps marked <b>needed to quote</b> to start your first project.</div>';
+}
+async function load() {
+  if (loading) return; loading = true;
+  try {
+    const j = await (await fetch("/api/setup/status?manufacturer_id=" + encodeURIComponent(MFG))).json();
+    if (!j.ok) { $("steps").innerHTML = '<div class="step small">' + esc(j.error || "Could not load your setup.") + "</div>"; return; }
+    DATA = j; render();
+  } catch (e) { $("steps").innerHTML = '<div class="step small">Could not load your setup. Check your connection and reload.</div>'; }
+  finally { loading = false; }
+}
+$("steps").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-skip]"); if (!b) return;
+  const on = b.dataset.on === "1";
+  if (on && !(await mcConfirm("Skip this step for now? You can come back to it any time from this checklist.", { okText: "Skip for now" }))) return;
+  await fetch("/api/setup/skip", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ manufacturer_id: MFG, step: b.dataset.skip, skip: on }) });
+  load();
+});
+// Back from a step's tab: refresh.
+window.addEventListener("focus", () => { if (DATA) load(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && DATA) load(); });
+load();
+</script>
+</body>
+</html>
