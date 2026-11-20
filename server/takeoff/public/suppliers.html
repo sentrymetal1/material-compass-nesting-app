@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Your Material Suppliers</title>
+<!--
+  A shop's material suppliers (setup checklist step 4). Opened as
+    /takeoff/suppliers.html?manufacturer_id=<MFG id>&t=<token>
+  List + invite: server/suppliers/claim.js. Add one: /api/mfg/rfq/add-supplier (server/mfgRfq.js).
+-->
+<script src="/takeoff/mc-dialog.js"></script>
+<style>
+  :root{--blue:#5F94CE;--ink:#1f2a37;--mut:#667;--line:#e3e6ea;--grn:#2e7d32;--grnbg:#e8f5e9;--ylw:#b45309;--ylwbg:#fff7ed;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:1040px;margin:0 auto;}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;} .brand{font-weight:800;font-size:16px;color:var(--blue);} .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;padding:16px 18px;}
+  h1{font-size:20px;margin:0 0 4px;} h2{font-size:16px;margin:0 0 4px;}
+  .small{font-size:12.5px;color:var(--mut);line-height:1.5;}
+  .btn{font:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:8px 14px;cursor:pointer;}
+  .btn:disabled{opacity:.5;cursor:default;} .btn.ghost{background:#fff;color:var(--blue);border:1px solid #cdd3da;} .btn.sm{padding:5px 10px;font-size:12px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;} th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:8px;border-bottom:1px solid var(--line);}
+  td{padding:9px 8px;border-bottom:1px solid #f0f2f4;vertical-align:top;}
+  .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:10px;font-weight:600;white-space:nowrap;}
+  .p-on{background:var(--grnbg);color:var(--grn);} .p-mail{background:#eef3fa;color:#3d6ea8;} .p-inv{background:var(--ylwbg);color:var(--ylw);}
+  .c{display:flex;align-items:center;gap:8px;justify-content:space-between;padding:3px 0;}
+  .form{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 12px;margin-top:10px;} .form label{display:block;font-size:11.5px;color:var(--mut);margin-bottom:3px;}
+  input,select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cdd3da;border-radius:6px;width:100%;background:#fff;} input:focus,select:focus{border-color:var(--blue);outline:none;}
+  .s2{grid-column:span 2;} .hidden{display:none;}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:10px;font-size:14px;font-weight:600;display:none;background:var(--blue);} .busy.show{display:block;}
+  .ver{font-size:11px;color:#99a;text-align:right;}
+</style>
+</head>
+<body>
+<div class="busy" id="busy"></div>
+<div class="wrap">
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">Material suppliers</span></div>
+  <div class="card">
+    <h1>Your material suppliers</h1>
+    <div class="small">Who your material quote requests (RFQs) go to. <b>On Material Compass</b> suppliers are matched to your shop and quote online.
+      <b>Your own suppliers</b> get every line of your RFQs by email; invite them to claim a free login so they can also see and price your requests online.</div>
+    <div style="margin-top:12px"><button class="btn" id="addBtn">+ Add one of your suppliers</button></div>
+    <div id="addForm" class="hidden">
+      <div class="form">
+        <div class="s2"><label>Company name *</label><input id="aCo"></div>
+        <div><label>Company phone *</label><input id="aPh"></div>
+        <div><label>Supplies</label><select id="aMat"><option value="Structural Pipe And Fittings">Structural, pipe and fittings</option><option value="Structural And Pipe">Structural and pipe</option><option value="Fittings And Pipe">Fittings and pipe</option></select></div>
+        <div class="s2"><label>Street *</label><input id="aA1"></div>
+        <div><label>City *</label><input id="aCity"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><label>State *</label><input id="aSt"></div><div><label>Zip *</label><input id="aZip"></div></div>
+        <div><label>Contact first name *</label><input id="aFn"></div>
+        <div><label>Contact last name *</label><input id="aLn"></div>
+        <div><label>Contact email *</label><input id="aEm"></div>
+        <div><label>Company email</label><input id="aCem" placeholder="optional"></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px"><button class="btn" id="aSave">Add supplier</button><button class="btn ghost" id="aCancel">Cancel</button></div>
+    </div>
+  </div>
+  <div class="card">
+    <table><thead><tr><th style="width:30%">Supplier</th><th style="width:18%">Where</th><th style="width:18%">How they get RFQs</th><th>Contacts</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="4" class="small">Loading…</td></tr></tbody></table>
+  </div>
+  <div class="ver" id="ver"></div>
+</div>
+<script>
+const VERSION = "v0.1 · 2026-11-20 · suppliers + claim invites";
+document.getElementById("ver").textContent = VERSION;
+const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let LIST = [];
+function busy(m) { $("busy").textContent = m || ""; $("busy").className = "busy" + (m ? " show" : ""); }
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.assign({ manufacturer_id: MFG }, body)) });
+  try { return await r.json(); } catch (e) { return { ok: false, error: "Something went wrong. Please try again." }; }
+}
+const day = (iso) => { try { return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch (e) { return ""; } };
+function render() {
+  if (!LIST.length) { $("rows").innerHTML = '<tr><td colspan="4" class="small">No suppliers yet. Add the suppliers you buy material from.</td></tr>'; return; }
+  $("rows").innerHTML = LIST.map((s) => {
+    const how = s.own ? '<span class="pill p-mail">By email · every line</span>' : '<span class="pill p-on">On Material Compass</span>';
+    const cs = s.own ? (s.contacts.map((c) => '<div class="c"><span>' + esc(c.name || c.email) + ' <span class="small">' + esc(c.email) + "</span></span>" +
+      (c.has_login ? '<span class="pill p-on">Has a login</span>'
+        : '<span>' + (c.invited ? '<span class="pill p-inv">Invited ' + esc(day(c.invited)) + "</span> " : "") +
+          '<button class="btn sm' + (c.invited ? " ghost" : "") + '" data-s="' + s.id + '" data-r="' + c.id + '">' + (c.invited ? "Resend" : "Invite to Material Compass") + "</button></span>") + "</div>").join("") ||
+      '<span class="small">No contact on file.</span>') : '<span class="small">Quotes online through Material Compass.</span>';
+    return "<tr><td><b>" + esc(s.name) + '</b><div class="small">' + esc(s.material) + "</div></td><td>" + esc([s.city, s.state].filter(Boolean).join(", ")) + "</td><td>" + how + "</td><td>" + cs + "</td></tr>";
+  }).join("");
+}
+async function load() {
+  const r = await fetch("/api/mfg/suppliers?manufacturer_id=" + encodeURIComponent(MFG));
+  let j; try { j = await r.json(); } catch (e) { j = { ok: false }; }
+  if (!j.ok) { $("rows").innerHTML = '<tr><td colspan="4" class="small">' + esc(j.error || "Could not load your suppliers.") + "</td></tr>"; return; }
+  LIST = j.suppliers; render();
+}
+$("rows").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-r]"); if (!b) return;
+  const s = LIST.find((x) => x.id === b.dataset.s), c = s && s.contacts.find((x) => x.id === b.dataset.r);
+  if (!c) return;
+  if (!(await mcConfirm("Email " + (c.name || c.email) + " (" + c.email + ") an invite to claim " + s.name + "'s free Material Compass login? They will still get your RFQs by email either way.", { okText: "Send invite" }))) return;
+  busy("Sending invite…");
+  const j = await post("/api/mfg/suppliers/invite", { supplier_id: s.id, rep_id: c.id });
+  busy("");
+  if (!j.ok) return mcAlert(j.error);
+  mcAlert("Invite sent to " + c.email + ". Ask them to check their spam or junk folder if it isn't in their inbox within a few minutes.");
+  load();
+});
+$("addBtn").addEventListener("click", () => { $("addForm").classList.remove("hidden"); $("addBtn").classList.add("hidden"); $("aCo").focus(); });
+$("aCancel").addEventListener("click", () => { $("addForm").classList.add("hidden"); $("addBtn").classList.remove("hidden"); });
+$("aSave").addEventListener("click", async () => {
+  const v = (id) => $(id).value.trim();
+  busy("Adding supplier…");
+  const j = await post("/api/mfg/rfq/add-supplier", { company: v("aCo"), phone: v("aPh"), material: $("aMat").value, address1: v("aA1"), city: v("aCity"), state: v("aSt"), zip: v("aZip"),
+    first_name: v("aFn"), last_name: v("aLn"), contact_email: v("aEm"), company_email: v("aCem") });
+  busy("");
+  if (!j.ok) return mcAlert(j.error + (j.reasons && j.reasons.length ? "\n\n" + j.reasons.join("\n") : ""));
+  await mcAlert(j.message || "Supplier added.");
+  ["aCo", "aPh", "aA1", "aCity", "aSt", "aZip", "aFn", "aLn", "aEm", "aCem"].forEach((id) => { $(id).value = ""; });
+  $("addForm").classList.add("hidden"); $("addBtn").classList.remove("hidden");
+  load();
+});
+load();
+</script>
+</body>
+</html>

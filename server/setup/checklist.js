@@ -64,8 +64,8 @@ function buildSteps(f) {
 
   steps.push({ key: 'suppliers', title: 'Material suppliers', why: 'Who you send material RFQs to.',
     status: f.suppliers == null ? 'unknown' : (f.suppliers > 0 ? 'done' : 'todo'),
-    detail: f.suppliers == null ? "Couldn't check right now." : (f.suppliers > 0 ? plural(f.suppliers, 'supplier') + ' matched to your shop. Inviting your own suppliers is coming soon.' : 'No suppliers matched yet. Inviting your own suppliers is coming soon.'),
-    action: null, soon: true });
+    detail: f.suppliers == null ? "Couldn't check right now." : (f.suppliers > 0 ? plural(f.suppliers, 'supplier') + ' on your list. Add the suppliers you already buy from, and invite them to quote online.' : 'None yet. Add the suppliers you buy material from.'),
+    action: { label: f.suppliers > 0 ? 'Manage suppliers' : 'Add suppliers', url: L.suppliers } });
 
   steps.push({ key: 'subcontractors', title: 'Subcontractors', why: 'Galvanizers, painters, machine shops and other outside work, with their prices.',
     status: f.subs == null ? 'unknown' : (f.subs > 0 ? 'done' : 'todo'),
@@ -151,7 +151,7 @@ function registerSetupChecklist(app, deps) {
       const links = {
         profile: PORTAL + '/#Page:Manufacture_Profile?tab=tab1',
         clientList: PORTAL + '/#Page:Client_List_Page',
-        team: rail('team.html'), clients: rail('clients-import.html'), subs: rail('subcontractors.html'), teach: rail('teach.html'),
+        team: rail('team.html'), clients: rail('clients-import.html'), subs: rail('subcontractors.html'), teach: rail('teach.html'), suppliers: rail('suppliers.html'),
       };
       const st = buildSteps({ profile, people, clients: clients == null ? null : clients.length, suppliers: matches == null ? null : matches.length,
         subs: activeSubs, lessons: lessons == null ? null : lessons.length, teachJobs: require('../teach/teachRoutes').reviewedCount(mfg), skipped: (readJson(fileOf(mfg), {}) || {}).skipped || {}, links });

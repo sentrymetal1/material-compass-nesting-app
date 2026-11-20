@@ -4297,6 +4297,7 @@ require('./team/invites').registerTeamInvites(app, { getAccessToken, creatorApiB
 require('./clients/importRoutes').registerClientImport(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./setup/checklist').registerSetupChecklist(app, { fetchAllZohoPages });
 require('./teach/teachRoutes').registerTeach(app, { getAccessToken, creatorApiBase, zohoHeaders });
+require('./suppliers/claim').registerSupplierClaim(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 
 // ── ONE ROW, FOR DELUGE ─────────────────────────────────────────────────────────────────────
 // The project form's BOM subform cannot match a fitting to its catalog row, and the reason is
