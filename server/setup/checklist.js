@@ -72,10 +72,14 @@ function buildSteps(f) {
     detail: f.subs == null ? "Couldn't check right now." : (f.subs > 0 ? plural(f.subs, 'active subcontractor') + '.' : 'None yet. Add the shops you send outside work to.'),
     action: { label: f.subs > 0 ? 'Manage' : 'Add subcontractors', url: L.subs } });
 
-  steps.push({ key: 'teach', title: 'Teach the take-off', why: 'Your old quotes teach the AI how your shop prices work.',
-    status: f.lessons == null ? 'unknown' : (f.lessons > 0 ? 'done' : 'todo'),
-    detail: f.lessons > 0 ? plural(f.lessons, 'lesson') + ' learned from your old quotes.' : 'Upload a few past quotes so the take-off learns your scope and pricing. Coming soon.',
-    action: null, soon: !(f.lessons > 0) });
+  // Done at 3 reviewed past jobs (Mark: "3 to start, 10 is better").
+  const tj = f.teachJobs || 0;
+  steps.push({ key: 'teach', title: 'Teach the take-off', why: 'Your past jobs teach the AI how your shop scopes and prices work.',
+    status: tj >= 3 ? 'done' : (tj > 0 ? 'partial' : 'todo'),
+    detail: tj >= 3 ? plural(tj, 'past job') + ' reviewed' + (tj < 10 ? '. 10 is better; add more any time.' : '.') + (f.lessons > 0 ? ' ' + plural(f.lessons, 'lesson') + ' learned.' : '')
+      : (tj > 0 ? plural(tj, 'past job') + ' reviewed. Add ' + (3 - tj) + ' more to start (10 is better).'
+        : 'Add 3 past jobs (any quotes, estimates, cost reports) so the take-off learns your scope and pricing. 10 is better.'),
+    action: { label: tj > 0 ? 'Add past jobs' : 'Start', url: L.teach } });
 
   for (const st of steps) {
     st.skipped = !!sk[st.key] && st.status !== 'done';
@@ -147,10 +151,10 @@ function registerSetupChecklist(app, deps) {
       const links = {
         profile: PORTAL + '/#Page:Manufacture_Profile?tab=tab1',
         clientList: PORTAL + '/#Page:Client_List_Page',
-        team: rail('team.html'), clients: rail('clients-import.html'), subs: rail('subcontractors.html'),
+        team: rail('team.html'), clients: rail('clients-import.html'), subs: rail('subcontractors.html'), teach: rail('teach.html'),
       };
       const st = buildSteps({ profile, people, clients: clients == null ? null : clients.length, suppliers: matches == null ? null : matches.length,
-        subs: activeSubs, lessons: lessons == null ? null : lessons.length, skipped: (readJson(fileOf(mfg), {}) || {}).skipped || {}, links });
+        subs: activeSubs, lessons: lessons == null ? null : lessons.length, teachJobs: require('../teach/teachRoutes').reviewedCount(mfg), skipped: (readJson(fileOf(mfg), {}) || {}).skipped || {}, links });
       const body = Object.assign({ ok: true, shop: { id: mfg, name: s(me && me.Company_Name) || 'Your shop' }, first_project: PORTAL + '/#Page:Manufacture_Main_Dashboard' }, st);
       cache.set(mfg, { at: Date.now(), body });
       res.json(body);

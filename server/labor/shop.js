@@ -85,7 +85,8 @@ function clean(input, mfg) {
       pieces: pos(j.pieces),
       job_number: txt(j.job_number, 40),
       date: txt(j.date, 10),
-      source: j.source === 'workorder' ? 'workorder' : 'entered',
+      source: ['workorder', 'history'].includes(j.source) ? j.source : 'entered',   // history = from Teach the take-off
+      hours_kind: ['actual', 'estimated'].includes(j.hours_kind) ? j.hours_kind : undefined,
     }))
     .filter((j) => j.tons != null && j.hours != null);
   // The materials x processes setup (processModel.js). Absent on a profile saved before it existed.

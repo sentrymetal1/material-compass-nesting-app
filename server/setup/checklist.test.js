@@ -7,7 +7,7 @@ const full = { markup: true, projectTypes: true, shipping: true, laborTypes: tru
 const by = (r, k) => r.steps.find((s) => s.key === k);
 
 test('a finished shop', () => {
-  const r = buildSteps({ profile: full, people: 3, clients: 40, suppliers: 6, subs: 5, lessons: 4 });
+  const r = buildSteps({ profile: full, people: 3, clients: 40, suppliers: 6, subs: 5, lessons: 4, teachJobs: 3 });
   assert.strictEqual(r.done, 6);
   assert.ok(r.ready);
   assert.match(by(r, 'team').detail, /3 of 4 seats/);
@@ -35,4 +35,10 @@ test('skipping a required step makes the shop ready; a done step cannot be skipp
   assert.ok(!by(r, 'profile').skipped);
   assert.ok(!by(r, 'profile').can_skip);
   assert.ok(r.ready);
+});
+
+test('teach: done at 3 reviewed jobs, partial before', () => {
+  assert.strictEqual(by(buildSteps({ profile: full, teachJobs: 1 }), 'teach').status, 'partial');
+  assert.match(by(buildSteps({ profile: full, teachJobs: 1 }), 'teach').detail, /Add 2 more/);
+  assert.strictEqual(by(buildSteps({ profile: full, teachJobs: 3, lessons: 12 }), 'teach').status, 'done');
 });

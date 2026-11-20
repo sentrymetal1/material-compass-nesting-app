@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Teach the take-off</title>
+<!--
+  A shop teaches the take-off from its own past jobs. Plan: docs/TEACH_TAKEOFF_PLAN.md.
+  Opened from the setup checklist as /takeoff/teach.html?manufacturer_id=<MFG id>&t=<token>
+  Server: server/teach/teachRoutes.js (+ teachCore.js). Project types: /api/takeoff/project-types.
+-->
+<script src="/takeoff/mc-dialog.js"></script>
+<style>
+  :root{--blue:#5F94CE;--ink:#1f2a37;--mut:#667;--line:#e3e6ea;--grn:#2e7d32;--grnbg:#e8f5e9;--ylw:#b45309;--ylwbg:#fff7ed;--red:#b91c1c;--redbg:#fdeeee;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:22px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:1280px;margin:0 auto;}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+  .brand{font-weight:800;font-size:16px;color:var(--blue);} .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;padding:16px 18px;}
+  h1{font-size:20px;margin:0 0 4px;} h2{font-size:16px;margin:0 0 8px;} h3{font-size:13px;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);}
+  .small{font-size:12.5px;color:var(--mut);line-height:1.5;}
+  .prog{display:flex;align-items:center;gap:12px;margin-top:10px;} .bar{flex:1;height:9px;background:#edf0f4;border-radius:6px;overflow:hidden;} .bar i{display:block;height:100%;background:var(--blue);}
+  .cols{display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start;}
+  .jobs .j{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;cursor:pointer;background:#fff;}
+  .jobs .j:hover{border-color:#b9cde3;} .jobs .j.on{border-color:var(--blue);background:#f4f8fd;}
+  .jobs .j b{font-size:13.5px;} .jobs .j .small{font-size:12px;}
+  .btn{font:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:8px 14px;cursor:pointer;}
+  .btn:disabled{opacity:.5;cursor:default;} .btn.ghost{background:#fff;color:var(--blue);border:1px solid #cdd3da;} .btn.sm{padding:5px 10px;font-size:12px;}
+  .lnk{font:inherit;font-size:12px;color:var(--blue);background:none;border:0;cursor:pointer;padding:2px 4px;} .lnk.red{color:var(--red);}
+  input[type=text],input[type=number],select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cdd3da;border-radius:6px;background:#fff;}
+  input:focus,select:focus{border-color:var(--blue);outline:none;}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 12px;} .grid label{display:block;font-size:11.5px;color:var(--mut);margin-bottom:3px;} .grid input,.grid select{width:100%;}
+  .drop{border:2px dashed #c4d3e6;border-radius:10px;padding:18px;text-align:center;color:#4a6588;background:#f7faff;cursor:pointer;}
+  .drop.over{background:#e9f2fd;border-color:var(--blue);}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;} td,th{padding:6px 8px;border-bottom:1px solid #f0f2f4;text-align:left;vertical-align:top;}
+  th{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;}
+  .pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;font-weight:600;} .p-ok{background:var(--grnbg);color:var(--grn);} .p-wait{background:#eef3fa;color:#3d6ea8;} .p-bad{background:var(--redbg);color:var(--red);}
+  .check{font-size:12.5px;color:var(--ylw);background:var(--ylwbg);border-radius:8px;padding:8px 12px;margin-bottom:6px;}
+  .prop{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;background:#fff;}
+  .prop.off{opacity:.55;} .prop .src{font-size:11.5px;color:#8a96a3;margin-top:3px;}
+  .prop .tt{font-size:11.5px;font-weight:700;color:#3d6ea8;text-transform:uppercase;letter-spacing:.03em;}
+  .prop input[type=text]{width:100%;}
+  .opt{font-size:11.5px;color:#3d6ea8;cursor:pointer;text-decoration:underline;margin-right:8px;}
+  .sugg{font-size:12px;color:#3d6ea8;margin-top:4px;}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:10px;font-size:14px;font-weight:600;display:none;background:var(--blue);} .busy.show{display:block;}
+  .empty{padding:40px;text-align:center;color:var(--mut);}
+  .ver{font-size:11px;color:#99a;text-align:right;}
+  .hidden{display:none;}
+</style>
+</head>
+<body>
+<div class="busy" id="busy"></div>
+<div class="wrap">
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">Teach the take-off</span></div>
+  <div class="card">
+    <h1>Teach the take-off from your past jobs</h1>
+    <div class="small">Add a past job and drop in whatever you have for it: the quote or proposal, estimate sheets, material lists, supplier quotes,
+      specifications, a job cost report with actual hours, even photos of handwritten sheets. The AI reads them and proposes what your shop does:
+      scope it includes and excludes, finishes, outside costs, prices paid, tons and hours. <b>You confirm each one; nothing is used until you do.</b>
+      Your files are kept, private to your shop, so they can be read again as the take-off improves.</div>
+    <div class="prog"><div class="bar"><i id="fill" style="width:0"></i></div><b id="count" style="font-size:13px"></b></div>
+  </div>
+  <div class="cols">
+    <div>
+      <button class="btn" id="addJob" style="width:100%;margin-bottom:10px">+ Add a past job</button>
+      <div class="jobs" id="jobs"></div>
+    </div>
+    <div id="main"><div class="card empty">Add a past job to start. Pick a typical one you know well; a job with actual hours teaches the most.</div></div>
+  </div>
+  <div class="ver" id="ver"></div>
+</div>
+<input type="file" id="file" multiple accept=".pdf,.xlsx,.csv,.txt,.png,.jpg,.jpeg,.webp,.gif" class="hidden">
+<script>
+const VERSION = "v0.1 · 2026-11-19 · teach the take-off";
+document.getElementById("ver").textContent = VERSION;
+const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let LIST = null, JOB = null, TYPES = [], DIRTY = false;
+
+function busy(m) { $("busy").textContent = m || ""; $("busy").className = "busy" + (m ? " show" : ""); }
+async function api(method, path, body) {
+  const url = path + (method === "GET" ? (path.includes("?") ? "&" : "?") + "manufacturer_id=" + encodeURIComponent(MFG) : "");
+  const r = await fetch(url, method === "GET" ? undefined : { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.assign({ manufacturer_id: MFG }, body || {})) });
+  try { return await r.json(); } catch (e) { return { ok: false, error: "Something went wrong. Please try again." }; }
+}
+
+// ---- list ----
+async function loadList(selectId) {
+  const j = await api("GET", "/api/teach/jobs");
+  if (!j.ok) return mcAlert(j.error);
+  LIST = j;
+  const n = j.reviewed;
+  $("fill").style.width = Math.min(100, Math.round(n / j.better * 100)) + "%";
+  $("count").textContent = n + " reviewed · " + (n < j.target ? (j.target - n) + " more to start" : (n < j.better ? "10 is better" : "great"));
+  $("jobs").innerHTML = j.jobs.map((x) => '<div class="j' + (JOB && JOB.id === x.id ? " on" : "") + '" data-id="' + x.id + '"><b>' + esc(x.name || "Unnamed job") + "</b>" +
+    (x.number ? ' <span class="small">#' + esc(x.number) + "</span>" : "") + '<div class="small">' + esc(x.project_type ? x.project_type.name : "No project type yet") +
+    " · " + x.files.length + " file" + (x.files.length === 1 ? "" : "s") + "</div>" + (x.reviewed ? '<span class="pill p-ok">Reviewed</span>' : '<span class="pill p-wait">Not reviewed</span>') + "</div>").join("") ||
+    '<div class="small">No past jobs yet.</div>';
+  if (selectId) openJob(selectId);
+}
+$("jobs").addEventListener("click", (e) => { const d = e.target.closest(".j"); if (d) openJob(d.dataset.id); });
+$("addJob").addEventListener("click", async () => {
+  if (DIRTY && !(await mcConfirm("You have unsaved choices on this job. Leave without saving them?", { okText: "Leave" }))) return;
+  const j = await api("POST", "/api/teach/jobs", {});
+  if (!j.ok) return mcAlert(j.error);
+  JOB = j.job; DIRTY = false; await loadList(); render();
+});
+
+async function loadTypes() {
+  const j = await api("GET", "/api/takeoff/project-types");
+  TYPES = j.ok ? j.types : [];
+}
+async function openJob(id) {
+  if (JOB && JOB.id !== id && DIRTY && !(await mcConfirm("You have unsaved choices on this job. Leave without saving them?", { okText: "Leave" }))) return;
+  busy("Opening…");
+  const j = await api("GET", "/api/teach/jobs/" + id);
+  busy("");
+  if (!j.ok) return mcAlert(j.error);
+  JOB = j.job; DIRTY = false; render();
+  document.querySelectorAll(".jobs .j").forEach((d) => d.classList.toggle("on", d.dataset.id === id));
+}
+
+// ---- one job ----
+const LC = () => (LIST && LIST.labor_cats) || {};
+const KINDS = () => (LIST && LIST.kinds) || {};
+function render() {
+  const j = JOB, sg = j.suggest || {};
+  const typeOpts = '<option value="">Pick a project type…</option>' + TYPES.map((t) => '<option value="' + t.id + '"' + (j.project_type && j.project_type.id === t.id ? " selected" : "") + ">" + esc(t.name) + (t.difficulty ? " (" + esc(t.difficulty) + ")" : "") + "</option>").join("") + '<option value="__new">+ Add a new project type…</option>';
+  const lcOpts = '<option value="">Pick…</option>' + Object.keys(LC()).map((k) => '<option value="' + k + '"' + (j.labor_cat === k ? " selected" : "") + ">" + esc(LC()[k]) + "</option>").join("");
+  const typeMatch = sg.project_type && TYPES.find((t) => t.name.toLowerCase() === sg.project_type.toLowerCase());
+  let h = '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><h2>' + esc(j.name || "New past job") + '</h2><button class="lnk red" id="delJob">Remove this job</button></div>' +
+    '<div class="grid">' +
+    '<div><label>Job name</label><input type="text" id="jName" value="' + esc(j.name) + '" placeholder="' + esc(sg.name || "e.g. Mill platform") + '"></div>' +
+    '<div><label>Job #</label><input type="text" id="jNum" value="' + esc(j.number) + '"></div>' +
+    '<div><label>Won or lost</label><select id="jOut"><option value="">Not sure</option><option value="won"' + (j.outcome === "won" ? " selected" : "") + '>Won</option><option value="lost"' + (j.outcome === "lost" ? " selected" : "") + ">Lost</option></select></div>" +
+    '<div><label>Final price ($, optional)</label><input type="number" id="jPrice" value="' + (j.final_price || "") + '"></div>' +
+    '<div style="grid-column:span 2"><label>Project type <b style="color:var(--red)">*</b> (adds to your profile\'s Project Types)</label><select id="jType">' + typeOpts + "</select>" +
+      (sg.project_type && !(j.project_type) ? '<div class="sugg">Suggested from your documents: <b>' + esc(sg.project_type) + '</b> <button class="lnk" id="useType">' + (typeMatch ? "Use it" : "Add it as a new type") + "</button></div>" : "") + "</div>" +
+    '<div style="grid-column:span 2"><label>Labor category (for its tons and hours)</label><select id="jLc">' + lcOpts + "</select></div>" +
+    '</div><div id="newType" class="hidden" style="margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fafbfc">' +
+    '<div class="grid"><div style="grid-column:span 2"><label>New project type name</label><input type="text" id="ntName"></div><div><label>Difficulty</label><select id="ntDiff"><option value="">Pick…</option><option>Basic</option><option>Moderate</option><option>Difficult</option></select></div>' +
+    '<div style="display:flex;align-items:flex-end;gap:6px"><button class="btn sm" id="ntSave">Add type</button><button class="btn ghost sm" id="ntCancel">Cancel</button></div></div></div></div>';
+
+  // files
+  h += '<div class="card"><h2>Documents for this job</h2><div class="drop" id="drop"><b>Drop files here</b> or click to choose · PDF, Excel (.xlsx), CSV, photos · several at once is fine</div>' +
+    '<div id="upl" class="small" style="margin-top:6px"></div>';
+  if (j.files.length) {
+    const kOpts = (sel) => Object.keys(KINDS()).map((k) => '<option value="' + k + '"' + (k === sel ? " selected" : "") + ">" + esc(KINDS()[k]) + "</option>").join("");
+    h += '<table style="margin-top:8px"><tr><th>File</th><th style="width:210px">What it is</th><th>What the AI read</th><th></th></tr>' + j.files.map((f) =>
+      "<tr><td><b>" + esc(f.name) + "</b></td><td>" + (f.status === "read" ? '<select data-kind="' + f.id + '">' + kOpts(f.kind) + "</select>" : (f.status === "reading" ? '<span class="pill p-wait">Reading…</span>' : '<span class="pill p-bad">Not read</span>')) +
+      "</td><td>" + (f.status === "failed" ? '<span style="color:var(--red)">' + esc(f.error) + "</span>" : esc(f.summary)) + '</td><td><button class="lnk red" data-delf="' + f.id + '">Remove</button></td></tr>').join("") + "</table>";
+  }
+  h += "</div>";
+
+  // proposals
+  if ((j.proposals || []).length || (j.checks || []).length) {
+    h += '<div class="card"><h2>What your documents say</h2><div class="small" style="margin-bottom:8px">Tick what is true for how your shop works; edit anything. Only ticked items are saved.</div>';
+    (j.checks || []).forEach((c) => { h += '<div class="check"><b>' + esc(c.what) + ":</b> " + esc(c.text) + "</div>"; });
+    const groups = [["reference_job", "Tons and hours (labor reference)"], ["scope", "Scope habits"], ["outside_cost", "Outside costs"], ["material_price", "Material prices paid"], ["markup", "Markup"]];
+    groups.forEach(([type, label]) => {
+      const ps = j.proposals.filter((p) => p.type === type); if (!ps.length) return;
+      h += "<h3>" + esc(label) + "</h3>" + ps.map(propHtml).join("");
+    });
+    h += '<div style="display:flex;gap:10px;align-items:center;margin-top:12px"><button class="btn" id="saveBtn">Save confirmed lessons</button><span class="small" id="saveNote">' +
+      (j.reviewed ? "Reviewed before. Saving again adds only what is new." : "") + "</span></div></div>";
+  } else if (j.files.length && j.files.every((f) => f.status !== "reading")) {
+    h += '<div class="card small">Nothing to propose from these documents yet. A quote/proposal, an estimate sheet or a job cost report teaches the most.</div>';
+  }
+  $("main").innerHTML = h;
+  wire();
+}
+function fld(p, k, type, w) {
+  const v = p.fields[k] == null ? "" : p.fields[k];
+  return '<input type="' + (type || "text") + '" data-p="' + p.id + '" data-k="' + k + '" value="' + esc(v) + '"' + (w ? ' style="width:' + w + '"' : "") + (type === "number" ? ' step="any"' : "") + ">";
+}
+function propHtml(p) {
+  const tick = p.info ? "" : '<input type="checkbox" data-acc="' + p.id + '"' + (p.accept ? " checked" : "") + ' style="margin-top:3px">';
+  let body = "";
+  if (p.type === "reference_job") {
+    const mats = { CS: "Carbon steel", SS: "Stainless", AL: "Aluminum", DSS: "Duplex", NI: "Nickel alloy", CU: "Copper alloys", TI: "Titanium" };
+    const opts = (k) => (p.options && p.options[k] || []).length > 1 ? '<div class="small">Other values: ' + p.options[k].map((o) => '<span class="opt" data-p="' + p.id + '" data-k="' + k + '" data-v="' + o.value + '" title="' + esc(o.src) + '">' + o.value + "</span>").join("") + "</div>" : "";
+    body = '<div class="grid" style="grid-template-columns:repeat(5,1fr)"><div><label>Tons</label>' + fld(p, "tons", "number") + opts("tons") + "</div><div><label>Shop hours (" + esc(p.fields.hours_kind || "—") + ")</label>" + fld(p, "hours", "number") + opts("hours") +
+      '</div><div><label>Material</label><select data-p="' + p.id + '" data-k="material">' + Object.keys(mats).map((m) => '<option value="' + m + '"' + (p.fields.material === m ? " selected" : "") + ">" + mats[m] + "</option>").join("") + "</select></div>" +
+      "<div><label>Hours per ton</label><b>" + (Number(p.fields.tons) > 0 && Number(p.fields.hours) > 0 ? (Number(p.fields.hours) / Number(p.fields.tons)).toFixed(1) : "—") + "</b></div><div><label>Date</label>" + fld(p, "date") + "</div></div>";
+  } else if (p.type === "scope") body = '<div class="tt">' + esc(p.title) + "</div>" + fld(p, "text");
+  else if (p.type === "outside_cost") body = '<div class="tt">Outside cost</div><div style="display:flex;gap:6px">' + fld(p, "what", "text", "38%") + fld(p, "vendor", "text", "24%") + fld(p, "amount", "number", "14%") + '<span class="small" style="align-self:center">per</span>' + fld(p, "unit", "text", "12%") + "</div>";
+  else if (p.type === "material_price") body = '<div class="tt">Material price paid · ' + esc(p.fields.how || "") + '</div><div style="display:flex;gap:6px">' + fld(p, "item", "text", "40%") + fld(p, "vendor", "text", "28%") + '<span class="small" style="align-self:center">$</span>' + fld(p, "per_lb", "number", "14%") + '<span class="small" style="align-self:center">/lb</span></div>';
+  else if (p.type === "markup") body = '<div class="tt">Markup on this job</div><b>' + esc(p.fields.pct) + "%</b>";
+  return '<div class="prop' + (p.accept || p.info ? "" : " off") + '" data-row="' + p.id + '">' + tick + '<div style="flex:1">' + body + '<div class="src">From: ' + esc(p.source) + "</div>" + (p.note ? '<div class="small" style="color:var(--ylw)">' + esc(p.note) + "</div>" : "") + "</div></div>";
+}
+const P = (id) => JOB.proposals.find((p) => p.id === id);
+function wire() {
+  // meta
+  const saveMeta = async (body) => { const j = await api("POST", "/api/teach/jobs/" + JOB.id, body); if (!j.ok) return mcAlert(j.error); JOB.name = j.job.name; JOB.number = j.job.number; JOB.project_type = j.job.project_type; JOB.labor_cat = j.job.labor_cat; loadList(); };
+  $("jName").addEventListener("change", () => saveMeta({ name: $("jName").value }));
+  $("jNum").addEventListener("change", () => saveMeta({ number: $("jNum").value }));
+  $("jOut").addEventListener("change", () => saveMeta({ outcome: $("jOut").value }));
+  $("jPrice").addEventListener("change", () => saveMeta({ final_price: $("jPrice").value }));
+  $("jLc").addEventListener("change", () => saveMeta({ labor_cat: $("jLc").value }));
+  $("jType").addEventListener("change", async () => {
+    const v = $("jType").value;
+    if (v === "__new") { $("newType").classList.remove("hidden"); $("ntName").focus(); return; }
+    const t = TYPES.find((x) => x.id === v);
+    await saveMeta({ project_type: t ? { id: t.id, name: t.name } : null }); render();
+  });
+  if ($("useType")) $("useType").addEventListener("click", async () => {
+    const sg = JOB.suggest.project_type, t = TYPES.find((x) => x.name.toLowerCase() === sg.toLowerCase());
+    if (t) { await saveMeta({ project_type: { id: t.id, name: t.name } }); render(); return; }
+    $("jType").value = "__new"; $("newType").classList.remove("hidden"); $("ntName").value = sg; $("ntDiff").focus();
+  });
+  $("ntCancel").addEventListener("click", () => { $("newType").classList.add("hidden"); $("jType").value = JOB.project_type ? JOB.project_type.id : ""; });
+  $("ntSave").addEventListener("click", async () => {
+    const name = $("ntName").value.trim(), difficulty = $("ntDiff").value;
+    if (!name) return mcAlert("Enter a name for the project type.");
+    if (!difficulty) return mcAlert("Pick a difficulty. It feeds labor.");
+    busy("Adding project type…");
+    const r = await api("POST", "/api/takeoff/project-types", { name, difficulty });
+    busy("");
+    if (!r.ok && !r.id) return mcAlert(r.error);
+    await loadTypes();
+    const t = TYPES.find((x) => x.id === String(r.id || (r.type && r.type.id) || "")) || TYPES.find((x) => x.name.toLowerCase() === name.toLowerCase());
+    if (t) await saveMeta({ project_type: { id: t.id, name: t.name } });
+    render();
+  });
+  $("delJob").addEventListener("click", async () => {
+    if (!(await mcConfirm("Remove this past job and its files? Lessons you already saved from it stay.", { danger: true, okText: "Remove" }))) return;
+    await api("DELETE", "/api/teach/jobs/" + JOB.id); JOB = null; DIRTY = false;
+    $("main").innerHTML = '<div class="card empty">Job removed.</div>'; loadList();
+  });
+  // files
+  $("drop").addEventListener("click", () => $("file").click());
+  $("drop").addEventListener("dragover", (e) => { e.preventDefault(); $("drop").classList.add("over"); });
+  $("drop").addEventListener("dragleave", () => $("drop").classList.remove("over"));
+  $("drop").addEventListener("drop", (e) => { e.preventDefault(); $("drop").classList.remove("over"); upload([...e.dataTransfer.files]); });
+  document.querySelectorAll("[data-kind]").forEach((s) => s.addEventListener("change", async () => {
+    busy("Reading it again as " + KINDS()[s.value] + "…");
+    const j = await api("POST", "/api/teach/jobs/" + JOB.id + "/file/" + s.dataset.kind + "/kind", { kind: s.value });
+    busy(""); if (!j.ok) return mcAlert(j.error); JOB = j.job; DIRTY = false; render();
+  }));
+  document.querySelectorAll("[data-delf]").forEach((b) => b.addEventListener("click", async () => {
+    if (!(await mcConfirm("Remove this file from the job?", { danger: true, okText: "Remove" }))) return;
+    const j = await api("DELETE", "/api/teach/jobs/" + JOB.id + "/file/" + b.dataset.delf);
+    if (j.job) { JOB = j.job; render(); loadList(); }
+  }));
+  // proposals
+  $("main").querySelectorAll("[data-acc]").forEach((c) => c.addEventListener("change", () => { P(c.dataset.acc).accept = c.checked; c.closest(".prop").classList.toggle("off", !c.checked); DIRTY = true; }));
+  $("main").querySelectorAll("input[data-p],select[data-p]").forEach((i) => i.addEventListener("change", () => {
+    const p = P(i.dataset.p); p.fields[i.dataset.k] = i.type === "number" ? (i.value === "" ? null : Number(i.value)) : i.value; DIRTY = true;
+    if (p.type === "reference_job") { const row = i.closest(".prop"); row.outerHTML = propHtml(p); wire(); }
+  }));
+  $("main").querySelectorAll(".opt").forEach((o) => o.addEventListener("click", () => { const p = P(o.dataset.p); p.fields[o.dataset.k] = Number(o.dataset.v); DIRTY = true; render(); }));
+  if ($("saveBtn")) $("saveBtn").addEventListener("click", save);
+}
+$("file").addEventListener("change", () => { upload([...$("file").files]); $("file").value = ""; });
+
+async function upload(files) {
+  if (!files.length || !JOB) return;
+  for (let n = 0; n < files.length; n++) {
+    const f = files[n];
+    if (f.size > 30 * 1024 * 1024) { mcAlert(f.name + " is over 30 MB. Add just the pages that matter."); continue; }
+    $("upl").textContent = "Reading " + f.name + " (" + (n + 1) + " of " + files.length + ")… this can take a minute per document.";
+    const b64 = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.readAsDataURL(f); });
+    const j = await api("POST", "/api/teach/jobs/" + JOB.id + "/file", { name: f.name, b64, media_type: f.type });
+    if (!j.ok) { mcAlert(j.error); continue; }
+    JOB = j.job; DIRTY = false; render();
+  }
+  $("upl") && ($("upl").textContent = "");
+  loadList();
+}
+
+async function save() {
+  if (!JOB.project_type) return mcAlert("Pick or add this job's project type first, so the lessons are filed under the right kind of work.");
+  const picked = JOB.proposals.filter((p) => p.accept && !p.info);
+  if (!picked.length) return mcAlert("Tick at least one item that is true for your shop.");
+  busy("Saving…");
+  const j = await api("POST", "/api/teach/jobs/" + JOB.id + "/confirm", { proposals: picked });
+  busy("");
+  if (!j.ok) return mcAlert(j.error);
+  const r = j.result; DIRTY = false;
+  await mcAlert((r.reference_job ? "Tons and hours added to your labor reference jobs. " : "") + r.lessons + " lesson" + (r.lessons === 1 ? "" : "s") + " saved" +
+    (r.skipped ? " (" + r.skipped + " already saved before)" : "") + "." + (r.problems.length ? "\n\n" + r.problems.join("\n") : "") +
+    (j.reviewed < 3 ? "\n\nAdd " + (3 - j.reviewed) + " more past job" + (3 - j.reviewed === 1 ? "" : "s") + " to finish this step." : ""));
+  loadList(JOB.id);
+}
+window.addEventListener("beforeunload", (e) => { if (DIRTY) { e.preventDefault(); e.returnValue = ""; } });
+(async () => { await loadTypes(); await loadList(); })();
+</script>
+</body>
+</html>

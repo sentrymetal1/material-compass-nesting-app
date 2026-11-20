@@ -59,6 +59,7 @@ app.use('/api/triage/manual', express.json({ limit: '40mb' })); // manual intake
 app.use('/api/files', express.json({ limit: '60mb' })); // drawings saved to the project store are base64 PDFs; same reason, same placement
 app.use(['/api/supplier/me/autofill', '/api/mfg/supplier-quotes/autofill', '/api/supplier/me/quote-attachment', '/api/mfg/supplier-quotes/quote-attachment'], express.json({ limit: '40mb' })); // a supplier's quote PDF, base64; same reason, same placement
 app.use('/api/clients/import', express.json({ limit: '40mb' })); // an uploaded customer list (base64) or its rows; same reason, same placement
+app.use('/api/teach', express.json({ limit: '45mb' })); // one past-job document (base64); same reason, same placement
 app.use(express.json({ limit: '10mb' }));
 
 // ── NO VENDOR NAMES IN WHAT USERS SEE ─────────────────────────────────────────────────────────
@@ -2034,7 +2035,7 @@ async function fetchShopLearning(mfg) {
   // it from a menu, which is not what it is and not how the model should apply it.
   const kind = function (r) {
     const s = String(r.Source || '').toLowerCase().trim();
-    return (s === 'instruction' || s === 'material' || s === 'fitting') ? s : 'decision';
+    return (s === 'instruction' || s === 'material' || s === 'fitting' || s === 'history') ? s : 'decision';
   };
 
   // 1. DECISIONS — tally the human's choice per judgment call; the prevailing one is the default.
@@ -2090,7 +2091,30 @@ async function fetchShopLearning(mfg) {
     fitting.push('- ' + String(r.Context || 'fitting').trim() + ': "' + av + '" should be written "' + hv + '"');
   });
 
+  // 5. FROM PAST JOBS — habits the shop CONFIRMED on the Teach the take-off page (Source = history):
+  // scope included/excluded, finish, buyouts, spec requirements, outside costs and material prices it
+  // actually paid, each tagged with the project type of the job it came from. Unlike chat instructions
+  // these are standing rules the shop signed off, so they are injected — grouped by project type, so a
+  // habit from stair-and-rail work is applied to stair-and-rail work.
+  const histBy = {}, seenHist = {};
+  recs.filter(function (r) { return kind(r) === 'history'; })
+    .sort(function (a, b) { return String(b.Created || '').localeCompare(String(a.Created || '')); })
+    .forEach(function (r) {
+      const ctx = String(r.Context || '').trim(); const pt = String(r.Project_Type || '').trim() || 'Any project type';
+      const k = (pt + '|' + ctx).toLowerCase();
+      if (!ctx || seenHist[k]) return;
+      seenHist[k] = 1;
+      (histBy[pt] = histBy[pt] || []).push('- ' + ctx);
+    });
+  const history = [];
+  Object.keys(histBy).forEach(function (pt) { history.push('[' + pt + ']\n' + histBy[pt].slice(0, 25).join('\n')); });
+
   const out = [];
+  if (history.length) {
+    out.push("THIS FABRICATOR'S HABITS FROM ITS OWN PAST JOBS (confirmed by the shop). Apply the ones under the project " +
+      "type that matches this job; use the others only where the work is clearly the same kind. Scope habits decide what to " +
+      "include or exclude; outside costs and material prices are what this shop actually paid and quoted:\n" + history.join('\n\n'));
+  }
   if (decision.length) {
     out.push("THIS FABRICATOR'S PAST DECISIONS (apply as standing preferences): when the SAME judgment call " +
       "appears in this take-off, pre-resolve it to this shop's prior choice and set that decision's " +
@@ -4272,6 +4296,7 @@ require('./labor/timeEntry').registerTimeEntry(app, { getAccessToken, creatorApi
 require('./team/invites').registerTeamInvites(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./clients/importRoutes').registerClientImport(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./setup/checklist').registerSetupChecklist(app, { fetchAllZohoPages });
+require('./teach/teachRoutes').registerTeach(app, { getAccessToken, creatorApiBase, zohoHeaders });
 
 // ── ONE ROW, FOR DELUGE ─────────────────────────────────────────────────────────────────────
 // The project form's BOM subform cannot match a fitting to its catalog row, and the reason is

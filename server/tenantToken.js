@@ -103,7 +103,7 @@ const TENANT_ROUTES = [
   /^\/api\/project\//, /^\/api\/standalone\//, /^\/api\/bom-lookups\/(components|drawings)$/,
   /^\/api\/match-suggestions$/, /^\/api\/fittings\/resolve-row$/, /^\/api\/supplier\/me/, /^\/api\/mfg\/supplier-quotes\//, /^\/api\/mfg\/rfq\//,
   /^\/api\/labor\/(shop|weld-time|estimate)$/, /^\/api\/intel\//, /^\/api\/subcontractors/, /^\/api\/labor-time\//,
-  /^\/api\/team(\/(invite|resend|cancel))?$/, /^\/api\/clients\/import\/(read|preview|commit)$/, /^\/api\/setup\//,   // NOT /api/team/join: the invitee has no shop token, the signed link is the proof
+  /^\/api\/team(\/(invite|resend|cancel))?$/, /^\/api\/clients\/import\/(read|preview|commit)$/, /^\/api\/setup\//, /^\/api\/teach\//,   // NOT /api/team/join: the invitee has no shop token, the signed link is the proof
 ];
 
 // What the report shows: per route, how requests would have fared under enforce. Kept on
