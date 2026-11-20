@@ -8,6 +8,7 @@
 //    DELETE /api/teach/jobs/:id                  remove a job and its files (confirmed lessons stay)
 //    POST   /api/teach/jobs/:id/file             add ONE file; the AI reads it now
 //    POST   /api/teach/jobs/:id/file/:fid/kind   "this is really a job cost report" -> read again
+//    POST   /api/teach/jobs/:id/file/:fid/read   read a saved file again
 //    DELETE /api/teach/jobs/:id/file/:fid
 //    POST   /api/teach/jobs/:id/confirm          save the confirmed proposals
 //
@@ -148,7 +149,10 @@ function registerTeach(app, deps) {
       f.status = 'read'; f.error = '';
     } catch (e) {
       f.status = 'failed';
-      f.error = e.user ? e.message : 'Could not be read. Try again, or add it as a PDF.';
+      // The AI service itself refusing (no credit, overloaded, rate limit) is not the document's fault:
+      // say so, rather than sending the user off to convert a file that is fine.
+      const svc = e.status === 401 || e.status === 402 || e.status === 403 || e.status === 429 || e.status >= 500 || /credit balance|billing|overloaded|rate.?limit/i.test(String(e.message || ''));
+      f.error = e.user ? e.message : (svc ? 'Document reading is not available right now. Try again later; the file is saved and can be read then.' : 'Could not be read. Try again, or add it as a PDF.');
       if (!e.user) console.error('[teach] read', f.name, e.message);
     }
     f.read_at = new Date().toISOString();
@@ -236,6 +240,16 @@ function registerTeach(app, deps) {
     const kind = s((req.body || {}).kind);
     if (!T.KIND_KEYS.includes(kind)) return bad(res, 'Pick what the document is.');
     f.kind = kind; f.kind_set_by_user = true;
+    await readFile(mfg, j, f);
+    store(mfg, d);
+    res.json({ ok: true, job: jobOut(j, true) });
+  }));
+
+  // Read a saved file again (it failed because the reading service was down, or the take-off improved).
+  app.post('/api/teach/jobs/:id/file/:fid/read', withShop(async (req, res, mfg) => {
+    const d = load(mfg), j = findJob(d, req.params.id);
+    const f = j && (j.files || []).find((x) => x.id === req.params.fid);
+    if (!f) return bad(res, 'That file is not here any more. Reload the page.', 404);
     await readFile(mfg, j, f);
     store(mfg, d);
     res.json({ ok: true, job: jobOut(j, true) });

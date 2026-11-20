@@ -73,7 +73,7 @@
 </div>
 <input type="file" id="file" multiple accept=".pdf,.xlsx,.csv,.txt,.png,.jpg,.jpeg,.webp,.gif" class="hidden">
 <script>
-const VERSION = "v0.1 · 2026-11-19 · teach the take-off";
+const VERSION = "v0.2 · 2026-11-19 · Read again for files not read";
 document.getElementById("ver").textContent = VERSION;
 const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
 const $ = (id) => document.getElementById(id);
@@ -150,7 +150,7 @@ function render() {
   if (j.files.length) {
     const kOpts = (sel) => Object.keys(KINDS()).map((k) => '<option value="' + k + '"' + (k === sel ? " selected" : "") + ">" + esc(KINDS()[k]) + "</option>").join("");
     h += '<table style="margin-top:8px"><tr><th>File</th><th style="width:210px">What it is</th><th>What the AI read</th><th></th></tr>' + j.files.map((f) =>
-      "<tr><td><b>" + esc(f.name) + "</b></td><td>" + (f.status === "read" ? '<select data-kind="' + f.id + '">' + kOpts(f.kind) + "</select>" : (f.status === "reading" ? '<span class="pill p-wait">Reading…</span>' : '<span class="pill p-bad">Not read</span>')) +
+      "<tr><td><b>" + esc(f.name) + "</b></td><td>" + (f.status === "read" ? '<select data-kind="' + f.id + '">' + kOpts(f.kind) + "</select>" : (f.status === "reading" ? '<span class="pill p-wait">Reading…</span>' : '<span class="pill p-bad">Not read</span> <button class="lnk" data-reread="' + f.id + '">Read again</button>')) +
       "</td><td>" + (f.status === "failed" ? '<span style="color:var(--red)">' + esc(f.error) + "</span>" : esc(f.summary)) + '</td><td><button class="lnk red" data-delf="' + f.id + '">Remove</button></td></tr>').join("") + "</table>";
   }
   h += "</div>";
@@ -239,6 +239,11 @@ function wire() {
     busy("Reading it again as " + KINDS()[s.value] + "…");
     const j = await api("POST", "/api/teach/jobs/" + JOB.id + "/file/" + s.dataset.kind + "/kind", { kind: s.value });
     busy(""); if (!j.ok) return mcAlert(j.error); JOB = j.job; DIRTY = false; render();
+  }));
+  document.querySelectorAll("[data-reread]").forEach((b) => b.addEventListener("click", async () => {
+    busy("Reading it again…");
+    const j = await api("POST", "/api/teach/jobs/" + JOB.id + "/file/" + b.dataset.reread + "/read", {});
+    busy(""); if (!j.ok) return mcAlert(j.error); JOB = j.job; DIRTY = false; render(); loadList();
   }));
   document.querySelectorAll("[data-delf]").forEach((b) => b.addEventListener("click", async () => {
     if (!(await mcConfirm("Remove this file from the job?", { danger: true, okText: "Remove" }))) return;
