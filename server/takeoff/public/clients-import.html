@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Import Clients</title>
+<!--
+  A shop imports its existing customer list. Opened from Material Compass as
+    /takeoff/clients-import.html?manufacturer_id=<MFG record id>&t=<tenant token>
+  Server: server/clients/importRoutes.js (+ importCore.js). Steps: file/paste -> match columns ->
+  preview (new / already in your list / needs a fix, editable) -> import.
+-->
+<script src="/takeoff/mc-dialog.js"></script>
+<style>
+  :root{--blue:#5F94CE;--ink:#1f2a37;--mut:#667;--line:#e3e6ea;--grn:#2e7d32;--grnbg:#e8f5e9;--ylw:#b45309;--ylwbg:#fff7ed;--red:#b91c1c;--redbg:#fdeeee;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:1280px;margin:0 auto;}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+  .brand{font-weight:800;font-size:16px;color:var(--blue);}
+  .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .steps{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;}
+  .steps span{font-size:12.5px;padding:5px 12px;border-radius:14px;background:#e4e9f0;color:#556;}
+  .steps span.on{background:var(--blue);color:#fff;font-weight:600;} .steps span.done{background:#d6e6f5;color:#2c5d8f;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;padding:18px 20px;}
+  h2{font-size:17px;margin:0 0 6px;}
+  .small{font-size:12.5px;color:var(--mut);line-height:1.5;}
+  .btn{font:inherit;font-size:13.5px;font-weight:600;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:9px 18px;cursor:pointer;}
+  .btn:disabled{opacity:.5;cursor:default;} .btn.ghost{background:#fff;color:var(--blue);border:1px solid #cdd3da;}
+  .drop{border:2px dashed #c4d3e6;border-radius:12px;padding:34px;text-align:center;color:#4a6588;background:#f7faff;cursor:pointer;margin-top:12px;}
+  .drop.over{background:#e9f2fd;border-color:var(--blue);}
+  .drop b{font-size:15px;color:var(--ink);}
+  textarea{width:100%;min-height:110px;font:12.5px Consolas,monospace;border:1px solid #cdd3da;border-radius:8px;padding:9px;margin-top:8px;}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:8px;border-bottom:1px solid var(--line);background:#fafbfc;position:sticky;top:0;}
+  td{padding:7px 8px;border-bottom:1px solid #f0f2f4;vertical-align:top;}
+  select,input[type=text]{font:inherit;font-size:13px;padding:5px 7px;border:1px solid #cdd3da;border-radius:6px;width:100%;background:#fff;}
+  input[type=text]:focus,select:focus{border-color:var(--blue);outline:none;}
+  input.miss{border-color:#f0b4b4;background:#fffafa;}
+  .tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;background:#eef3fa;color:#3d6ea8;margin-left:6px;}
+  .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:10px;font-weight:600;white-space:nowrap;}
+  .p-new{background:var(--grnbg);color:var(--grn);} .p-ex{background:#eef3fa;color:#3d6ea8;} .p-fix{background:var(--redbg);color:var(--red);}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px;}
+  .chips button{font:inherit;font-size:12.5px;border:1px solid #cdd3da;background:#fff;border-radius:16px;padding:5px 12px;cursor:pointer;}
+  .chips button.on{background:#eaf2fb;border-color:var(--blue);color:#1f3a5f;font-weight:600;}
+  .note{font-size:11.5px;color:var(--ylw);margin-top:3px;} .fixnote{font-size:11.5px;color:var(--red);margin-top:3px;}
+  .k{font-size:12px;line-height:1.5;} .k .x{color:#99a;}
+  .scroll{max-height:62vh;overflow:auto;border:1px solid var(--line);border-radius:8px;}
+  .bar{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap;}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:11px;font-size:14px;font-weight:600;display:none;background:var(--blue);}
+  .busy.show{display:block;}
+  .sum{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0;}
+  .sum div{background:#f4f7fb;border-radius:10px;padding:10px 16px;font-size:12.5px;color:var(--mut);}
+  .sum b{display:block;font-size:22px;color:var(--ink);}
+  .ver{font-size:11px;color:#99a;text-align:right;}
+  .hidden{display:none;}
+</style>
+</head>
+<body>
+<div class="busy" id="busy"></div>
+<div class="wrap">
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">Import Clients</span></div>
+  <div class="steps" id="steps"><span>1 · Your list</span><span>2 · Match columns</span><span>3 · Review</span><span>4 · Done</span></div>
+
+  <!-- 1 -->
+  <div class="card" id="s1">
+    <h2>Bring in your existing clients</h2>
+    <div class="small">Use the customer list from your accounting software, CRM, email contacts or your own spreadsheet.
+      In QuickBooks: <b>Customers › Export to Excel</b>. In Outlook: <b>File › Open &amp; Export › Export</b> to CSV.
+      Excel (.xlsx) and CSV files both work. Nothing is saved until you click Import at the end.</div>
+    <div class="drop" id="drop"><b>Drop your file here</b><br><span class="small">or click to choose a file (.xlsx or .csv)</span></div>
+    <input type="file" id="file" accept=".xlsx,.csv,.txt,.xls" class="hidden">
+    <div style="margin-top:16px" class="small"><b>Or paste rows</b> copied from a spreadsheet, including the header row:</div>
+    <textarea id="paste" placeholder="Company&#9;Address&#9;City&#9;State&#9;Zip&#9;Phone&#9;Contact&#9;Email"></textarea>
+    <div class="bar"><button class="btn" id="pasteBtn">Use pasted rows</button>
+      <span class="small">No list? <a href="/api/clients/import/template.csv">Download a blank template</a>, fill it in and upload it.</span></div>
+  </div>
+
+  <!-- 2 -->
+  <div class="card hidden" id="s2">
+    <h2>Match your columns</h2>
+    <div class="small" id="mapIntro"></div>
+    <div class="scroll" style="margin-top:10px;max-height:56vh"><table><thead><tr><th style="width:26%">Your column</th><th style="width:40%">Example from your list</th><th>Goes to</th></tr></thead>
+      <tbody id="mapRows"></tbody></table></div>
+    <div class="bar"><button class="btn ghost" id="back1">Back</button><button class="btn" id="toPreview">Next: review clients</button></div>
+  </div>
+
+  <!-- 3 -->
+  <div class="card hidden" id="s3">
+    <h2>Review before importing</h2>
+    <div class="small">Fix anything right here. Unticked rows are not imported. Clients already in your list are not added again,
+      but new contacts for them are.</div>
+    <div class="chips" id="chips"></div>
+    <div class="scroll"><table><thead><tr><th style="width:28px"><input type="checkbox" id="all"></th><th style="width:16%">Company</th><th style="width:15%">Street</th>
+      <th style="width:9%">City</th><th style="width:5%">State</th><th style="width:7%">Zip</th><th style="width:10%">Phone</th><th style="width:12%">Email</th>
+      <th>Contacts</th><th style="width:110px">Status</th></tr></thead><tbody id="pvRows"></tbody></table></div>
+    <div class="bar"><button class="btn ghost" id="back2">Back</button><button class="btn" id="importBtn">Import</button><span class="small" id="importNote"></span></div>
+  </div>
+
+  <!-- 4 -->
+  <div class="card hidden" id="s4">
+    <h2 id="doneTitle">Done</h2>
+    <div class="sum" id="sum"></div>
+    <div id="problems"></div>
+    <div class="bar"><button class="btn ghost" id="again">Import another list</button></div>
+  </div>
+  <div class="ver" id="ver"></div>
+</div>
+<script>
+const VERSION = "v0.1 · 2026-11-19 · client import";
+document.getElementById("ver").textContent = VERSION;
+const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[a-z]{2,}$/i;
+let READ = null, ITEMS = [], FILTER = "all";
+
+function busy(msg) { const b = $("busy"); b.textContent = msg || ""; b.className = "busy" + (msg ? " show" : ""); }
+function step(n) {
+  ["s1", "s2", "s3", "s4"].forEach((id, i) => $(id).classList.toggle("hidden", i !== n - 1));
+  [...$("steps").children].forEach((el, i) => { el.className = i === n - 1 ? "on" : (i < n - 1 ? "done" : ""); });
+  window.scrollTo(0, 0);
+}
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.assign({ manufacturer_id: MFG }, body)) });
+  try { return await r.json(); } catch (e) { return { ok: false, error: "Something went wrong. Please try again." }; }
+}
+
+// ---- 1: read ----
+async function read(body) {
+  busy("Reading your list…");
+  const j = await post("/api/clients/import/read", body);
+  busy("");
+  if (!j.ok) return mcAlert(j.error);
+  READ = j;
+  Object.keys(j.suggested || {}).forEach((i) => { if (!j.mapping[i]) j.mapping[i] = j.suggested[i]; });
+  renderMap(); step(2);
+}
+$("drop").addEventListener("click", () => $("file").click());
+$("drop").addEventListener("dragover", (e) => { e.preventDefault(); $("drop").classList.add("over"); });
+$("drop").addEventListener("dragleave", () => $("drop").classList.remove("over"));
+$("drop").addEventListener("drop", (e) => { e.preventDefault(); $("drop").classList.remove("over"); if (e.dataTransfer.files[0]) useFile(e.dataTransfer.files[0]); });
+$("file").addEventListener("change", () => { if ($("file").files[0]) useFile($("file").files[0]); $("file").value = ""; });
+function useFile(f) {
+  if (f.size > 25 * 1024 * 1024) return mcAlert("That file is over 25 MB. Export only the customer list, or split it.");
+  const r = new FileReader();
+  r.onload = () => read({ file: { name: f.name, b64: String(r.result).split(",")[1] || "" } });
+  r.readAsDataURL(f);
+}
+$("pasteBtn").addEventListener("click", () => { const t = $("paste").value.trim(); if (!t) return mcAlert("Paste your rows first, including the header row."); read({ text: t }); });
+
+// ---- 2: map ----
+function renderMap() {
+  const r = READ, auto = r.mapping.filter(Boolean).length, sug = Object.keys(r.suggested || {}).length;
+  $("mapIntro").innerHTML = r.rows.length + " rows found. " + (auto ? "<b>" + auto + " of " + r.headers.length + " columns</b> were matched for you" : "Pick where each column goes") +
+    (sug ? " (" + sug + " suggested; check those)" : "") + ". Columns set to <i>Skip</i> are not imported.";
+  const opts = (sel) => '<option value="">Skip</option>' + r.fields.map((f) => '<option value="' + f.key + '"' + (f.key === sel ? " selected" : "") + ">" + esc(f.label) + "</option>").join("");
+  $("mapRows").innerHTML = r.headers.map((h, i) => {
+    const ex = r.rows.map((row) => row[i]).filter((v) => v && String(v).trim()).slice(0, 2).map((v) => String(v).slice(0, 60)).join(" · ");
+    const tag = r.suggested && r.suggested[i] ? '<span class="tag">suggested</span>' : "";
+    return "<tr><td><b>" + esc(h || "(no header)") + "</b>" + tag + '</td><td class="small">' + esc(ex) + '</td><td><select data-i="' + i + '">' + opts(r.mapping[i]) + "</select></td></tr>";
+  }).join("");
+}
+$("mapRows").addEventListener("change", (e) => { const s = e.target.closest("select"); if (s) READ.mapping[+s.dataset.i] = s.value; });
+$("back1").addEventListener("click", () => step(1));
+$("toPreview").addEventListener("click", async () => {
+  if (!READ.mapping.includes("company")) return mcAlert("Pick which column is the company name.");
+  busy("Checking against your client list…");
+  const j = await post("/api/clients/import/preview", { headers: READ.headers, rows: READ.rows, mapping: READ.mapping });
+  busy("");
+  if (!j.ok) return mcAlert(j.error);
+  ITEMS = j.items.map((it) => Object.assign(it, { pick: it.status === "new" || (it.status === "exists" && it.contacts_to_add > 0) }));
+  FILTER = "all"; renderPreview(); step(3);
+});
+
+// ---- 3: preview ----
+function evaluate(it) {
+  const c = it.client;
+  it.fix = []; if (!c.company.trim()) it.fix.push("No company name"); if (!c.address1.trim()) it.fix.push("No street address"); if (!c.city.trim()) it.fix.push("No city");
+  if (it.status !== "exists") it.status = it.fix.length ? "fix" : "new";
+  const ok = (k) => !k.exists && k.first && EMAIL_RE.test(k.email || "");
+  it.contacts_to_add = it.contacts.filter(ok).length;
+  it.contacts_skipped = it.contacts.filter((k) => !k.exists && !ok(k)).length;
+}
+function counts() {
+  return { all: ITEMS.length, new: ITEMS.filter((i) => i.status === "new").length, exists: ITEMS.filter((i) => i.status === "exists").length, fix: ITEMS.filter((i) => i.status === "fix").length };
+}
+function renderChips() {
+  const c = counts();
+  const ch = [["all", "All " + c.all], ["new", "New " + c.new], ["exists", "Already in your list " + c.exists], ["fix", "Needs a fix " + c.fix]];
+  $("chips").innerHTML = ch.map(([k, t]) => '<button data-f="' + k + '" class="' + (FILTER === k ? "on" : "") + '">' + esc(t) + "</button>").join("");
+  const pickNew = ITEMS.filter((i) => i.pick && i.status === "new").length;
+  const pickK = ITEMS.filter((i) => i.pick && i.status !== "fix").reduce((n, i) => n + i.contacts_to_add, 0);
+  $("importBtn").textContent = "Import " + pickNew + " client" + (pickNew === 1 ? "" : "s") + (pickK ? " and " + pickK + " contact" + (pickK === 1 ? "" : "s") : "");
+  $("importBtn").disabled = !pickNew && !pickK;
+  $("importNote").textContent = c.fix ? c.fix + " need a fix and won't be imported until fixed." : "";
+}
+const inp = (i, f, v, miss) => '<input type="text" data-i="' + i + '" data-f="' + f + '" value="' + esc(v) + '"' + (miss ? ' class="miss"' : "") + ">";
+function rowHtml(it, i) {
+  const c = it.client;
+  const pill = it.status === "new" ? '<span class="pill p-new">New</span>' : it.status === "exists" ? '<span class="pill p-ex">Already in your list</span>' : '<span class="pill p-fix">Needs a fix</span>';
+  const ks = it.contacts.map((k, n) => {
+    const nm = esc((k.first + " " + (k.last || "")).trim() || "(no name)");
+    if (k.exists) return '<div class="k">' + nm + ' <span class="x">· already a contact</span></div>';
+    if (k.first && EMAIL_RE.test(k.email || "")) return '<div class="k">' + nm + ' <span class="x">· ' + esc(k.email) + "</span></div>";
+    return '<div class="k">' + nm + ' <span class="x">· needs an email:</span><input type="text" data-i="' + i + '" data-k="' + n + '" value="' + esc(k.email || "") + '" placeholder="email" class="miss" style="margin-top:2px"></div>';
+  }).join("") || '<span class="small">—</span>';
+  const notes = (it.fix.length ? '<div class="fixnote">' + esc(it.fix.join(" · ")) + "</div>" : "") +
+    (it.similar ? '<div class="note">' + esc(it.similar) + "</div>" : "") +
+    (it.notes || []).map((n) => '<div class="note">' + esc(n) + "</div>").join("");
+  return '<tr data-row="' + i + '"><td><input type="checkbox" data-pick="' + i + '"' + (it.pick ? " checked" : "") + (it.status === "fix" ? " disabled" : "") + "></td>" +
+    "<td>" + inp(i, "company", c.company, !c.company) + notes + "</td><td>" + inp(i, "address1", c.address1, !c.address1) + "</td><td>" + inp(i, "city", c.city, !c.city) +
+    "</td><td>" + inp(i, "state", c.state) + "</td><td>" + inp(i, "zip", c.zip) + "</td><td>" + inp(i, "phone", c.phone) + "</td><td>" + inp(i, "email", c.email) +
+    "</td><td>" + ks + "</td><td>" + pill + "</td></tr>";
+}
+function renderPreview() {
+  renderChips();
+  const show = ITEMS.map((it, i) => [it, i]).filter(([it]) => FILTER === "all" || it.status === FILTER);
+  $("pvRows").innerHTML = show.length ? show.map(([it, i]) => rowHtml(it, i)).join("") : '<tr><td colspan="10" class="small" style="padding:20px">Nothing here.</td></tr>';
+}
+// Redraw one row after an edit. Runs after the browser has moved focus (Tab), and puts focus back on
+// the same field in the redrawn row, so typing across a row is not interrupted.
+function refreshRow(i) {
+  setTimeout(() => {
+    const tr = document.querySelector('tr[data-row="' + i + '"]');
+    if (!tr) return;
+    const a = document.activeElement;
+    const inRow = a && tr.contains(a) ? (a.dataset.f ? 'input[data-f="' + a.dataset.f + '"]' : (a.dataset.k != null ? 'input[data-k="' + a.dataset.k + '"]' : '')) : '';
+    tr.outerHTML = rowHtml(ITEMS[i], i);
+    if (inRow) { const el = document.querySelector('tr[data-row="' + i + '"] ' + inRow); if (el) el.focus(); }
+    renderChips();
+  }, 0);
+}
+$("chips").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { FILTER = b.dataset.f; renderPreview(); } });
+$("pvRows").addEventListener("change", (e) => {
+  const t = e.target;
+  if (t.dataset.pick != null) { ITEMS[+t.dataset.pick].pick = t.checked; renderChips(); return; }
+  const it = ITEMS[+t.dataset.i]; if (!it) return;
+  const before = it.status;
+  if (t.dataset.f) it.client[t.dataset.f] = t.value.trim();
+  if (t.dataset.k != null) it.contacts[+t.dataset.k].email = t.value.trim();
+  evaluate(it);
+  if (before === "fix" && it.status === "new") it.pick = true;
+  refreshRow(+t.dataset.i);
+});
+$("all").addEventListener("change", () => { ITEMS.forEach((it) => { if (it.status !== "fix" && (FILTER === "all" || it.status === FILTER)) it.pick = $("all").checked; }); renderPreview(); });
+$("back2").addEventListener("click", () => step(2));
+$("importBtn").addEventListener("click", async () => {
+  const pick = ITEMS.filter((it) => it.pick && it.status !== "fix");
+  if (!pick.length) return;
+  if (!(await mcConfirm($("importBtn").textContent + " into your client list?", { okText: "Import" }))) return;
+  busy("Importing… this can take a minute for a long list.");
+  $("importBtn").disabled = true;
+  const j = await post("/api/clients/import/commit", { items: pick });
+  busy(""); $("importBtn").disabled = false;
+  if (!j.ok) return mcAlert(j.error);
+  const s = j.summary;
+  $("doneTitle").textContent = s.failed ? "Imported, with some problems" : "Your clients are in";
+  $("sum").innerHTML = "<div><b>" + s.clients_added + "</b>clients added</div><div><b>" + s.contacts_added + "</b>contacts added</div>" +
+    "<div><b>" + s.already + "</b>already in your list</div>" + (s.skipped ? "<div><b>" + s.skipped + "</b>skipped</div>" : "") +
+    (s.failed ? '<div style="background:var(--redbg)"><b>' + s.failed + "</b>not saved</div>" : "");
+  const probs = j.results.filter((r) => r.problems.length);
+  $("problems").innerHTML = probs.length ? '<div class="small" style="margin-bottom:6px"><b>Needs attention:</b></div>' +
+    probs.map((r) => '<div class="small">• <b>' + esc(r.company || "(no name)") + "</b>: " + esc(r.problems.join("; ")) + "</div>").join("") : "";
+  step(4);
+});
+$("again").addEventListener("click", () => { READ = null; ITEMS = []; $("paste").value = ""; step(1); });
+step(1);
+</script>
+</body>
+</html>

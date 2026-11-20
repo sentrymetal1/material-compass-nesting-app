@@ -58,6 +58,7 @@ app.use('/api/takeoff', express.json({ limit: '200mb' }));
 app.use('/api/triage/manual', express.json({ limit: '40mb' })); // manual intake carries base64 photos/PDFs; same reason, same placement
 app.use('/api/files', express.json({ limit: '60mb' })); // drawings saved to the project store are base64 PDFs; same reason, same placement
 app.use(['/api/supplier/me/autofill', '/api/mfg/supplier-quotes/autofill', '/api/supplier/me/quote-attachment', '/api/mfg/supplier-quotes/quote-attachment'], express.json({ limit: '40mb' })); // a supplier's quote PDF, base64; same reason, same placement
+app.use('/api/clients/import', express.json({ limit: '40mb' })); // an uploaded customer list (base64) or its rows; same reason, same placement
 app.use(express.json({ limit: '10mb' }));
 
 // ── NO VENDOR NAMES IN WHAT USERS SEE ─────────────────────────────────────────────────────────
@@ -4259,6 +4260,7 @@ require('./labor/laborCommit').registerLaborCommit(app, { getAccessToken, creato
 require('./subcontractors').registerSubcontractors(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages, cachedLookup });
 require('./labor/timeEntry').registerTimeEntry(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./team/invites').registerTeamInvites(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
+require('./clients/importRoutes').registerClientImport(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 
 // ── ONE ROW, FOR DELUGE ─────────────────────────────────────────────────────────────────────
 // The project form's BOM subform cannot match a fitting to its catalog row, and the reason is
