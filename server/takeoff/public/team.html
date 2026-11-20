@@ -81,11 +81,18 @@
     <table><thead><tr><th>Name</th><th>Position</th><th>Email</th><th>Status</th><th></th></tr></thead>
       <tbody id="rows"><tr><td colspan="5" class="small">Loading…</td></tr></tbody></table>
   </div>
+  <div class="card" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#f4f8fd;border-color:#cfe0f3">
+    <div style="flex:1;min-width:260px"><h2 style="margin:0 0 2px">Next step: bring in your clients</h2>
+      <div class="small">Import your customer list from QuickBooks, Outlook or a spreadsheet, so your first quote needs no typing.
+        You can add team members later; this page stays under Manufacture Profile › Representatives.</div></div>
+    <a class="btn" id="nextClients" href="#" style="text-decoration:none">Import my clients →</a>
+  </div>
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.2 · 2026-11-18 · spam-folder hint, replies go to the shop";
+const VERSION = "v0.3 · 2026-11-19 · next step: import clients";
 document.getElementById("ver").textContent = VERSION;
+document.getElementById("nextClients").href = "/takeoff/clients-import.html?manufacturer_id=" + encodeURIComponent(new URLSearchParams(location.search).get("manufacturer_id") || "") + (window.MC_TOKEN ? "&t=" + encodeURIComponent(window.MC_TOKEN) : "");
 const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
