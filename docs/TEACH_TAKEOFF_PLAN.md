@@ -17,10 +17,20 @@ an anchor in a document.
 ## Flow (page: /takeoff/teach.html, from the setup checklist)
 1. **Add a past job.** Name / number (optional), plus drop **all its files**: PDF, Excel, CSV, Word,
    photos of handwritten sheets. Optional: won or lost, and the final price.
-2. **The AI sorts the files**, one label each, which the admin can change:
+2. **Label the job's project type** (Mark, 2026-11-19), so the shop's Project Types fill in as it goes:
+   - Pick one of the shop's existing project types (Manufacture Profile › PROJECT TYPES, form
+     `Type_Of_Projects`), or add a new one right there: name + difficulty (Basic / Moderate / Difficult).
+     New ones go through the existing POST /api/takeoff/project-types (duplicate names refused), so they
+     appear in the profile.
+   - The AI **suggests** the type from the proposal or drawings; the admin picks or edits.
+   - Each job also gets a labor category (labor/shop.js JOB_TYPES: platform & stairs, handrail,
+     structural, skid/frame…) for its reference job, suggested from the project type.
+   - Lessons from the job are tagged with its project type, so the take-off applies a scope habit to the
+     kind of work it came from, not to everything.
+3. **The AI sorts the files**, one label each, which the admin can change:
    quote / proposal · estimate or take-off sheet · material list · supplier quote · specification ·
    job cost / actual hours report · drawings · other.
-3. **It extracts by type:**
+4. **It extracts by type:**
 
    | Document | What it can teach |
    |---|---|
@@ -32,9 +42,9 @@ an anchor in a document.
    | Job cost / actual hours | **Actual** hours (and cost) versus estimate. This is the best labor evidence. |
    | Drawings | Job type and size cross-check only |
 
-4. **Cross-check before proposing.** Tons from the estimate vs the material list vs the proposal; hours
+5. **Cross-check before proposing.** Tons from the estimate vs the material list vs the proposal; hours
    estimated vs actual. A mismatch is shown, never averaged away (same rule as the take-off weight check).
-5. **Proposals, one card each**, with the source quoted:
+6. **Proposals, one card each**, with the source quoted:
    - **Reference job**: type, material, tons, hours (actual when there is a cost report, else
      estimated, labeled as such), giving hr/ton. Confirmed → Labor Standards › Reference jobs (the section
      that weighs most in labor estimates).
@@ -46,7 +56,7 @@ an anchor in a document.
      *from old quotes*, to seed the parked material price fallback.
    - **Markup / margin** when both cost and price are present. Shown for information; it does not
      overwrite the profile markup without the admin choosing to.
-6. **Done** when 3 or more jobs are reviewed (checklist step turns green). More jobs = better; any time later.
+7. **Done** when 3 or more jobs are reviewed (checklist step turns green). More jobs = better; any time later.
 
 ## What it never does
 - Never saves anything the admin did not confirm.
