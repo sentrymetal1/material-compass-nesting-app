@@ -32,10 +32,36 @@
 const C = new URLSearchParams(location.search).get("c") || "";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-function done(email, isAdmin) {
-  $("bd").innerHTML = '<div class="ok">✓ Claimed</div>' + (isAdmin ? '<p>You are also your company&#39;s administrator, because this is your company&#39;s main email.</p>' : '<p>Your login lets you see and price requests. Your company&#39;s administrator is set up separately, through your company&#39;s main email.</p>') + '<p><b>Next:</b> watch for an email at <b>' + esc(email) + '</b> to set your password. Check your spam or junk folder too, and mark it Not spam so its link works.</p>' +
+// r: { email, has_admin, ask_admin, admin_notice_sent } from the claim. A rep login never makes anyone the
+// company administrator; when there is no company mailbox on file, the rep is asked who manages the account.
+function done(email, r) {
+  r = r || {};
+  let adminPart = "";
+  if (r.ask_admin) {
+    adminPart = '<div style="border:1px solid #f3c58b;background:#fff7ed;border-radius:8px;padding:12px 14px;margin:12px 0">' +
+      "<b>Who manages your company&#39;s account?</b><div class=\"mut\" style=\"margin:4px 0 8px\">Your login is for you as a salesperson. Your company also needs an administrator, who controls who at your company can use Material Compass. " +
+      "Enter the owner&#39;s, manager&#39;s or office&#39;s email (a shared one like office@ is best). We will send them a link; nothing changes until they accept.</div>" +
+      '<input id="adName" placeholder="Their name (optional)" style="font:inherit;font-size:14px;padding:7px 9px;border:1px solid #cdd3da;border-radius:6px;width:100%;margin-bottom:6px">' +
+      '<input id="adEmail" placeholder="Their email, e.g. office@yourcompany.com" style="font:inherit;font-size:14px;padding:7px 9px;border:1px solid #cdd3da;border-radius:6px;width:100%">' +
+      '<div style="margin-top:8px"><button class="btn" id="adSend" style="font-size:14px;padding:9px 18px">Send them the administrator link</button> <span class="mut">or skip: you can tell them later.</span></div><div id="adMsg"></div></div>';
+  } else if (r.admin_notice_sent) {
+    adminPart = "<p>Your company&#39;s administrator is set up separately: we emailed your company&#39;s main address so the right person can take it on.</p>";
+  } else {
+    adminPart = "<p>Your login lets you see and price requests. Your company&#39;s administrator is set up separately.</p>";
+  }
+  $("bd").innerHTML = '<div class="ok">✓ Claimed</div>' + adminPart + '<p><b>Next:</b> watch for an email at <b>' + esc(email) + '</b> to set your password. Check your spam or junk folder too, and mark it Not spam so its link works.</p>' +
     "<p>After you set your password, Material Compass activates your login. That is usually within an hour during business hours, and you will get an email when it is done.</p>" +
     '<p>Then sign in at <a href="https://customer.materialcompassportal.com">customer.materialcompassportal.com</a>. Requests keep coming by email as well.</p>';
+  if ($("adSend")) $("adSend").addEventListener("click", async () => {
+    $("adSend").disabled = true;
+    let x;
+    try { x = await (await fetch("/api/suppliers/admin-request", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ c: C, email: $("adEmail").value, name: $("adName").value }) })).json(); }
+    catch (e) { x = { ok: false, error: "Could not reach Material Compass. Please try again." }; }
+    $("adSend").disabled = false;
+    if (!x.ok) { $("adMsg").innerHTML = '<p class="err">' + esc(x.error) + "</p>"; return; }
+    $("adMsg").innerHTML = x.sent ? '<p class="ok" style="font-size:14px">Sent to ' + esc(x.email) + ".</p>" : '<p style="font-size:14px"><b>Thanks.</b> Material Compass will confirm with your company before sending the administrator link.</p>';
+    $("adSend").remove();
+  });
 }
 (async () => {
   if (!C) { $("bd").innerHTML = '<span class="err">This link is not complete. Open it again from the invite email.</span>'; return; }
@@ -54,7 +80,7 @@ function done(email, isAdmin) {
     try { r = await (await fetch("/api/suppliers/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ c: C }) })).json(); }
     catch (e) { r = { ok: false, error: "Could not reach Material Compass. Please try again." }; }
     if (!r.ok) { $("acc").disabled = false; $("acc").textContent = "Yes, claim " + j.supplier.name; $("bd").insertAdjacentHTML("beforeend", '<p class="err">' + esc(r.error) + "</p>"); return; }
-    done(r.email, r.is_admin);
+    done(r.email, r);
   });
 })();
 </script>

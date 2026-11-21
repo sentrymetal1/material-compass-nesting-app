@@ -285,19 +285,18 @@ function registerSupplierClaim(app, deps) {
           if (!r1.data || r1.data.code !== 3000) throw new Error('supplier patch ' + JSON.stringify(r1.data).slice(0, 200));
         }
         // 2) the rep: Admin_Email (Zoho pages) + Grant_Portal_Login (the Zoho workflow invites them to the
-        //    portal as a REP). If the company's main email IS this rep's email, they are the company: admin.
+        //    portal as a REP). A shop's invite NEVER makes anyone admin (Mark, 2026-11-21): the "main
+        //    email" is often the rep's own, copied in when the shop gave no company email.
         const admins = readJson(ADMINS, {}) || {};
         const main = lc(c.sup.Email);
-        const selfAdmin = !admins[c.supId] && main && main === c.rep.email;
         const r2 = await axios.patch(creatorApiBase() + '/report/' + REP_REPORT + '/' + c.repId,
-          { data: Object.assign({ Admin_Email: c.rep.email, Grant_Portal_Login: 'true' }, selfAdmin ? { Grant_Portal_Admin: 'true' } : {}) }, await hdr());
+          { data: { Admin_Email: c.rep.email, Grant_Portal_Login: 'true' } }, await hdr());
         if (!r2.data || r2.data.code !== 3000) throw new Error('rep patch ' + JSON.stringify(r2.data).slice(0, 200));
         mine.claimed = new Date().toISOString();
         writeJson(INVITES, inv);
-        if (selfAdmin) {
-          admins[c.supId] = { email: main, name: c.rep.name, title: '', rep_id: c.repId, at: mine.claimed, how: 'main email is the rep' };
-          writeJson(ADMINS, admins);
-        } else if (!admins[c.supId] && EMAIL_RE.test(main)) {
+        // When the main email is the rep's own (or missing), there is no company mailbox to send the admin
+        // link to: the claim page asks the rep who manages the account (/api/suppliers/admin-request).
+        if (!admins[c.supId] && EMAIL_RE.test(main) && main !== c.rep.email) {
           // 3) tell the company (main email only) that a rep is in and nobody manages the account yet
           const shopName = mine.by ? (await shopInfo(mine.by)).name : '';
           const link = publicBase(req) + '/takeoff/supplier-admin.html?c=' + enc(makeAdminToken(c.supId, main));
@@ -313,8 +312,55 @@ function registerSupplierClaim(app, deps) {
             '<p>Their email is on the supplier\'s login list and their rep has Admin_Email set. Register stays "No" (all RFQ lines by email).</p>',
           text: c.rep.name + ' (' + c.rep.email + ') claimed supplier ' + s(c.sup.Company_Name) + '. Approve their portal sign-up request in Zoho Creator.' }).catch(() => {});
       }
-      const ad = (readJson(ADMINS, {}) || {})[c.supId];
-      res.json({ ok: true, email: c.rep.email, supplier: s(c.sup.Company_Name), is_admin: !!(ad && ad.email === c.rep.email) });
+      const all = readJson(ADMINS, {}) || {};
+      const ad = all[c.supId];
+      const main2 = lc(c.sup.Email);
+      res.json({ ok: true, email: c.rep.email, supplier: s(c.sup.Company_Name), has_admin: !!ad,
+        // no admin and no company mailbox apart from the rep's own: ask the rep who manages the account
+        ask_admin: !ad && !(EMAIL_RE.test(main2) && main2 !== c.rep.email) && !((all._requested || {})[c.supId]),
+        admin_notice_sent: !ad && EMAIL_RE.test(main2) && main2 !== c.rep.email });
+    } catch (e) { fail(res, e); }
+  });
+
+  // The rep names who manages the company's account. Business domain: the address must be at the
+  // rep's own company domain (and not the rep), and the admin link goes there. Public mail domains
+  // (gmail…) prove nothing, so those go to Material Compass to confirm with the company by phone.
+  const domainOf = (e) => lc(e).split('@')[1] || '';
+  app.post('/api/suppliers/admin-request', async (req, res) => {
+    try {
+      const b = req.body || {};
+      const c = await claimOf(b.c);
+      if (c.error) return res.json({ ok: false, error: c.error });
+      const em = lc(b.email), who = s(b.name).slice(0, 80);
+      if (!EMAIL_RE.test(em)) return res.json({ ok: false, error: 'Enter a valid email.' });
+      if (em === c.rep.email) return res.json({ ok: false, error: 'Enter the email of the person or office who manages your company, not your own.' });
+      const admins = readJson(ADMINS, {}) || {};
+      if (admins[c.supId]) return res.json({ ok: false, error: 'Your company already has an administrator.' });
+      const repPublic = looksPersonal(c.rep.email), emPublic = looksPersonal(em);
+      admins._requested = admins._requested || {};
+      admins._requested[c.supId] = { by: c.rep.email, email: em, name: who, at: new Date().toISOString() };
+      const esc = mailer.esc, to = process.env.MC_APPROVALS_TO || 'admin@materialcompass.us';
+      if (!repPublic && !emPublic && domainOf(em) === domainOf(c.rep.email)) {
+        admins._nominated = admins._nominated || {};
+        admins._nominated[c.supId] = em;
+        writeJson(ADMINS, admins);
+        const link = publicBase(req) + '/takeoff/supplier-admin.html?c=' + enc(makeAdminToken(c.supId, em));
+        const n = companyNotice({ name: s(c.sup.Company_Name) }, c.rep, '', link);
+        const r = await mailer.send({ to: em, subject: n.subject, html: n.html, text: n.text, replyTo: process.env.MC_SUPPORT_EMAIL || 'admin@materialcompass.us' });
+        if (!r.ok) return res.json({ ok: false, error: 'The email did not send. Please try again later.' });
+        return res.json({ ok: true, sent: true, email: em });
+      }
+      if (!repPublic && domainOf(em) !== domainOf(c.rep.email)) {
+        return res.json({ ok: false, error: 'Use an address at your company (@' + domainOf(c.rep.email) + '), such as the owner\'s or the office\'s.' });
+      }
+      // gmail-type addresses: Material Compass confirms with the company before sending anything.
+      writeJson(ADMINS, admins);
+      mailer.send({ to, subject: 'Confirm supplier administrator: ' + s(c.sup.Company_Name),
+        html: '<p><b>' + esc(c.rep.name) + '</b> (' + esc(c.rep.email) + '), a rep at <b>' + esc(s(c.sup.Company_Name)) + '</b>, says the company\'s account is managed by <b>' +
+          esc(who || em) + '</b> (' + esc(em) + ').</p><p>Both use public mail, so this was NOT sent automatically. Confirm with the company (phone ' + esc(s(c.sup.Phone_Number)) +
+          '), then set the supplier\'s main email (Supplier_Entry_Form.Email) to the confirmed address and send the admin link from the supplier claim tools.</p>',
+        text: c.rep.name + ' (' + c.rep.email + ') says ' + s(c.sup.Company_Name) + ' is managed by ' + (who || em) + ' (' + em + '). Confirm with the company before sending an admin link.' }).catch(() => {});
+      res.json({ ok: true, sent: false, review: true });
     } catch (e) { fail(res, e); }
   });
 
@@ -324,9 +370,11 @@ function registerSupplierClaim(app, deps) {
     if (t.error) return { error: MSG[t.error] || MSG.gone };
     const sup = await supById(t.supId);
     if (!sup) return { error: MSG.gone };
-    // The link names the main email it was sent to; if the company has changed its main email since, it is void.
-    if (lc(sup.Email) !== lc(t.email)) return { error: 'This link was sent to an email that is no longer your company\'s main email. Request a new one below.' , supId: t.supId };
-    return { sup, supId: t.supId, email: lc(t.email) };
+    // The link names the email it was sent to: the company's main email, or the address a rep named
+    // (same company domain). Anything else (main email changed since, nomination replaced) is void.
+    const nominated = lc(((readJson(ADMINS, {}) || {})._nominated || {})[t.supId]);
+    if (lc(sup.Email) !== lc(t.email) && nominated !== lc(t.email)) return { error: 'This link was sent to an email that is no longer your company\'s main email. Request a new one below.' , supId: t.supId };
+    return { sup, supId: t.supId, email: lc(t.email), nominated: nominated === lc(t.email) && lc(sup.Email) !== lc(t.email) };
   }
   app.get('/api/suppliers/admin-claim', async (req, res) => {
     try {
@@ -365,13 +413,23 @@ function registerSupplierClaim(app, deps) {
         rep = { ID: r.data.data.ID };
       }
       const add = addEmail(a.sup.Account_User_Email, a.email);
-      if (add.added) {
-        const r1 = await axios.patch(creatorApiBase() + '/report/' + SUP_REPORT + '/' + a.supId, { data: { Account_User_Email: add.value } }, await hdr());
+      const patch = add.added ? { Account_User_Email: add.value } : {};
+      // A nominated company mailbox becomes the supplier's main email: that fixes records whose "main
+      // email" was the rep's own (copied in when the shop added the supplier without a company email).
+      if (a.nominated) patch.Email = a.email;
+      if (Object.keys(patch).length) {
+        let r1 = await axios.patch(creatorApiBase() + '/report/' + SUP_REPORT + '/' + a.supId, { data: patch }, await hdr());
+        if ((!r1.data || r1.data.code !== 3000) && patch.Email) {
+          // Email is unique on Supplier_Entry_Form; if another record already uses it, keep the login, report it.
+          console.warn('[suppliers] main email not changed for', a.supId, JSON.stringify(r1.data).slice(0, 200));
+          delete patch.Email;
+          r1 = Object.keys(patch).length ? await axios.patch(creatorApiBase() + '/report/' + SUP_REPORT + '/' + a.supId, { data: patch }, await hdr()) : { data: { code: 3000 } };
+        }
         if (!r1.data || r1.data.code !== 3000) throw new Error('supplier patch ' + JSON.stringify(r1.data).slice(0, 200));
       }
       const admins = readJson(ADMINS, {}) || {};
       const prev = admins[a.supId];
-      admins[a.supId] = { email: a.email, name, title, rep_id: s(rep.ID), at: new Date().toISOString(), how: 'main email link', replaced: prev ? prev.email : undefined };
+      admins[a.supId] = { email: a.email, name, title, rep_id: s(rep.ID), at: new Date().toISOString(), how: a.nominated ? 'address named by a rep (same company domain)' : 'main email link', replaced: prev ? prev.email : undefined };
       writeJson(ADMINS, admins);
       const to = process.env.MC_APPROVALS_TO || 'admin@materialcompass.us';
       const esc = mailer.esc;
