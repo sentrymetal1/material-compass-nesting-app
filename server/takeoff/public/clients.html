@@ -159,7 +159,7 @@
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.2 · 2026-11-21 · fits inside the Zoho Clients page";
+const VERSION = "v0.3 · 2026-11-21 · fits inside the Zoho Clients page; ?add=1";
 if (window.top !== window) document.body.classList.add("embed");
 document.getElementById("ver").textContent = VERSION;
 const QS = new URLSearchParams(location.search);
@@ -329,7 +329,7 @@ function renderProjects() {
 }
 
 const START = QS.get("client_id");
-loadList().then(() => { if (START) openClient(START); });
+loadList().then(() => { if (START) openClient(START); else if (QS.get("add") === "1") $("addBtn").click(); });
 </script>
 </body>
 </html>
