@@ -66,7 +66,7 @@
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.1 · 2026-11-20 · suppliers + claim invites";
+const VERSION = "v0.2 · 2026-11-21 · Claimed label";
 document.getElementById("ver").textContent = VERSION;
 const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
 const $ = (id) => document.getElementById(id);
@@ -83,7 +83,7 @@ function render() {
   $("rows").innerHTML = LIST.map((s) => {
     const how = s.own ? '<span class="pill p-mail">By email · every line</span>' : '<span class="pill p-on">On Material Compass</span>';
     const cs = s.own ? (s.contacts.map((c) => '<div class="c"><span>' + esc(c.name || c.email) + ' <span class="small">' + esc(c.email) + "</span></span>" +
-      (c.has_login ? '<span class="pill p-on">Has a login</span>'
+      (c.has_login ? '<span class="pill p-on" title="They accepted the invite. Their login is active once Material Compass approves it.">Claimed</span>'
         : '<span>' + (c.invited ? '<span class="pill p-inv">Invited ' + esc(day(c.invited)) + "</span> " : "") +
           '<button class="btn sm' + (c.invited ? " ghost" : "") + '" data-s="' + s.id + '" data-r="' + c.id + '">' + (c.invited ? "Resend" : "Invite to Material Compass") + "</button></span>") + "</div>").join("") ||
       '<span class="small">No contact on file.</span>') : '<span class="small">Quotes online through Material Compass.</span>';
