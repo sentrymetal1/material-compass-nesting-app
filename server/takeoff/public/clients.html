@@ -6,9 +6,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Your Clients</title>
 <!--
-  A shop's clients, off Zoho. Opened from Material Compass as
+  A shop's clients. Opened from Material Compass as
     /takeoff/clients.html?manufacturer_id=<MFG record id>&t=<tenant token>[&client_id=<id>]
-  Server: server/clients/clientsRoutes.js. The records stay in the Zoho client forms; nothing is deleted here.
+  Server: server/clients/clientsRoutes.js. The records stay in the client forms of the data store; nothing is deleted here.
 -->
 <script src="/takeoff/mc-dialog.js"></script>
 <style>
@@ -16,7 +16,7 @@
   *{box-sizing:border-box;}
   body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
   .wrap{max-width:1080px;margin:0 auto;}
-  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;} .brand{font-weight:800;font-size:16px;color:var(--blue);} .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;} .logo{width:34px;height:34px;} .brand{font-family:Georgia,serif;font-size:16px;letter-spacing:4px;color:#5286B4;} .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;padding:16px 18px;}
   h1{font-size:20px;margin:0 0 4px;} h2{font-size:16px;margin:0;}
   .small{font-size:12.5px;color:var(--mut);line-height:1.5;}
@@ -45,14 +45,14 @@
   .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:10px;font-size:14px;font-weight:600;display:none;background:var(--blue);} .busy.show{display:block;}
   a{color:var(--blue);} a.btn{color:#fff;} a.btn.ghost{color:var(--blue);}
   .ver{font-size:11px;color:#99a;text-align:right;}
-  /* Inside the Zoho Clients page (embedded frame): Zoho already shows the menu and header. */
-  body.embed{padding:12px 14px;background:#fff;} body.embed .appbar{display:none;} body.embed .wrap{max-width:none;}
+  /* Embedded as the portal's Clients page: full width, tighter. */
+  body.embed{padding:12px 16px;} body.embed .wrap{max-width:none;}
 </style>
 </head>
 <body>
 <div class="busy" id="busy"></div>
 <div class="wrap">
-  <div class="appbar"><span class="brand">Material Compass</span><span class="page">Clients</span></div>
+  <div class="appbar"><img src="/brand/mc-compass.png" alt="" class="logo"><span class="brand">MATERIAL COMPASS</span><span class="page">Clients</span></div>
 
   <!-- LIST -->
   <div id="listView">
@@ -159,7 +159,7 @@
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.3 · 2026-11-21 · fits inside the Zoho Clients page; ?add=1";
+const VERSION = "v0.4 · 2026-11-21 · branded header";
 if (window.top !== window) document.body.classList.add("embed");
 document.getElementById("ver").textContent = VERSION;
 const QS = new URLSearchParams(location.search);
@@ -202,7 +202,7 @@ $("rows").addEventListener("click", (e) => { const tr = e.target.closest("tr[dat
 
 // ---------- add ----------
 const ADD_IDS = ["nCo", "nPh", "nEm", "nA1", "nA2", "nCity", "nSt", "nZip", "nFn", "nLn", "nCem", "nCph"];
-$("addBtn").addEventListener("click", () => { $("addCard").classList.remove("hidden"); $("addBtn").disabled = true; $("nCo").focus(); });
+$("addBtn").addEventListener("click", () => { $("addCard").classList.remove("hidden"); $("addBtn").disabled = true; $("nCo").focus({ preventScroll: true }); });
 $("nCancel").addEventListener("click", () => { $("addCard").classList.add("hidden"); $("addBtn").disabled = false; });
 $("nSave").addEventListener("click", async () => {
   busy("Adding client…");

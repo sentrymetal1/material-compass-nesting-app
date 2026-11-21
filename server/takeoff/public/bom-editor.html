@@ -588,7 +588,7 @@
 <div id="loading" class="state-msg"><span class="spinner"></span>Loading BOM rows...</div>
 <div id="error" class="state-msg error" style="display:none;"></div>
 <div id="quota-banner" style="display:none; background:#fdecea; border-top:1px solid #f5c2c0; border-bottom:1px solid #f5c2c0; color:#7a1f1a; padding:8px 16px; font-size:13px;">
-  <strong>Zoho API daily quota reached.</strong> Lookup dropdowns (Form / Mat Type / Spec / Material) cannot fetch new options until the limit resets at midnight UTC. Existing cell values display normally. Upgrade Zoho plan for higher limits.
+  <strong>Daily data limit reached.</strong> Lookup dropdowns (Form / Mat Type / Spec / Material) cannot fetch new options until the limit resets at midnight. Existing cell values display normally.
 </div>
 <div id="bom-table" style="display:none;"></div>
 
@@ -1562,11 +1562,11 @@ async function fetchRailwayLookup(path) {
     try { body = await resp.json(); } catch (_) {}
     if (body?.zoho_code === 4000 && !zohoQuotaExhausted) {
       zohoQuotaExhausted = true;
-      showToast('Zoho daily API quota reached. Dropdowns will repopulate after midnight UTC.', 'error');
+      showToast('Daily data limit reached. Dropdowns will fill again after midnight.', 'error');
       const banner = document.getElementById('quota-banner');
       if (banner) banner.style.display = 'block';
     }
-    throw new Error('Zoho quota exhausted on ' + path);
+    throw new Error('Daily data limit reached (' + path + ')');
   }
   if (!resp.ok) throw new Error('HTTP ' + resp.status + ' on ' + path);
   return await resp.json();
@@ -2399,7 +2399,7 @@ document.getElementById('back').addEventListener('click', async () => {
     a.textContent = 'Open the project →';
     a.style.cssText = 'margin-left:8px;font-weight:600;color:#2563eb;';
     document.getElementById('back').after(a);
-    showToast('Zoho blocked the automatic return. Click “Open the project →” next to the Back button.', 'error');
+    showToast('The automatic return was blocked. Click “Open the project →” next to the Back button.', 'error');
   }, 1500);
 });
 
@@ -2634,11 +2634,11 @@ async function hardDeleteAllMarked() {
   } else if (ok === 0) {
     // EVERY call failed -> systemic (permission, API method, or a deny workflow), not per-row.
     await customAlert(
-      `All ${failed} deletes failed — none succeeded.\n\nThis is a single root cause, not row-by-row blocking (delete permission, API call, or a deny workflow).\n\nExact error Zoho returned:\n${firstErrDetail}`,
+      `All ${failed} deletes failed — none succeeded.\n\nThis is a single root cause, not row-by-row blocking (delete permission, API call, or a deny workflow).\n\nExact error returned:\n${firstErrDetail}`,
       {title: 'Delete failed', okText: 'OK'});
   } else {
     await customAlert(
-      `${ok} row(s) deleted, ${failed} failed.\n\nThe failed rows are likely still tied to purchasing/allocated material in Zoho.\n\nFirst error:\n${firstErrDetail}`,
+      `${ok} row(s) deleted, ${failed} failed.\n\nThe failed rows are likely still tied to purchasing/allocated material.\n\nFirst error:\n${firstErrDetail}`,
       {title: 'Partly done'});
   }
 }
