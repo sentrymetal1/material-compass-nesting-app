@@ -45,6 +45,8 @@
   .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:10px;font-size:14px;font-weight:600;display:none;background:var(--blue);} .busy.show{display:block;}
   a{color:var(--blue);} a.btn{color:#fff;} a.btn.ghost{color:var(--blue);}
   .ver{font-size:11px;color:#99a;text-align:right;}
+  /* Inside the Zoho Clients page (embedded frame): Zoho already shows the menu and header. */
+  body.embed{padding:12px 14px;background:#fff;} body.embed .appbar{display:none;} body.embed .wrap{max-width:none;}
 </style>
 </head>
 <body>
@@ -157,7 +159,8 @@
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.1 · 2026-11-21 · Clients off Zoho";
+const VERSION = "v0.2 · 2026-11-21 · fits inside the Zoho Clients page";
+if (window.top !== window) document.body.classList.add("embed");
 document.getElementById("ver").textContent = VERSION;
 const QS = new URLSearchParams(location.search);
 const MFG = QS.get("manufacturer_id") || "";
