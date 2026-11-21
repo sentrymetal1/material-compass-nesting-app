@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Your company's Material Compass administrator</title>
+<!--
+  A supplier's company administrator, from the link sent ONLY to the supplier's main company email:
+  /takeoff/supplier-admin.html?c=<signed link>. Server: server/suppliers/claim.js (admin-claim, admin-link).
+-->
+<style>
+  :root{--blue:#5286B4;--ink:#1f2a37;--mut:#667;--red:#b42318;--grn:#2e7d32;--ylw:#b45309;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;background:#eef2f7;color:var(--ink);min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:44px 18px;}
+  .card{background:#fff;border:1px solid #d9e2ec;border-radius:12px;max-width:580px;width:100%;overflow:hidden;box-shadow:0 8px 30px rgba(20,30,40,.08);}
+  .hd{padding:18px 26px;display:flex;align-items:center;gap:10px;} .hd img{width:42px;height:42px;} .hd span{font-family:Georgia,serif;font-size:17px;letter-spacing:4px;color:var(--blue);}
+  .band{background:var(--blue);color:#fff;padding:18px 26px;} .band h1{font-size:20px;margin:0;} .band div{font-size:13px;opacity:.92;margin-top:2px;}
+  .bd{padding:20px 26px;font-size:14.5px;line-height:1.6;}
+  .stop{border:2px solid var(--red);background:#fff4f2;border-radius:8px;padding:12px 14px;color:var(--red);margin-bottom:14px;}
+  .warn{border:1px solid #f3c58b;background:#fff7ed;border-radius:8px;padding:10px 12px;color:var(--ylw);font-size:13.5px;margin:10px 0;}
+  .co{border:1px solid #d9e2ec;border-radius:8px;padding:10px 14px;background:#f7f9fc;margin:8px 0 12px;}
+  label{display:block;font-size:12.5px;color:var(--mut);margin:10px 0 3px;} input[type=text]{font:inherit;font-size:14px;padding:8px 10px;border:1px solid #cdd3da;border-radius:6px;width:100%;}
+  .chk{display:flex;gap:8px;align-items:flex-start;margin:14px 0;font-size:14px;} .chk input{margin-top:4px;}
+  .btn{font:inherit;font-size:15px;font-weight:700;color:#fff;background:var(--blue);border:0;border-radius:6px;padding:12px 24px;cursor:pointer;} .btn:disabled{opacity:.45;cursor:default;}
+  .lnk{font:inherit;font-size:13px;color:var(--blue);background:none;border:0;cursor:pointer;text-decoration:underline;padding:0;}
+  .mut{font-size:12.5px;color:var(--mut);} .err{color:var(--red);font-weight:600;} .ok{color:var(--grn);font-weight:700;font-size:16px;}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="hd"><img src="/brand/mc-compass.png" alt=""><span>MATERIAL COMPASS</span></div>
+  <div class="band"><h1 id="h">Company administrator</h1><div id="sub"></div></div>
+  <div class="bd" id="bd">Checking your link…</div>
+</div>
+<script>
+const C = new URLSearchParams(location.search).get("c") || "";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function resendBox(supId) {
+  return supId ? '<p class="mut">You can request a new link. It goes only to your company\'s main email address on file. <button class="lnk" id="again">Send a new link</button></p>' : "";
+}
+function wireResend(supId) {
+  const b = $("again"); if (!b) return;
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    const r = await (await fetch("/api/suppliers/admin-link", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ supplier_id: supId }) })).json();
+    b.insertAdjacentHTML("afterend", r.ok ? ' <b>Sent to ' + esc(r.masked) + ".</b>" : ' <span class="err">' + esc(r.error) + "</span>");
+  });
+}
+(async () => {
+  if (!C) { $("bd").innerHTML = '<span class="err">This link is not complete. Open it again from the email.</span>'; return; }
+  let j;
+  try { j = await (await fetch("/api/suppliers/admin-claim?c=" + encodeURIComponent(C))).json(); } catch (e) { j = { ok: false, error: "Could not check your link. Please try again." }; }
+  if (!j.ok) { $("bd").innerHTML = '<p class="err">' + esc(j.error) + "</p>" + resendBox(j.supplier_id); wireResend(j.supplier_id); return; }
+  const s = j.supplier, cur = j.current_admin;
+  $("h").textContent = s.name + ": company administrator";
+  $("sub").textContent = "The administrator login will be " + j.email;
+  if (cur && cur.same) {
+    $("bd").innerHTML = '<div class="ok">✓ ' + esc(j.email) + " is already your company's administrator</div><p>Set up by " + esc(cur.name) + (cur.title ? ", " + esc(cur.title) : "") + ". Nothing more to do.</p>";
+    return;
+  }
+  $("bd").innerHTML =
+    '<div class="stop"><b>Stop if this is not you.</b> Only the person who manages ' + esc(s.name) + "'s account (owner, manager or office lead) should continue. " +
+    "The administrator controls who at " + esc(s.name) + " can use Material Compass, your company profile and your stock list. If that is not you, close this page and forward the email to them.</div>" +
+    '<div class="co"><b>' + esc(s.name) + '</b><div class="mut">' + esc(s.address) + "</div></div>" +
+    (cur ? '<div class="warn">Your company already has an administrator: <b>' + esc(cur.name) + "</b> (" + esc(cur.email) + "). Continuing <b>replaces</b> them with " + esc(j.email) + ".</div>" : "") +
+    "<div>The administrator login will be <b>" + esc(j.email) + "</b>, the company mailbox this link was sent to, so it stays with your company when people change jobs.</div>" +
+    (j.personal ? '<div class="warn">' + esc(j.email) + " looks like a personal mailbox. If someone leaves, your company could lose access. Consider asking us to change your company's main email to a shared one (sales@, purchasing@, office@) first: reply to the email you received.</div>" : "") +
+    '<label>Your name</label><input type="text" id="nm" autocomplete="name">' +
+    '<label>Your title</label><input type="text" id="tt" placeholder="e.g. Owner, General Manager, Sales Manager">' +
+    '<div class="chk"><input type="checkbox" id="ck"><span>I am authorized to manage ' + esc(s.name) + "'s account, and I understand the administrator controls who at my company can use it.</span></div>" +
+    '<button class="btn" id="go" disabled>Become the administrator</button><p class="mut" style="margin-top:12px">Not right? Reply to the email you received and we will help.</p>';
+  const upd = () => { $("go").disabled = !($("ck").checked && $("nm").value.trim() && $("tt").value.trim()); };
+  ["ck", "nm", "tt"].forEach((id) => $(id).addEventListener("input", upd));
+  $("ck").addEventListener("change", upd);
+  $("go").addEventListener("click", async () => {
+    $("go").disabled = true; $("go").textContent = "Saving…";
+    let r;
+    try { r = await (await fetch("/api/suppliers/admin-claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ c: C, name: $("nm").value, title: $("tt").value, confirm: $("ck").checked }) })).json(); }
+    catch (e) { r = { ok: false, error: "Could not reach Material Compass. Please try again." }; }
+    if (!r.ok) { $("go").textContent = "Become the administrator"; upd(); $("bd").insertAdjacentHTML("beforeend", '<p class="err">' + esc(r.error) + "</p>"); return; }
+    $("bd").innerHTML = '<div class="ok">✓ You are ' + esc(r.supplier) + "'s administrator</div><p><b>Next:</b> watch for an email at <b>" + esc(r.email) + "</b> to set the password. Check spam or junk too.</p>" +
+      "<p>After that, Material Compass activates the login (usually within an hour during business hours), and you will get an email. Then sign in at " +
+      '<a href="https://customer.materialcompassportal.com">customer.materialcompassportal.com</a>.</p>';
+  });
+})();
+</script>
+</body>
+</html>

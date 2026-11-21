@@ -24,3 +24,25 @@ test('invite email: names shop, supplier and link; no vendor names', () => {
   assert.ok(m.html.includes('Claim Lancaster Metal Services') && m.html.includes('https://x/claim?c=1') && m.text.includes('https://x/claim?c=1'));
   assert.ok(!/zoho/i.test(m.html));
 });
+
+test('admin token carries the main email; tamper and expiry refused', () => {
+  const t = C.makeAdminToken('4111484000006566008', 'Sales@LancasterMetal.com', 1000);
+  assert.deepStrictEqual(C.readAdminToken(t, 2000), { supId: '4111484000006566008', email: 'sales@lancastermetal.com' });
+  const parts = t.split('.');
+  const other = Buffer.from('bill@lancastermetal.com').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  assert.strictEqual(C.readAdminToken([parts[0], other, parts[2], parts[3]].join('.'), 2000).error, 'bad_signature');
+  assert.strictEqual(C.readAdminToken(t, 1000 + 31 * 86400000).error, 'expired');
+});
+
+test('personal mailbox warning', () => {
+  assert.ok(C.looksPersonal('bill.myers@gmail.com'));
+  assert.ok(C.looksPersonal('x@yahoo.co.uk'));
+  assert.ok(!C.looksPersonal('sales@lancastermetal.com'));
+});
+
+test('company notice: stop warning first, admin = this mailbox', () => {
+  const n = C.companyNotice({ name: 'Lancaster Metal Services' }, { name: 'Bill Myers', email: 'bill@lms.com' }, 'Black Rock Fabrication', 'https://x/a?c=1');
+  assert.ok(n.html.indexOf('Do not continue') < n.html.indexOf('Become your company'));
+  assert.match(n.html, /administrator login will be <b>this mailbox<\/b>/);
+  assert.match(n.text, /^ONLY FOR THE PERSON WHO MANAGES LANCASTER METAL SERVICES/);
+});

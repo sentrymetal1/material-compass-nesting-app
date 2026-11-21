@@ -32,8 +32,8 @@
 const C = new URLSearchParams(location.search).get("c") || "";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-function done(email) {
-  $("bd").innerHTML = '<div class="ok">✓ Claimed</div><p><b>Next:</b> watch for an email at <b>' + esc(email) + '</b> to set your password. Check your spam or junk folder too, and mark it Not spam so its link works.</p>' +
+function done(email, isAdmin) {
+  $("bd").innerHTML = '<div class="ok">✓ Claimed</div>' + (isAdmin ? '<p>You are also your company&#39;s administrator, because this is your company&#39;s main email.</p>' : '<p>Your login lets you see and price requests. Your company&#39;s administrator is set up separately, through your company&#39;s main email.</p>') + '<p><b>Next:</b> watch for an email at <b>' + esc(email) + '</b> to set your password. Check your spam or junk folder too, and mark it Not spam so its link works.</p>' +
     "<p>After you set your password, Material Compass activates your login. That is usually within an hour during business hours, and you will get an email when it is done.</p>" +
     '<p>Then sign in at <a href="https://customer.materialcompassportal.com">customer.materialcompassportal.com</a>. Requests keep coming by email as well.</p>';
 }
@@ -54,7 +54,7 @@ function done(email) {
     try { r = await (await fetch("/api/suppliers/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ c: C }) })).json(); }
     catch (e) { r = { ok: false, error: "Could not reach Material Compass. Please try again." }; }
     if (!r.ok) { $("acc").disabled = false; $("acc").textContent = "Yes, claim " + j.supplier.name; $("bd").insertAdjacentHTML("beforeend", '<p class="err">' + esc(r.error) + "</p>"); return; }
-    done(r.email);
+    done(r.email, r.is_admin);
   });
 })();
 </script>
