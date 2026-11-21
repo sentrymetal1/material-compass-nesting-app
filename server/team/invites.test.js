@@ -66,3 +66,7 @@ test('default location: admin first, else any rep, else none', () => {
   assert.strictEqual(T.defaultLocation([reps[0]]), '222');
   assert.strictEqual(T.defaultLocation([{ Position: 'Administrator', Location: [] }]), '');
 });
+
+test('a "+" address is refused (the portal will not accept it as a login)', () => {
+  assert.match(T.checkInvite([], [], { first: 'A', last: 'B', email: 'mark+test@x.com', position: 'Estimator' }).error, /\+/);
+});

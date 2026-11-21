@@ -100,6 +100,8 @@ function checkInvite(shopReps, otherReps, b) {
   const email = lc(b.email);
   if (!s(b.first) || !s(b.last)) return { error: 'Enter a first and last name.' };
   if (!EMAIL_RE.test(email)) return { error: 'Enter a valid email address.' };
+  // The portal refuses logins with a '+' in the address (Zoho: "Email address is invalid"), 2026-11-21.
+  if (email.includes('+')) return { error: 'Logins cannot use an email with a "+" in it. Use their regular email address.' };
   if (POSITIONS.indexOf(s(b.position)) < 0) return { error: 'Pick a position from the list.' };
   const mine = shopReps.find((r) => lc(r.Email) === email);
   if (mine && statusOf(mine) === 'Invited') return { error: 'This person already has an invite. Use Resend on their row.' };

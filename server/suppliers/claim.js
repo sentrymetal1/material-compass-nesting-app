@@ -229,6 +229,8 @@ function registerSupplierClaim(app, deps) {
       if (!/^no$/i.test(s(sup.Register))) return res.status(400).json({ ok: false, error: s(sup.Company_Name) + ' is already on Material Compass.' });
       const r = repOut(rep);
       if (!EMAIL_RE.test(r.email)) return res.status(400).json({ ok: false, error: 'This contact has no valid email.' });
+      // The portal refuses logins with a '+' in the address (Zoho: 'Email address is invalid'), 2026-11-21.
+      if (r.email.includes('+')) return res.status(400).json({ ok: false, error: r.email + ' has a "+" in it, which cannot be used for a login. Add a contact with their regular email (without +) and invite them instead.' });
       const shop = await shopInfo(mfg);
       const link = publicBase(req) + '/takeoff/supplier-claim.html?c=' + enc(makeClaimToken(repId, supId));
       const m = inviteEmail(shop.name, { name: s(sup.Company_Name) }, r, link);
