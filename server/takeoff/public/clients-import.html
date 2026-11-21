@@ -104,12 +104,12 @@
     <h2 id="doneTitle">Done</h2>
     <div class="sum" id="sum"></div>
     <div id="problems"></div>
-    <div class="bar"><button class="btn ghost" id="again">Import another list</button></div>
+    <div class="bar"><a class="btn" id="toList" href="#" style="text-decoration:none;display:inline-block">See your clients</a> <button class="btn ghost" id="again">Import another list</button></div>
   </div>
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.1 · 2026-11-19 · client import";
+const VERSION = "v0.2 · 2026-11-21 · link to Clients page";
 document.getElementById("ver").textContent = VERSION;
 const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
 const $ = (id) => document.getElementById(id);
@@ -212,7 +212,7 @@ function rowHtml(it, i) {
     (it.notes || []).map((n) => '<div class="note">' + esc(n) + "</div>").join("");
   return '<tr data-row="' + i + '"><td><input type="checkbox" data-pick="' + i + '"' + (it.pick ? " checked" : "") + (it.status === "fix" ? " disabled" : "") + "></td>" +
     "<td>" + inp(i, "company", c.company, !c.company) + notes + "</td><td>" + inp(i, "address1", c.address1, !c.address1) + "</td><td>" + inp(i, "city", c.city, !c.city) +
-    "</td><td>" + inp(i, "state", c.state) + "</td><td>" + inp(i, "zip", c.zip) + "</td><td>" + inp(i, "phone", c.phone) + "</td><td>" + inp(i, "email", c.email) +
+    "</td><td>" + inp(i, "state", c.state) + "</td><td>" + inp(i, "zip", c.zip, !c.zip) + "</td><td>" + inp(i, "phone", c.phone) + "</td><td>" + inp(i, "email", c.email) +
     "</td><td>" + ks + "</td><td>" + pill + "</td></tr>";
 }
 function renderPreview() {
@@ -267,6 +267,7 @@ $("importBtn").addEventListener("click", async () => {
   step(4);
 });
 $("again").addEventListener("click", () => { READ = null; ITEMS = []; $("paste").value = ""; step(1); });
+$("toList").href = "/takeoff/clients.html?manufacturer_id=" + encodeURIComponent(MFG);
 step(1);
 </script>
 </body>

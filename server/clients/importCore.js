@@ -285,6 +285,7 @@ function itemStatus(it) {
   if (!c.company) fix.push('No company name');
   if (!c.address1) fix.push('No street address');
   if (!c.city) fix.push('No city');                       // Zoho requires the address city
+  if (!c.zip) fix.push('No zip code');                    // ...and the location's zip (2026-11-21: a location without one is refused)
   const warn = [];
   if (!c.phone) warn.push('No phone');
   if (!c.email) warn.push('No email');

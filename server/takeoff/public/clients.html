@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="/takeoff/mc-token.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Your Clients</title>
+<!--
+  A shop's clients, off Zoho. Opened from Material Compass as
+    /takeoff/clients.html?manufacturer_id=<MFG record id>&t=<tenant token>[&client_id=<id>]
+  Server: server/clients/clientsRoutes.js. The records stay in the Zoho client forms; nothing is deleted here.
+-->
+<script src="/takeoff/mc-dialog.js"></script>
+<style>
+  :root{--blue:#5F94CE;--ink:#1f2a37;--mut:#667;--line:#e3e6ea;--grn:#2e7d32;--grnbg:#e8f5e9;--ylw:#b45309;--ylwbg:#fff7ed;--red:#b91c1c;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:1080px;margin:0 auto;}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;} .brand{font-weight:800;font-size:16px;color:var(--blue);} .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;padding:16px 18px;}
+  h1{font-size:20px;margin:0 0 4px;} h2{font-size:16px;margin:0;}
+  .small{font-size:12.5px;color:var(--mut);line-height:1.5;}
+  .btn{font:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:8px 14px;cursor:pointer;text-decoration:none;display:inline-block;}
+  .btn:disabled{opacity:.5;cursor:default;} .btn.ghost{background:#fff;color:var(--blue);border-color:#cdd3da;} .btn.sm{padding:5px 10px;font-size:12px;}
+  .lnk{font:inherit;font-size:12.5px;font-weight:600;color:var(--blue);background:none;border:0;cursor:pointer;padding:2px 4px;}
+  .bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;}
+  .search{flex:1;min-width:220px;}
+  .seg{display:inline-flex;border:1px solid #cdd3da;border-radius:6px;overflow:hidden;} .seg button{font:inherit;font-size:12.5px;font-weight:600;border:0;background:#fff;color:var(--mut);padding:7px 12px;cursor:pointer;}
+  .seg button.on{background:var(--blue);color:#fff;}
+  table{width:100%;border-collapse:collapse;font-size:13px;} th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:600;padding:8px;border-bottom:1px solid var(--line);}
+  td{padding:9px 8px;border-bottom:1px solid #f0f2f4;vertical-align:top;}
+  tbody tr.row{cursor:pointer;} tbody tr.row:hover td{background:#f6f9fd;}
+  .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:10px;font-weight:600;white-space:nowrap;}
+  .p-on{background:var(--grnbg);color:var(--grn);} .p-off{background:#f1f1f1;color:#888;} .p-blue{background:#eef3fa;color:#3d6ea8;} .p-ylw{background:var(--ylwbg);color:var(--ylw);}
+  .form{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 12px;margin-top:10px;} .form label{display:block;font-size:11.5px;color:var(--mut);margin-bottom:3px;}
+  .s2{grid-column:span 2;} .s4{grid-column:1 / -1;} .hidden{display:none !important;}
+  input,select,textarea{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cdd3da;border-radius:6px;width:100%;background:#fff;}
+  textarea{min-height:70px;resize:vertical;} input:focus,select:focus,textarea:focus{border-color:var(--blue);outline:none;}
+  .sub{font-size:12px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-top:14px;}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:14px -18px 0;padding:0 18px;}
+  .tabs button{font:inherit;font-size:13px;font-weight:600;color:var(--mut);background:none;border:0;border-bottom:3px solid transparent;padding:9px 12px;cursor:pointer;}
+  .tabs button.on{color:var(--blue);border-bottom-color:var(--blue);}
+  .head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+  .acts{display:flex;gap:8px;margin-top:12px;}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;color:#fff;text-align:center;padding:10px;font-size:14px;font-weight:600;display:none;background:var(--blue);} .busy.show{display:block;}
+  a{color:var(--blue);} a.btn{color:#fff;} a.btn.ghost{color:var(--blue);}
+  .ver{font-size:11px;color:#99a;text-align:right;}
+</style>
+</head>
+<body>
+<div class="busy" id="busy"></div>
+<div class="wrap">
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">Clients</span></div>
+
+  <!-- LIST -->
+  <div id="listView">
+    <div class="card">
+      <h1>Your clients</h1>
+      <div class="small">The companies you quote for, their locations and contacts. Projects and quotes pick from this list.</div>
+      <div class="bar">
+        <button class="btn" id="addBtn">+ Add a client</button>
+        <a class="btn ghost" id="importLink" href="#">Import from a spreadsheet</a>
+        <input class="search" id="q" placeholder="Search by company, city or phone">
+        <span class="seg" id="seg"><button data-v="active" class="on">Active</button><button data-v="off">Not active</button><button data-v="all">All</button></span>
+      </div>
+    </div>
+    <div class="card hidden" id="addCard">
+      <h2>Add a client</h2>
+      <div class="form">
+        <div class="s2"><label>Company name *</label><input id="nCo"></div>
+        <div><label>Phone</label><input id="nPh"></div>
+        <div><label>Email</label><input id="nEm" placeholder="e.g. office@"></div>
+        <div class="s2"><label>Street *</label><input id="nA1"></div>
+        <div class="s2"><label>Suite, unit</label><input id="nA2"></div>
+        <div><label>City *</label><input id="nCity"></div>
+        <div><label>State</label><input id="nSt"></div>
+        <div><label>Zip *</label><input id="nZip"></div>
+        <div></div>
+        <div class="s4 sub">Main contact (optional)</div>
+        <div><label>First name</label><input id="nFn"></div>
+        <div><label>Last name</label><input id="nLn"></div>
+        <div><label>Email</label><input id="nCem"></div>
+        <div><label>Phone</label><input id="nCph"></div>
+      </div>
+      <div class="acts"><button class="btn" id="nSave">Add client</button><button class="btn ghost" id="nCancel">Cancel</button></div>
+    </div>
+    <div class="card">
+      <table><thead><tr><th style="width:36%">Company</th><th style="width:20%">City</th><th style="width:16%">Phone</th><th>Locations</th><th>Contacts</th><th></th></tr></thead>
+        <tbody id="rows"><tr><td colspan="6" class="small">Loading…</td></tr></tbody></table>
+      <div class="small" id="count" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- ONE CLIENT -->
+  <div id="oneView" class="hidden">
+    <div style="margin-bottom:10px"><button class="lnk" id="back">← All clients</button></div>
+    <div class="card">
+      <div class="head"><div><h1 id="cName"></h1><div class="small" id="cLine"></div></div><span id="cPill"></span></div>
+      <div class="tabs" id="tabs"><button data-t="profile" class="on">Profile</button><button data-t="locs">Locations</button><button data-t="reps">Contacts</button><button data-t="projects">Projects</button></div>
+
+      <div id="t-profile">
+        <div class="form">
+          <div class="s2"><label>Company name *</label><input id="pCo"></div>
+          <div><label>Phone</label><input id="pPh"></div>
+          <div><label>Email</label><input id="pEm"></div>
+          <div class="s2"><label>Street *</label><input id="pA1"></div>
+          <div class="s2"><label>Suite, unit</label><input id="pA2"></div>
+          <div><label>City *</label><input id="pCity"></div>
+          <div><label>State</label><input id="pSt"></div>
+          <div><label>Zip</label><input id="pZip"></div>
+          <div><label>Status</label><select id="pAct"><option value="1">Active</option><option value="0">Not active</option></select></div>
+          <div class="s4"><label>Notes</label><textarea id="pNotes"></textarea></div>
+        </div>
+        <div class="acts"><button class="btn" id="pSave">Save</button><span class="small" id="pCreated" style="align-self:center"></span></div>
+      </div>
+
+      <div id="t-locs" class="hidden">
+        <table style="margin-top:8px"><thead><tr><th style="width:24%">Location</th><th>Address</th><th style="width:16%">Phone</th><th style="width:70px"></th></tr></thead><tbody id="locRows"></tbody></table>
+        <div class="acts"><button class="btn sm" id="locAdd">+ Add a location</button></div>
+        <div id="locForm" class="hidden">
+          <div class="form">
+            <div><label>Location name</label><input id="lNm" placeholder="defaults to the city"></div>
+            <div class="s2"><label>Street *</label><input id="lA1"></div>
+            <div><label>Suite, unit</label><input id="lA2"></div>
+            <div><label>City *</label><input id="lCity"></div>
+            <div><label>State</label><input id="lSt"></div>
+            <div><label>Zip *</label><input id="lZip"></div>
+            <div><label>Phone</label><input id="lPh"></div>
+          </div>
+          <div class="acts"><button class="btn" id="lSave">Save location</button><button class="btn ghost" id="lCancel">Cancel</button></div>
+        </div>
+      </div>
+
+      <div id="t-reps" class="hidden">
+        <table style="margin-top:8px"><thead><tr><th style="width:22%">Name</th><th style="width:26%">Email</th><th>Phone</th><th>Mobile</th><th>Location</th><th style="width:70px"></th></tr></thead><tbody id="repRows"></tbody></table>
+        <div class="acts"><button class="btn sm" id="repAdd">+ Add a contact</button></div>
+        <div id="repForm" class="hidden">
+          <div class="form">
+            <div><label>First name *</label><input id="rFn"></div>
+            <div><label>Last name</label><input id="rLn"></div>
+            <div class="s2"><label>Email *</label><input id="rEm"></div>
+            <div><label>Phone</label><input id="rPh"></div>
+            <div><label>Ext</label><input id="rExt"></div>
+            <div><label>Mobile</label><input id="rMob"></div>
+            <div><label>Location</label><select id="rLoc"></select></div>
+            <div class="s4"><label>Notes (title, best time to call…)</label><input id="rNotes"></div>
+          </div>
+          <div class="acts"><button class="btn" id="rSave">Save contact</button><button class="btn ghost" id="rCancel">Cancel</button></div>
+        </div>
+      </div>
+
+      <div id="t-projects" class="hidden">
+        <table style="margin-top:8px"><thead><tr><th style="width:14%">Number</th><th>Project</th><th style="width:16%">Client RFQ #</th><th style="width:13%">Quote due</th><th style="width:15%">Status</th></tr></thead><tbody id="projRows"></tbody></table>
+      </div>
+    </div>
+  </div>
+  <div class="ver" id="ver"></div>
+</div>
+<script>
+const VERSION = "v0.1 · 2026-11-21 · Clients off Zoho";
+document.getElementById("ver").textContent = VERSION;
+const QS = new URLSearchParams(location.search);
+const MFG = QS.get("manufacturer_id") || "";
+const PORTAL = "https://customer.materialcompassportal.com";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const val = (id) => $(id).value.trim();
+let LIST = [], FILTER = "active", ONE = null, EDIT_LOC = "", EDIT_REP = "";
+
+function busy(m) { $("busy").textContent = m || ""; $("busy").className = "busy" + (m ? " show" : ""); }
+async function api(path, body) {
+  const url = path + (body ? "" : (path.includes("?") ? "&" : "?") + "manufacturer_id=" + encodeURIComponent(MFG));
+  const opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.assign({ manufacturer_id: MFG }, body)) } : {};
+  try { return await (await fetch(url, opt)).json(); } catch (e) { return { ok: false, error: "Could not reach Material Compass. Please try again." }; }
+}
+const why = (j) => (j.error || "Something went wrong.") + (j.reasons && j.reasons.length ? "\n\n" + j.reasons.join("\n") : "");
+$("importLink").href = "/takeoff/clients-import.html?manufacturer_id=" + encodeURIComponent(MFG);
+
+// ---------- list ----------
+function renderList() {
+  const q = val("q").toLowerCase(), qd = q.replace(/\D/g, "");
+  const shown = LIST.filter((c) => (FILTER === "all" || (FILTER === "active") === c.active) &&
+    (!q || (c.company + " " + c.city + " " + c.state + " " + c.email).toLowerCase().includes(q) || (qd.length >= 3 && c.phone.replace(/\D/g, "").includes(qd))));
+  $("rows").innerHTML = shown.length ? shown.map((c) => '<tr class="row" data-id="' + c.id + '"><td><b>' + esc(c.company) + "</b>" + (c.active ? "" : ' <span class="pill p-off">Not active</span>') +
+    (c.email ? '<div class="small">' + esc(c.email) + "</div>" : "") + "</td><td>" + esc([c.city, c.state].filter(Boolean).join(", ")) + "</td><td>" + esc(c.phone) +
+    "</td><td>" + c.locations + "</td><td>" + (c.contacts || '<span class="pill p-ylw">None</span>') + '</td><td><button class="lnk">Open</button></td></tr>').join("")
+    : '<tr><td colspan="6" class="small">' + (LIST.length ? "No clients match." : "No clients yet. Add one, or import your list from a spreadsheet.") + "</td></tr>";
+  $("count").textContent = LIST.length ? shown.length + " of " + LIST.length + " clients" : "";
+}
+async function loadList(fresh) {
+  const j = await api("/api/clients" + (fresh ? "?fresh=1" : ""));
+  if (!j.ok) { $("rows").innerHTML = '<tr><td colspan="6" class="small">' + esc(j.error || "Could not load your clients.") + "</td></tr>"; return; }
+  LIST = j.clients; renderList();
+}
+$("q").addEventListener("input", renderList);
+$("seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; FILTER = b.dataset.v;
+  [...$("seg").children].forEach((x) => x.classList.toggle("on", x === b)); renderList(); });
+$("rows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) openClient(tr.dataset.id); });
+
+// ---------- add ----------
+const ADD_IDS = ["nCo", "nPh", "nEm", "nA1", "nA2", "nCity", "nSt", "nZip", "nFn", "nLn", "nCem", "nCph"];
+$("addBtn").addEventListener("click", () => { $("addCard").classList.remove("hidden"); $("addBtn").disabled = true; $("nCo").focus(); });
+$("nCancel").addEventListener("click", () => { $("addCard").classList.add("hidden"); $("addBtn").disabled = false; });
+$("nSave").addEventListener("click", async () => {
+  busy("Adding client…");
+  const j = await api("/api/clients/save", { company: val("nCo"), phone: val("nPh"), email: val("nEm"), address1: val("nA1"), address2: val("nA2"), city: val("nCity"), state: val("nSt"), zip: val("nZip"),
+    contact: { first: val("nFn"), last: val("nLn"), email: val("nCem"), phone: val("nCph") } });
+  busy("");
+  if (!j.ok) {
+    if (j.duplicate_id && await mcConfirm(why(j) + "\n\nOpen it?", { okText: "Open it" })) openClient(j.duplicate_id);
+    else if (!j.duplicate_id) mcAlert(why(j));
+    return;
+  }
+  if (j.problems && j.problems.length) await mcAlert(j.message + "\n\n" + j.problems.join("\n"));
+  ADD_IDS.forEach((id) => { $(id).value = ""; });
+  $("addCard").classList.add("hidden"); $("addBtn").disabled = false;
+  await loadList(true);
+  openClient(j.id);
+});
+
+// ---------- one client ----------
+function showTab(t) {
+  [...$("tabs").children].forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+  ["profile", "locs", "reps", "projects"].forEach((k) => $("t-" + k).classList.toggle("hidden", k !== t));
+}
+$("tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) showTab(b.dataset.t); });
+$("back").addEventListener("click", () => { $("oneView").classList.add("hidden"); $("listView").classList.remove("hidden"); history.replaceState(null, "", setParam("client_id", "")); loadList(); });
+function setParam(k, v) { const u = new URL(location.href); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); u.searchParams.delete("t"); return u.pathname + u.search; }
+
+async function openClient(id, tab, fresh) {
+  busy("Loading…");
+  const j = await api("/api/clients/detail?id=" + encodeURIComponent(id) + (fresh ? "&fresh=1" : ""));
+  busy("");
+  if (!j.ok) return mcAlert(why(j));
+  ONE = j;
+  history.replaceState(null, "", setParam("client_id", id));
+  $("listView").classList.add("hidden"); $("oneView").classList.remove("hidden");
+  const c = j.client;
+  $("cName").textContent = c.company;
+  $("cLine").textContent = [c.line, c.phone, c.email].filter(Boolean).join(" · ");
+  $("cPill").innerHTML = c.active ? '<span class="pill p-on">Active</span>' : '<span class="pill p-off">Not active</span>';
+  $("pCo").value = c.company; $("pPh").value = c.phone; $("pEm").value = c.email; $("pA1").value = c.address1; $("pA2").value = c.address2;
+  $("pCity").value = c.city; $("pSt").value = c.state; $("pZip").value = c.zip; $("pAct").value = c.active ? "1" : "0"; $("pNotes").value = c.notes;
+  $("pCreated").textContent = c.created ? "Added " + c.created.replace(/^([A-Za-z]{3}) 0?(\d{1,2}),/, "$1 $2, ") : "";
+  [...$("tabs").children].forEach((b) => {
+    const n = { locs: j.locations.length, reps: j.contacts.length, projects: j.projects ? j.projects.length : null }[b.dataset.t];
+    b.textContent = { profile: "Profile", locs: "Locations", reps: "Contacts", projects: "Projects" }[b.dataset.t] + (n == null ? "" : " (" + n + ")");
+  });
+  renderLocs(); renderReps(); renderProjects();
+  closeLocForm(); closeRepForm();
+  showTab(tab || "profile");
+}
+
+$("pSave").addEventListener("click", async () => {
+  busy("Saving…");
+  const j = await api("/api/clients/save", { client_id: ONE.client.id, company: val("pCo"), phone: val("pPh"), email: val("pEm"), address1: val("pA1"), address2: val("pA2"),
+    city: val("pCity"), state: val("pSt"), zip: val("pZip"), active: $("pAct").value === "1", notes: $("pNotes").value });
+  busy("");
+  if (!j.ok) return mcAlert(why(j));
+  openClient(ONE.client.id, "profile", true);
+});
+
+// locations
+function renderLocs() {
+  $("locRows").innerHTML = ONE.locations.length ? ONE.locations.map((l) => "<tr><td><b>" + esc(l.name) + "</b></td><td>" + esc(l.line) + "</td><td>" + esc(l.phone) +
+    '</td><td><button class="lnk" data-l="' + l.id + '">Edit</button></td></tr>').join("") : '<tr><td colspan="4" class="small">No locations yet. A client needs one before you can add contacts.</td></tr>';
+}
+function closeLocForm() { $("locForm").classList.add("hidden"); $("locAdd").classList.remove("hidden"); EDIT_LOC = ""; }
+function openLocForm(l) {
+  EDIT_LOC = l ? l.id : "";
+  const c = ONE.client;
+  $("lNm").value = l ? l.name : ""; $("lA1").value = l ? l.address1 : ""; $("lA2").value = l ? l.address2 : ""; $("lCity").value = l ? l.city : "";
+  $("lSt").value = l ? l.state : c.state; $("lZip").value = l ? l.zip : ""; $("lPh").value = l ? l.phone : "";
+  $("lSave").textContent = l ? "Save location" : "Add location";
+  $("locForm").classList.remove("hidden"); $("locAdd").classList.add("hidden"); $("lA1").focus();
+}
+$("locAdd").addEventListener("click", () => openLocForm(null));
+$("lCancel").addEventListener("click", closeLocForm);
+$("locRows").addEventListener("click", (e) => { const b = e.target.closest("button[data-l]"); if (b) openLocForm(ONE.locations.find((l) => l.id === b.dataset.l)); });
+$("lSave").addEventListener("click", async () => {
+  busy("Saving location…");
+  const j = await api("/api/clients/location/save", { client_id: ONE.client.id, location_id: EDIT_LOC, name: val("lNm"), address1: val("lA1"), address2: val("lA2"),
+    city: val("lCity"), state: val("lSt"), zip: val("lZip"), phone: val("lPh") });
+  busy("");
+  if (!j.ok) return mcAlert(why(j));
+  openClient(ONE.client.id, "locs", true);
+});
+
+// contacts
+function renderReps() {
+  $("repRows").innerHTML = ONE.contacts.length ? ONE.contacts.map((r) => "<tr><td><b>" + esc(r.name) + "</b>" + (r.notes ? '<div class="small">' + esc(r.notes) + "</div>" : "") +
+    '</td><td><a href="mailto:' + esc(r.email) + '">' + esc(r.email) + "</a></td><td>" + esc(r.phone) + (r.ext ? " x" + esc(r.ext) : "") + "</td><td>" + esc(r.mobile) +
+    "</td><td>" + esc(r.location) + '</td><td><button class="lnk" data-r="' + r.id + '">Edit</button></td></tr>').join("")
+    : '<tr><td colspan="6" class="small">No contacts yet.</td></tr>';
+}
+function closeRepForm() { $("repForm").classList.add("hidden"); $("repAdd").classList.remove("hidden"); EDIT_REP = ""; }
+async function openRepForm(r) {
+  if (!ONE.locations.length) { await mcAlert("Add a location for this client first, then add the contact."); showTab("locs"); return; }
+  EDIT_REP = r ? r.id : "";
+  $("rFn").value = r ? r.first : ""; $("rLn").value = r ? r.last : ""; $("rEm").value = r ? r.email : ""; $("rPh").value = r ? r.phone : "";
+  $("rExt").value = r ? r.ext : ""; $("rMob").value = r ? r.mobile : ""; $("rNotes").value = r ? r.notes : "";
+  $("rLoc").innerHTML = ONE.locations.map((l) => '<option value="' + l.id + '">' + esc(l.name) + "</option>").join("");
+  if (r && r.location_id) $("rLoc").value = r.location_id;
+  $("rSave").textContent = r ? "Save contact" : "Add contact";
+  $("repForm").classList.remove("hidden"); $("repAdd").classList.add("hidden"); $("rFn").focus();
+}
+$("repAdd").addEventListener("click", () => openRepForm(null));
+$("rCancel").addEventListener("click", closeRepForm);
+$("repRows").addEventListener("click", (e) => { const b = e.target.closest("button[data-r]"); if (b) openRepForm(ONE.contacts.find((r) => r.id === b.dataset.r)); });
+$("rSave").addEventListener("click", async () => {
+  busy("Saving contact…");
+  const j = await api("/api/clients/rep/save", { client_id: ONE.client.id, rep_id: EDIT_REP, first: val("rFn"), last: val("rLn"), email: val("rEm"), phone: val("rPh"),
+    ext: val("rExt"), mobile: val("rMob"), location_id: $("rLoc").value, notes: val("rNotes") });
+  busy("");
+  if (!j.ok) return mcAlert(why(j));
+  openClient(ONE.client.id, "reps", true);
+});
+
+// projects (read only; each opens in Material Compass)
+function renderProjects() {
+  const P = ONE.projects;
+  if (P == null) { $("projRows").innerHTML = '<tr><td colspan="5" class="small">Projects could not be loaded right now.</td></tr>'; return; }
+  $("projRows").innerHTML = P.length ? P.map((p) => '<tr><td><a target="_top" href="' + PORTAL + "/#Page:Project_Dashboard?project_id=" + encodeURIComponent(p.id) + '">' + esc(p.number || "Open") + "</a></td><td>" + esc(p.name) +
+    "</td><td>" + esc(p.rfq) + "</td><td>" + esc(p.due) + '</td><td><span class="pill ' + (/award/i.test(p.status) ? "p-on" : /not|lost|cancel/i.test(p.status) ? "p-off" : "p-blue") + '">' + esc(p.status) + "</span></td></tr>").join("")
+    : '<tr><td colspan="5" class="small">No projects for this client yet.</td></tr>';
+}
+
+const START = QS.get("client_id");
+loadList().then(() => { if (START) openClient(START); });
+</script>
+</body>
+</html>

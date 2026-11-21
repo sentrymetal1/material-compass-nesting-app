@@ -103,7 +103,7 @@ const TENANT_ROUTES = [
   /^\/api\/project\//, /^\/api\/standalone\//, /^\/api\/bom-lookups\/(components|drawings)$/,
   /^\/api\/match-suggestions$/, /^\/api\/fittings\/resolve-row$/, /^\/api\/supplier\/me/, /^\/api\/mfg\/supplier-quotes\//, /^\/api\/mfg\/rfq\//,
   /^\/api\/labor\/(shop|weld-time|estimate)$/, /^\/api\/intel\//, /^\/api\/subcontractors/, /^\/api\/labor-time\//,
-  /^\/api\/team(\/(invite|resend|cancel))?$/, /^\/api\/clients\/import\/(read|preview|commit)$/, /^\/api\/setup\//, /^\/api\/teach\//,
+  /^\/api\/team(\/(invite|resend|cancel))?$/, /^\/api\/clients\/import\/(read|preview|commit)$/, /^\/api\/clients(\/(detail|save|location\/save|rep\/save))?$/,/^\/api\/setup\//, /^\/api\/teach\//,
   /^\/api\/mfg\/suppliers(\/invite)?$/,   // NOT /api/suppliers/claim: the supplier has no shop token, the signed link is the proof   // NOT /api/team/join: the invitee has no shop token, the signed link is the proof
 ];
 

@@ -58,9 +58,9 @@ function buildSteps(f) {
 
   steps.push({ key: 'clients', title: 'Clients', required: true, why: 'Your customers, so a new quote starts from a list, not from typing.',
     status: f.clients == null ? 'unknown' : (f.clients > 0 ? 'done' : 'todo'),
-    detail: f.clients == null ? "Couldn't check right now." : (f.clients > 0 ? plural(f.clients, 'client') + ' in your list.' : 'No clients yet. Import your customer list from QuickBooks, Outlook or a spreadsheet.'),
-    action: { label: f.clients > 0 ? 'Import more' : 'Import clients', url: L.clients },
-    action2: f.clients > 0 ? { label: 'View list', url: L.clientList, portal: true } : null });
+    detail: f.clients == null ? "Couldn't check right now." : (f.clients > 0 ? plural(f.clients, 'client') + ' in your list.' : 'No clients yet. Import your customer list from QuickBooks, Outlook or a spreadsheet, or add them one at a time.'),
+    action: f.clients > 0 ? { label: 'Your clients', url: L.clientsPage } : { label: 'Import clients', url: L.clients },
+    action2: f.clients > 0 ? { label: 'Import more', url: L.clients } : { label: 'Add one at a time', url: L.clientsPage } });
 
   steps.push({ key: 'suppliers', title: 'Material suppliers', why: 'Who you send material RFQs to.',
     status: f.suppliers == null ? 'unknown' : (f.suppliers > 0 ? 'done' : 'todo'),
@@ -151,7 +151,7 @@ function registerSetupChecklist(app, deps) {
       const links = {
         profile: PORTAL + '/#Page:Manufacture_Profile?tab=tab1',
         clientList: PORTAL + '/#Page:Client_List_Page',
-        team: rail('team.html'), clients: rail('clients-import.html'), subs: rail('subcontractors.html'), teach: rail('teach.html'), suppliers: rail('suppliers.html'),
+        team: rail('team.html'), clients: rail('clients-import.html'), clientsPage: rail('clients.html'), subs: rail('subcontractors.html'), teach: rail('teach.html'), suppliers: rail('suppliers.html'),
       };
       const st = buildSteps({ profile, people, clients: clients == null ? null : clients.length, suppliers: matches == null ? null : matches.length,
         subs: activeSubs, lessons: lessons == null ? null : lessons.length, teachJobs: require('../teach/teachRoutes').reviewedCount(mfg), skipped: (readJson(fileOf(mfg), {}) || {}).skipped || {}, links });

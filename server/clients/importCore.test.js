@@ -57,12 +57,12 @@ test('cleaning: phones, states, zips, emails, names', () => {
 });
 
 test('duplicates: name + city, suffixes ignored; same client twice in the file = one client, two contacts', () => {
-  const map = ['company', 'city', 'address1', 'contact_first', 'contact_email'];
+  const map = ['company', 'city', 'address1', 'contact_first', 'contact_email', 'zip'];
   const rows = [
-    ['ACE CONTRACTING CO.', 'Buffalo', '1 A St', 'Bob', 'bob@ace.com'],
-    ['Ace Contracting', 'Buffalo', '1 A St', 'Sue', 'sue@ace.com'],
-    ['Ace Contracting', 'Rochester', '9 B St', 'Tim', 'tim@ace.com'],
-    ['Capital Steel', 'Lockport', '', '', ''],
+    ['ACE CONTRACTING CO.', 'Buffalo', '1 A St', 'Bob', 'bob@ace.com', '14201'],
+    ['Ace Contracting', 'Buffalo', '1 A St', 'Sue', 'sue@ace.com', '14201'],
+    ['Ace Contracting', 'Rochester', '9 B St', 'Tim', 'tim@ace.com', '14604'],
+    ['Capital Steel', 'Lockport', '', '', '', '14094'],
   ];
   const existing = { clients: [{ id: '11', company: 'Ace Contracting, Inc.', city: 'Buffalo' }], reps: [{ client_id: '11', email: 'bob@ace.com' }] };
   const items = C.buildPreview(rows, map, existing);
@@ -77,10 +77,12 @@ test('duplicates: name + city, suffixes ignored; same client twice in the file =
   assert.match(roc.similar, /different city/);
   assert.strictEqual(cap.status, 'fix');
   assert.deepStrictEqual(cap.fix, ['No street address']);   // has a city
+  const [nz] = C.buildPreview([['Nozip Co', 'Erie', '1 A St', '', '', '']], map, null);
+  assert.deepStrictEqual(nz.fix, ['No zip code']);         // its location would be refused without one
 });
 
 test('contact without a valid email is skipped, client still imports', () => {
-  const [it] = C.buildPreview([['Ace', '1 A St', 'Buffalo', 'Bob', 'nope']], ['company', 'address1', 'city', 'contact_first', 'contact_email'], null);
+  const [it] = C.buildPreview([['Ace', '1 A St', 'Buffalo', 'Bob', 'nope', '14201']], ['company', 'address1', 'city', 'contact_first', 'contact_email', 'zip'], null);
   assert.strictEqual(it.status, 'new');
   assert.strictEqual(it.contacts_skipped, 1);
   assert.strictEqual(it.contacts_to_add, 0);

@@ -4295,6 +4295,7 @@ require('./subcontractors').registerSubcontractors(app, { getAccessToken, creato
 require('./labor/timeEntry').registerTimeEntry(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./team/invites').registerTeamInvites(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./clients/importRoutes').registerClientImport(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
+require('./clients/clientsRoutes').registerClients(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./setup/checklist').registerSetupChecklist(app, { fetchAllZohoPages });
 require('./teach/teachRoutes').registerTeach(app, { getAccessToken, creatorApiBase, zohoHeaders });
 require('./suppliers/claim').registerSupplierClaim(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
