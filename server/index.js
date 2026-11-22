@@ -1657,7 +1657,8 @@ app.post('/api/takeoff/index', (req, res) => indexHandler(req, res)); // intake:
 app.post('/api/takeoff/inspect', (req, res) => inspectHandler(req, res)); // intake: drawing or document? (no AI, no size limit)
 app.post('/api/takeoff/addenda', (req, res) => addendaHandler(req, res)); // review: what each addendum changed
 app.post('/api/takeoff/label-pieces', (req, res) => labelPiecesHandler(req, res)); // review: piece roles + pipe joints for typical welds
-app.post('/api/takeoff/repair', (req, res) => repairHandler(req, res));   // review: metric + duplicate checks on an older take-off
+app.post('/api/takeoff/repair', (req, res) => repairHandler(req, res));
+require('./takeoff/sheetMap').registerSheetMap(app, { ledger: require('./costLedger') }); // drawing workspace: number → file + page   // review: metric + duplicate checks on an older take-off
 app.post('/api/takeoff/ask', (req, res) => askHandler(req, res));     // intake: ask about the uploaded documents
 // What a run would cost per reading depth, before anything is spent. Rates come from the
 // engine's own table so the quote and the bill cannot drift apart.

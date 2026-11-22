@@ -195,7 +195,7 @@
   @media print {
     body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .wrap,.appbar{max-width:100%;}
-    #printBtn,#newRun,.bar,.busy,.commit,#reviseCard,.applybtn,.pillbtn,.footerdock,#chatCard,.tabs{display:none !important;}
+    #printBtn,#drawBtn,#newRun,.bar,.busy,.commit,#reviseCard,.applybtn,.pillbtn,.footerdock,#chatCard,.tabs{display:none !important;}
     .tabpane{display:block !important;}   /* print the whole package, every tab */
     .card{box-shadow:none;break-inside:avoid;}
     input[type=number]{border:none;padding:0;width:auto;background:transparent;font-size:12.5px;}
@@ -207,6 +207,7 @@
 <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span class="projhead" id="projHead"></span><span id="saveInd" role="button" tabindex="0" title="Saves by itself after every change. Click to save now." onclick="saveNow()" style="font-size:11px;color:var(--mut);margin-left:12px;cursor:pointer"></span>
   <span id="aiCost" class="aicost" style="display:none"></span>
   <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
+  <a id="drawBtn" href="#" onclick="openDrawings();return false;" title="The drawings beside the take-off lines. Read-only, opens in a new tab." style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">▦ Drawings view (new)</a>
   <a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a>
   <a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
 <input type="file" id="addFile" accept="application/pdf" multiple style="display:none" onchange="addDrawings(this)">
@@ -218,7 +219,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.120 · 2026-11-21 · vendor name removed from on-screen messages";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.121 · 2026-11-22 · Drawings view (new) link";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -275,6 +276,15 @@
   // window + sessionStorage are GLOBAL (not project-keyed) — a result from another project must
   // never be reused here, or you'd open Schutte and see Alden. Every result is tagged __project.
   function sameProj(R){ return !!(R && params.project_id && String(R.__project||"")===String(params.project_id)); }
+  // The drawing workspace (drawings.html): the project's drawings beside the take-off lines.
+  // Read-only; it reads this browser's working copy, so save nothing first — just open it.
+  function openDrawings(){
+    if(!params.project_id) return;
+    flushZohoSave();
+    const u=RAILWAY_URL+"/takeoff/drawings.html?project_id="+encodeURIComponent(params.project_id)+
+      "&manufacturer_id="+encodeURIComponent(params.manufacturer_id||"")+(window.MC_TOKEN?"&t="+encodeURIComponent(window.MC_TOKEN):"");
+    window.open(u,"_blank");
+  }
   function loadResult(){
     if (window.TAKEOFF_RESULT && sameProj(window.TAKEOFF_RESULT)) return window.TAKEOFF_RESULT;
     try { const s=sessionStorage.getItem("takeoff_result"); if(s){ const R=JSON.parse(s); if(sameProj(R)) return R; } } catch(e){}
