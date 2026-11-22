@@ -9,7 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!--
-  DRAWING WORKSPACE — step 1 (read-only). The project's own drawings in the middle, the take-off
+  DRAWING WORKSPACE (read-only). v0.4: two panes side by side, a part followed across every drawing
+  it is on, and drawings where it is printed but not taken off. Step 1: The project's own drawings in the middle, the take-off
   lines beside them, grouped by drawing; click a line or a drawing and its sheet opens.
   Opened from the review page ("Drawings view"); it never edits or saves the take-off.
   Plan and mock-up: Projects/mc-product-tour/workspace.html. Step 2 adds highlights on the sheet.
@@ -39,17 +40,28 @@ button:disabled{opacity:.5;cursor:default}
 .main{display:grid;grid-template-columns:48px minmax(0,1fr) 400px;min-height:0}
 .tools{display:flex;flex-direction:column;gap:6px;padding:10px 4px;background:var(--card);border-right:1px solid var(--line)}
 .tools button{width:40px;height:40px;padding:0;display:grid;place-items:center;border:0;background:transparent}
-.tools button:hover{background:var(--soft)}
+.tools button:hover{background:var(--soft)}.tools button.on{background:var(--soft);color:#1d4670}
 .tools svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.stage{position:relative;overflow:hidden;background:#d5dce3;cursor:grab;touch-action:none}
+.stage{position:relative;overflow:hidden;background:#d5dce3;cursor:grab;touch-action:none;flex:1;min-height:0}
 .stage.drag{cursor:grabbing}
-#paper{position:absolute;left:0;top:0;transform-origin:0 0;box-shadow:0 6px 30px -8px #0005;background:#fff}
-#paper canvas{display:block}
+.stages{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;background:#aab6c1;min-height:0}
+.stages.split{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.pane{display:flex;flex-direction:column;min-height:0;min-width:0}.pane[hidden]{display:none}
+.phd{display:flex;align-items:center;gap:8px;padding:3px 6px 3px 12px;background:#eef2f6;border-bottom:1px solid var(--line);font-size:13px;min-height:34px}
+.stages:not(.split) .phd{display:none}
+.pane.on .phd{background:#dfeaf5;color:#1d4670;font-weight:600;box-shadow:inset 0 -3px 0 var(--brand)}
+.phd button{min-height:28px;padding:0 8px;border:0;background:transparent}
+.paper{position:absolute;left:0;top:0;transform-origin:0 0;box-shadow:0 6px 30px -8px #0005;background:#fff}
+.paper canvas{display:block}
+.topctl{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px;z-index:3;max-width:calc(100% - 20px)}
+.follow{display:flex;align-items:center;gap:6px;background:#173450;color:#fff;border-radius:10px;padding:3px 4px 3px 12px;font-size:13px;box-shadow:0 6px 18px -8px #0008;white-space:nowrap}
+.follow[hidden]{display:none}.follow button{min-height:30px;border:0;background:#ffffff1f;color:#fff;padding:0 10px;font-size:15px}
+.follow button:hover{background:#ffffff38}.follow .k{color:#cfe0f0;font-size:12.5px}
 .msg[hidden]{display:none}
 .msg{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:var(--mute)}
 .msg div{max-width:420px;background:var(--card);border-radius:12px;padding:18px 20px;box-shadow:0 6px 24px -10px #0004}
 .msg b{color:var(--ink)}
-.parts{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:3px;box-shadow:0 4px 14px -6px #0003}
+.parts{display:flex;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:3px;box-shadow:0 4px 14px -6px #0003}
 .parts[hidden]{display:none}.parts button{min-height:30px;border:0;font-size:13px}.parts button.on{background:var(--brand);color:#fff;font-weight:600}
 .zoomtag{position:absolute;left:10px;bottom:10px;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:3px 9px;font-size:12.5px;color:var(--mute)}
 .panel{background:var(--card);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
@@ -74,9 +86,9 @@ button:disabled{opacity:.5;cursor:default}
 .row .meta{grid-column:2/4;font-size:12.5px;color:var(--mute)}
 .foot{font-size:12px;color:var(--mute);padding:8px 14px;border-top:1px solid var(--line)}
 /* Boxes on the sheet: where a part mark was read off the drawing. */
-#ov{position:absolute;inset:0;pointer-events:none}
-#ov i{position:absolute;border:2px dashed #1f63b0;background:#5286b42e;border-radius:3px;pointer-events:auto;cursor:pointer;box-shadow:0 0 0 2px #ffffffb0}
-#ov i.cur{border-style:solid;border-color:#d97706;background:#f59e0b33;animation:blink 1.3s 2}
+.ov{position:absolute;inset:0;pointer-events:none}
+.ov i{position:absolute;border:2px dashed #1f63b0;background:#5286b42e;border-radius:3px;pointer-events:auto;cursor:pointer;box-shadow:0 0 0 2px #ffffffb0}
+.ov i.cur{border-style:solid;border-color:#d97706;background:#f59e0b33;animation:blink 1.3s 2}
 @keyframes blink{50%{opacity:.35}}
 .ocr{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#cfe0f0}
 /* Where used: the selected part across the whole job. */
@@ -88,14 +100,15 @@ button:disabled{opacity:.5;cursor:default}
 .used th{font-size:11.5px;color:var(--mute);font-weight:600;text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
 .used td{padding:5px 6px;border-bottom:1px solid #eef1f4;white-space:nowrap}
 .used td.n,.used th.n{text-align:right;font-variant-numeric:tabular-nums}
+.used tr.miss td{color:var(--ylw)}.used tr.miss td:first-child{font-weight:600}
 .used tr.go{cursor:pointer}.used tr.go:hover td{background:var(--soft)}.used tr.here td{background:#dfeaf5;font-weight:600}
 .used .note{font-size:11.5px;color:var(--mute);margin-top:6px}
 .used .warn{color:var(--ylw);font-weight:600}
-@media(prefers-reduced-motion:reduce){#ov i.cur{animation:none}}
+@media(prefers-reduced-motion:reduce){.ov i.cur{animation:none}}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid #c9d6e3;border-top-color:var(--brand);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media(max-width:900px){.app{height:auto}.main{grid-template-columns:1fr}.tools{flex-direction:row;border-right:0;border-bottom:1px solid var(--line)}
-.stage{height:62vh;min-height:340px}.panel{border-left:0}.list{max-height:none}}
+.stages{height:62vh;min-height:340px}.stages.split{grid-template-columns:minmax(0,1fr);grid-template-rows:1fr 1fr;height:90vh}.panel{border-left:0}.list{max-height:none}}
 </style>
 </head>
 <body>
@@ -114,14 +127,10 @@ button:disabled{opacity:.5;cursor:default}
       <button id="zin" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M10 7v6M7 10h6M15 15l5 5"/></svg></button>
       <button id="zout" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M7 10h6M15 15l5 5"/></svg></button>
       <button id="fit" title="Fit the sheet" aria-label="Fit the sheet"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      <button id="splitBtn" title="Open a second drawing beside this one" aria-label="Open a drawing beside this one"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="16" rx="1"/><rect x="13" y="4" width="8" height="16" rx="1"/></svg></button>
       <button id="find" title="Find a mark or size" aria-label="Find a mark or size"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="17" cy="16" r="3"/><path d="M19.5 18.5L22 21"/></svg></button>
     </div>
-    <div class="stage" id="stage">
-      <div id="paper"></div>
-      <div class="msg" id="msg"><div><span class="spin"></span>Loading the drawings…</div></div>
-      <div class="zoomtag" id="zoomtag" hidden></div>
-      <div class="parts" id="parts" hidden></div>
-    </div>
+    <div class="stages" id="stages"></div>
     <aside class="panel">
       <div class="ph"><div id="wcheck"></div><input class="search" id="q" placeholder="Find a mark or size, e.g. p512" aria-label="Find a mark or size"></div>
       <div class="list" id="list"></div>
@@ -134,7 +143,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v0.3 · 2026-11-22 · part marks boxed on the sheet; where-used totals";
+const VERSION="drawings v0.4 · 2026-11-22 · side by side; follow a part across drawings";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -171,7 +180,10 @@ function ftin(ft){const L=Number(ft)||0;if(!(L>0))return"";let f=Math.floor(L),i
   const w=Math.floor(i),fr=Math.round((i-w)*16);let t="";if(fr){let n=fr,d=16;while(n%2===0){n/=2;d/=2}t=(w?w+" ":"")+n+"/"+d}else t=String(w);return f+"'-"+t+'"'}
 
 /* ---- state ---- */
-const S={marks:{},mnow:"",pageKey:"",selMark:null,boxI:-1,part:0,R:null,head:null,files:[],map:null,stale:false,sheets:[],cur:-1,sel:-1,q:"",docs:{},view:{s:1,tx:0,ty:0},page:null,render:null,rs:0};
+// One take-off, up to two drawing panes. The ACTIVE pane (the one last clicked) is the one the
+// drawing picker, the arrows, the tools and the list drive.
+const S={marks:{},mnow:"",selMark:null,sel:-1,selG:-1,R:null,head:null,files:[],map:null,stale:false,sheets:[],q:"",docs:{},panes:[],active:0,split:false};
+const act=()=>S.panes[S.active];
 
 /* The take-off: this browser's working copy when it has one (it can hold unsaved changes),
    else the copy saved on the project. Same keys review.html uses. */
@@ -198,7 +210,7 @@ function locate(num){
 function buildSheets(){
   const live=arr(S.R&&S.R.rows).filter(r=>r&&!r.deleted&&Number(r.quantity)>0);
   const by={},order=[];
-  live.forEach((r,i)=>{const n=String(r.source_sheet||"").trim()||"(no drawing number)";if(!by[n]){by[n]={number:n,rows:[]};order.push(n)}by[n].rows.push(r)});
+  live.forEach(r=>{const n=String(r.source_sheet||"").trim()||"(no drawing number)";if(!by[n]){by[n]={number:n,rows:[]};order.push(n)}by[n].rows.push(r)});
   // Map order (the order the pages sit in the set) when known; else as the take-off lists them.
   const pos=n=>{const s=S.map&&arr(S.map.sheets).findIndex(x=>key(x.number)===key(n));return s>-1?s:1e6};
   order.sort((a,b)=>pos(a)-pos(b)||a.localeCompare(b,undefined,{numeric:true}));
@@ -219,129 +231,210 @@ function renderCheck(){
 }
 function rowMatch(r){if(!S.q)return true;const t=(r.member_mark+" "+r.size+" "+r.form_type+" "+r.source_sheet+" "+(r.note||"")).toLowerCase();return t.indexOf(S.q)>-1}
 function renderList(){
-  let h="";
+  let h="";const cur=act()?act().cur:-1;
   S.sheets.forEach((g,gi)=>{
     const rows=g.rows.filter(rowMatch);if(S.q&&!rows.length&&key(g.number).indexOf(key(S.q))<0)return;
-    h+=`<div class="grp ${gi===S.cur?"on":""}" data-g="${gi}"><span>${esc(g.number)}</span><span class="t">${esc(g.title)}</span>${g.loc?"":'<span class="nf">page not found</span>'}<span class="w">${g.lb?fmtLb(g.lb)+" lb":""}</span></div>`;
+    h+=`<div class="grp ${gi===cur?"on":""}" data-g="${gi}"><span>${esc(g.number)}</span><span class="t">${esc(g.title)}</span>${g.loc?"":'<span class="nf">page not found</span>'}<span class="w">${g.lb?fmtLb(g.lb)+" lb":""}</span></div>`;
     rows.forEach(r=>{const i=g.rows.indexOf(r),w=rowWeight(r);
-      h+=`<div class="row ${gi===S.cur&&i===S.sel?"sel":""}" data-g="${gi}" data-r="${i}" tabindex="0" role="button"><span class="m">${esc(r.member_mark||"–")}</span><span class="s">${esc(r.size||"")} <span style="color:var(--mute)">${esc(r.form_type||"")}</span></span><span class="w">${w?fmtLb(w)+" lb":"–"}</span><span class="meta">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}${r.component?" · "+esc(r.component):""}</span></div>`});
+      h+=`<div class="row ${gi===S.selG&&i===S.sel?"sel":""}" data-g="${gi}" data-r="${i}" tabindex="0" role="button"><span class="m">${esc(r.member_mark||"–")}</span><span class="s">${esc(r.size||"")} <span style="color:var(--mute)">${esc(r.form_type||"")}</span></span><span class="w">${w?fmtLb(w)+" lb":"–"}</span><span class="meta">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}${r.component?" · "+esc(r.component):""}</span></div>`});
   });
   $("list").innerHTML=h||'<div style="padding:16px;color:var(--mute)">No lines match.</div>';
 }
 function renderNav(){
+  const cur=act()?act().cur:-1;
   $("sheet").innerHTML=S.sheets.map((g,i)=>`<option value="${i}">${esc(g.number)}${g.title?" · "+esc(g.title):""}${g.loc?"":" (page not found)"}</option>`).join("");
-  $("sheet").value=S.cur<0?0:S.cur;$("of").textContent=S.sheets.length?`${Math.max(0,S.cur)+1} of ${S.sheets.length}`:"";
+  $("sheet").value=cur<0?0:cur;$("of").textContent=S.sheets.length?`${Math.max(0,cur)+1} of ${S.sheets.length}`:"";
   const missing=S.sheets.filter(g=>!g.loc).length;
   $("mapnote").innerHTML=S.files.length&&(S.stale||missing)?`<span class="mapnote">${S.stale?"Drawings changed since their pages were found.":missing+" drawing"+(missing>1?"s":"")+" not matched to a page."} <button id="build">Find drawing pages</button></span>`:"";
 }
 
-/* ---- viewer ---- */
-function msg(html){$("msg").hidden=!html;if(html)$("msg").innerHTML="<div>"+html+"</div>"}
+/* ---- part marks (read off each sheet by OCR on the server) ----
+   Every drawing is read once by /api/takeoff/marks, in the background, the sheets on screen first.
+   A count of places is not a quantity — a mark appears in several views and in the parts list —
+   so it is shown beside the take-off's own quantity, never in place of it. */
+const normMark=t=>String(t||"").toLowerCase().replace(/\|/g,"l").replace(/[^a-z0-9]/g,"");
+const keyOf=loc=>loc?loc.file_id+":"+(loc.page||1):"";
+const partsOf=g=>g&&g.loc?(g.loc.more&&g.loc.more.length?g.loc.more:[g.loc]):[];
+const baseMark=m=>{const x=String(m||"").match(/^([a-z]+\d+)[a-z]$/);return x?x[1]:""};
+function hitsOn(k,m){const e=S.marks[k];if(!e||!e.words||!m)return[];
+  const exact=e.words.filter(w=>normMark(w[0])===m);if(exact.length)return exact;
+  // The take-off sometimes adds a letter to tell two lengths of one mark apart ("p285b"); the
+  // drawing prints the mark itself ("p285"). Fall back to it, and say so in the panel.
+  const base=baseMark(m);return base?e.words.filter(w=>normMark(w[0])===base):[]}
+function printedAs(k,m){const e=S.marks[k];if(!e||!e.words||!m)return"";if(e.words.some(w=>normMark(w[0])===m))return"";const b=baseMark(m);return b&&e.words.some(w=>normMark(w[0])===b)?b:""}
+function sheetHits(g,m){let n=0,read=0;const ps=partsOf(g);ps.forEach(p=>{const e=S.marks[keyOf(p)];if(e&&e.words){read++;n+=hitsOn(keyOf(p),m).length}});return{n,read,parts:ps.length}}
+// Printed on a drawing that has no take-off line for it. The "p285b → p285" fallback is not
+// used here when the drawing has its own p285 line: that p285 is a different part.
+function printedOnly(g,m){
+  if(g.rows.some(r=>normMark(r.member_mark)===m))return 0;
+  const b=baseMark(m);let n=0;
+  partsOf(g).forEach(p=>{const e=S.marks[keyOf(p)];if(!e||!e.words)return;
+    n+=e.words.filter(w=>normMark(w[0])===m).length;
+    if(b&&!g.rows.some(r=>normMark(r.member_mark)===b))n+=e.words.filter(w=>normMark(w[0])===b).length});
+  return n}
+// Every drawing the part is on: in the take-off, or printed there. Sheet order.
+function drawingsFor(m){const out=[];if(!m)return out;S.sheets.forEach((g,gi)=>{if(g.rows.some(r=>normMark(r.member_mark)===m)||printedOnly(g,m))out.push(gi)});return out}
+function markLabel(m){for(const g of S.sheets){const r=g.rows.find(x=>normMark(x.member_mark)===m);if(r)return r.member_mark}return m}
+
+/* ---- a drawing pane ---- */
+const PANE_HTML=`<div class="phd"></div><div class="stage"><div class="paper"></div>
+  <div class="topctl"><div class="follow" hidden></div><div class="parts" hidden></div></div>
+  <div class="msg" hidden></div><div class="zoomtag" hidden></div></div>`;
+class Pane{
+  constructor(idx){
+    const el=document.createElement("div");el.className="pane"+(idx?"":" on");el.innerHTML=PANE_HTML;if(idx)el.hidden=true;
+    $("stages").appendChild(el);
+    Object.assign(this,{el,idx,cur:-1,part:0,page:null,view:{s:1,tx:0,ty:0},rs:0,task:null,fitS:0,pageKey:"",boxI:-1,rTimer:null,drag:null});
+    const q=c=>el.querySelector(c);
+    Object.assign(this,{stage:q(".stage"),paper:q(".paper"),msgEl:q(".msg"),zoomtag:q(".zoomtag"),partsEl:q(".parts"),followEl:q(".follow"),hd:q(".phd")});
+    this.bind();
+  }
+  msg(html){this.msgEl.hidden=!html;if(html)this.msgEl.innerHTML="<div>"+html+"</div>"}
+  async open(gi,keepView,part){
+    if(gi<0||gi>=S.sheets.length)return;
+    this.part=part||0;this.cur=gi;this.page=null;this.rs=0;this.paper.innerHTML="";this.boxI=-1;
+    const g=S.sheets[gi];
+    if(this===act()){renderNav();renderList();document.querySelector(`.grp[data-g="${gi}"]`)?.scrollIntoView({block:"nearest"})}
+    this.renderHead();this.renderFollow();
+    if(!g.loc){this.pageKey="";this.zoomtag.hidden=true;this.partsEl.hidden=true;renderUsed();
+      this.msg(`<b>Drawing ${esc(g.number)} isn't matched to a page yet.</b><br><br>`+(S.files.length?`Press <b>Find drawing pages</b> at the top. It reads the drawing number off every page once and remembers it for this project.`:`This project has no drawings saved. Open the take-off once with its drawings so they're kept.`));return}
+    // A drawing split over several files ("1 OF 2", "2 OF 2"): a switcher above the sheet.
+    const ps=g.loc.more&&g.loc.more.length>1?g.loc.more:null,loc=ps?(ps[this.part]||ps[0]):g.loc,pk=keyOf(loc);
+    this.pageKey=pk;renderUsed();
+    if(!S.marks[pk])startOcr(pk,true);
+    this.partsEl.hidden=!ps;
+    if(ps)this.partsEl.innerHTML=ps.map((p,i)=>`<button data-part="${i}" class="${i===this.part?"on":""}" title="${esc(p.name)}">Sheet ${i+1} of ${ps.length}</button>`).join("");
+    this.msg('<span class="spin"></span>Opening '+esc(g.number)+"…");
+    try{
+      const doc=await getDoc(loc.file_id);
+      const page=await doc.getPage(Math.min(loc.page,doc.numPages));
+      if(this.cur!==gi||this.pageKey!==pk)return;
+      this.page=page;this.rs=0;this.msg("");this.zoomtag.hidden=false;
+      if(!keepView)this.fit();else this.draw();
+      if(S.selMark&&hitsOn(pk,S.selMark).length)this.focusBox(0);
+    }catch(e){console.error(e);this.msg(`<b>Couldn't open drawing ${esc(g.number)}.</b><br>${esc(e.message||e)}`)}
+  }
+  fit(){if(!this.page)return;const st=this.stage.getBoundingClientRect(),v=this.page.getViewport({scale:1});
+    const s=Math.min((st.width-24)/v.width,(st.height-24)/v.height);this.fitS=s;this.view={s,tx:(st.width-v.width*s)/2,ty:(st.height-v.height*s)/2};this.draw()}
+  draw(){
+    if(!this.page)return;const V=this.view;
+    // Re-render when the zoom has moved well away from the resolution on screen; CSS scales in between.
+    if(!this.rs||V.s>this.rs*1.25||V.s<this.rs/2){clearTimeout(this.rTimer);this.rTimer=setTimeout(()=>this.rasterize(),this.rs?180:0)}
+    const k=this.rs?V.s/this.rs:1;this.paper.style.transform=`translate(${V.tx}px,${V.ty}px) scale(${k})`;
+    this.zoomtag.textContent=Math.round(V.s/(this.fitS||V.s)*100)+"%";
+  }
+  async rasterize(){
+    const page=this.page;if(!page)return;const V=this.view,dpr=window.devicePixelRatio||1,v1=page.getViewport({scale:1});
+    // Cap the canvas: a 36×24 in sheet at full zoom would be hundreds of megapixels.
+    let rs=V.s;const maxSide=8192/dpr,maxPx=36e6/(dpr*dpr);rs=Math.min(rs,maxSide/Math.max(v1.width,v1.height),Math.sqrt(maxPx/(v1.width*v1.height)));
+    const vp=page.getViewport({scale:rs*dpr}),c=document.createElement("canvas");c.width=Math.floor(vp.width);c.height=Math.floor(vp.height);
+    c.style.width=(vp.width/dpr)+"px";c.style.height=(vp.height/dpr)+"px";
+    if(this.task){try{this.task.cancel()}catch(e){}}
+    const task=page.render({canvasContext:c.getContext("2d"),viewport:vp});this.task=task;
+    try{await task.promise}catch(e){return}
+    if(this.page!==page)return;
+    this.paper.innerHTML="";this.paper.appendChild(c);this.rs=rs;this.task=null;
+    this.drawBoxes();this.draw()}
+  zoomAt(f,cx,cy){if(!this.page)return;const V=this.view,st=this.stage.getBoundingClientRect();cx??=st.width/2;cy??=st.height/2;
+    const s=Math.max(.05,Math.min(V.s*f,40));this.view={s,tx:cx-(cx-V.tx)*s/V.s,ty:cy-(cy-V.ty)*s/V.s};this.draw()}
+  drawBoxes(){
+    if(!this.paper.querySelector("canvas"))return;
+    let ov=this.paper.querySelector(".ov");if(!ov){ov=document.createElement("div");ov.className="ov";this.paper.appendChild(ov)}
+    const hs=hitsOn(this.pageKey,S.selMark);
+    ov.innerHTML=hs.map((w,i)=>`<i data-box="${i}" class="${i===this.boxI?"cur":""}" title="${esc(w[0])}" style="left:${(w[1]*100-0.4).toFixed(3)}%;top:${(w[2]*100-0.5).toFixed(3)}%;width:${(w[3]*100+0.8).toFixed(3)}%;height:${(w[4]*100+1).toFixed(3)}%"></i>`).join("");
+  }
+  focusBox(i){
+    const hs=hitsOn(this.pageKey,S.selMark);if(!hs.length||!this.page)return;
+    this.boxI=((i||0)+hs.length)%hs.length;const w=hs[this.boxI];
+    const st=this.stage.getBoundingClientRect(),v=this.page.getViewport({scale:1});
+    const s=Math.min(Math.max(this.fitS*3,this.view.s),this.fitS*6);
+    const cx=(w[1]+w[3]/2)*v.width,cy=(w[2]+w[4]/2)*v.height;
+    this.view={s,tx:st.width/2-cx*s,ty:st.height/2-cy*s};this.draw();this.drawBoxes();if(this===act())renderUsed();
+  }
+  renderHead(){const g=S.sheets[this.cur];
+    this.hd.innerHTML=`<span>${g?esc(g.number):"—"}</span><span style="font-weight:400;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g&&g.title?esc(g.title):""}</span><span class="sp"></span>${this.idx?'<button data-close="1" title="Close this side" aria-label="Close this side">✕ Close</button>':""}`}
+  // "p512 · on 12 drawings · ‹ 3 of 12 ›" — step through every drawing the part is on.
+  renderFollow(){
+    const m=S.selMark,D=drawingsFor(m);
+    if(!m||!D.length){this.followEl.hidden=true;return}
+    const k=D.indexOf(this.cur);this.followEl.hidden=false;
+    this.followEl.innerHTML=`<b>${esc(markLabel(m))}</b><span class="k">on ${D.length} drawing${D.length===1?"":"s"}</span>`+
+      (D.length>1||k<0?`<button data-f="-1" title="Previous drawing with this part" aria-label="Previous drawing with this part">‹</button><span class="k">${k>-1?k+1:"–"} of ${D.length}</span><button data-f="1" title="Next drawing with this part" aria-label="Next drawing with this part">›</button>`:"")+
+      `<button data-f="x" title="Clear the part" aria-label="Clear the part">✕</button>`;
+  }
+  follow(d){const D=drawingsFor(S.selMark);if(!D.length)return;const k=D.indexOf(this.cur);
+    const n=k<0?(d>0?(D.find(x=>x>this.cur)??D[0]):([...D].reverse().find(x=>x<this.cur)??D[D.length-1])):D[(k+d+D.length)%D.length];
+    openFor(this,n)}
+  bind(){
+    const st=this.stage;
+    st.addEventListener("wheel",e=>{e.preventDefault();const r=st.getBoundingClientRect();this.zoomAt(e.deltaY>0?1/1.15:1.15,e.clientX-r.left,e.clientY-r.top)},{passive:false});
+    st.addEventListener("pointerdown",e=>{
+      setActive(this.idx);
+      const bx=e.target.closest(".ov i");
+      if(bx){this.boxI=+bx.dataset.box;this.drawBoxes();const g=S.sheets[this.cur],ri=g?g.rows.findIndex(r=>normMark(r.member_mark)===S.selMark):-1;
+        if(ri>-1){S.selG=this.cur;S.sel=ri;renderList()}renderUsed();return}
+      if(!this.page||e.target.closest(".topctl,.msg"))return;
+      this.drag={x:e.clientX,y:e.clientY,tx:this.view.tx,ty:this.view.ty};st.setPointerCapture(e.pointerId);st.classList.add("drag")});
+    st.addEventListener("pointermove",e=>{const d=this.drag;if(!d)return;this.view.tx=d.tx+e.clientX-d.x;this.view.ty=d.ty+e.clientY-d.y;this.draw()});
+    const end=()=>{this.drag=null;st.classList.remove("drag")};st.addEventListener("pointerup",end);st.addEventListener("pointercancel",end);
+    this.partsEl.addEventListener("click",e=>{const b=e.target.closest("[data-part]");if(b)this.open(this.cur,false,+b.dataset.part)});
+    this.followEl.addEventListener("click",e=>{const b=e.target.closest("[data-f]");if(!b)return;
+      if(b.dataset.f==="x"){clearPart();return}this.follow(+b.dataset.f)});
+    this.hd.addEventListener("click",e=>{if(e.target.closest("[data-close]"))setSplit(false);else setActive(this.idx)});
+    new ResizeObserver(()=>{if(this.page)this.draw()}).observe(st);
+  }
+}
 function getDoc(fileId){
   if(!S.docs[fileId])S.docs[fileId]=(async()=>{
     const r=await fetch(API+"/api/files/project/"+encodeURIComponent(P.project_id)+"/"+encodeURIComponent(fileId));
     if(!r.ok)throw new Error("file "+r.status);
     return pdfjsLib.getDocument({data:new Uint8Array(await r.arrayBuffer())}).promise})();
   return S.docs[fileId]}
-async function openSheet(gi,keepView,part){
-  if(gi<0||gi>=S.sheets.length)return;
-  S.part=part||0;
-  S.cur=gi;renderNav();renderList();
-  const g=S.sheets[gi];S.page=null;S.rs=0;$("paper").innerHTML="";
-  document.querySelector(`.grp[data-g="${gi}"]`)?.scrollIntoView({block:"nearest"});
-  if(!g.loc){$("paper").innerHTML="";S.page=null;S.pageKey="";renderUsed();$("zoomtag").hidden=true;$("parts").hidden=true;
-    msg(`<b>Drawing ${esc(g.number)} isn't matched to a page yet.</b><br><br>`+(S.files.length?`Press <b>Find drawing pages</b> at the top. It reads the drawing number off every page once and remembers it for this project.`:`This project has no drawings saved. Open the take-off once with its drawings so they're kept.`));return}
-  // A drawing split over several files ("1 OF 2", "2 OF 2"): a switcher above the sheet.
-  const ps=g.loc.more&&g.loc.more.length>1?g.loc.more:null,loc=ps?(ps[S.part]||ps[0]):g.loc;
-  S.pageKey=keyOf(loc);S.boxI=-1;renderUsed();
-  if(!S.marks[S.pageKey])startOcr(S.pageKey,true);
-  $("parts").hidden=!ps;
-  if(ps)$("parts").innerHTML=ps.map((p,i)=>`<button data-part="${i}" class="${i===S.part?"on":""}" title="${esc(p.name)}">Sheet ${i+1} of ${ps.length}</button>`).join("");
-  msg('<span class="spin"></span>Opening '+esc(g.number)+"…");
-  try{
-    const doc=await getDoc(loc.file_id);
-    const page=await doc.getPage(Math.min(loc.page,doc.numPages));
-    if(S.cur!==gi)return;
-    S.page=page;S.rs=0;msg("");$("zoomtag").hidden=false;
-    if(!keepView)fit();else draw();
-    if(S.selMark&&hitsOn(S.pageKey,S.selMark).length)focusBox(0);
-  }catch(e){console.error(e);msg(`<b>Couldn't open drawing ${esc(g.number)}.</b><br>${esc(e.message||e)}`)}
+// Open drawing gi in a pane, on the file where the selected part is printed.
+function openFor(pane,gi){
+  const g=S.sheets[gi];if(!g)return;let part=pane.cur===gi?pane.part:0;
+  if(S.selMark&&!hitsOn(keyOf(partsOf(g)[part]),S.selMark).length){const k=partsOf(g).findIndex(p=>hitsOn(keyOf(p),S.selMark).length);if(k>-1)part=k}
+  if(pane.cur===gi&&pane.part===part&&pane.page){pane.boxI=-1;pane.drawBoxes();if(hitsOn(pane.pageKey,S.selMark).length)pane.focusBox(0);pane.renderFollow();if(pane===act()){renderList();renderUsed()}return}
+  return pane.open(gi,false,part)}
+function setActive(i){if(S.active===i||!S.panes[i]||S.panes[i].el.hidden)return;S.active=i;
+  S.panes.forEach((p,j)=>p.el.classList.toggle("on",j===i));renderNav();renderList();renderUsed()}
+function setSplit(on){
+  S.split=on;const B=S.panes[1];$("stages").classList.toggle("split",on);B.el.hidden=!on;$("splitBtn").classList.toggle("on",on);
+  if(on){const A=S.panes[0];let gi=A.cur;
+    // The second side opens on the next drawing the selected part is on, else the same drawing.
+    if(S.selMark){const D=drawingsFor(S.selMark),k=D.indexOf(A.cur);if(D.length>1)gi=D[(k+1)%D.length]}
+    setActive(1);openFor(B,gi<0?0:gi)}
+  else{setActive(0)}
+  requestAnimationFrame(()=>S.panes.forEach(p=>{if(p.page&&!p.el.hidden){p.fit();if(S.selMark&&hitsOn(p.pageKey,S.selMark).length)p.focusBox(Math.max(0,p.boxI))}}));
 }
-function fit(){if(!S.page)return;const st=$("stage").getBoundingClientRect(),v=S.page.getViewport({scale:1});
-  const s=Math.min((st.width-24)/v.width,(st.height-24)/v.height);S.fitS=s;S.view={s,tx:(st.width-v.width*s)/2,ty:(st.height-v.height*s)/2};draw()}
-let rTimer=null;
-function draw(){
-  if(!S.page)return;const V=S.view,paper=$("paper");
-  // Re-render when the zoom has moved well away from the resolution on screen; CSS scales in between.
-  if(!S.rs||V.s>S.rs*1.25||V.s<S.rs/2){clearTimeout(rTimer);rTimer=setTimeout(rasterize,S.rs?180:0)}
-  const k=S.rs?V.s/S.rs:1;paper.style.transform=`translate(${V.tx}px,${V.ty}px) scale(${k})`;
-  $("zoomtag").textContent=Math.round(V.s/(S.fitS||V.s)*100)+"%";
-}
-async function rasterize(){
-  const page=S.page;if(!page)return;const V=S.view,dpr=window.devicePixelRatio||1,v1=page.getViewport({scale:1});
-  // Cap the canvas: a 36×24 in sheet at full zoom would be hundreds of megapixels.
-  let rs=V.s;const maxSide=8192/dpr,maxPx=36e6/(dpr*dpr);rs=Math.min(rs,maxSide/Math.max(v1.width,v1.height),Math.sqrt(maxPx/(v1.width*v1.height)));
-  const vp=page.getViewport({scale:rs*dpr}),c=document.createElement("canvas");c.width=Math.floor(vp.width);c.height=Math.floor(vp.height);
-  c.style.width=(vp.width/dpr)+"px";c.style.height=(vp.height/dpr)+"px";
-  if(S.render){try{S.render.cancel()}catch(e){}}
-  const task=page.render({canvasContext:c.getContext("2d"),viewport:vp});S.render=task;
-  try{await task.promise}catch(e){return}
-  if(S.page!==page)return;
-  const paper=$("paper");paper.innerHTML="";paper.appendChild(c);S.rs=rs;S.render=null;
-  drawBoxes();draw()}
-function zoomAt(f,cx,cy){if(!S.page)return;const V=S.view,st=$("stage").getBoundingClientRect();cx??=st.width/2;cy??=st.height/2;
-  const s=Math.max(.05,Math.min(V.s*f,40));S.view={s,tx:cx-(cx-V.tx)*s/V.s,ty:cy-(cy-V.ty)*s/V.s};draw()}
+const visiblePanes=()=>S.panes.filter(p=>!p.el.hidden);
+function refreshMarks(){visiblePanes().forEach(p=>{p.drawBoxes();p.renderFollow()});renderUsed()}
+function clearPart(){S.selMark=null;S.sel=-1;S.selG=-1;visiblePanes().forEach(p=>{p.boxI=-1;p.drawBoxes();p.renderFollow()});renderList();renderUsed()}
 
-/* ---- part marks on the sheet (step 2) ----
-   Every drawing is read once on the server by OCR (/api/takeoff/marks), in the background, the
-   sheet on screen first. Clicking a line boxes every place its mark is printed on the sheet, and
-   the panel below the list shows the part across the whole job: total quantity, every drawing it
-   is on, and how often it was found printed on each. A count of places is not a quantity — a
-   mark appears in several views and in the parts list — so it is shown beside the take-off's
-   own quantity, never in place of it. */
-const normMark=t=>String(t||"").toLowerCase().replace(/\|/g,"l").replace(/[^a-z0-9]/g,"");
-const keyOf=loc=>loc?loc.file_id+":"+(loc.page||1):"";
-const partsOf=g=>g&&g.loc?(g.loc.more&&g.loc.more.length?g.loc.more:[g.loc]):[];
-function hitsOn(k,m){const e=S.marks[k];if(!e||!e.words||!m)return[];
-  const exact=e.words.filter(w=>normMark(w[0])===m);if(exact.length)return exact;
-  // The take-off sometimes adds a letter to tell two lengths of one mark apart ("p285b"); the
-  // drawing prints the mark itself ("p285"). Fall back to it, and say so in the panel.
-  const base=baseMark(m);return base?e.words.filter(w=>normMark(w[0])===base):[]}
-const baseMark=m=>{const x=String(m||"").match(/^([a-z]+\d+)[a-z]$/);return x?x[1]:""};
-function printedAs(k,m){const e=S.marks[k];if(!e||!e.words||!m)return"";if(e.words.some(w=>normMark(w[0])===m))return"";const b=baseMark(m);return b&&e.words.some(w=>normMark(w[0])===b)?b:""}
-function sheetHits(g,m){let n=0,read=0;const ps=partsOf(g);ps.forEach(p=>{const e=S.marks[keyOf(p)];if(e&&e.words){read++;n+=hitsOn(keyOf(p),m).length}});return{n,read,parts:ps.length}}
-function drawBoxes(){
-  const paper=$("paper");if(!paper.querySelector("canvas"))return;
-  let ov=$("ov");if(!ov){ov=document.createElement("div");ov.id="ov";paper.appendChild(ov)}
-  const hs=hitsOn(S.pageKey,S.selMark);
-  ov.innerHTML=hs.map((w,i)=>`<i data-box="${i}" class="${i===S.boxI?"cur":""}" title="${esc(w[0])}" style="left:${(w[1]*100-0.4).toFixed(3)}%;top:${(w[2]*100-0.5).toFixed(3)}%;width:${(w[3]*100+0.8).toFixed(3)}%;height:${(w[4]*100+1).toFixed(3)}%"></i>`).join("");
-}
-function focusBox(i){
-  const hs=hitsOn(S.pageKey,S.selMark);if(!hs.length||!S.page)return;
-  S.boxI=((i||0)+hs.length)%hs.length;const w=hs[S.boxI];
-  const st=$("stage").getBoundingClientRect(),v=S.page.getViewport({scale:1});
-  const s=Math.min(Math.max(S.fitS*3,S.view.s),S.fitS*6);
-  const cx=(w[1]+w[3]/2)*v.width,cy=(w[2]+w[4]/2)*v.height;
-  S.view={s,tx:st.width/2-cx*s,ty:st.height/2-cy*s};draw();drawBoxes();renderUsed();
-}
+/* ---- where used: the selected part across the whole job ---- */
 function renderUsed(){
-  const box=$("used");const m=S.selMark;
-  if(!m){box.hidden=true;return}
+  const box=$("used");const m=S.selMark,A=act();
+  if(!m||!A){box.hidden=true;return}
   const per=[];let qty=0,lb=0;const sizes={};
   S.sheets.forEach((g,gi)=>{const rs=g.rows.filter(r=>normMark(r.member_mark)===m);if(!rs.length)return;
     let q=0,w=0;rs.forEach(r=>{q+=orderQtyOf(r);w+=rowWeight(r)||0;sizes[(r.size||"")+" "+(r.form_type||"")]=1});
     qty+=q;lb+=w;per.push({gi,g,q,w,row:g.rows.indexOf(rs[0]),h:sheetHits(g,m)})});
-  const sz=Object.keys(sizes),here=S.sheets[S.cur],hereHits=hitsOn(S.pageKey,m).length;
+  const miss=[];S.sheets.forEach((g,gi)=>{if(per.some(p=>p.gi===gi))return;const n=printedOnly(g,m);if(n)miss.push({gi,g,n})});
+  const all=per.concat(miss.map(x=>({gi:x.gi,g:x.g,miss:x.n}))).sort((a,b)=>a.gi-b.gi);
+  const sz=Object.keys(sizes),hk=A.pageKey,hereHits=hitsOn(hk,m).length,pa=printedAs(hk,m);
   const cell=h=>!h.parts?"–":h.read<h.parts?'<span title="Still being read">reading…</span>':String(h.n);
+  const pending=S.sheets.some(g=>partsOf(g).some(p=>!S.marks[keyOf(p)]));
   box.hidden=false;
-  box.innerHTML=`<h4>${esc(per[0]?S.sheets[per[0].gi].rows[per[0].row].member_mark:m)}</h4>
+  box.innerHTML=`<h4>${esc(markLabel(m))}</h4>
    <div class="sub">${esc(sz.join(" · "))}${sz.length>1?' <span class="warn">· '+sz.length+" different sizes use this mark</span>":""}</div>
    <div class="tot"><span>Total in take-off <b>${qty.toLocaleString()}</b> pcs</span><span><b>${lb?fmtLb(lb):"–"}</b> lb</span><span>on <b>${per.length}</b> drawing${per.length===1?"":"s"}</span></div>
-   ${here&&S.pageKey?`<div class="sub">${S.marks[S.pageKey]&&S.marks[S.pageKey].words?(hereHits?`Boxed on this sheet: <b>${hereHits}</b> place${hereHits===1?"":"s"}${printedAs(S.pageKey,m)?" (printed as <b>"+esc(printedAs(S.pageKey,m))+"</b>)":""}${hereHits>1?' · <a href="#" data-step="1">next ›</a>':""}`:"Not found printed on this sheet by the drawing reader."):S.marks[S.pageKey]&&S.marks[S.pageKey].err?"This sheet couldn't be read for part marks.":'<span class="spin"></span>This sheet is still being read for part marks.'}</div>`:""}
+   ${miss.length?`<div class="sub warn">Also printed on ${miss.length} drawing${miss.length===1?"":"s"} with no take-off line for it. Check ${miss.length===1?"it":"them"} for a missed quantity.</div>`:""}
+   ${hk?`<div class="sub">${S.marks[hk]&&S.marks[hk].words?(hereHits?`Boxed on this sheet: <b>${hereHits}</b> place${hereHits===1?"":"s"}${pa?" (printed as <b>"+esc(pa)+"</b>)":""}${hereHits>1?' · <a href="#" data-step="1">next ›</a>':""}`:"Not found printed on this sheet by the drawing reader."):S.marks[hk]&&S.marks[hk].err?"This sheet couldn't be read for part marks.":'<span class="spin"></span>This sheet is still being read for part marks.'}</div>`:""}
    <table><thead><tr><th>Drawing</th><th class="n">Qty</th><th class="n">lb</th><th class="n" title="How often the mark is printed on the drawing: views, callouts and the parts list. Not a quantity.">Printed</th></tr></thead><tbody>
-   ${per.map(p=>`<tr class="go ${p.gi===S.cur?"here":""}" data-g="${p.gi}" data-r="${p.row}"><td>${esc(p.g.number)}</td><td class="n">${p.q.toLocaleString()}</td><td class="n">${p.w?fmtLb(p.w):"–"}</td><td class="n">${cell(p.h)}</td></tr>`).join("")}
+   ${all.map(p=>p.miss?`<tr class="go miss ${p.gi===A.cur?"here":""}" data-g="${p.gi}" data-r="-1" title="Printed on this drawing, but the take-off has no line for it here"><td>${esc(p.g.number)} ⚠</td><td class="n">not in take-off</td><td class="n">–</td><td class="n">${p.miss}</td></tr>`
+      :`<tr class="go ${p.gi===A.cur?"here":""}" data-g="${p.gi}" data-r="${p.row}"><td>${esc(p.g.number)}</td><td class="n">${p.q.toLocaleString()}</td><td class="n">${p.w?fmtLb(p.w):"–"}</td><td class="n">${cell(p.h)}</td></tr>`).join("")}
    </tbody></table>
-   <div class="note">Qty is the take-off's own count (pieces × assemblies built). Printed is how often the drawing reader found the mark on the sheet (views, callouts, the parts list), shown as a check, not a count.</div>`;
+   <div class="note">Qty is the take-off's own count (pieces × assemblies built). Printed is how often the drawing reader found the mark on the sheet (views, callouts, the parts list), shown as a check, not a count.${pending?" Some drawings are still being read, so more may appear.":""}</div>`;
 }
 function ocrTargets(){const ks={},out=[];S.sheets.forEach(g=>partsOf(g).forEach(p=>{const k=keyOf(p);if(!ks[k]){ks[k]=1;out.push({file_id:p.file_id,page:p.page||1,key:k})}}));return out}
 function renderOcr(){
@@ -353,7 +446,7 @@ async function pollMarks(){
   clearTimeout(ocrTimer);
   try{const d=await getJSON("/api/takeoff/marks/"+encodeURIComponent(P.project_id)+(S.mnow?"?since="+encodeURIComponent(S.mnow):""));
     if(d&&d.ok){Object.assign(S.marks,d.pages||{});S.mnow=d.now||S.mnow;
-      if(d.pages&&d.pages[S.pageKey]){drawBoxes();if(S.selMark&&S.boxI<0)focusBox(0)}
+      visiblePanes().forEach(p=>{if(d.pages&&d.pages[p.pageKey]){p.drawBoxes();if(S.selMark&&p.boxI<0&&hitsOn(p.pageKey,S.selMark).length)p.focusBox(0)}p.renderFollow()});
       renderOcr();renderUsed();
       if(ocrTargets().some(x=>!S.marks[x.key]))ocrTimer=setTimeout(pollMarks,d.status&&(d.status.running||d.status.queued)?4000:15000)}}
   catch(e){ocrTimer=setTimeout(pollMarks,15000)}
@@ -366,51 +459,45 @@ async function startOcr(firstKey,onlyFirst){
       body:JSON.stringify({targets:onlyFirst?t.filter(x=>x.key===firstKey):t,first:firstKey||""})});}catch(e){}
   pollMarks();
 }
+// A line in the list: select its part, open its drawing in the active pane, box it in both panes.
 function selectRow(gi,ri){
-  const g=S.sheets[gi],r=g&&g.rows[ri];S.sel=ri;S.selMark=r?normMark(r.member_mark):null;S.boxI=-1;
-  // On a drawing split over several files, open the part where the mark is printed.
-  let part=gi===S.cur?S.part:0;
-  if(S.selMark&&!hitsOn(keyOf(partsOf(g)[part]),S.selMark).length){const k=partsOf(g).findIndex(p=>hitsOn(keyOf(p),S.selMark).length);if(k>-1)part=k}
-  if(gi!==S.cur||part!==S.part){
-    openSheet(gi,false,part);
-  } else {renderList();drawBoxes();if(hitsOn(S.pageKey,S.selMark).length)focusBox(0);renderUsed()}
+  const g=S.sheets[gi],r=g&&g.rows[ri];S.selG=gi;S.sel=ri;S.selMark=r?normMark(r.member_mark):null;
+  visiblePanes().forEach(p=>{if(p!==act()){p.boxI=-1;p.drawBoxes();if(hitsOn(p.pageKey,S.selMark).length)p.focusBox(0);p.renderFollow()}});
+  openFor(act(),gi);renderList();renderUsed();
   document.querySelector(`.row[data-g="${gi}"][data-r="${ri}"]`)?.scrollIntoView({block:"nearest"});
 }
 
 /* ---- events ---- */
-$("prev").onclick=()=>openSheet((S.cur-1+S.sheets.length)%S.sheets.length);
-$("next").onclick=()=>openSheet((S.cur+1)%S.sheets.length);
-$("sheet").onchange=e=>{S.sel=-1;S.selMark=null;openSheet(+e.target.value)};
-$("zin").onclick=()=>zoomAt(1.4);$("zout").onclick=()=>zoomAt(1/1.4);$("fit").onclick=()=>fit();
-$("parts").addEventListener("click",e=>{const b=e.target.closest("[data-part]");if(b)openSheet(S.cur,false,+b.dataset.part)});
-$("used").addEventListener("click",e=>{const st=e.target.closest("[data-step]");if(st){e.preventDefault();focusBox(S.boxI+1);return}
-  const tr=e.target.closest("tr.go");if(tr)selectRow(+tr.dataset.g,+tr.dataset.r)});
+$("prev").onclick=()=>act().open((act().cur-1+S.sheets.length)%S.sheets.length);
+$("next").onclick=()=>act().open((act().cur+1)%S.sheets.length);
+$("sheet").onchange=e=>act().open(+e.target.value);
+$("zin").onclick=()=>act().zoomAt(1.4);$("zout").onclick=()=>act().zoomAt(1/1.4);$("fit").onclick=()=>act().fit();
+$("splitBtn").onclick=()=>setSplit(!S.split);
+$("used").addEventListener("click",e=>{const st=e.target.closest("[data-step]");if(st){e.preventDefault();act().focusBox(act().boxI+1);return}
+  const tr=e.target.closest("tr.go");if(!tr)return;const gi=+tr.dataset.g,ri=+tr.dataset.r;
+  if(ri>-1)selectRow(gi,ri);else openFor(act(),gi)});
 $("find").onclick=()=>$("q").focus();
 $("q").oninput=e=>{S.q=e.target.value.trim().toLowerCase();renderList()};
-const pick=el=>{const g=+el.dataset.g;if(el.dataset.r!=null)return selectRow(g,+el.dataset.r);S.sel=-1;S.selMark=null;renderUsed();if(g!==S.cur)openSheet(g);else renderList()};
+const pick=el=>{const g=+el.dataset.g;if(el.dataset.r!=null)return selectRow(g,+el.dataset.r);if(g!==act().cur)act().open(g);else renderList()};
 $("list").addEventListener("click",e=>{const el=e.target.closest("[data-g]");if(el)pick(el)});
 $("list").addEventListener("keydown",e=>{if(e.key==="Enter"){const el=e.target.closest("[data-g]");if(el)pick(el)}});
 $("mapnote").addEventListener("click",async e=>{if(e.target.id!=="build")return;const b=e.target;b.disabled=true;b.innerHTML='<span class="spin"></span>Reading drawing numbers…';
   try{const d=await getJSON("/api/takeoff/sheet-map/"+encodeURIComponent(P.project_id)+"/build",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({manufacturer_id:P.manufacturer_id})});
-    if(!d.ok)throw new Error(d.error||"failed");S.map=d.map;S.stale=false;const cur=S.sheets[S.cur]&&S.sheets[S.cur].number;buildSheets();
-    const gi=Math.max(0,S.sheets.findIndex(g=>g.number===cur));renderCheck();openSheet(gi)}
-  catch(err){b.disabled=false;b.textContent="Try again";b.title=String(err.message||err);msg("<b>Couldn't read the drawing numbers.</b><br>"+esc(err.message||err))}});
-const stage=$("stage");let drag=null;
-stage.addEventListener("wheel",e=>{e.preventDefault();const r=stage.getBoundingClientRect();zoomAt(e.deltaY>0?1/1.15:1.15,e.clientX-r.left,e.clientY-r.top)},{passive:false});
-stage.addEventListener("pointerdown",e=>{const bx=e.target.closest("#ov i");if(bx){const g=S.sheets[S.cur],ri=g?g.rows.findIndex(r=>normMark(r.member_mark)===S.selMark):-1;S.boxI=+bx.dataset.box;drawBoxes();renderUsed();if(ri>-1){S.sel=ri;renderList()}return}
-  if(!S.page||e.target.closest("#parts,.msg"))return;drag={x:e.clientX,y:e.clientY,tx:S.view.tx,ty:S.view.ty};stage.setPointerCapture(e.pointerId);stage.classList.add("drag")});
-stage.addEventListener("pointermove",e=>{if(!drag)return;S.view.tx=drag.tx+e.clientX-drag.x;S.view.ty=drag.ty+e.clientY-drag.y;draw()});
-const end=()=>{drag=null;stage.classList.remove("drag")};stage.addEventListener("pointerup",end);stage.addEventListener("pointercancel",end);
-addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT")return;
+    if(!d.ok)throw new Error(d.error||"failed");S.map=d.map;S.stale=false;const cur=S.sheets[act().cur]&&S.sheets[act().cur].number;buildSheets();
+    const gi=Math.max(0,S.sheets.findIndex(g=>g.number===cur));renderCheck();act().open(gi);startOcr(act().pageKey,false)}
+  catch(err){b.disabled=false;b.textContent="Try again";b.title=String(err.message||err);act().msg("<b>Couldn't read the drawing numbers.</b><br>"+esc(err.message||err))}});
+addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT")return;const A=act();
   if(e.key==="PageDown"||e.key==="]")$("next").click();else if(e.key==="PageUp"||e.key==="[")$("prev").click();
-  else if(e.key==="+"||e.key==="=")zoomAt(1.25);else if(e.key==="-")zoomAt(.8);else if(e.key==="0")fit();});
-new ResizeObserver(()=>{if(S.page&&S.cur>-1&&S.view)draw()}).observe(stage);
+  else if(e.key==="+"||e.key==="=")A.zoomAt(1.25);else if(e.key==="-")A.zoomAt(.8);else if(e.key==="0")A.fit();
+  else if(e.key==="Escape"&&S.selMark)clearPart();});
 $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)history.back();else location.href="/takeoff/review.html?project_id="+encodeURIComponent(P.project_id)+"&manufacturer_id="+encodeURIComponent(P.manufacturer_id)};
 
 /* ---- start ---- */
 (async function init(){
-  if(!P.project_id){msg("<b>No project was given.</b><br>Open this page from a take-off's review page.");$("job").firstChild.textContent="AI Take-off";return}
-  if(!window.pdfjsLib){msg("<b>The drawing viewer didn't load.</b><br>Check the internet connection and reload the page.");return}
+  S.panes=[new Pane(0),new Pane(1)];const A=S.panes[0];
+  A.msg('<span class="spin"></span>Loading the drawings…');
+  if(!P.project_id){A.msg("<b>No project was given.</b><br>Open this page from a take-off's review page.");$("job").firstChild.textContent="AI Take-off";return}
+  if(!window.pdfjsLib){A.msg("<b>The drawing viewer didn't load.</b><br>Check the internet connection and reload the page.");return}
   const [R,map,scope,cat]=await Promise.all([
     loadTakeoff().catch(()=>null),
     getJSON("/api/takeoff/sheet-map/"+encodeURIComponent(P.project_id)).catch(()=>null),
@@ -421,11 +508,11 @@ $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)
   const name=S.head?[S.head.number,S.head.name].filter(Boolean).join(" · "):((R&&R.project&&R.project.name)||"AI Take-off");
   $("job").innerHTML=esc(name)+"<small>AI Take-off · Drawings</small>";document.title=name+" · Drawings";
   if(map&&map.ok){S.files=arr(map.files);S.map=map.map||null;S.stale=!!map.stale}
-  if(!R){msg("<b>This project has no saved take-off yet.</b><br>Run the take-off first, then open its drawings.");return}
+  if(!R){A.msg("<b>This project has no saved take-off yet.</b><br>Run the take-off first, then open its drawings.");return}
   S.R=R;buildSheets();renderCheck();renderList();renderNav();
-  if(!S.sheets.length){msg("<b>The take-off has no lines to show.</b>");return}
-  await openSheet(Math.max(0,S.sheets.findIndex(g=>g.loc)));
-  pollMarks().then(()=>startOcr(S.pageKey,false));
+  if(!S.sheets.length){A.msg("<b>The take-off has no lines to show.</b>");return}
+  await A.open(Math.max(0,S.sheets.findIndex(g=>g.loc)));
+  pollMarks().then(()=>startOcr(A.pageKey,false));
 })();
 }
 </script>
