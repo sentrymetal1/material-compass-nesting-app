@@ -84,6 +84,10 @@ button:disabled{opacity:.5;cursor:default}
 .row .s{font-size:13.5px}
 .row .w{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap;font-size:13.5px}
 .row .meta{grid-column:2/4;font-size:12.5px;color:var(--mute)}
+.row.flag{border-left-color:var(--red)}.row .fl{grid-column:2/4;font-size:12.5px;color:var(--red);font-weight:600}
+.srow{display:flex;gap:8px;align-items:center;margin-top:10px}.srow .search{margin-top:0;flex:1}
+.flagbtn{white-space:nowrap;color:var(--red);border-color:#f1b5b5;background:var(--redbg);font-weight:600;font-size:13px;min-height:38px}
+.flagbtn.on{color:var(--ink);background:var(--card);border-color:var(--line)}.flagbtn[hidden]{display:none}
 .foot{font-size:12px;color:var(--mute);padding:8px 14px;border-top:1px solid var(--line)}
 /* Boxes on the sheet: where a part mark was read off the drawing. */
 .ov{position:absolute;inset:0;pointer-events:none}
@@ -132,7 +136,7 @@ button:disabled{opacity:.5;cursor:default}
     </div>
     <div class="stages" id="stages"></div>
     <aside class="panel">
-      <div class="ph"><div id="wcheck"></div><input class="search" id="q" placeholder="Find a mark or size, e.g. p512" aria-label="Find a mark or size"></div>
+      <div class="ph"><div id="wcheck"></div><div class="srow"><input class="search" id="q" placeholder="Find a mark or size, e.g. p512" aria-label="Find a mark or size"><button id="flagBtn" class="flagbtn" hidden></button></div></div>
       <div class="list" id="list"></div>
       <div class="used" id="used" hidden></div>
       <div class="foot">Read-only view. Make changes on the review page.</div>
@@ -143,7 +147,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v0.4 · 2026-11-22 · side by side; follow a part across drawings";
+const VERSION="drawings v0.5 · 2026-11-22 · linked to the review page; weight-check flags on the lines";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -229,16 +233,34 @@ function renderCheck(){
   const p=(lb-ref)/ref*100,ok=Math.abs(p)<=3;
   $("wcheck").innerHTML=`<div class="wc ${ok?"ok":"bad"}"><div><small>Take-off</small><b>${fmtLb(lb)} lb</b></div><div><small>${ew?"Expected (entered)":"Project BOM"}</small><b>${fmtLb(ref)} lb</b></div><div><small>Difference</small><b class="d">${p>=0?"+":""}${p.toFixed(1)}%</b></div><p>${ok?"Within 3% of the expected weight.":"More than 3% off. Find the lines that make up the difference before pricing."}${un?` ${un} line${un>1?"s":""} can't be weighed yet.`:""}</p></div>`;
 }
-function rowMatch(r){if(!S.q)return true;const t=(r.member_mark+" "+r.size+" "+r.form_type+" "+r.source_sheet+" "+(r.note||"")).toLowerCase();return t.indexOf(S.q)>-1}
+/* Flags — the SAME checks the review page's weight card makes (noteMmMismatch, wcIsDouble), so a
+   line flagged there is flagged here, and a fix or a "keep" there (mm_ok, dbl_ok) clears it here. */
+function noteMmMismatch(r){
+  const note=String(r&&r.note||""),L=Number(r&&r.length_ft)||0;if(!(L>0)||r.mm_ok)return null;
+  if(/plate|sheet/i.test(String(r.form_type||"")))return null;
+  const mm=[];note.replace(/(\d{2,5}(?:\.\d+)?)\s*mm\b/gi,(_,n)=>{if(Number(n)>=150)mm.push(Number(n));return _});
+  if(!mm.length)return null;const inL=L*12;
+  if(mm.some(n=>Math.abs(n/25.4-inL)<=Math.max(0.25,inL*0.02)))return null;
+  return{mm:mm[0],note_in:mm[0]/25.4,row_in:inL}}
+const isDouble=r=>r&&!r.deleted&&Number(r.quantity)>0&&!r.dbl_ok&&Math.round(Number(r.units)||1)>1&&/\(\s*\d+\s*assy|\d+\s*assy\b|assemblies\)|x\s*\d+\s*assy/i.test(String(r.note||""));
+function flagsOf(r){const f=[],m=noteMmMismatch(r);
+  if(m)f.push(`Length ${Math.round(m.row_in*10)/10}" but its note says ${m.mm} mm = ${Math.round(m.note_in*10)/10}"`);
+  if(isDouble(r))f.push("May be counted twice: the Qty already covers the assemblies");
+  return f}
+function rowMatch(r){if(S.onlyFlags&&!flagsOf(r).length)return false;if(!S.q)return true;const t=(r.member_mark+" "+r.size+" "+r.form_type+" "+r.source_sheet+" "+(r.note||"")).toLowerCase();return t.indexOf(S.q)>-1}
 function renderList(){
   let h="";const cur=act()?act().cur:-1;
   S.sheets.forEach((g,gi)=>{
-    const rows=g.rows.filter(rowMatch);if(S.q&&!rows.length&&key(g.number).indexOf(key(S.q))<0)return;
-    h+=`<div class="grp ${gi===cur?"on":""}" data-g="${gi}"><span>${esc(g.number)}</span><span class="t">${esc(g.title)}</span>${g.loc?"":'<span class="nf">page not found</span>'}<span class="w">${g.lb?fmtLb(g.lb)+" lb":""}</span></div>`;
-    rows.forEach(r=>{const i=g.rows.indexOf(r),w=rowWeight(r);
-      h+=`<div class="row ${gi===S.selG&&i===S.sel?"sel":""}" data-g="${gi}" data-r="${i}" tabindex="0" role="button"><span class="m">${esc(r.member_mark||"–")}</span><span class="s">${esc(r.size||"")} <span style="color:var(--mute)">${esc(r.form_type||"")}</span></span><span class="w">${w?fmtLb(w)+" lb":"–"}</span><span class="meta">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}${r.component?" · "+esc(r.component):""}</span></div>`});
+    const rows=g.rows.filter(rowMatch);if((S.q||S.onlyFlags)&&!rows.length&&(S.onlyFlags||key(g.number).indexOf(key(S.q))<0))return;
+    const nf=g.rows.filter(r=>flagsOf(r).length).length;
+    h+=`<div class="grp ${gi===cur?"on":""}" data-g="${gi}"><span>${esc(g.number)}</span><span class="t">${esc(g.title)}</span>${nf?`<span class="nf" title="Lines flagged by the weight check">⚠ ${nf}</span>`:""}${g.loc?"":'<span class="nf">page not found</span>'}<span class="w">${g.lb?fmtLb(g.lb)+" lb":""}</span></div>`;
+    rows.forEach(r=>{const i=g.rows.indexOf(r),w=rowWeight(r),fl=flagsOf(r);
+      h+=`<div class="row ${gi===S.selG&&i===S.sel?"sel":""} ${fl.length?"flag":""}" data-g="${gi}" data-r="${i}" tabindex="0" role="button"><span class="m">${esc(r.member_mark||"–")}</span><span class="s">${esc(r.size||"")} <span style="color:var(--mute)">${esc(r.form_type||"")}</span></span><span class="w">${w?fmtLb(w)+" lb":"–"}</span><span class="meta">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}${r.component?" · "+esc(r.component):""}</span>${fl.map(t=>`<span class="fl">⚠ ${esc(t)}</span>`).join("")}</div>`});
   });
-  $("list").innerHTML=h||'<div style="padding:16px;color:var(--mute)">No lines match.</div>';
+  $("list").innerHTML=h||`<div style="padding:16px;color:var(--mute)">${S.onlyFlags?"No flagged lines. The weight check has nothing open.":"No lines match."}</div>`;
+  const nAll=S.sheets.reduce((a,g)=>a+g.rows.filter(r=>flagsOf(r).length).length,0);
+  $("flagBtn").hidden=!nAll&&!S.onlyFlags;$("flagBtn").classList.toggle("on",!!S.onlyFlags);
+  $("flagBtn").textContent=S.onlyFlags?"Show all lines":`⚠ ${nAll} flagged line${nAll===1?"":"s"}`;
 }
 function renderNav(){
   const cur=act()?act().cur:-1;
@@ -467,7 +489,35 @@ function selectRow(gi,ri){
   document.querySelector(`.row[data-g="${gi}"][data-r="${ri}"]`)?.scrollIntoView({block:"nearest"});
 }
 
+/* ---- the review page talks to this window ----
+   "show": a ⌖ button or a weight-check flag there — open that drawing, select that part.
+   "changed": the take-off was edited and saved there — re-read the working copy, keep the view. */
+function showFromReview(m){
+  const want=key(m&&m.sheet),mk=normMark(m&&m.mark);
+  let gi=want?S.sheets.findIndex(g=>key(g.number)===want):-1;
+  if(gi<0&&mk)gi=S.sheets.findIndex(g=>g.rows.some(r=>normMark(r.member_mark)===mk));
+  if(gi<0)return false;
+  if(S.onlyFlags||S.q){S.onlyFlags=false;S.q="";$("q").value=""}
+  if(mk){const ri=S.sheets[gi].rows.findIndex(r=>normMark(r.member_mark)===mk);if(ri>-1){selectRow(gi,ri);return true}}
+  clearPart();act().open(gi);return true}
+let reloadTimer=null;
+function reloadTakeoff(){
+  let R=null;try{const s=localStorage.getItem("mc_takeoff_"+P.project_id);if(s)R=JSON.parse(s)}catch(e){}
+  if(!R||!arr(R.rows).length)return;
+  const nums=S.panes.map(p=>S.sheets[p.cur]&&S.sheets[p.cur].number),selNum=S.sheets[S.selG]&&S.sheets[S.selG].number;
+  S.R=R;buildSheets();
+  S.panes.forEach((p,i)=>{const gi=S.sheets.findIndex(g=>g.number===nums[i]);if(gi>-1){p.cur=gi;p.renderHead()}});
+  S.selG=selNum?S.sheets.findIndex(g=>g.number===selNum):-1;
+  S.sel=S.selG>-1&&S.selMark?S.sheets[S.selG].rows.findIndex(r=>normMark(r.member_mark)===S.selMark):-1;
+  renderCheck();renderList();renderNav();renderUsed();visiblePanes().forEach(p=>p.renderFollow());
+}
+try{if("BroadcastChannel" in window&&P.project_id){const ch=new BroadcastChannel("mc-drawings-"+P.project_id);
+  ch.onmessage=e=>{const m=e.data||{};if(!S.R)return;
+    if(m.type==="show")showFromReview(m);
+    else if(m.type==="changed"){clearTimeout(reloadTimer);reloadTimer=setTimeout(reloadTakeoff,300)}}}}catch(e){}
+
 /* ---- events ---- */
+$("flagBtn").onclick=()=>{S.onlyFlags=!S.onlyFlags;renderList()};
 $("prev").onclick=()=>act().open((act().cur-1+S.sheets.length)%S.sheets.length);
 $("next").onclick=()=>act().open((act().cur+1)%S.sheets.length);
 $("sheet").onchange=e=>act().open(+e.target.value);
@@ -511,7 +561,9 @@ $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)
   if(!R){A.msg("<b>This project has no saved take-off yet.</b><br>Run the take-off first, then open its drawings.");return}
   S.R=R;buildSheets();renderCheck();renderList();renderNav();
   if(!S.sheets.length){A.msg("<b>The take-off has no lines to show.</b>");return}
-  await A.open(Math.max(0,S.sheets.findIndex(g=>g.loc)));
+  // Opened from a ⌖ on the review page: straight to that drawing and part. Else the first drawing.
+  const ask={sheet:q.get("sheet")||"",mark:q.get("mark")||""};
+  if(!((ask.sheet||ask.mark)&&showFromReview(ask)))await A.open(Math.max(0,S.sheets.findIndex(g=>g.loc)));
   pollMarks().then(()=>startOcr(A.pageKey,false));
 })();
 }

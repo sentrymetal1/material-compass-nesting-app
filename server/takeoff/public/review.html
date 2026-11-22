@@ -109,6 +109,8 @@
   .grp-units{background:#dbe8f7;color:#2c5c96;border-radius:9px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:4px;}
   tr.grp-draw td{background:#f7f9fb;color:#46566b;font-weight:600;font-size:12px;padding:5px 12px 5px 24px;border-bottom:1px solid #eef1f4;}
   .grp-meta{font-weight:500;color:#8493a4;font-size:11px;margin-left:8px;}
+  .ondraw{cursor:pointer;color:var(--blue);font-weight:700;margin-right:5px;padding:0 3px;border-radius:4px;}
+  .ondraw:hover{background:#e3eefa;}
   .pillbtn{font-size:11px;color:var(--blue);border:1px solid #cfe0f2;background:#f3f8fd;border-radius:5px;padding:1px 7px;margin-left:6px;cursor:pointer;}
   .ai{display:flex;gap:8px;} .ai input{flex:1;padding:10px 12px;border:1px solid #cdd3da;border-radius:8px;font-size:13px;}
   .achip{display:inline-flex;align-items:center;gap:6px;font-size:11px;background:#eef4fb;border:1px solid #cfe0f2;color:#2b4a6f;border-radius:6px;padding:3px 8px;}
@@ -207,7 +209,7 @@
 <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span class="projhead" id="projHead"></span><span id="saveInd" role="button" tabindex="0" title="Saves by itself after every change. Click to save now." onclick="saveNow()" style="font-size:11px;color:var(--mut);margin-left:12px;cursor:pointer"></span>
   <span id="aiCost" class="aicost" style="display:none"></span>
   <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
-  <a id="drawBtn" href="#" onclick="openDrawings();return false;" title="The drawings beside the take-off lines. Read-only, opens in a new tab." style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">▦ Drawings view (new)</a>
+  <a id="drawBtn" href="#" onclick="openDrawings(null);return false;" title="The drawings beside the take-off lines. Read-only, opens in a new tab." style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">▦ Drawings view (new)</a>
   <a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a>
   <a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
 <input type="file" id="addFile" accept="application/pdf" multiple style="display:none" onchange="addDrawings(this)">
@@ -219,7 +221,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.121 · 2026-11-22 · Drawings view (new) link";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.122 · 2026-11-22 · ⌖ show on the drawing; one shared Drawings window";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -278,13 +280,29 @@
   function sameProj(R){ return !!(R && params.project_id && String(R.__project||"")===String(params.project_id)); }
   // The drawing workspace (drawings.html): the project's drawings beside the take-off lines.
   // Read-only; it reads this browser's working copy, so save nothing first — just open it.
-  function openDrawings(){
+  // ONE Drawings window per project, reused: the first click opens it, later clicks send it
+  // "show this" over a BroadcastChannel instead of opening (and re-loading) another tab. It reads
+  // the same working copy of the take-off, and is told whenever this page saves a change.
+  const DRAW_CH=(function(){ try{ return ("BroadcastChannel" in window && params.project_id) ? new BroadcastChannel("mc-drawings-"+params.project_id) : null; }catch(e){ return null; } })();
+  function drawingsUrl(show){
+    return RAILWAY_URL+"/takeoff/drawings.html?project_id="+encodeURIComponent(params.project_id)+
+      "&manufacturer_id="+encodeURIComponent(params.manufacturer_id||"")+(window.MC_TOKEN?"&t="+encodeURIComponent(window.MC_TOKEN):"")+
+      (show&&show.sheet?"&sheet="+encodeURIComponent(show.sheet):"")+(show&&show.mark?"&mark="+encodeURIComponent(show.mark):"");
+  }
+  function openDrawings(show){
     if(!params.project_id) return;
     flushZohoSave();
-    const u=RAILWAY_URL+"/takeoff/drawings.html?project_id="+encodeURIComponent(params.project_id)+
-      "&manufacturer_id="+encodeURIComponent(params.manufacturer_id||"")+(window.MC_TOKEN?"&t="+encodeURIComponent(window.MC_TOKEN):"");
-    window.open(u,"_blank");
+    const name="mc_drawings_"+params.project_id;
+    let w=null; try{ w=window.open("",name); }catch(e){}
+    if(!w){ window.open(drawingsUrl(show),"_blank"); return; }
+    let blank=true; try{ blank=!w.location||w.location.href==="about:blank"; }catch(e){ blank=false; }
+    if(blank){ w.location.href=drawingsUrl(show); return; }
+    if(show&&DRAW_CH){ try{ DRAW_CH.postMessage({type:"show",sheet:show.sheet||"",mark:show.mark||""}); }catch(e){} }
+    try{ w.focus(); }catch(e){}
   }
+  // ⌖ buttons: a row by its index, or a drawing by the number in data-s (never quoted into onclick).
+  function showRowOnDrawing(i){ const r=arr(loadResult().rows)[i]; if(r) openDrawings({sheet:String(r.source_sheet||""),mark:String(r.member_mark||"")}); }
+  function showSheetOnDrawing(el){ openDrawings({sheet:String(el&&el.getAttribute("data-s")||"")}); }
   function loadResult(){
     if (window.TAKEOFF_RESULT && sameProj(window.TAKEOFF_RESULT)) return window.TAKEOFF_RESULT;
     try { const s=sessionStorage.getItem("takeoff_result"); if(s){ const R=JSON.parse(s); if(sameProj(R)) return R; } } catch(e){}
@@ -304,6 +322,7 @@
     try { const k=lsKey(); if(k) localStorage.setItem(k, JSON.stringify(result)); }
     catch(e){ console.error("[review] browser copy refused:",e); setSaveInd("⚠ this browser couldn’t keep a copy — wait for 💾 saved before closing","var(--red)"); }
     scheduleZohoSave();   // also persist to the project record in Zoho (debounced)
+    if(DRAW_CH){ try{ DRAW_CH.postMessage({type:"changed"}); }catch(e){} }
   }
   // ---- durable save to Zoho (per project), debounced ----
   let _zohoTimer=null;
@@ -3488,7 +3507,7 @@
         // No score is shown as "—", not 0.00: a missing number is not a zero, and painting every
         // row red for it buried the rows that really are low.
         '<td title="'+confWhy(r,hasC?c:null)+'"><span class="dot d-'+cls+'"></span>'+(hasC?c.toFixed(2):'<span class="src">—</span>')+xcTag(r)+'</td>'+
-        '<td>'+esc(r.form_type)+'</td>'+
+        '<td><span class="ondraw" title="Show '+escAttr(r.member_mark||"this line")+' on drawing '+escAttr(r.source_sheet||"")+'" onclick="showRowOnDrawing('+idx+')">⌖</span>'+esc(r.form_type)+'</td>'+
         '<td>'+esc(r.size)+(r.galvanized?' <span class="galv">galv</span>':'')+'</td>'+
         '<td>'+esc(r.specification)+'</td><td>'+qtyCell+'</td>'+
         '<td style="white-space:nowrap">'+dimStr(r)+'</td>'+
@@ -3518,7 +3537,7 @@
         '</span></td></tr>';
       g.dOrder.forEach(function(dN){
         const ids=g.dMap[dN];
-        html+='<tr class="grp-draw"><td colspan="'+NC+'">📄 '+esc(dN)+
+        html+='<tr class="grp-draw"><td colspan="'+NC+'">📄 '+esc(dN)+' <span class="ondraw" title="Open drawing '+escAttr(dN)+'" data-s="'+escAttr(dN)+'" onclick="showSheetOnDrawing(this)">⌖ drawing</span>'+
           ' <span class="grp-meta">'+ids.length+' line'+(ids.length===1?'':'s')+' · '+
           (Math.max.apply(null,[1].concat(ids.map(function(i){ return unitsOf(rows[i]); })))>1
             ? sumQty(ids)+' pcs per unit · <b>'+sumTot(ids)+' pcs total</b>' : sumQty(ids)+' pcs')+wtMeta(ids)+
@@ -4175,7 +4194,7 @@
       if(off.length) html+=box("off",'check them ▸',
         '<div class="src" style="margin-bottom:3px">Open the drawing on the By drawing tab and compare its rows with the parts list. Fix the rows there; or accept the difference if the printed weight leaves something out.</div>'+
         off.map(function(o){ return '<div><b>'+esc(o.sh)+'</b>: printed '+fmtLb(o.lb)+' lb, take-off '+fmtLb(o.tk)+' lb <b style="color:var(--red)">'+sgn(o.p)+'</b>'+
-          btn('open','setTab(\'drawings\')','Go to the By drawing tab')+btn('accept','wcAcceptDrawing(\''+q(o.sh)+'\')','Looked at it — the difference is right',true)+'</div>'; }).join("")); }
+          btn('drawing','openDrawings({sheet:\''+q(o.sh)+'\'})','Open this drawing in the Drawings view')+btn('open','setTab(\'drawings\')','Go to the By drawing tab')+btn('accept','wcAcceptDrawing(\''+q(o.sh)+'\')','Looked at it — the difference is right',true)+'</div>'; }).join("")); }
     if(none.length){
       html+=line(null,'<b>'+none.length+' drawing'+(none.length===1?'':'s')+' ('+fmtLb(noneLb)+' lb) not checked</b> — no printed weight was read. Type each drawing\'s weight below, or rely on the project total above.');
       html+=box("none",'enter their weights ▸',
@@ -4187,7 +4206,7 @@
       html+=line(false,'<b style="color:var(--red)">'+mis.length+' row'+(mis.length===1?'':'s')+' with a length that does not match its own note</b>'+
         btn('use the note\'s mm for all '+mis.length,'wcFixAllLengths()','Set each length to the millimetres written in its note'));
       html+=box("mm",'see them ▸',mis.map(function(x){ return '<div><b>'+esc(x.r.member_mark||x.r.size||"row")+'</b> on '+esc(x.r.source_sheet||'?')+' ('+esc(x.r.size||"")+', qty '+esc(x.r.quantity)+'): length '+(Math.round(x.m.row_in*10)/10)+'" — note says '+x.m.mm+' mm = <b>'+(Math.round(x.m.note_in*10)/10)+'"</b>'+
-        btn('use '+(Math.round(x.m.note_in*10)/10)+'"','wcFixLength('+x.i+')','Set the length to the note\'s millimetres')+btn('keep '+(Math.round(x.m.row_in*10)/10)+'"','wcKeepLength('+x.i+')','The length is right; the note is about something else',true)+'</div>'; }).join("")); }
+        btn('use '+(Math.round(x.m.note_in*10)/10)+'"','wcFixLength('+x.i+')','Set the length to the note\'s millimetres')+btn('drawing','showRowOnDrawing('+x.i+')','Show this part on its drawing')+btn('keep '+(Math.round(x.m.row_in*10)/10)+'"','wcKeepLength('+x.i+')','The length is right; the note is about something else',true)+'</div>'; }).join("")); }
     // 4. Built more than once AND a Qty that already says it covers the assemblies: counted twice.
     // 10058/10059 (2 each) read "4 REQ'D (2 assy)" into Qty and then were multiplied by 2 again.
     const dbl=live.filter(wcIsDouble);
@@ -4196,7 +4215,7 @@
       html+=line(false,'<b style="color:var(--red)">'+dbl.length+' row'+(dbl.length===1?'':'s')+' may be counted twice</b> — the Qty already says it covers the assemblies, and it is multiplied by the number built again.'+
         btn('Qty per ONE assembly on all','wcFixDouble()','Divide each Qty by the number built'));
       html+=box("dbl",'by drawing ▸',Object.keys(sh).map(function(k){ return '<div><b>'+esc(k)+'</b> (built '+sh[k].u+'×): '+sh[k].n+' row'+(sh[k].n===1?'':'s')+
-        btn('Qty ÷ '+sh[k].u,'wcFixDouble(\''+q(k)+'\')','Divide each Qty on this drawing by the number built')+btn('keep','wcKeepDouble(\''+q(k)+'\')','The Qty is per one assembly already',true)+'</div>'; }).join("")); }
+        btn('Qty ÷ '+sh[k].u,'wcFixDouble(\''+q(k)+'\')','Divide each Qty on this drawing by the number built')+btn('drawing','openDrawings({sheet:\''+q(k)+'\'})','Open this drawing in the Drawings view')+btn('keep','wcKeepDouble(\''+q(k)+'\')','The Qty is per one assembly already',true)+'</div>'; }).join("")); }
     // 5. One part mark labelled as two different kinds of part — settle these first: they decide what a "post" is below.
     const mr=wcMarkRoleGroups(R);
     if(mr.length){
