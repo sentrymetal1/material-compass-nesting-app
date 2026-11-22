@@ -1659,6 +1659,7 @@ app.post('/api/takeoff/addenda', (req, res) => addendaHandler(req, res)); // rev
 app.post('/api/takeoff/label-pieces', (req, res) => labelPiecesHandler(req, res)); // review: piece roles + pipe joints for typical welds
 app.post('/api/takeoff/repair', (req, res) => repairHandler(req, res));   // review: metric + duplicate checks on an older take-off
 require('./takeoff/sheetMap').registerSheetMap(app, { ledger: require('./costLedger') }); // drawing workspace: number → file + page
+require('./takeoff/markIndex').registerMarkIndex(app); // drawing workspace: part marks read off each sheet (OCR, no AI)
 app.post('/api/takeoff/ask', (req, res) => askHandler(req, res));     // intake: ask about the uploaded documents
 // What a run would cost per reading depth, before anything is spent. Rates come from the
 // engine's own table so the quote and the bill cannot drift apart.

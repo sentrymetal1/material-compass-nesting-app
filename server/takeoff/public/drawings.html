@@ -73,6 +73,25 @@ button:disabled{opacity:.5;cursor:default}
 .row .w{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap;font-size:13.5px}
 .row .meta{grid-column:2/4;font-size:12.5px;color:var(--mute)}
 .foot{font-size:12px;color:var(--mute);padding:8px 14px;border-top:1px solid var(--line)}
+/* Boxes on the sheet: where a part mark was read off the drawing. */
+#ov{position:absolute;inset:0;pointer-events:none}
+#ov i{position:absolute;border:2px dashed #1f63b0;background:#5286b42e;border-radius:3px;pointer-events:auto;cursor:pointer;box-shadow:0 0 0 2px #ffffffb0}
+#ov i.cur{border-style:solid;border-color:#d97706;background:#f59e0b33;animation:blink 1.3s 2}
+@keyframes blink{50%{opacity:.35}}
+.ocr{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#cfe0f0}
+/* Where used: the selected part across the whole job. */
+.used{border-top:1px solid var(--line);background:#f8fafc;max-height:42%;overflow:auto;padding:10px 14px}
+.used[hidden]{display:none}
+.used h4{margin:0 0 2px;font-size:14px}.used .sub{font-size:12.5px;color:var(--mute);margin-bottom:8px}
+.used .tot{display:flex;gap:16px;flex-wrap:wrap;margin:6px 0 8px;font-size:13px}.used .tot b{font-size:16px}
+.used table{width:100%;border-collapse:collapse;font-size:13px}
+.used th{font-size:11.5px;color:var(--mute);font-weight:600;text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
+.used td{padding:5px 6px;border-bottom:1px solid #eef1f4;white-space:nowrap}
+.used td.n,.used th.n{text-align:right;font-variant-numeric:tabular-nums}
+.used tr.go{cursor:pointer}.used tr.go:hover td{background:var(--soft)}.used tr.here td{background:#dfeaf5;font-weight:600}
+.used .note{font-size:11.5px;color:var(--mute);margin-top:6px}
+.used .warn{color:var(--ylw);font-weight:600}
+@media(prefers-reduced-motion:reduce){#ov i.cur{animation:none}}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid #c9d6e3;border-top-color:var(--brand);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media(max-width:900px){.app{height:auto}.main{grid-template-columns:1fr}.tools{flex-direction:row;border-right:0;border-bottom:1px solid var(--line)}
@@ -86,6 +105,7 @@ button:disabled{opacity:.5;cursor:default}
     <div class="job" id="job">Loading…<small>AI Take-off · Drawings</small></div>
     <div class="nav"><button id="prev" aria-label="Previous drawing">&larr;</button><select id="sheet" aria-label="Drawing"></select><span class="of" id="of"></span><button id="next" aria-label="Next drawing">&rarr;</button></div>
     <span id="mapnote"></span>
+    <span class="ocr" id="ocrnote"></span>
     <span class="sp"></span>
     <a id="back" href="#">Back to the review page</a>
   </div>
@@ -105,6 +125,7 @@ button:disabled{opacity:.5;cursor:default}
     <aside class="panel">
       <div class="ph"><div id="wcheck"></div><input class="search" id="q" placeholder="Find a mark or size, e.g. p512" aria-label="Find a mark or size"></div>
       <div class="list" id="list"></div>
+      <div class="used" id="used" hidden></div>
       <div class="foot">Read-only view. Make changes on the review page.</div>
     </aside>
   </div>
@@ -113,7 +134,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v0.2 · 2026-11-22 · whole-word file match, multi-file drawings";
+const VERSION="drawings v0.3 · 2026-11-22 · part marks boxed on the sheet; where-used totals";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -150,7 +171,7 @@ function ftin(ft){const L=Number(ft)||0;if(!(L>0))return"";let f=Math.floor(L),i
   const w=Math.floor(i),fr=Math.round((i-w)*16);let t="";if(fr){let n=fr,d=16;while(n%2===0){n/=2;d/=2}t=(w?w+" ":"")+n+"/"+d}else t=String(w);return f+"'-"+t+'"'}
 
 /* ---- state ---- */
-const S={part:0,R:null,head:null,files:[],map:null,stale:false,sheets:[],cur:-1,sel:-1,q:"",docs:{},view:{s:1,tx:0,ty:0},page:null,render:null,rs:0};
+const S={marks:{},mnow:"",pageKey:"",selMark:null,boxI:-1,part:0,R:null,head:null,files:[],map:null,stale:false,sheets:[],cur:-1,sel:-1,q:"",docs:{},view:{s:1,tx:0,ty:0},page:null,render:null,rs:0};
 
 /* The take-off: this browser's working copy when it has one (it can hold unsaved changes),
    else the copy saved on the project. Same keys review.html uses. */
@@ -228,10 +249,12 @@ async function openSheet(gi,keepView,part){
   S.cur=gi;renderNav();renderList();
   const g=S.sheets[gi];S.page=null;S.rs=0;$("paper").innerHTML="";
   document.querySelector(`.grp[data-g="${gi}"]`)?.scrollIntoView({block:"nearest"});
-  if(!g.loc){$("paper").innerHTML="";S.page=null;$("zoomtag").hidden=true;$("parts").hidden=true;
+  if(!g.loc){$("paper").innerHTML="";S.page=null;S.pageKey="";renderUsed();$("zoomtag").hidden=true;$("parts").hidden=true;
     msg(`<b>Drawing ${esc(g.number)} isn't matched to a page yet.</b><br><br>`+(S.files.length?`Press <b>Find drawing pages</b> at the top. It reads the drawing number off every page once and remembers it for this project.`:`This project has no drawings saved. Open the take-off once with its drawings so they're kept.`));return}
   // A drawing split over several files ("1 OF 2", "2 OF 2"): a switcher above the sheet.
   const ps=g.loc.more&&g.loc.more.length>1?g.loc.more:null,loc=ps?(ps[S.part]||ps[0]):g.loc;
+  S.pageKey=keyOf(loc);S.boxI=-1;renderUsed();
+  if(!S.marks[S.pageKey])startOcr(S.pageKey,true);
   $("parts").hidden=!ps;
   if(ps)$("parts").innerHTML=ps.map((p,i)=>`<button data-part="${i}" class="${i===S.part?"on":""}" title="${esc(p.name)}">Sheet ${i+1} of ${ps.length}</button>`).join("");
   msg('<span class="spin"></span>Opening '+esc(g.number)+"…");
@@ -241,6 +264,7 @@ async function openSheet(gi,keepView,part){
     if(S.cur!==gi)return;
     S.page=page;S.rs=0;msg("");$("zoomtag").hidden=false;
     if(!keepView)fit();else draw();
+    if(S.selMark&&hitsOn(S.pageKey,S.selMark).length)focusBox(0);
   }catch(e){console.error(e);msg(`<b>Couldn't open drawing ${esc(g.number)}.</b><br>${esc(e.message||e)}`)}
 }
 function fit(){if(!S.page)return;const st=$("stage").getBoundingClientRect(),v=S.page.getViewport({scale:1});
@@ -264,19 +288,106 @@ async function rasterize(){
   try{await task.promise}catch(e){return}
   if(S.page!==page)return;
   const paper=$("paper");paper.innerHTML="";paper.appendChild(c);S.rs=rs;S.render=null;
-  draw()}
+  drawBoxes();draw()}
 function zoomAt(f,cx,cy){if(!S.page)return;const V=S.view,st=$("stage").getBoundingClientRect();cx??=st.width/2;cy??=st.height/2;
   const s=Math.max(.05,Math.min(V.s*f,40));S.view={s,tx:cx-(cx-V.tx)*s/V.s,ty:cy-(cy-V.ty)*s/V.s};draw()}
+
+/* ---- part marks on the sheet (step 2) ----
+   Every drawing is read once on the server by OCR (/api/takeoff/marks), in the background, the
+   sheet on screen first. Clicking a line boxes every place its mark is printed on the sheet, and
+   the panel below the list shows the part across the whole job: total quantity, every drawing it
+   is on, and how often it was found printed on each. A count of places is not a quantity — a
+   mark appears in several views and in the parts list — so it is shown beside the take-off's
+   own quantity, never in place of it. */
+const normMark=t=>String(t||"").toLowerCase().replace(/\|/g,"l").replace(/[^a-z0-9]/g,"");
+const keyOf=loc=>loc?loc.file_id+":"+(loc.page||1):"";
+const partsOf=g=>g&&g.loc?(g.loc.more&&g.loc.more.length?g.loc.more:[g.loc]):[];
+function hitsOn(k,m){const e=S.marks[k];if(!e||!e.words||!m)return[];
+  const exact=e.words.filter(w=>normMark(w[0])===m);if(exact.length)return exact;
+  // The take-off sometimes adds a letter to tell two lengths of one mark apart ("p285b"); the
+  // drawing prints the mark itself ("p285"). Fall back to it, and say so in the panel.
+  const base=baseMark(m);return base?e.words.filter(w=>normMark(w[0])===base):[]}
+const baseMark=m=>{const x=String(m||"").match(/^([a-z]+\d+)[a-z]$/);return x?x[1]:""};
+function printedAs(k,m){const e=S.marks[k];if(!e||!e.words||!m)return"";if(e.words.some(w=>normMark(w[0])===m))return"";const b=baseMark(m);return b&&e.words.some(w=>normMark(w[0])===b)?b:""}
+function sheetHits(g,m){let n=0,read=0;const ps=partsOf(g);ps.forEach(p=>{const e=S.marks[keyOf(p)];if(e&&e.words){read++;n+=hitsOn(keyOf(p),m).length}});return{n,read,parts:ps.length}}
+function drawBoxes(){
+  const paper=$("paper");if(!paper.querySelector("canvas"))return;
+  let ov=$("ov");if(!ov){ov=document.createElement("div");ov.id="ov";paper.appendChild(ov)}
+  const hs=hitsOn(S.pageKey,S.selMark);
+  ov.innerHTML=hs.map((w,i)=>`<i data-box="${i}" class="${i===S.boxI?"cur":""}" title="${esc(w[0])}" style="left:${(w[1]*100-0.4).toFixed(3)}%;top:${(w[2]*100-0.5).toFixed(3)}%;width:${(w[3]*100+0.8).toFixed(3)}%;height:${(w[4]*100+1).toFixed(3)}%"></i>`).join("");
+}
+function focusBox(i){
+  const hs=hitsOn(S.pageKey,S.selMark);if(!hs.length||!S.page)return;
+  S.boxI=((i||0)+hs.length)%hs.length;const w=hs[S.boxI];
+  const st=$("stage").getBoundingClientRect(),v=S.page.getViewport({scale:1});
+  const s=Math.min(Math.max(S.fitS*3,S.view.s),S.fitS*6);
+  const cx=(w[1]+w[3]/2)*v.width,cy=(w[2]+w[4]/2)*v.height;
+  S.view={s,tx:st.width/2-cx*s,ty:st.height/2-cy*s};draw();drawBoxes();renderUsed();
+}
+function renderUsed(){
+  const box=$("used");const m=S.selMark;
+  if(!m){box.hidden=true;return}
+  const per=[];let qty=0,lb=0;const sizes={};
+  S.sheets.forEach((g,gi)=>{const rs=g.rows.filter(r=>normMark(r.member_mark)===m);if(!rs.length)return;
+    let q=0,w=0;rs.forEach(r=>{q+=orderQtyOf(r);w+=rowWeight(r)||0;sizes[(r.size||"")+" "+(r.form_type||"")]=1});
+    qty+=q;lb+=w;per.push({gi,g,q,w,row:g.rows.indexOf(rs[0]),h:sheetHits(g,m)})});
+  const sz=Object.keys(sizes),here=S.sheets[S.cur],hereHits=hitsOn(S.pageKey,m).length;
+  const cell=h=>!h.parts?"–":h.read<h.parts?'<span title="Still being read">reading…</span>':String(h.n);
+  box.hidden=false;
+  box.innerHTML=`<h4>${esc(per[0]?S.sheets[per[0].gi].rows[per[0].row].member_mark:m)}</h4>
+   <div class="sub">${esc(sz.join(" · "))}${sz.length>1?' <span class="warn">· '+sz.length+" different sizes use this mark</span>":""}</div>
+   <div class="tot"><span>Total in take-off <b>${qty.toLocaleString()}</b> pcs</span><span><b>${lb?fmtLb(lb):"–"}</b> lb</span><span>on <b>${per.length}</b> drawing${per.length===1?"":"s"}</span></div>
+   ${here&&S.pageKey?`<div class="sub">${S.marks[S.pageKey]&&S.marks[S.pageKey].words?(hereHits?`Boxed on this sheet: <b>${hereHits}</b> place${hereHits===1?"":"s"}${printedAs(S.pageKey,m)?" (printed as <b>"+esc(printedAs(S.pageKey,m))+"</b>)":""}${hereHits>1?' · <a href="#" data-step="1">next ›</a>':""}`:"Not found printed on this sheet by the drawing reader."):S.marks[S.pageKey]&&S.marks[S.pageKey].err?"This sheet couldn't be read for part marks.":'<span class="spin"></span>This sheet is still being read for part marks.'}</div>`:""}
+   <table><thead><tr><th>Drawing</th><th class="n">Qty</th><th class="n">lb</th><th class="n" title="How often the mark is printed on the drawing: views, callouts and the parts list. Not a quantity.">Printed</th></tr></thead><tbody>
+   ${per.map(p=>`<tr class="go ${p.gi===S.cur?"here":""}" data-g="${p.gi}" data-r="${p.row}"><td>${esc(p.g.number)}</td><td class="n">${p.q.toLocaleString()}</td><td class="n">${p.w?fmtLb(p.w):"–"}</td><td class="n">${cell(p.h)}</td></tr>`).join("")}
+   </tbody></table>
+   <div class="note">Qty is the take-off's own count (pieces × assemblies built). Printed is how often the drawing reader found the mark on the sheet (views, callouts, the parts list), shown as a check, not a count.</div>`;
+}
+function ocrTargets(){const ks={},out=[];S.sheets.forEach(g=>partsOf(g).forEach(p=>{const k=keyOf(p);if(!ks[k]){ks[k]=1;out.push({file_id:p.file_id,page:p.page||1,key:k})}}));return out}
+function renderOcr(){
+  const t=ocrTargets(),done=t.filter(x=>S.marks[x.key]).length;
+  $("ocrnote").innerHTML=!t.length||done>=t.length?"":`<span class="spin"></span>Reading part marks off the drawings: ${done} of ${t.length}`;
+}
+let ocrTimer=null;
+async function pollMarks(){
+  clearTimeout(ocrTimer);
+  try{const d=await getJSON("/api/takeoff/marks/"+encodeURIComponent(P.project_id)+(S.mnow?"?since="+encodeURIComponent(S.mnow):""));
+    if(d&&d.ok){Object.assign(S.marks,d.pages||{});S.mnow=d.now||S.mnow;
+      if(d.pages&&d.pages[S.pageKey]){drawBoxes();if(S.selMark&&S.boxI<0)focusBox(0)}
+      renderOcr();renderUsed();
+      if(ocrTargets().some(x=>!S.marks[x.key]))ocrTimer=setTimeout(pollMarks,d.status&&(d.status.running||d.status.queued)?4000:15000)}}
+  catch(e){ocrTimer=setTimeout(pollMarks,15000)}
+}
+async function startOcr(firstKey,onlyFirst){
+  const t=ocrTargets().filter(x=>!S.marks[x.key]||S.marks[x.key].err);
+  if(!t.length&&!firstKey)return;
+  if(firstKey&&S.marks[firstKey]&&S.marks[firstKey].words&&onlyFirst)return;
+  try{await getJSON("/api/takeoff/marks/"+encodeURIComponent(P.project_id)+"/build",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({targets:onlyFirst?t.filter(x=>x.key===firstKey):t,first:firstKey||""})});}catch(e){}
+  pollMarks();
+}
+function selectRow(gi,ri){
+  const g=S.sheets[gi],r=g&&g.rows[ri];S.sel=ri;S.selMark=r?normMark(r.member_mark):null;S.boxI=-1;
+  // On a drawing split over several files, open the part where the mark is printed.
+  let part=gi===S.cur?S.part:0;
+  if(S.selMark&&!hitsOn(keyOf(partsOf(g)[part]),S.selMark).length){const k=partsOf(g).findIndex(p=>hitsOn(keyOf(p),S.selMark).length);if(k>-1)part=k}
+  if(gi!==S.cur||part!==S.part){
+    openSheet(gi,false,part);
+  } else {renderList();drawBoxes();if(hitsOn(S.pageKey,S.selMark).length)focusBox(0);renderUsed()}
+  document.querySelector(`.row[data-g="${gi}"][data-r="${ri}"]`)?.scrollIntoView({block:"nearest"});
+}
 
 /* ---- events ---- */
 $("prev").onclick=()=>openSheet((S.cur-1+S.sheets.length)%S.sheets.length);
 $("next").onclick=()=>openSheet((S.cur+1)%S.sheets.length);
-$("sheet").onchange=e=>{S.sel=-1;openSheet(+e.target.value)};
+$("sheet").onchange=e=>{S.sel=-1;S.selMark=null;openSheet(+e.target.value)};
 $("zin").onclick=()=>zoomAt(1.4);$("zout").onclick=()=>zoomAt(1/1.4);$("fit").onclick=()=>fit();
 $("parts").addEventListener("click",e=>{const b=e.target.closest("[data-part]");if(b)openSheet(S.cur,false,+b.dataset.part)});
+$("used").addEventListener("click",e=>{const st=e.target.closest("[data-step]");if(st){e.preventDefault();focusBox(S.boxI+1);return}
+  const tr=e.target.closest("tr.go");if(tr)selectRow(+tr.dataset.g,+tr.dataset.r)});
 $("find").onclick=()=>$("q").focus();
 $("q").oninput=e=>{S.q=e.target.value.trim().toLowerCase();renderList()};
-const pick=el=>{const g=+el.dataset.g;S.sel=el.dataset.r!=null?+el.dataset.r:-1;if(g!==S.cur)openSheet(g);else renderList()};
+const pick=el=>{const g=+el.dataset.g;if(el.dataset.r!=null)return selectRow(g,+el.dataset.r);S.sel=-1;S.selMark=null;renderUsed();if(g!==S.cur)openSheet(g);else renderList()};
 $("list").addEventListener("click",e=>{const el=e.target.closest("[data-g]");if(el)pick(el)});
 $("list").addEventListener("keydown",e=>{if(e.key==="Enter"){const el=e.target.closest("[data-g]");if(el)pick(el)}});
 $("mapnote").addEventListener("click",async e=>{if(e.target.id!=="build")return;const b=e.target;b.disabled=true;b.innerHTML='<span class="spin"></span>Reading drawing numbers…';
@@ -286,7 +397,8 @@ $("mapnote").addEventListener("click",async e=>{if(e.target.id!=="build")return;
   catch(err){b.disabled=false;b.textContent="Try again";b.title=String(err.message||err);msg("<b>Couldn't read the drawing numbers.</b><br>"+esc(err.message||err))}});
 const stage=$("stage");let drag=null;
 stage.addEventListener("wheel",e=>{e.preventDefault();const r=stage.getBoundingClientRect();zoomAt(e.deltaY>0?1/1.15:1.15,e.clientX-r.left,e.clientY-r.top)},{passive:false});
-stage.addEventListener("pointerdown",e=>{if(!S.page||e.target.closest("#parts,.msg"))return;drag={x:e.clientX,y:e.clientY,tx:S.view.tx,ty:S.view.ty};stage.setPointerCapture(e.pointerId);stage.classList.add("drag")});
+stage.addEventListener("pointerdown",e=>{const bx=e.target.closest("#ov i");if(bx){const g=S.sheets[S.cur],ri=g?g.rows.findIndex(r=>normMark(r.member_mark)===S.selMark):-1;S.boxI=+bx.dataset.box;drawBoxes();renderUsed();if(ri>-1){S.sel=ri;renderList()}return}
+  if(!S.page||e.target.closest("#parts,.msg"))return;drag={x:e.clientX,y:e.clientY,tx:S.view.tx,ty:S.view.ty};stage.setPointerCapture(e.pointerId);stage.classList.add("drag")});
 stage.addEventListener("pointermove",e=>{if(!drag)return;S.view.tx=drag.tx+e.clientX-drag.x;S.view.ty=drag.ty+e.clientY-drag.y;draw()});
 const end=()=>{drag=null;stage.classList.remove("drag")};stage.addEventListener("pointerup",end);stage.addEventListener("pointercancel",end);
 addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT")return;
@@ -312,7 +424,8 @@ $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)
   if(!R){msg("<b>This project has no saved take-off yet.</b><br>Run the take-off first, then open its drawings.");return}
   S.R=R;buildSheets();renderCheck();renderList();renderNav();
   if(!S.sheets.length){msg("<b>The take-off has no lines to show.</b>");return}
-  openSheet(Math.max(0,S.sheets.findIndex(g=>g.loc)));
+  await openSheet(Math.max(0,S.sheets.findIndex(g=>g.loc)));
+  pollMarks().then(()=>startOcr(S.pageKey,false));
 })();
 }
 </script>
