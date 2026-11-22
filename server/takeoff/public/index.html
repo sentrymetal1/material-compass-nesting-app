@@ -498,6 +498,8 @@
          border:1px solid #cfe0f2;border-radius:8px;font-size:13px;color:#334;">
       💾 You have a saved take-off for this project.
       <a id="resumeLink" href="#" style="color:var(--blue);font-weight:600;text-decoration:none;">Open it →</a>
+      <span style="color:#8893a0;">·</span>
+      <a id="drawingsLink" href="#" style="color:var(--blue);font-weight:600;text-decoration:none;">See it beside the drawings (new) →</a>
       <span style="color:#8893a0;">or run a new one below.</span>
     </div>
 
@@ -718,6 +720,9 @@
       if (!has) return;
       const el = document.getElementById("resume"), lk = document.getElementById("resumeLink");
       if (lk) lk.href = "review.html?project_id=" + encodeURIComponent(params.project_id) +
+        "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
+      const dl = document.getElementById("drawingsLink");   // the drawing workspace (drawings.html), read-only
+      if (dl) dl.href = "drawings.html?project_id=" + encodeURIComponent(params.project_id) +
         "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
       if (el) el.style.display = "block";
     }
