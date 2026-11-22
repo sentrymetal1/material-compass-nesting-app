@@ -108,6 +108,14 @@ button:disabled{opacity:.5;cursor:default}
 .used tr.go{cursor:pointer}.used tr.go:hover td{background:var(--soft)}.used tr.here td{background:#dfeaf5;font-weight:600}
 .used .note{font-size:11.5px;color:var(--mute);margin-top:6px}
 .used .warn{color:var(--ylw);font-weight:600}
+.ed{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:8px 0;font-size:13px}
+.ed.add{border-color:#e6b35a;background:var(--ylwbg)}
+.edh{font-weight:600;margin-bottom:4px}.ed .k{color:var(--mute);font-size:12.5px}
+.edrow{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
+.ed input{font-size:15px;width:96px;min-height:32px;border:1px solid #c9d3dc;border-radius:6px;padding:0 6px;margin-left:4px}
+.ed button{min-height:30px;font-size:12.5px;padding:0 10px;margin-left:6px}.ed button.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+.edflag{color:var(--red);font-weight:600;margin-top:6px;font-size:12.5px}
+.edmsg{font-size:12.5px;margin-top:4px;min-height:1em}.edmsg.ok{color:var(--grn);font-weight:600}.edmsg.bad{color:var(--red)}
 @media(prefers-reduced-motion:reduce){.ov i.cur{animation:none}}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid #c9d6e3;border-top-color:var(--brand);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -139,7 +147,7 @@ button:disabled{opacity:.5;cursor:default}
       <div class="ph"><div id="wcheck"></div><div class="srow"><input class="search" id="q" placeholder="Find a mark or size, e.g. p512" aria-label="Find a mark or size"><button id="flagBtn" class="flagbtn" hidden></button></div></div>
       <div class="list" id="list"></div>
       <div class="used" id="used" hidden></div>
-      <div class="foot">Read-only view. Make changes on the review page.</div>
+      <div class="foot">Changes made here are saved by the review page, so keep it open in its own tab.</div>
     </aside>
   </div>
 </div>
@@ -147,7 +155,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v0.5 · 2026-11-22 · linked to the review page; weight-check flags on the lines";
+const VERSION="drawings v0.6 · 2026-11-22 · fixes from the drawing, saved by the review page";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -437,6 +445,9 @@ function clearPart(){S.selMark=null;S.sel=-1;S.selG=-1;visiblePanes().forEach(p=
 function renderUsed(){
   const box=$("used");const m=S.selMark,A=act();
   if(!m||!A){box.hidden=true;return}
+  // Not while someone is typing in it: the marks poll redraws this every few seconds.
+  const fe=document.activeElement;if(fe&&fe.tagName==="INPUT"&&box.contains(fe)){S.usedLater=true;return}
+  S.usedLater=false;
   const per=[];let qty=0,lb=0;const sizes={};
   S.sheets.forEach((g,gi)=>{const rs=g.rows.filter(r=>normMark(r.member_mark)===m);if(!rs.length)return;
     let q=0,w=0;rs.forEach(r=>{q+=orderQtyOf(r);w+=rowWeight(r)||0;sizes[(r.size||"")+" "+(r.form_type||"")]=1});
@@ -450,6 +461,7 @@ function renderUsed(){
   box.innerHTML=`<h4>${esc(markLabel(m))}</h4>
    <div class="sub">${esc(sz.join(" · "))}${sz.length>1?' <span class="warn">· '+sz.length+" different sizes use this mark</span>":""}</div>
    <div class="tot"><span>Total in take-off <b>${qty.toLocaleString()}</b> pcs</span><span><b>${lb?fmtLb(lb):"–"}</b> lb</span><span>on <b>${per.length}</b> drawing${per.length===1?"":"s"}</span></div>
+   ${editorHtml()}${addHtml()}
    ${miss.length?`<div class="sub warn">Also printed on ${miss.length} drawing${miss.length===1?"":"s"} with no take-off line for it. Check ${miss.length===1?"it":"them"} for a missed quantity.</div>`:""}
    ${hk?`<div class="sub">${S.marks[hk]&&S.marks[hk].words?(hereHits?`Boxed on this sheet: <b>${hereHits}</b> place${hereHits===1?"":"s"}${pa?" (printed as <b>"+esc(pa)+"</b>)":""}${hereHits>1?' · <a href="#" data-step="1">next ›</a>':""}`:"Not found printed on this sheet by the drawing reader."):S.marks[hk]&&S.marks[hk].err?"This sheet couldn't be read for part marks.":'<span class="spin"></span>This sheet is still being read for part marks.'}</div>`:""}
    <table><thead><tr><th>Drawing</th><th class="n">Qty</th><th class="n">lb</th><th class="n" title="How often the mark is printed on the drawing: views, callouts and the parts list. Not a quantity.">Printed</th></tr></thead><tbody>
@@ -457,6 +469,8 @@ function renderUsed(){
       :`<tr class="go ${p.gi===A.cur?"here":""}" data-g="${p.gi}" data-r="${p.row}"><td>${esc(p.g.number)}</td><td class="n">${p.q.toLocaleString()}</td><td class="n">${p.w?fmtLb(p.w):"–"}</td><td class="n">${cell(p.h)}</td></tr>`).join("")}
    </tbody></table>
    <div class="note">Qty is the take-off's own count (pieces × assemblies built). Printed is how often the drawing reader found the mark on the sheet (views, callouts, the parts list), shown as a check, not a count.${pending?" Some drawings are still being read, so more may appear.":""}</div>`;
+  // Keep the last "Saved ✓" / "Not saved" across redraws, for a few seconds.
+  const lm=S.lastMsg;if(lm&&Date.now()<lm.until){const el=$(lm.id);if(el){el.className=lm.cls;el.innerHTML=lm.html}}
 }
 function ocrTargets(){const ks={},out=[];S.sheets.forEach(g=>partsOf(g).forEach(p=>{const k=keyOf(p);if(!ks[k]){ks[k]=1;out.push({file_id:p.file_id,page:p.page||1,key:k})}}));return out}
 function renderOcr(){
@@ -509,12 +523,69 @@ function reloadTakeoff(){
   S.panes.forEach((p,i)=>{const gi=S.sheets.findIndex(g=>g.number===nums[i]);if(gi>-1){p.cur=gi;p.renderHead()}});
   S.selG=selNum?S.sheets.findIndex(g=>g.number===selNum):-1;
   S.sel=S.selG>-1&&S.selMark?S.sheets[S.selG].rows.findIndex(r=>normMark(r.member_mark)===S.selMark):-1;
+  if(S.afterAdd){const a=S.afterAdd;S.afterAdd=null;const gi=S.sheets.findIndex(g=>g.number===a.sheet);
+    const ri=gi>-1?S.sheets[gi].rows.findIndex(r=>normMark(r.member_mark)===a.mark):-1;if(ri>-1){S.selG=gi;S.sel=ri}}
   renderCheck();renderList();renderNav();renderUsed();visiblePanes().forEach(p=>p.renderFollow());
 }
-try{if("BroadcastChannel" in window&&P.project_id){const ch=new BroadcastChannel("mc-drawings-"+P.project_id);
-  ch.onmessage=e=>{const m=e.data||{};if(!S.R)return;
+let CH=null;const pendingEdits={};let editSeq=0;
+try{if("BroadcastChannel" in window&&P.project_id){CH=new BroadcastChannel("mc-drawings-"+P.project_id);
+  CH.onmessage=e=>{const m=e.data||{};
+    if((m.type==="edited"||m.type==="editFailed")&&pendingEdits[m.id]){const f=pendingEdits[m.id];delete pendingEdits[m.id];f({ok:m.type==="edited",why:m.why});return}
+    if(!S.R)return;
     if(m.type==="show")showFromReview(m);
     else if(m.type==="changed"){clearTimeout(reloadTimer);reloadTimer=setTimeout(reloadTakeoff,300)}}}}catch(e){}
+
+/* ---- fixes, made here and saved by the review page ----
+   This window never saves the take-off: it sends the fix to the review page, which applies it with
+   its own functions and saves it, then says "changed" and this view re-reads it. When the review
+   page is not open, nothing is saved and the line says so. */
+const fpOf=r=>[r.member_mark,r.source_sheet,r.size,r.quantity,r.length_ft].map(x=>String(x==null?"":x)).join("|");
+function sendEdit(op,payload){return new Promise(res=>{
+  if(!CH){res({ok:false,why:"This browser can't link the two pages. Make the change on the review page."});return}
+  const id=++editSeq;pendingEdits[id]=res;
+  try{CH.postMessage(Object.assign({type:"edit",id,op},payload))}catch(e){delete pendingEdits[id];res({ok:false,why:String(e.message||e)});return}
+  setTimeout(()=>{if(pendingEdits[id]){delete pendingEdits[id];res({ok:false,why:"noreview"})}},3000)})}
+async function doEdit(op,payload,msgEl){
+  if(msgEl){msgEl.className="edmsg";msgEl.innerHTML='<span class="spin"></span>Saving…'}
+  const r=await sendEdit(op,payload);
+  if(!msgEl)return r;
+  if(r.ok){msgEl.className="edmsg ok";msgEl.textContent="Saved on the review page ✓"}
+  else{msgEl.className="edmsg bad";msgEl.innerHTML=r.why==="noreview"
+    ?'Not saved: the review page isn\'t open. Changes are saved there. <a href="#" data-openreview="1">Open it</a>, then try again.'
+    :"Not saved: "+esc(r.why)}
+  S.lastMsg={id:msgEl.id,cls:msgEl.className,html:msgEl.innerHTML,until:Date.now()+(r.ok?5000:20000)};
+  return r}
+// Inches as the shop writes them: 50 3/16, 50.19, 4'-2 3/16", 4' 2-3/16.
+function parseLen(s){
+  s=String(s||"").trim().replace(/[”″]/g,'"').replace(/[’′]/g,"'");if(!s)return null;
+  const num=t=>{t=String(t||"").trim().replace(/"$/,"").trim();if(!t)return 0;
+    let m=t.match(/^(\d+(?:\.\d+)?)[\s-]+(\d+)\/(\d+)$/);if(m)return +m[1]+ +m[2]/ +m[3];
+    m=t.match(/^(\d+)\/(\d+)$/);if(m)return +m[1]/ +m[2];
+    m=t.match(/^\d+(?:\.\d+)?$/);return m?+t:NaN};
+  const ft=s.match(/^(\d+(?:\.\d+)?)\s*'\s*-?\s*(.*)$/);
+  const inch=ft?(+ft[1])*12+num(ft[2]):num(s);
+  return Number.isFinite(inch)&&inch>0?inch/12:null}
+function inStr(ft){const L=(Number(ft)||0)*12;if(!(L>0))return"";let w=Math.floor(L),fr=Math.round((L-w)*16);if(fr===16){w++;fr=0}
+  if(!fr)return String(w);let n=fr,d=16;while(n%2===0){n/=2;d/=2}return w+" "+n+"/"+d}
+function editorHtml(){
+  const g=S.sheets[S.selG],r=g&&g.rows[S.sel];if(!r)return"";
+  const u=Math.max(1,Math.round(Number(r.units)||1)),mm=noteMmMismatch(r),dbl=isDouble(r);
+  return `<div class="ed"><div class="edh">This line on ${esc(g.number)}</div>
+   <div class="edrow"><label>Qty <input id="edQty" type="number" min="0" step="1" value="${esc(r.quantity)}"></label>${u>1?`<span class="k">× ${u} built = <b>${orderQtyOf(r)}</b></span>`:""}
+   <label>Length <input id="edLen" value="${esc(inStr(r.length_ft))}" title="Inches: 50 3/16, 50.19, or 4'-2 3/16&quot;"> in</label></div>
+   ${r.qty_was!=null||r.length_was_ft!=null?`<div class="k">${r.qty_was!=null?"Qty was "+esc(r.qty_was)+". ":""}${r.length_was_ft!=null?"Length was "+esc(inStr(r.length_was_ft))+" in.":""}</div>`:""}
+   ${mm?`<div class="edflag">⚠ Length ${Math.round(mm.row_in*10)/10}" but the note says ${mm.mm} mm = ${Math.round(mm.note_in*10)/10}" <button data-ed="useMm">Use ${Math.round(mm.note_in*10)/10}"</button><button data-ed="keepMm">Keep ${Math.round(mm.row_in*10)/10}"</button></div>`:""}
+   ${dbl?`<div class="edflag">⚠ May be counted twice: the Qty already covers the assemblies <button data-ed="dblFix">Qty ÷ ${u}</button><button data-ed="dblKeep">Keep</button></div>`:""}
+   <div class="edmsg" id="edMsg"></div></div>`}
+// On a drawing where the part is printed but not taken off: add a line for it here.
+function addHtml(){
+  const m=S.selMark,A=act(),g=S.sheets[A&&A.cur];if(!m||!g||!printedOnly(g,m))return"";
+  let t=null;for(const h of S.sheets){t=h.rows.find(x=>normMark(x.member_mark)===m);if(t)break}
+  if(!t)return"";
+  return `<div class="ed add"><div class="edh">${esc(t.member_mark)} is printed on ${esc(g.number)} with no take-off line</div>
+   <div class="k">A line would copy ${esc(t.size||"")} ${esc(t.form_type||"")} × ${esc(inStr(t.length_ft))} in from ${esc(t.source_sheet||"")}.</div>
+   <div class="edrow"><label>Qty per assembly <input id="addQty" type="number" min="1" step="1" placeholder="qty"></label><button id="addBtn" class="pri">Add a line</button></div>
+   <div class="edmsg" id="addMsg"></div></div>`}
 
 /* ---- events ---- */
 $("flagBtn").onclick=()=>{S.onlyFlags=!S.onlyFlags;renderList()};
@@ -523,7 +594,28 @@ $("next").onclick=()=>act().open((act().cur+1)%S.sheets.length);
 $("sheet").onchange=e=>act().open(+e.target.value);
 $("zin").onclick=()=>act().zoomAt(1.4);$("zout").onclick=()=>act().zoomAt(1/1.4);$("fit").onclick=()=>act().fit();
 $("splitBtn").onclick=()=>setSplit(!S.split);
-$("used").addEventListener("click",e=>{const st=e.target.closest("[data-step]");if(st){e.preventDefault();act().focusBox(act().boxI+1);return}
+/* fixes in the part panel */
+const selRow=()=>{const g=S.sheets[S.selG];return g?g.rows[S.sel]:null};
+const rowIdx=r=>arr(S.R&&S.R.rows).indexOf(r);
+$("used").addEventListener("change",e=>{const r=selRow();if(!r)return;
+  if(e.target.id==="edQty"){const v=Number(e.target.value);if(!(v>=0)||String(v)===String(r.quantity))return;doEdit("qty",{i:rowIdx(r),fp:fpOf(r),value:v},$("edMsg"))}
+  else if(e.target.id==="edLen"){const ft=parseLen(e.target.value),m=$("edMsg");
+    if(ft==null){m.className="edmsg bad";m.textContent="Not a length. Type inches, like 50 3/16, or feet and inches, like 4'-2 3/16\".";return}
+    if(Math.abs(ft-Number(r.length_ft))<1e-4)return;doEdit("length",{i:rowIdx(r),fp:fpOf(r),value:ft},m)}});
+$("used").addEventListener("focusout",()=>{setTimeout(()=>{if(S.usedLater&&!$("used").contains(document.activeElement))renderUsed()},50)});
+$("used").addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.tagName==="INPUT"){e.preventDefault();if(e.target.id==="addQty")$("addBtn").click();else e.target.blur()}});
+$("used").addEventListener("click",e=>{
+  const op=e.target.closest("[data-ed]");if(op){const r=selRow();if(r)doEdit(op.dataset.ed,{i:rowIdx(r),fp:fpOf(r)},$("edMsg"));return}
+  if(e.target.closest("#addBtn")){const m=S.selMark,g=S.sheets[act().cur];let t=null;for(const h of S.sheets){t=h.rows.find(x=>normMark(x.member_mark)===m);if(t)break}
+    const v=Number($("addQty").value);if(!t||!g)return;
+    if(!(v>0)){const el=$("addMsg");el.className="edmsg bad";el.textContent="Type the quantity per assembly first.";return}
+    // Once added, the line exists here: select it, and show the "Saved" on its editor.
+    S.afterAdd={sheet:g.number,mark:m};
+    doEdit("add",{from:rowIdx(t),fp:fpOf(t),sheet:g.number,value:v},$("addMsg")).then(res=>{if(res.ok&&S.lastMsg){S.lastMsg.id="edMsg";S.lastMsg.html="Line added and saved on the review page ✓"}else S.afterAdd=null});return}
+  if(e.target.closest("[data-openreview]")){e.preventDefault();
+    try{if(window.opener&&!window.opener.closed){window.opener.focus();return}}catch(x){}
+    window.open("/takeoff/review.html?project_id="+encodeURIComponent(P.project_id)+"&manufacturer_id="+encodeURIComponent(P.manufacturer_id),"_blank");return}
+  const st=e.target.closest("[data-step]");if(st){e.preventDefault();act().focusBox(act().boxI+1);return}
   const tr=e.target.closest("tr.go");if(!tr)return;const gi=+tr.dataset.g,ri=+tr.dataset.r;
   if(ri>-1)selectRow(gi,ri);else openFor(act(),gi)});
 $("find").onclick=()=>$("q").focus();

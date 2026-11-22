@@ -300,6 +300,49 @@
     if(show&&DRAW_CH){ try{ DRAW_CH.postMessage({type:"show",sheet:show.sheet||"",mark:show.mark||""}); }catch(e){} }
     try{ w.focus(); }catch(e){}
   }
+  // FIXES MADE IN THE DRAWINGS VIEW. That window never saves the take-off itself: it sends the fix
+  // here, this page applies it with its own functions (editQty, wcFixLength, ...) and saves as
+  // always, then tells it "changed". One writer, so the two pages cannot overwrite each other.
+  // Each fix names its row by index AND a fingerprint, so a fix aimed at a row that has since
+  // moved or changed is refused, not applied to the wrong row.
+  function drawFp(r){ return [r.member_mark,r.source_sheet,r.size,r.quantity,r.length_ft].map(function(x){ return String(x==null?"":x); }).join("|"); }
+  if(DRAW_CH) DRAW_CH.onmessage=function(e){
+    const m=e.data||{};
+    if(m.type==="ping"){ try{ DRAW_CH.postMessage({type:"pong"}); }catch(x){} return; }
+    if(m.type!=="edit") return;
+    const reply=function(ok,why){ try{ DRAW_CH.postMessage({type:ok?"edited":"editFailed",id:m.id,why:why||""}); }catch(x){} };
+    try{
+      const R=loadResult(); if(!R||R.__demo||!Array.isArray(R.rows)) return reply(false,"No take-off is open on the review page.");
+      const i=Number(m.i), r=R.rows[i];
+      if(m.op!=="add" && (!r || drawFp(r)!==m.fp)) return reply(false,"That line changed on the review page. It has been refreshed here; try again.");
+      if(m.op==="qty"){ const v=Number(m.value); if(!(v>=0)) return reply(false,"Not a quantity."); if(r.qty_was==null) r.qty_was=r.quantity; editQty(i,v); }
+      else if(m.op==="length"){ const v=Number(m.value); if(!(v>0)) return reply(false,"Not a length.");
+        wcRowsDo(function(R2){ const x=R2.rows[i]; if(x.length_was_ft==null) x.length_was_ft=x.length_ft; x.length_ft=Math.round(v*10000)/10000; x.length_fixed="set in the Drawings view"; }); }
+      else if(m.op==="useMm") wcFixLength(i);
+      else if(m.op==="keepMm") wcKeepLength(i);
+      else if(m.op==="dblFix"){ if(!wcIsDouble(r)) return reply(false,"That line is no longer flagged.");
+        wcRowsDo(function(R2){ const x=R2.rows[i], u=Math.max(1,Math.round(Number(x.units)||1)); x.qty_was=x.quantity; x.quantity=Math.max(1,Math.round(Number(x.quantity)/u)); x.qty_per_unit=x.quantity; x.quantity_total=x.quantity*u; x.dbl_ok=true; }); }
+      else if(m.op==="dblKeep") wcRowsDo(function(R2){ R2.rows[i].dbl_ok=true; });
+      else if(m.op==="add"){
+        // A part printed on a drawing with no take-off line there: a copy of the same part from
+        // another drawing (size, length, material), on this drawing, with the quantity typed in.
+        const t=R.rows[Number(m.from)]; if(!t||drawFp(t)!==m.fp) return reply(false,"That line changed on the review page. It has been refreshed here; try again.");
+        const q=Math.max(1,Math.round(Number(m.value)||0)); if(!(Number(m.value)>0)) return reply(false,"Type the quantity first.");
+        wcRowsDo(function(R2){
+          const same=R2.rows.filter(function(x){ return x && !x.deleted && sameSheet(x.source_sheet,m.sheet); }), base=same[0]||{};
+          const nr={form_type:t.form_type, material_type:t.material_type, specification:t.specification, size:t.size, length_ft:t.length_ft,
+            width_ft:t.width_ft, member_mark:t.member_mark, galvanized:t.galvanized, disposition:t.disposition||"fabricate",
+            component:base.component||t.component, units:base.units||1, sheet_qty:base.sheet_qty, source_sheet:String(m.sheet),
+            quantity:q, confidence:null, added_from:"drawings view",
+            note:"Added in the Drawings view: "+(t.member_mark||"part")+" is printed on "+m.sheet+" with no take-off line; size and length copied from "+(t.source_sheet||"another drawing")+"."};
+          nr.qty_per_unit=nr.quantity; nr.quantity_total=nr.quantity*Math.max(1,Math.round(Number(nr.units)||1));
+          const at=same.length?R2.rows.lastIndexOf(same[same.length-1])+1:R2.rows.length;
+          R2.rows.splice(at,0,nr);
+        }); }
+      else return reply(false,"Unknown change.");
+      reply(true);
+    }catch(err){ console.error("[drawings edit]",err); reply(false,"The review page could not apply it: "+(err&&err.message||err)); }
+  };
   // ⌖ buttons: a row by its index, or a drawing by the number in data-s (never quoted into onclick).
   function showRowOnDrawing(i){ const r=arr(loadResult().rows)[i]; if(r) openDrawings({sheet:String(r.source_sheet||""),mark:String(r.member_mark||"")}); }
   function showSheetOnDrawing(el){ openDrawings({sheet:String(el&&el.getAttribute("data-s")||"")}); }
