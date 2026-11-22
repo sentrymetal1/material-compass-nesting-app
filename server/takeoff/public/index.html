@@ -631,7 +631,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.118 (2026-11-21)";   // vendor name removed from on-screen messages
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.119 (2026-11-22)";   // "+ drawing" in each component header; "See it beside the drawings" link
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -1835,6 +1835,8 @@
             (closed ? "Show" : "Hide") + ' the drawings">' + (closed ? "▸" : "▾") + "</button>" : "") +
           ccell + qcell +
           '<span class="ccount">' + nd + " dwg" + (nd === 1 ? "" : "s") + "</span>" +
+          // Also up here: with 50+ drawings the "+ add drawing" at the foot of the list is a long scroll away.
+          (c.cid ? '<button type="button" class="addd" data-k="adddrawtop" data-ci="' + ci + '" title="Add a drawing to this component">+ drawing</button>' : "") +
           rowBtns("component", ci, null, c.cid) + "</div>" +
           (closed ? "" : '<div class="draws">' + rows + (rows && chips ? '<div class="dsep"></div>' : "") +
             (chips ? '<div class="dgrid">' + chips + "</div>" : "") + doneBtn +
@@ -2041,6 +2043,15 @@
         saveScope(); renderScope(); return;
       }
       if (k === "adddraw") { (scope[ci].drawings = scope[ci].drawings || []).push({ id: "", number: "" }); renderScope(); return; }
+      if (k === "adddrawtop") {                                  // same, from the component's header row
+        (scope[ci].drawings = scope[ci].drawings || []).push({ id: "", number: "" });
+        if (scope[ci].cid) delete compClosed[scope[ci].cid];      // open the list so the new row shows
+        renderScope();
+        const card = document.querySelectorAll("#scopeList .comp")[ci] || document.querySelectorAll(".comp")[ci];
+        const inp = card && Array.prototype.find.call(card.querySelectorAll(".draws input, .draws select"), (x) => !x.value);
+        if (inp) { inp.scrollIntoView({ block: "center" }); inp.focus(); }
+        return;
+      }
       if (k === "cx") {                                          // out of THIS take-off, still on the project
         if (scope[ci].cid) excluded.c[String(scope[ci].cid)] = 1;
         scope.splice(ci, 1); saveScope(); renderScope(); return;
