@@ -49,6 +49,8 @@ button:disabled{opacity:.5;cursor:default}
 .msg{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:var(--mute)}
 .msg div{max-width:420px;background:var(--card);border-radius:12px;padding:18px 20px;box-shadow:0 6px 24px -10px #0004}
 .msg b{color:var(--ink)}
+.parts{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:3px;box-shadow:0 4px 14px -6px #0003}
+.parts[hidden]{display:none}.parts button{min-height:30px;border:0;font-size:13px}.parts button.on{background:var(--brand);color:#fff;font-weight:600}
 .zoomtag{position:absolute;left:10px;bottom:10px;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:3px 9px;font-size:12.5px;color:var(--mute)}
 .panel{background:var(--card);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
 .ph{padding:12px 14px;border-bottom:1px solid var(--line)}
@@ -98,6 +100,7 @@ button:disabled{opacity:.5;cursor:default}
       <div id="paper"></div>
       <div class="msg" id="msg"><div><span class="spin"></span>Loading the drawings…</div></div>
       <div class="zoomtag" id="zoomtag" hidden></div>
+      <div class="parts" id="parts" hidden></div>
     </div>
     <aside class="panel">
       <div class="ph"><div id="wcheck"></div><input class="search" id="q" placeholder="Find a mark or size, e.g. p512" aria-label="Find a mark or size"></div>
@@ -110,7 +113,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v0.1 · 2026-11-22 · drawing workspace step 1";
+const VERSION="drawings v0.2 · 2026-11-22 · whole-word file match, multi-file drawings";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -147,7 +150,7 @@ function ftin(ft){const L=Number(ft)||0;if(!(L>0))return"";let f=Math.floor(L),i
   const w=Math.floor(i),fr=Math.round((i-w)*16);let t="";if(fr){let n=fr,d=16;while(n%2===0){n/=2;d/=2}t=(w?w+" ":"")+n+"/"+d}else t=String(w);return f+"'-"+t+'"'}
 
 /* ---- state ---- */
-const S={R:null,head:null,files:[],map:null,stale:false,sheets:[],cur:-1,sel:-1,q:"",docs:{},view:{s:1,tx:0,ty:0},page:null,render:null,rs:0};
+const S={part:0,R:null,head:null,files:[],map:null,stale:false,sheets:[],cur:-1,sel:-1,q:"",docs:{},view:{s:1,tx:0,ty:0},page:null,render:null,rs:0};
 
 /* The take-off: this browser's working copy when it has one (it can hold unsaved changes),
    else the copy saved on the project. Same keys review.html uses. */
@@ -161,8 +164,14 @@ async function loadTakeoff(){
 function locate(num){
   const k=key(num);if(!k)return null;
   if(S.map&&!S.stale){const s=arr(S.map.sheets).find(x=>key(x.number)===k);if(s)return{file_id:s.file_id,page:s.page||1,how:"map"}}
-  const hits=S.files.filter(f=>key(String(f.name).replace(/\.pdf$/i,"")).indexOf(k)>-1);
-  if(hits.length){hits.sort((a,b)=>a.name.length-b.name.length);return{file_id:hits[0].id,page:1,how:"name"}}
+  // A file named after the drawing: "ML001-...-8065_R0-1 OF 2.pdf". A whole part of the name
+  // equal to the number wins over the number merely appearing inside a longer one. A drawing
+  // split over several files ("1 OF 2", "2 OF 2") keeps every part, in name order.
+  const base=f=>String(f.name).replace(/\.pdf$/i,"");
+  let hits=S.files.filter(f=>base(f).split(/[^A-Za-z0-9]+/).map(key).indexOf(k)>-1);
+  if(!hits.length)hits=S.files.filter(f=>key(base(f)).indexOf(k)>-1);
+  if(hits.length){hits.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+    return{file_id:hits[0].id,page:1,how:"name",more:hits.map(f=>({file_id:f.id,page:1,name:f.name}))}}
   return null}
 
 function buildSheets(){
@@ -213,17 +222,22 @@ function getDoc(fileId){
     if(!r.ok)throw new Error("file "+r.status);
     return pdfjsLib.getDocument({data:new Uint8Array(await r.arrayBuffer())}).promise})();
   return S.docs[fileId]}
-async function openSheet(gi,keepView){
+async function openSheet(gi,keepView,part){
   if(gi<0||gi>=S.sheets.length)return;
+  S.part=part||0;
   S.cur=gi;renderNav();renderList();
   const g=S.sheets[gi];S.page=null;S.rs=0;$("paper").innerHTML="";
   document.querySelector(`.grp[data-g="${gi}"]`)?.scrollIntoView({block:"nearest"});
-  if(!g.loc){$("paper").innerHTML="";S.page=null;$("zoomtag").hidden=true;
+  if(!g.loc){$("paper").innerHTML="";S.page=null;$("zoomtag").hidden=true;$("parts").hidden=true;
     msg(`<b>Drawing ${esc(g.number)} isn't matched to a page yet.</b><br><br>`+(S.files.length?`Press <b>Find drawing pages</b> at the top. It reads the drawing number off every page once and remembers it for this project.`:`This project has no drawings saved. Open the take-off once with its drawings so they're kept.`));return}
+  // A drawing split over several files ("1 OF 2", "2 OF 2"): a switcher above the sheet.
+  const ps=g.loc.more&&g.loc.more.length>1?g.loc.more:null,loc=ps?(ps[S.part]||ps[0]):g.loc;
+  $("parts").hidden=!ps;
+  if(ps)$("parts").innerHTML=ps.map((p,i)=>`<button data-part="${i}" class="${i===S.part?"on":""}" title="${esc(p.name)}">Sheet ${i+1} of ${ps.length}</button>`).join("");
   msg('<span class="spin"></span>Opening '+esc(g.number)+"…");
   try{
-    const doc=await getDoc(g.loc.file_id);
-    const page=await doc.getPage(Math.min(g.loc.page,doc.numPages));
+    const doc=await getDoc(loc.file_id);
+    const page=await doc.getPage(Math.min(loc.page,doc.numPages));
     if(S.cur!==gi)return;
     S.page=page;S.rs=0;msg("");$("zoomtag").hidden=false;
     if(!keepView)fit();else draw();
@@ -259,6 +273,7 @@ $("prev").onclick=()=>openSheet((S.cur-1+S.sheets.length)%S.sheets.length);
 $("next").onclick=()=>openSheet((S.cur+1)%S.sheets.length);
 $("sheet").onchange=e=>{S.sel=-1;openSheet(+e.target.value)};
 $("zin").onclick=()=>zoomAt(1.4);$("zout").onclick=()=>zoomAt(1/1.4);$("fit").onclick=()=>fit();
+$("parts").addEventListener("click",e=>{const b=e.target.closest("[data-part]");if(b)openSheet(S.cur,false,+b.dataset.part)});
 $("find").onclick=()=>$("q").focus();
 $("q").oninput=e=>{S.q=e.target.value.trim().toLowerCase();renderList()};
 const pick=el=>{const g=+el.dataset.g;S.sel=el.dataset.r!=null?+el.dataset.r:-1;if(g!==S.cur)openSheet(g);else renderList()};
@@ -271,7 +286,7 @@ $("mapnote").addEventListener("click",async e=>{if(e.target.id!=="build")return;
   catch(err){b.disabled=false;b.textContent="Try again";b.title=String(err.message||err);msg("<b>Couldn't read the drawing numbers.</b><br>"+esc(err.message||err))}});
 const stage=$("stage");let drag=null;
 stage.addEventListener("wheel",e=>{e.preventDefault();const r=stage.getBoundingClientRect();zoomAt(e.deltaY>0?1/1.15:1.15,e.clientX-r.left,e.clientY-r.top)},{passive:false});
-stage.addEventListener("pointerdown",e=>{if(!S.page)return;drag={x:e.clientX,y:e.clientY,tx:S.view.tx,ty:S.view.ty};stage.setPointerCapture(e.pointerId);stage.classList.add("drag")});
+stage.addEventListener("pointerdown",e=>{if(!S.page||e.target.closest("#parts,.msg"))return;drag={x:e.clientX,y:e.clientY,tx:S.view.tx,ty:S.view.ty};stage.setPointerCapture(e.pointerId);stage.classList.add("drag")});
 stage.addEventListener("pointermove",e=>{if(!drag)return;S.view.tx=drag.tx+e.clientX-drag.x;S.view.ty=drag.ty+e.clientY-drag.y;draw()});
 const end=()=>{drag=null;stage.classList.remove("drag")};stage.addEventListener("pointerup",end);stage.addEventListener("pointercancel",end);
 addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT")return;
