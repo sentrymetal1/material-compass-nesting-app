@@ -641,7 +641,7 @@
   <script>
     if (window.__MC_GO) throw new Error("Opening the AI Take-off Assistant");   // see the redirect in <head>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off Assistant — v0.124 (2026-11-23)";   // a project opened on the intake page goes to the Assistant
+    const BUILD_TAG = "Material Compass · AI Take-off Assistant — v0.125 (2026-11-23)";   // Setup in the Assistant laid out as 4 steps + a run bar
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -687,6 +687,104 @@
     // Opened in the AI Take-off Assistant's Setup tab (drawings.html adds in=assistant).
     const IN_ASSISTANT = new URLSearchParams(window.location.search).get("in") === "assistant" && window.parent !== window;
     if (IN_ASSISTANT) { const st = document.createElement("style"); st.textContent = ".appbar{display:none!important}body{background:#fff}"; document.head.appendChild(st); }
+
+    // ---- SETUP, laid out as steps (Mark 2026-11-23: "a lot is happening … can you streamline this") ----
+    // Inside the Assistant this page is its Setup tab. The same boxes, regrouped: four steps that open
+    // one at a time, each with a one-line summary when closed, and the things that decide the run —
+    // Type of project, reading depth, balance, Run — pinned in a bar along the bottom. Nodes are MOVED,
+    // never copied, so every listener and id the rest of this page uses keeps working.
+    function setupAsSteps() {
+      const $id = (id) => document.getElementById(id);
+      const card = document.querySelector("body > .card");
+      if (!card || !$id("scopePanel")) return;
+      const css = document.createElement("style");
+      css.textContent =
+        "body{padding-bottom:96px}.card>h1,.card>p.sub{display:none}" +
+        ".stp{border:1px solid #dfe6ee;border-radius:10px;margin:0 0 10px;background:#fff}" +
+        ".stp>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px}" +
+        ".stp>summary::-webkit-details-marker{display:none}.stp>summary:hover{background:#f6f9fc}" +
+        ".stp[open]>summary{border-bottom:1px solid #eef2f6;border-radius:10px 10px 0 0}" +
+        ".stp .sn{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;background:#e3e9ef;color:#44525f;flex:none}" +
+        ".stp.done .sn{background:#e8f6ed;color:#1f7a3d}.stp[open] .sn{background:#5286B4;color:#fff}" +
+        ".stp .st{font-weight:700;font-size:14.5px;color:#1f2a36;white-space:nowrap}" +
+        ".stp .ss{flex:1;min-width:0;font-size:12.5px;color:#5b6b7a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+        ".stp .sx{font-size:12px;color:#2f6a9e;font-weight:600;white-space:nowrap}" +
+        ".stp>.sb{padding:12px 14px}" +
+        ".runbar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:#fff;border-top:1px solid #dfe6ee;box-shadow:0 -8px 24px -16px #0005;" +
+        "display:flex;align-items:flex-start;gap:16px;padding:10px 18px;flex-wrap:wrap}" +
+        ".runbar .rb{display:flex;flex-direction:column;gap:3px;min-width:200px}" +
+        ".runbar .rb>label{font-size:11px;font-weight:700;color:#5b6b7a;text-transform:uppercase;letter-spacing:.04em}" +
+        ".runbar select{min-height:34px}.runbar .colhint{font-size:11.5px;margin:0;max-width:340px}.runbar .go{min-width:220px;min-height:42px}" +
+        ".runbar .rbgo{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:3px;max-width:420px;text-align:right}" +
+        ".runbar .ptype{margin:0;padding:0;border:0;background:none}" +
+        ".runbar .ptype>label{font-size:11px;font-weight:700;color:#5b6b7a;text-transform:uppercase;letter-spacing:.04em}" +
+        ".runbar #ptypeHint{font-size:11.5px}.runbar .rb:first-child{flex:0 1 360px}.runbar .rb select{width:100%;max-width:360px}" +
+        ".runbar .ptypenew{margin-top:6px}";
+      document.head.appendChild(css);
+
+      const step = (n, title) => {
+        const d = document.createElement("details"); d.className = "stp";
+        d.innerHTML = '<summary><span class="sn">' + n + '</span><span class="st">' + title + '</span><span class="ss"></span><span class="sx">Show</span></summary><div class="sb"></div>';
+        d.addEventListener("toggle", () => { d.querySelector(".sx").textContent = d.open ? "Hide" : "Show"; });
+        return d;
+      };
+      const opt = ' <span style="font-weight:400;color:#8893a0">· optional</span>';
+      const docPanel = $id("drop").closest(".panel");
+      const scopeBox = $id("scopePanel").parentElement;           // the pills + notes box
+      const cols = document.querySelector(".cols");
+      const toprow = document.querySelector(".toprow");
+      const S1 = step(1, "Documents"), S2 = step(2, "What to quote"),
+            S3 = step(3, "Components &amp; drawings" + opt), S4 = step(4, "Ask about the documents" + opt);
+      [S1, S2, S3, S4].forEach((s) => card.insertBefore(s, toprow));
+      const b = (s) => s.querySelector(".sb");
+      [$id("fromRfq"), docPanel, $id("preflight")].forEach((n) => { if (n) b(S1).appendChild(n); });
+      b(S2).appendChild(scopeBox); scopeBox.style.margin = "0";
+      b(S3).innerHTML = '<div style="font-size:12.5px;color:#5b6b7a;margin-bottom:10px">Optional here: you can also put each drawing under its component while you confirm material on the <b>Drawings</b> tab.</div>';
+      if (cols) b(S3).appendChild(cols);
+      b(S4).appendChild($id("askBox")); $id("askBox").style.margin = "0";
+
+      // The bar: Type of project · Reading depth (with the balance) · Run.
+      const bar = document.createElement("div"); bar.className = "runbar";
+      const ptype = $id("ptypeBox");
+      if (ptype) { const w = document.createElement("div"); w.className = "rb"; w.appendChild(ptype); bar.appendChild(w); }
+      const depth = document.createElement("div"); depth.className = "rb";
+      depth.innerHTML = '<label for="model">Reading depth</label>';
+      depth.appendChild($id("model")); depth.appendChild($id("depthCostHint")); bar.appendChild(depth);
+      const go = document.createElement("div"); go.className = "rbgo";
+      go.appendChild($id("go")); go.appendChild($id("runHint")); bar.appendChild(go);
+      document.body.appendChild(bar);
+      if (toprow) toprow.style.display = "none";
+
+      // One-line summaries, kept current as the page fills in.
+      const txt = (el) => (el ? el.textContent || "" : "").replace(/\s+/g, " ").trim();
+      const rfqBusy = () => { const r = $id("fromRfq"); return !!r && r.style.display !== "none" && /Loading/i.test(r.textContent); };
+      function summarize() {
+        const fl = txt($id("fileList"));
+        const tot = (fl.match(/Total:\s*([\d.,]+\s*MB)/) || [])[1];
+        S1.querySelector(".ss").textContent = rfqBusy() ? txt($id("fromRfq")) : fl ? (tot ? tot + " of documents loaded" : "Documents loaded") : "No documents yet: add the PDFs";
+        S1.classList.toggle("done", !!fl);
+        const yes = Array.from(document.querySelectorAll("#scopePanel .mcs-p.yes")).map((x) => x.textContent.replace(/^✓\s*/, "").replace(/AI\s*$/, "").trim());
+        const brief = ($id("quoteBrief").value || "").trim();
+        S2.querySelector(".ss").textContent = (yes.length ? "Includes " + yes.join(", ") : "Nothing chosen yet") +
+          (brief ? " · “" + brief.slice(0, 80) + (brief.length > 80 ? "…" : "") + "”" : "");
+        S2.classList.toggle("done", yes.length > 0);
+        const cov = txt($id("coverage")).split("Check the full list")[0].replace(/^✓\s*/, "").trim();
+        const onp = (txt($id("scopeSum")).match(/On the project:\s*([^.]*?components?[^.]*?take-off)/) || [])[1] || "";
+        S3.querySelector(".ss").textContent = [onp, cov].filter(Boolean).join(" · ") || "Optional";
+        const q = $id("askThread") ? $id("askThread").children.length : 0;
+        S4.querySelector(".ss").textContent = q ? q + " message" + (q === 1 ? "" : "s") : "Ask what is in a file, or whether something is covered, before you run";
+        S4.style.display = $id("askBox").style.display === "none" ? "none" : "";
+      }
+      let t = null;
+      const later = () => { clearTimeout(t); t = setTimeout(summarize, 250); };
+      new MutationObserver(later).observe(card, { subtree: true, childList: true, characterData: true });
+      $id("quoteBrief").addEventListener("input", later);
+      summarize();
+      // Open what needs doing: the documents when there are none. The summaries say the rest.
+      setTimeout(() => { if (!txt($id("fileList")) && !rfqBusy()) S1.open = true; summarize(); }, 3000);
+    }
+    if (IN_ASSISTANT) setupAsSteps();
+
 
     // ---- AI cost of this project --------------------------------------------
     // The running total of what this project's AI calls have cost (preview, questions, take-off,
@@ -1370,9 +1468,11 @@
         if (hint) hint.innerHTML = "Load at least one PDF or image under <b>Documents</b> to enable this.";
       } else if (noType) {
         go.title = "Choose a Type of project first";
-        if (hint) hint.innerHTML = "Choose a <b>Type of project</b> below before running. The project " +
-          "form requires it on every component, and a component saved without one fails later with " +
-          "&ldquo;Invalid entries found&rdquo; naming no row.";
+        if (hint) hint.innerHTML = IN_ASSISTANT
+          ? "Choose a <b>Type of project</b> (bottom left) first. The project needs it on every component."
+          : "Choose a <b>Type of project</b> below before running. The project " +
+            "form requires it on every component, and a component saved without one fails later with " +
+            "&ldquo;Invalid entries found&rdquo; naming no row.";
       } else if (over) {
         go.title = "The drawings total more than " + SEND_CAP_MB + " MB";
         if (hint) hint.innerHTML = "<b>" + sendMb.toFixed(1) + " MB to read — over the " + SEND_CAP_MB +
