@@ -154,6 +154,10 @@ button:disabled{opacity:.5;cursor:default}
 .mbox button{min-height:30px;font-size:12.5px;padding:0 10px}.mbox button.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
 .mbox .row2{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px}
 .mbox .res{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:6px}
+.mbox .mtop{display:flex;align-items:center;gap:8px;margin-bottom:4px}.mbox .mtop h4{margin:0;flex:1}
+.mbox button.clr{background:var(--redbg);border:1.5px solid var(--red);color:var(--red);font-weight:700;font-size:13px;min-height:32px}
+.mbox button.clr:hover{background:var(--red);color:#fff}
+.mbox .known{margin-top:8px;padding:8px;border:1px dashed var(--brand);border-radius:8px;background:var(--soft)}
 .mbox .warn{color:var(--ylw);font-weight:600}.mbox .ok{color:var(--grn);font-weight:600}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid #c9d6e3;border-top-color:var(--brand);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -197,7 +201,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v0.7 · 2026-11-22 · saves by itself; Confirm material; ruler";
+const VERSION="drawings v0.8 · 2026-11-23 · scale from a known dimension; clearer Clear";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -522,7 +526,7 @@ class Pane{
   measClick(p,shift){
     if(!this.page)return;p=this.lock(p,shift);
     if(!this.pts){this.pts=p;this.hover=p;this.drawMeas();return}
-    const seg={a:this.pts,b:p};this.pts=null;this.hover=null;
+    const seg={a:this.pts,b:p,s:this.view.s};this.pts=null;this.hover=null;
     if(Math.hypot(seg.b[0]-seg.a[0],seg.b[1]-seg.a[1])<0.5){this.drawMeas();return}
     if(S.tool==="cal"){this.calSeg=seg;this.calS=this.view.s}
     else{(S.meas[this.pageKey]=S.meas[this.pageKey]||[]).push(seg)}
@@ -546,21 +550,25 @@ class Pane{
     if(S.tool==="pan"||!this.page||this!==act()){b.hidden=true;return}
     b.hidden=false;const sc=this.scale(),v=this.page.getViewport({scale:1}),i=this.idx;
     const pw=Math.round(v.width/72*10)/10,ph=Math.round(v.height/72*10)/10;
-    let h=`<h4>Ruler</h4>`;
-    h+=`<div class="k">${sc?`Scale: <b style="color:var(--ink)">${esc(sc.label)}</b> ${sc.how==="dimension"?`(set from a dimension${sc.err?", within about "+(Math.round(sc.err*1000)/10||0.1)+"%":""})`:'(printed scale)'}`:'<span class="warn">Set the scale for this sheet first.</span>'}</div>`;
+    const ms=S.meas[this.pageKey]||[],last=ms[ms.length-1];
+    let h=`<div class="mtop"><h4>Ruler</h4>${ms.length&&S.tool!=="cal"?`<button class="clr" data-m="clear" title="Remove the lines measured on this sheet (C)">✕ Clear ${ms.length} measurement${ms.length>1?"s":""}</button>`:""}</div>`;
+    h+=`<div class="k">${sc?`Scale: <b style="color:var(--ink)">${esc(sc.label)}</b> ${sc.how==="dimension"?`(set from a dimension${sc.err?", within about "+(Math.round(sc.err*1000)/10||0.1)+"%":""})`:'(printed scale)'}`:'<span class="warn">No scale on this sheet yet.</span>'}</div>`;
     if(S.tool==="cal"){
-      h+=this.calSeg?`<div class="row2">That dimension is <input id="calIn${i}" size="10" placeholder="e.g. 12'-6&quot;"><button class="pri" data-m="calset">Set scale</button><button data-m="calcancel">Cancel</button></div>
-        <div class="k">Type it as printed: 12'-6", 150, or 3048 mm.</div>`
+      h+=this.calSeg?`<div class="row2">That dimension is <input id="calIn${i}" size="10" placeholder="e.g. 5'-1-3/8&quot;"><button class="pri" data-m="calset">Set scale</button><button data-m="calcancel">Cancel</button></div>
+        <div class="k">Type it as printed: 5'-1-3/8", 61 3/8 (inches), or 1559 mm.</div>`
         :`<div class="row2"><b>Click both ends of a dimension printed on the drawing.</b></div><div class="k">Zoom in close on each end: the closer you zoom, the more accurate the scale.</div><div class="row2"><button data-m="calcancel">Cancel</button></div>`;
     }else{
-      h+=`<div class="row2"><button data-m="cal" class="${sc?"":"pri"}">Set from a dimension</button><select data-m="printed" title="Only right when the PDF is the drawing's full paper size"><option value="">Printed scale…</option>${PRINTED_SCALES.map(s=>`<option value="${s[1]}">${esc(s[0])}</option>`).join("")}</select></div>`;
+      h+=`<div class="row2"><button data-m="cal" class="${sc?"":"pri"}">${sc?"Re-scale from a known dimension":"Scale from a known dimension"}</button><select data-m="printed" title="Only right when the PDF is the drawing's full paper size"><option value="">Printed scale…</option>${PRINTED_SCALES.map(s=>`<option value="${s[1]}">${esc(s[0])}</option>`).join("")}</select></div>`;
       h+=`<div class="k">This PDF page is ${pw} × ${ph} in.${sc&&sc.how==="printed"?' <span class="warn">Check it: measure a dimension printed on the drawing.</span>':""}</div>`;
-      const ms=S.meas[this.pageKey]||[],last=ms[ms.length-1];
       if(last&&sc){const L=this.lenIn(last.a,last.b),T=this.tolIn(last.a,last.b);
         h+=`<div class="res">${esc(ftin(L/12))} <span class="k" style="font-size:12.5px;font-weight:400">${esc(inStr(L/12))} in · ${Math.round(L*25.4).toLocaleString()} mm · within about ${esc(tolStr(T))}${T>0.25?" (zoom in for closer)":""}</span></div>`;
         const r=selRow();if(r)h+=`<div class="row2"><button class="pri" data-m="use">Use ${esc(ftin(L/12))} as the length of ${esc(r.member_mark||"this line")}</button><span class="k">now ${esc(ftin(r.length_ft))}</span></div><div class="edmsg" id="mMsg${i}"></div>`;
         else h+=`<div class="k">Select a line to use this as its length.</div>`}
-      h+=`<div class="k" style="margin-top:6px">Click two points to measure. Hold Shift for a straight line. Esc stops.</div>`+(ms.length?`<div class="row2"><button data-m="clear">Clear measurements</button></div>`:"");
+      // The line just measured is a dimension the drawing prints: scale the sheet from it.
+      if(last)h+=`<div class="known"><div class="k" style="color:var(--ink)"><b>${sc?"Is this line a known dimension?":"You measured a line. What does the drawing say it is?"}</b></div>
+        <div class="row2">It is <input id="knIn${i}" size="10" placeholder="e.g. 5'-1-3/8&quot;"><button class="${sc?"":"pri"}" data-m="known">Scale from this line</button></div>
+        <div class="k" id="knMsg${i}">The sheet is scaled so this line reads that length.</div></div>`;
+      h+=`<div class="k" style="margin-top:6px">Click two points to measure. Hold Shift for a straight line. C clears. Esc stops.</div>`;
     }
     b.innerHTML=h;
     const lm=S.lastMsg;if(lm&&Date.now()<lm.until){const el=document.getElementById(lm.id);if(el&&b.contains(el)){el.className=lm.cls;el.innerHTML=lm.html}}
@@ -570,18 +578,24 @@ class Pane{
     if(m==="cal"){setTool("cal");return}
     if(m==="calcancel"){this.calSeg=null;setTool("measure");return}
     if(m==="clear"){delete S.meas[this.pageKey];this.drawMeas();this.renderMbox();return}
-    if(m==="calset"){const inp=this.mbox.querySelector("#calIn"+this.idx),raw=String(inp&&inp.value||"").trim();
-      let inches=null;const mm=raw.match(/^(\d+(?:\.\d+)?)\s*mm$/i);if(mm)inches=Number(mm[1])/25.4;else{const ft=parseLen(raw);if(ft)inches=ft*12}
-      if(!(inches>0)){inp&&inp.focus();const k=this.mbox.querySelector(".k:last-child");if(k){k.className="k warn";k.textContent="Not a length. Type it as printed: 12'-6\", 150 (inches) or 3048 mm."}return}
-      const s=this.calSeg,d=Math.hypot(s.b[0]-s.a[0],s.b[1]-s.a[1]),pk=this.pageKey;
-      const sc={in_per_pt:inches/d,how:"dimension",label:raw+" dimension",err:2/(this.calS||this.view.s)/d,at:new Date().toISOString()};
-      const why=applyChange(R=>{R.scales=R.scales&&typeof R.scales==="object"?R.scales:{};R.scales[pk]=sc});
-      this.calSeg=null;if(why){alert("Scale not saved: "+why);return}
-      S.R.scales=Object.assign({},S.R.scales||{},{[pk]:sc});setTool("measure");return}
+    if(m==="calset"){
+      if(this.setScale(this.calSeg,this.calS,this.mbox.querySelector("#calIn"+this.idx),this.mbox.querySelector(".k:last-child"))){this.calSeg=null;setTool("measure")}return}
+    if(m==="known"){const ms=S.meas[this.pageKey]||[],last=ms[ms.length-1];if(!last)return;
+      if(this.setScale(last,last.s,this.mbox.querySelector("#knIn"+this.idx),this.mbox.querySelector("#knMsg"+this.idx))){this.drawMeas();this.renderMbox()}return}
     if(m==="use"){const r=selRow(),ms=S.meas[this.pageKey]||[],last=ms[ms.length-1];if(!r||!last)return;
       const L=this.lenIn(last.a,last.b);if(!(L>0))return;
       doEdit("length",{i:rowIdx(r),fp:fpOf(r),value:L/12,how:"measured on the drawing"},document.getElementById("mMsg"+this.idx)).then(()=>this.renderMbox());return}
   }
+  // Scale the sheet so segment seg (clicked at zoom zs) reads the length typed in inp. True when saved.
+  setScale(seg,zs,inp,msgEl){
+    const raw=String(inp&&inp.value||"").trim();
+    let inches=null;const mm=raw.match(/^(\d+(?:\.\d+)?)\s*mm$/i);if(mm)inches=Number(mm[1])/25.4;else{const ft=parseLen(raw);if(ft)inches=ft*12}
+    if(!(inches>0)){inp&&inp.focus();if(msgEl){msgEl.className="k warn";msgEl.textContent="Not a length. Type it as printed: 5'-1-3/8\", 61 3/8 (inches) or 1559 mm."}return false}
+    if(!seg)return false;const d=Math.hypot(seg.b[0]-seg.a[0],seg.b[1]-seg.a[1]),pk=this.pageKey;if(!(d>0))return false;
+    const sc={in_per_pt:inches/d,how:"dimension",label:raw+" dimension",err:2/(zs||this.view.s)/d,at:new Date().toISOString()};
+    const why=applyChange(R=>{R.scales=R.scales&&typeof R.scales==="object"?R.scales:{};R.scales[pk]=sc});
+    if(why){alert("Scale not saved: "+why);return false}
+    S.R.scales=Object.assign({},S.R.scales||{},{[pk]:sc});return true}
   mboxChange(e){const el=e.target.closest('select[data-m="printed"]');if(!el||!el.value)return;
     const v=Number(el.value),lab=el.options[el.selectedIndex].text,pk=this.pageKey;
     const sc={in_per_pt:v/72,how:"printed",label:lab,err:0,at:new Date().toISOString()};
@@ -608,7 +622,8 @@ class Pane{
       if(d&&!d.moved&&e&&e.type==="pointerup"&&S.tool!=="pan"){this.view.tx=d.tx;this.view.ty=d.ty;this.draw();this.measClick(this.toPage(e),e.shiftKey)}};
     st.addEventListener("pointerup",end);st.addEventListener("pointercancel",end);
     this.mbox.addEventListener("click",e=>this.mboxClick(e));this.mbox.addEventListener("change",e=>this.mboxChange(e));
-    this.mbox.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="calIn"+this.idx){e.preventDefault();this.mbox.querySelector('[data-m="calset"]')?.click()}});
+    this.mbox.addEventListener("keydown",e=>{if(e.key!=="Enter")return;const m=e.target.id==="calIn"+this.idx?"calset":e.target.id==="knIn"+this.idx?"known":"";
+      if(m){e.preventDefault();this.mbox.querySelector('[data-m="'+m+'"]')?.click()}});
     this.mbox.addEventListener("pointerdown",e=>e.stopPropagation());
     this.partsEl.addEventListener("click",e=>{const b=e.target.closest("[data-part]");if(b)this.open(this.cur,false,+b.dataset.part)});
     this.followEl.addEventListener("click",e=>{const b=e.target.closest("[data-f]");if(!b)return;
@@ -767,7 +782,8 @@ function renderSave(s,detail){const el=$("foot");if(!el)return;
 if(STORE)STORE.onStatus(renderSave);
 // Inches as the shop writes them: 50 3/16, 50.19, 4'-2 3/16", 4' 2-3/16.
 function parseLen(s){
-  s=String(s||"").trim().replace(/[”″]/g,'"').replace(/[’′]/g,"'");if(!s)return null;
+  s=String(s||"").trim().replace(/[”″]/g,'"').replace(/[’′]/g,"'")
+    .replace(/[⅛¼⅜½⅝¾⅞]/g,c=>" "+{"⅛":"1/8","¼":"1/4","⅜":"3/8","½":"1/2","⅝":"5/8","¾":"3/4","⅞":"7/8"}[c]).replace(/(\d)\s*-?\s+(\d+\/)/,"$1 $2").trim();if(!s)return null;
   const num=t=>{t=String(t||"").trim().replace(/"$/,"").trim();if(!t)return 0;
     let m=t.match(/^(\d+(?:\.\d+)?)[\s-]+(\d+)\/(\d+)$/);if(m)return +m[1]+ +m[2]/ +m[3];
     m=t.match(/^(\d+)\/(\d+)$/);if(m)return +m[1]/ +m[2];
@@ -858,6 +874,7 @@ addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==
   if(e.key==="PageDown"||e.key==="]")$("next").click();else if(e.key==="PageUp"||e.key==="[")$("prev").click();
   else if(e.key==="+"||e.key==="=")A.zoomAt(1.25);else if(e.key==="-")A.zoomAt(.8);else if(e.key==="0")A.fit();
   else if(e.key==="m"||e.key==="M")setTool(S.tool==="pan"?"measure":"pan");
+  else if((e.key==="c"||e.key==="C")&&S.tool==="measure"&&A&&(S.meas[A.pageKey]||[]).length){delete S.meas[A.pageKey];A.pts=null;A.hover=null;A.drawMeas();A.renderMbox()}
   else if(e.key==="Escape"){if(S.tool!=="pan"){if(A.pts){A.pts=null;A.hover=null;A.drawMeas()}else setTool("pan")}else if(S.selMark)clearPart()}});
 $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)history.back();else location.href="/takeoff/review.html?project_id="+encodeURIComponent(P.project_id)+"&manufacturer_id="+encodeURIComponent(P.manufacturer_id)};
 
