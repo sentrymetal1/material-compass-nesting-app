@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="/takeoff/takeoff-store.js"></script>
 <!--
   DRAWING WORKSPACE (read-only). v0.4: two panes side by side, a part followed across every drawing
   it is on, and drawings where it is printed but not taken off. Step 1: The project's own drawings in the middle, the take-off
@@ -85,7 +86,7 @@ button:disabled{opacity:.5;cursor:default}
 .row .w{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap;font-size:13.5px}
 .row .meta{grid-column:2/4;font-size:12.5px;color:var(--mute)}
 .row.flag{border-left-color:var(--red)}.row .fl{grid-column:2/4;font-size:12.5px;color:var(--red);font-weight:600}
-.srow{display:flex;gap:8px;align-items:center;margin-top:10px}.srow .search{margin-top:0;flex:1}
+.srow{display:flex;gap:8px;align-items:center;margin-top:10px}.srow[hidden]{display:none}.srow .search{margin-top:0;flex:1}
 .flagbtn{white-space:nowrap;color:var(--red);border-color:#f1b5b5;background:var(--redbg);font-weight:600;font-size:13px;min-height:38px}
 .flagbtn.on{color:var(--ink);background:var(--card);border-color:var(--line)}.flagbtn[hidden]{display:none}
 .foot{font-size:12px;color:var(--mute);padding:8px 14px;border-top:1px solid var(--line)}
@@ -117,6 +118,43 @@ button:disabled{opacity:.5;cursor:default}
 .edflag{color:var(--red);font-weight:600;margin-top:6px;font-size:12.5px}
 .edmsg{font-size:12.5px;margin-top:4px;min-height:1em}.edmsg.ok{color:var(--grn);font-weight:600}.edmsg.bad{color:var(--red)}
 @media(prefers-reduced-motion:reduce){.ov i.cur{animation:none}}
+/* Material confirmed: progress in the bar, and the per-drawing check in the panel. */
+.prog{display:flex;align-items:center;gap:8px;background:#1a3754;border:0;color:#fff;border-radius:8px;min-height:36px;padding:0 12px;font-size:13px}
+.prog .pb{width:110px;height:8px;border-radius:5px;background:#ffffff2e;overflow:hidden}.prog .pb i{display:block;height:100%;background:#4ade80}
+.prog b{font-variant-numeric:tabular-nums}.prog.all{background:#1f7a3d}
+.ptabs{display:flex;gap:4px;margin-top:10px;background:#eef2f6;border-radius:9px;padding:3px}
+.ptabs button{flex:1;border:0;background:transparent;min-height:32px;font-size:13.5px;font-weight:600;color:var(--mute);border-radius:7px}
+.ptabs button.on{background:#fff;color:#1d4670;box-shadow:0 1px 3px #0002}
+.cf{padding:12px 14px}
+.cfh{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.cfh h3{margin:0;font-size:16px}.cfh .t{color:var(--mute);font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill{display:inline-block;font-size:12px;font-weight:700;border-radius:20px;padding:2px 10px;white-space:nowrap}
+.pill.done{background:var(--grnbg);color:var(--grn)}.pill.todo{background:#eef2f6;color:var(--mute)}.pill.changed{background:var(--ylwbg);color:var(--ylw)}
+.cfs{font-size:12px;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 4px}
+.iss{display:flex;gap:8px;align-items:flex-start;padding:7px 10px;border-radius:8px;margin:4px 0;font-size:13px;cursor:pointer;border:1px solid}
+.iss.bad{background:var(--redbg);border-color:#f1b5b5}.iss.miss{background:var(--ylwbg);border-color:#ecc98a}.iss:hover{filter:brightness(.97)}
+.iss b{white-space:nowrap;flex:none}.iss span{flex:1}
+.cl{display:grid;grid-template-columns:20px 58px minmax(0,1fr) auto;gap:0 8px;align-items:baseline;padding:6px 4px;border-bottom:1px solid #f0f3f6;cursor:pointer;font-size:13.5px}
+.cl:hover{background:var(--soft)}.cl.sel{background:var(--soft);box-shadow:inset 3px 0 var(--brand)}
+.cl .ic{font-weight:700;text-align:center}.cl .ic.ok{color:var(--grn)}.cl .ic.no{color:#9aa7b4}.cl .ic.bad{color:var(--red)}
+.cl .m{font-weight:700;overflow:hidden;text-overflow:ellipsis}.cl .w{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cl .meta{grid-column:3/5;font-size:12px;color:var(--mute)}
+.cfbtn{width:100%;margin-top:14px;min-height:44px;font-weight:700;font-size:15px;border:0;border-radius:10px;background:var(--grn);color:#fff}
+.cfbtn.warn{background:#b45309}.cfask{margin-top:10px;font-size:13px;background:var(--ylwbg);border:1px solid #ecc98a;border-radius:8px;padding:10px}
+.cfask button{margin:8px 8px 0 0}.cfdone{margin-top:14px;font-size:13px;color:var(--grn);background:var(--grnbg);border-radius:8px;padding:10px}
+.cfdone button,.cfnext{min-height:30px;font-size:12.5px;margin-left:6px}
+.grp .ok{color:var(--grn);font-weight:700}
+/* Ruler */
+.stage.meas{cursor:crosshair}
+.mv{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.mv line{stroke:#d9480f;stroke-width:2}.mv line.tk{stroke-width:2}.mv line.cal{stroke:#7048e8}.mv circle{fill:#d9480f}
+.mv text{font:600 13px Inter,system-ui,sans-serif;fill:#fff;paint-order:stroke;stroke:#9a3412;stroke-width:3px}
+.mbox{position:absolute;left:10px;bottom:40px;z-index:4;width:330px;max-width:calc(100% - 20px);background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px -10px #0006;padding:10px 12px;font-size:13px}
+.mbox[hidden]{display:none}.mbox h4{margin:0 0 4px;font-size:14px}.mbox .k{color:var(--mute);font-size:12.5px}
+.mbox select,.mbox input{min-height:32px;border:1px solid #c9d3dc;border-radius:6px;padding:0 6px;font-size:14px}
+.mbox button{min-height:30px;font-size:12.5px;padding:0 10px}.mbox button.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+.mbox .row2{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.mbox .res{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:6px}
+.mbox .warn{color:var(--ylw);font-weight:600}.mbox .ok{color:var(--grn);font-weight:600}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid #c9d6e3;border-top-color:var(--brand);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media(max-width:900px){.app{height:auto}.main{grid-template-columns:1fr}.tools{flex-direction:row;border-right:0;border-bottom:1px solid var(--line)}
@@ -129,10 +167,11 @@ button:disabled{opacity:.5;cursor:default}
     <svg width="28" height="28" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="19" fill="#fff"/><path d="M20 5l3.2 11.8L35 20l-11.8 3.2L20 35l-3.2-11.8L5 20l11.8-3.2z" fill="#5286B4"/></svg>
     <div class="job" id="job">Loading…<small>AI Take-off · Drawings</small></div>
     <div class="nav"><button id="prev" aria-label="Previous drawing">&larr;</button><select id="sheet" aria-label="Drawing"></select><span class="of" id="of"></span><button id="next" aria-label="Next drawing">&rarr;</button></div>
+    <button id="prog" class="prog" title="Go to the next drawing not confirmed yet" hidden></button>
     <span id="mapnote"></span>
     <span class="ocr" id="ocrnote"></span>
     <span class="sp"></span>
-    <a id="back" href="#">Back to the review page</a>
+    <a id="back" href="#" title="The review page, with every tab">Classic view</a>
   </div>
   <div class="main">
     <div class="tools" role="toolbar" aria-label="Drawing tools">
@@ -140,14 +179,17 @@ button:disabled{opacity:.5;cursor:default}
       <button id="zout" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M7 10h6M15 15l5 5"/></svg></button>
       <button id="fit" title="Fit the sheet" aria-label="Fit the sheet"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
       <button id="splitBtn" title="Open a second drawing beside this one" aria-label="Open a drawing beside this one"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="16" rx="1"/><rect x="13" y="4" width="8" height="16" rx="1"/></svg></button>
+      <button id="measBtn" title="Ruler: measure on the drawing (M)" aria-label="Ruler"><svg viewBox="0 0 24 24"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg></button>
       <button id="find" title="Find a mark or size" aria-label="Find a mark or size"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="17" cy="16" r="3"/><path d="M19.5 18.5L22 21"/></svg></button>
     </div>
     <div class="stages" id="stages"></div>
     <aside class="panel">
-      <div class="ph"><div id="wcheck"></div><div class="srow"><input class="search" id="q" placeholder="Find a mark or size, e.g. p512" aria-label="Find a mark or size"><button id="flagBtn" class="flagbtn" hidden></button></div></div>
+      <div class="ph"><div id="wcheck"></div>
+        <div class="ptabs" role="tablist"><button id="tabConfirm" class="on" role="tab">Confirm material</button><button id="tabLines" role="tab">All lines</button></div>
+        <div class="srow" id="srow" hidden><input class="search" id="q" placeholder="Find a mark or size, e.g. p512" aria-label="Find a mark or size"><button id="flagBtn" class="flagbtn" hidden></button></div></div>
       <div class="list" id="list"></div>
       <div class="used" id="used" hidden></div>
-      <div class="foot">Changes made here are saved by the review page, so keep it open in its own tab.</div>
+      <div class="foot" id="foot">Changes you make here are saved to the project.</div>
     </aside>
   </div>
 </div>
@@ -155,7 +197,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v0.6 · 2026-11-22 · fixes from the drawing, saved by the review page";
+const VERSION="drawings v0.7 · 2026-11-22 · saves by itself; Confirm material; ruler";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -194,16 +236,16 @@ function ftin(ft){const L=Number(ft)||0;if(!(L>0))return"";let f=Math.floor(L),i
 /* ---- state ---- */
 // One take-off, up to two drawing panes. The ACTIVE pane (the one last clicked) is the one the
 // drawing picker, the arrows, the tools and the list drive.
-const S={marks:{},mnow:"",selMark:null,sel:-1,selG:-1,R:null,head:null,files:[],map:null,stale:false,sheets:[],q:"",docs:{},panes:[],active:0,split:false};
+const S={marks:{},mnow:"",selMark:null,sel:-1,selG:-1,R:null,head:null,files:[],map:null,stale:false,sheets:[],q:"",docs:{},panes:[],active:0,split:false,
+  tab:"confirm",tool:"pan",meas:{},lastMeas:null,cal:null,confAsk:false};
+// This page saves the take-off itself (takeoff-store.js): the same browser copy and project save as
+// the review page, which re-reads it whenever this page changes it.
+const STORE=window.TakeoffStore?TakeoffStore.create(P.project_id,{from:"drawings"}):null;
 const act=()=>S.panes[S.active];
 
 /* The take-off: this browser's working copy when it has one (it can hold unsaved changes),
    else the copy saved on the project. Same keys review.html uses. */
-async function loadTakeoff(){
-  try{const s=localStorage.getItem("mc_takeoff_"+P.project_id);if(s){const R=JSON.parse(s);if(R&&arr(R.rows).length)return R}}catch(e){}
-  const d=await getJSON("/api/takeoff/saved/"+encodeURIComponent(P.project_id));
-  return d&&d.ok&&d.found?d.package:null;
-}
+async function loadTakeoff(){return STORE?STORE.load():null}
 
 /* Drawing number → {file_id, page}. The saved page map first; then a file named after the drawing. */
 function locate(num){
@@ -237,8 +279,9 @@ function renderCheck(){
   const ew=Number(S.R&&S.R.expected_weight_lb)>0?Number(S.R.expected_weight_lb):null;
   const pw=S.head&&Number(S.head.total_weight)>0?Number(S.head.total_weight):null;
   const ref=ew||pw;
-  if(!ref){$("wcheck").innerHTML=`<div class="wc none"><div><small>Take-off</small><b>${fmtLb(lb)} lb</b></div><div><small>Expected</small><b>none yet</b></div><div><small>Lines not weighed</small><b>${un}</b></div><p>Enter the job's known weight on the review page to check the take-off against it.</p></div>`;return}
+  if(!ref){renderProg();$("wcheck").innerHTML=`<div class="wc none"><div><small>Take-off</small><b>${fmtLb(lb)} lb</b></div><div><small>Expected</small><b>none yet</b></div><div><small>Lines not weighed</small><b>${un}</b></div><p>Enter the job's known weight on the review page to check the take-off against it.</p></div>`;return}
   const p=(lb-ref)/ref*100,ok=Math.abs(p)<=3;
+  renderProg();
   $("wcheck").innerHTML=`<div class="wc ${ok?"ok":"bad"}"><div><small>Take-off</small><b>${fmtLb(lb)} lb</b></div><div><small>${ew?"Expected (entered)":"Project BOM"}</small><b>${fmtLb(ref)} lb</b></div><div><small>Difference</small><b class="d">${p>=0?"+":""}${p.toFixed(1)}%</b></div><p>${ok?"Within 3% of the expected weight.":"More than 3% off. Find the lines that make up the difference before pricing."}${un?` ${un} line${un>1?"s":""} can't be weighed yet.`:""}</p></div>`;
 }
 /* Flags — the SAME checks the review page's weight card makes (noteMmMismatch, wcIsDouble), so a
@@ -257,11 +300,13 @@ function flagsOf(r){const f=[],m=noteMmMismatch(r);
   return f}
 function rowMatch(r){if(S.onlyFlags&&!flagsOf(r).length)return false;if(!S.q)return true;const t=(r.member_mark+" "+r.size+" "+r.form_type+" "+r.source_sheet+" "+(r.note||"")).toLowerCase();return t.indexOf(S.q)>-1}
 function renderList(){
+  if(S.tab==="confirm")return renderConfirm();
   let h="";const cur=act()?act().cur:-1;
   S.sheets.forEach((g,gi)=>{
     const rows=g.rows.filter(rowMatch);if((S.q||S.onlyFlags)&&!rows.length&&(S.onlyFlags||key(g.number).indexOf(key(S.q))<0))return;
     const nf=g.rows.filter(r=>flagsOf(r).length).length;
-    h+=`<div class="grp ${gi===cur?"on":""}" data-g="${gi}"><span>${esc(g.number)}</span><span class="t">${esc(g.title)}</span>${nf?`<span class="nf" title="Lines flagged by the weight check">⚠ ${nf}</span>`:""}${g.loc?"":'<span class="nf">page not found</span>'}<span class="w">${g.lb?fmtLb(g.lb)+" lb":""}</span></div>`;
+    const cs=confOf(g).state;
+    h+=`<div class="grp ${gi===cur?"on":""}" data-g="${gi}"><span>${cs==="done"?'<span class="ok" title="Material confirmed">✓</span> ':""}${esc(g.number)}</span><span class="t">${esc(g.title)}</span>${nf?`<span class="nf" title="Lines flagged by the weight check">⚠ ${nf}</span>`:""}${g.loc?"":'<span class="nf">page not found</span>'}<span class="w">${g.lb?fmtLb(g.lb)+" lb":""}</span></div>`;
     rows.forEach(r=>{const i=g.rows.indexOf(r),w=rowWeight(r),fl=flagsOf(r);
       h+=`<div class="row ${gi===S.selG&&i===S.sel?"sel":""} ${fl.length?"flag":""}" data-g="${gi}" data-r="${i}" tabindex="0" role="button"><span class="m">${esc(r.member_mark||"–")}</span><span class="s">${esc(r.size||"")} <span style="color:var(--mute)">${esc(r.form_type||"")}</span></span><span class="w">${w?fmtLb(w)+" lb":"–"}</span><span class="meta">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}${r.component?" · "+esc(r.component):""}</span>${fl.map(t=>`<span class="fl">⚠ ${esc(t)}</span>`).join("")}</div>`});
   });
@@ -270,6 +315,68 @@ function renderList(){
   $("flagBtn").hidden=!nAll&&!S.onlyFlags;$("flagBtn").classList.toggle("on",!!S.onlyFlags);
   $("flagBtn").textContent=S.onlyFlags?"Show all lines":`⚠ ${nAll} flagged line${nAll===1?"":"s"}`;
 }
+/* ---- MATERIAL CONFIRMED, drawing by drawing ----
+   The take-off's material is confirmed one drawing at a time, against the drawing itself:
+     ⚠ a line the weight check flags (length vs its mm note, counted twice),
+     ✗ a part printed on the drawing with no take-off line here (the drawing reader's find),
+     and each line marked by whether its mark was found printed on the sheet.
+   A confirmation is stored with the take-off (R.material_confirm, by drawing) with a fingerprint
+   of the drawing's lines, so a line changed later shows "changed since confirmed". */
+function rowsSig(g){const s=g.rows.map(fpOf).sort().join("\n");let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))|0;return g.rows.length+":"+h}
+function confOf(g){const c=g&&S.R&&S.R.material_confirm&&S.R.material_confirm[key(g.number)];
+  if(!c)return{state:"todo"};return{state:c.sig===rowsSig(g)?"done":"changed",at:c.at}}
+let MARKS_ALL=null,MARKS_R=null;
+function allMarks(){if(MARKS_R===S.R&&MARKS_ALL)return MARKS_ALL;const s=new Set();
+  S.sheets.forEach(g=>g.rows.forEach(r=>{const m=normMark(r.member_mark);if(m&&/[a-z]/.test(m)&&/\d/.test(m))s.add(m)}));
+  MARKS_R=S.R;return(MARKS_ALL=s)}
+function sheetIssues(g){
+  const flagged=[];g.rows.forEach((r,i)=>{const f=flagsOf(r);if(f.length)flagged.push({r,i,f})});
+  const ms=allMarks(),missing=[];
+  ms.forEach(m=>{const b=baseMark(m);if(b&&ms.has(b))return;const n=printedOnly(g,m);if(n)missing.push({m,n})});
+  missing.sort((a,b)=>a.m.localeCompare(b.m,undefined,{numeric:true}));
+  const ps=partsOf(g),reading=ps.some(p=>!S.marks[keyOf(p)]),unread=ps.some(p=>S.marks[keyOf(p)]&&S.marks[keyOf(p)].err);
+  return{flagged,missing,reading,unread,n:flagged.length+missing.length}}
+// Was this line's mark found printed on its drawing? null = the drawing hasn't been read.
+function printedOnSheet(g,r){const m=normMark(r.member_mark);if(!m)return null;let read=0,n=0;
+  partsOf(g).forEach(p=>{const e=S.marks[keyOf(p)];if(e&&e.words){read++;n+=hitsOn(keyOf(p),m).length}});return read?n>0:null}
+function nextTodo(from){const n=S.sheets.length;for(let k=1;k<=n;k++){const gi=(from+k+n)%n;if(confOf(S.sheets[gi]).state!=="done")return gi}return -1}
+function renderProg(){const b=$("prog");if(!b)return;const n=S.sheets.length;if(!n){b.hidden=true;return}
+  const d=S.sheets.filter(g=>confOf(g).state==="done").length;b.hidden=false;b.classList.toggle("all",d===n);
+  b.innerHTML=`<span>Material confirmed</span><span class="pb"><i style="width:${Math.round(d/n*100)}%"></i></span><b>${d} of ${n}</b>`;
+  b.title=d===n?"Every drawing's material is confirmed.":"Go to the next drawing not confirmed yet"}
+function renderConfirm(){
+  const A=act(),gi=A?A.cur:-1,g=S.sheets[gi];
+  if(!g){$("list").innerHTML='<div class="cf" style="color:var(--mute)">Open a drawing to confirm its material.</div>';renderProg();return}
+  const c=confOf(g),is=sheetIssues(g),lb=g.lb,nx=nextTodo(gi);
+  let h=`<div class="cf"><div class="cfh"><h3>${esc(g.number)}</h3><span class="t">${esc(g.title)}</span>
+    <span class="pill ${c.state}">${c.state==="done"?"✓ Confirmed":c.state==="changed"?"Changed since confirmed":"Not confirmed"}</span></div>
+    <div style="font-size:13px;color:var(--mute);margin-top:2px">${g.rows.length} line${g.rows.length===1?"":"s"}${lb?" · "+fmtLb(lb)+" lb":""}</div>`;
+  if(is.n){h+=`<div class="cfs">To check (${is.n})</div>`;
+    is.flagged.forEach(x=>{h+=`<div class="iss bad" data-r="${x.i}" role="button" tabindex="0"><b>⚠ ${esc(x.r.member_mark||"–")}</b><span>${esc(x.f.join(" · "))}</span></div>`});
+    is.missing.forEach(x=>{h+=`<div class="iss miss" data-mk="${esc(x.m)}" role="button" tabindex="0"><b>✗ ${esc(markLabel(x.m))}</b><span>Printed on this drawing (${x.n}×) with no take-off line here. Check for a missed quantity.</span></div>`})}
+  else if(!is.reading)h+=`<div class="cfs" style="color:var(--grn)">Nothing flagged on this drawing</div>`;
+  if(is.reading)h+=`<div style="font-size:12.5px;color:var(--mute);margin-top:8px"><span class="spin"></span>Still reading this drawing for part marks; more may show up.</div>`;
+  else if(is.unread)h+=`<div style="font-size:12.5px;color:var(--ylw);margin-top:8px">This drawing couldn't be read for part marks, so missed parts can't be found automatically. Check it by eye.</div>`;
+  h+=`<div class="cfs">Lines on this drawing</div>`;
+  g.rows.forEach((r,i)=>{const fl=flagsOf(r).length,pr=printedOnSheet(g,r),w=rowWeight(r);
+    const ic=fl?'<span class="ic bad" title="Flagged">⚠</span>':pr===true?'<span class="ic ok" title="Found printed on this drawing">✓</span>':pr===false?'<span class="ic no" title="Not found printed on this drawing by the reader. Check it is on this drawing.">?</span>':'<span class="ic no">·</span>';
+    h+=`<div class="cl ${gi===S.selG&&i===S.sel?"sel":""}" data-r="${i}" tabindex="0" role="button">${ic}<span class="m">${esc(r.member_mark||"–")}</span><span>${esc(r.size||"")} <span style="color:var(--mute)">${esc(r.form_type||"")}</span></span><span class="w">${w?fmtLb(w)+" lb":"–"}</span><span class="meta">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}${pr===false?" · not found printed here":""}</span></div>`});
+  if(c.state==="done")h+=`<div class="cfdone">✓ Material confirmed${c.at?" on "+esc(new Date(c.at).toLocaleDateString()):""}. <button data-cf="undo">Undo</button>${nx>-1?'<button class="cfnext" data-cf="next">Next to confirm ›</button>':""}</div>`;
+  else if(S.confAsk&&is.n)h+=`<div class="cfask"><b>${is.n} thing${is.n===1?"":"s"} still to check on this drawing.</b> Confirm the material anyway?<br><button data-cf="force">Confirm anyway</button><button data-cf="cancel">Check them first</button></div>`;
+  else h+=`<button class="cfbtn ${is.n?"warn":""}" data-cf="yes">${c.state==="changed"?"Confirm again":"Material confirmed"}${nx>-1&&nx!==gi?" · next drawing ›":""}</button>
+    <div style="font-size:12px;color:var(--mute);margin-top:6px">Confirm when every part on this drawing has the right line: quantity, size and length.</div>`;
+  $("list").innerHTML=h+"</div>";
+  renderProg();
+}
+function setConfirm(g,on){
+  const why=applyChange(R=>{R.material_confirm=R.material_confirm&&typeof R.material_confirm==="object"?R.material_confirm:{};
+    if(on)R.material_confirm[key(g.number)]={at:new Date().toISOString(),sig:rowsSig(g),lb:Math.round(g.lb||0),lines:g.rows.length};
+    else delete R.material_confirm[key(g.number)]});
+  S.confAsk=false;reloadTakeoff();return why}
+function confirmAndNext(){const A=act(),gi=A.cur,g=S.sheets[gi];if(!g)return;
+  const why=setConfirm(g,true);if(why){alert(why);return}
+  const n=nextTodo(gi);if(n>-1&&n!==gi){clearPart();A.open(n)}else{renderList();renderProg()}}
+
 function renderNav(){
   const cur=act()?act().cur:-1;
   $("sheet").innerHTML=S.sheets.map((g,i)=>`<option value="${i}">${esc(g.number)}${g.title?" · "+esc(g.title):""}${g.loc?"":" (page not found)"}</option>`).join("");
@@ -309,6 +416,7 @@ function markLabel(m){for(const g of S.sheets){const r=g.rows.find(x=>normMark(x
 /* ---- a drawing pane ---- */
 const PANE_HTML=`<div class="phd"></div><div class="stage"><div class="paper"></div>
   <div class="topctl"><div class="follow" hidden></div><div class="parts" hidden></div></div>
+  <svg class="mv"></svg><div class="mbox" hidden></div>
   <div class="msg" hidden></div><div class="zoomtag" hidden></div></div>`;
 class Pane{
   constructor(idx){
@@ -316,15 +424,16 @@ class Pane{
     $("stages").appendChild(el);
     Object.assign(this,{el,idx,cur:-1,part:0,page:null,view:{s:1,tx:0,ty:0},rs:0,task:null,fitS:0,pageKey:"",boxI:-1,rTimer:null,drag:null});
     const q=c=>el.querySelector(c);
-    Object.assign(this,{stage:q(".stage"),paper:q(".paper"),msgEl:q(".msg"),zoomtag:q(".zoomtag"),partsEl:q(".parts"),followEl:q(".follow"),hd:q(".phd")});
+    Object.assign(this,{stage:q(".stage"),paper:q(".paper"),msgEl:q(".msg"),zoomtag:q(".zoomtag"),partsEl:q(".parts"),followEl:q(".follow"),hd:q(".phd"),mv:q(".mv"),mbox:q(".mbox"),pts:null,hover:null,calSeg:null,calS:0});
+    this.stage.classList.toggle("meas",S.tool!=="pan");
     this.bind();
   }
   msg(html){this.msgEl.hidden=!html;if(html)this.msgEl.innerHTML="<div>"+html+"</div>"}
   async open(gi,keepView,part){
     if(gi<0||gi>=S.sheets.length)return;
-    this.part=part||0;this.cur=gi;this.page=null;this.rs=0;this.paper.innerHTML="";this.boxI=-1;
+    this.part=part||0;this.cur=gi;this.page=null;this.rs=0;this.paper.innerHTML="";this.boxI=-1;this.pts=null;this.hover=null;this.calSeg=null;this.drawMeas();this.renderMbox();
     const g=S.sheets[gi];
-    if(this===act()){renderNav();renderList();document.querySelector(`.grp[data-g="${gi}"]`)?.scrollIntoView({block:"nearest"})}
+    if(this===act()){S.confAsk=false;renderNav();renderList();document.querySelector(`.grp[data-g="${gi}"]`)?.scrollIntoView({block:"nearest"})}
     this.renderHead();this.renderFollow();
     if(!g.loc){this.pageKey="";this.zoomtag.hidden=true;this.partsEl.hidden=true;renderUsed();
       this.msg(`<b>Drawing ${esc(g.number)} isn't matched to a page yet.</b><br><br>`+(S.files.length?`Press <b>Find drawing pages</b> at the top. It reads the drawing number off every page once and remembers it for this project.`:`This project has no drawings saved. Open the take-off once with its drawings so they're kept.`));return}
@@ -341,6 +450,7 @@ class Pane{
       if(this.cur!==gi||this.pageKey!==pk)return;
       this.page=page;this.rs=0;this.msg("");this.zoomtag.hidden=false;
       if(!keepView)this.fit();else this.draw();
+      this.renderMbox();
       if(S.selMark&&hitsOn(pk,S.selMark).length)this.focusBox(0);
     }catch(e){console.error(e);this.msg(`<b>Couldn't open drawing ${esc(g.number)}.</b><br>${esc(e.message||e)}`)}
   }
@@ -352,6 +462,7 @@ class Pane{
     if(!this.rs||V.s>this.rs*1.25||V.s<this.rs/2){clearTimeout(this.rTimer);this.rTimer=setTimeout(()=>this.rasterize(),this.rs?180:0)}
     const k=this.rs?V.s/this.rs:1;this.paper.style.transform=`translate(${V.tx}px,${V.ty}px) scale(${k})`;
     this.zoomtag.textContent=Math.round(V.s/(this.fitS||V.s)*100)+"%";
+    this.drawMeas();
   }
   async rasterize(){
     const page=this.page;if(!page)return;const V=this.view,dpr=window.devicePixelRatio||1,v1=page.getViewport({scale:1});
@@ -395,18 +506,110 @@ class Pane{
   follow(d){const D=drawingsFor(S.selMark);if(!D.length)return;const k=D.indexOf(this.cur);
     const n=k<0?(d>0?(D.find(x=>x>this.cur)??D[0]):([...D].reverse().find(x=>x<this.cur)??D[D.length-1])):D[(k+d+D.length)%D.length];
     openFor(this,n)}
+  /* ---- RULER ----
+     Points are kept in PDF points (1/72 in of paper), so they stay put through zoom and pan.
+     The scale is set per sheet and saved with the take-off (R.scales by file:page):
+       from a dimension printed on the drawing (click its two ends, type what it says) — the
+       accurate way, good for scans and resized prints; or a printed scale (1/4" = 1'-0"), which
+       only holds when the PDF is the drawing's true paper size, so it asks to be checked.
+     Every reading shows how close it can be: one screen pixel at each end at the current zoom,
+     plus the scale's own error. */
+  toPage(e){const r=this.stage.getBoundingClientRect();return[(e.clientX-r.left-this.view.tx)/this.view.s,(e.clientY-r.top-this.view.ty)/this.view.s]}
+  lock(p,shift){if(!shift||!this.pts)return p;const dx=Math.abs(p[0]-this.pts[0]),dy=Math.abs(p[1]-this.pts[1]);return dx>=dy?[p[0],this.pts[1]]:[this.pts[0],p[1]]}
+  scale(){return S.R&&S.R.scales&&this.pageKey?S.R.scales[this.pageKey]||null:null}
+  lenIn(a,b){const sc=this.scale();if(!sc)return null;return Math.hypot(b[0]-a[0],b[1]-a[1])*sc.in_per_pt}
+  tolIn(a,b){const sc=this.scale();if(!sc)return null;const L=this.lenIn(a,b);return 2*sc.in_per_pt/this.view.s+(sc.err||0)*L}
+  measClick(p,shift){
+    if(!this.page)return;p=this.lock(p,shift);
+    if(!this.pts){this.pts=p;this.hover=p;this.drawMeas();return}
+    const seg={a:this.pts,b:p};this.pts=null;this.hover=null;
+    if(Math.hypot(seg.b[0]-seg.a[0],seg.b[1]-seg.a[1])<0.5){this.drawMeas();return}
+    if(S.tool==="cal"){this.calSeg=seg;this.calS=this.view.s}
+    else{(S.meas[this.pageKey]=S.meas[this.pageKey]||[]).push(seg)}
+    this.drawMeas();this.renderMbox();
+    if(S.tool==="cal")setTimeout(()=>this.mbox.querySelector("#calIn"+this.idx)?.focus(),0)}
+  drawMeas(){
+    const sv=this.mv;if(!sv)return;if(!this.page){sv.innerHTML="";return}
+    const V=this.view,P2=p=>[V.tx+p[0]*V.s,V.ty+p[1]*V.s];
+    const seg=(a,b,cls,label)=>{const A=P2(a),B=P2(b),dx=B[0]-A[0],dy=B[1]-A[1],L=Math.hypot(dx,dy)||1,nx=-dy/L*7,ny=dx/L*7;
+      const mx=(A[0]+B[0])/2,my=(A[1]+B[1])/2;
+      return `<line class="${cls}" x1="${A[0]}" y1="${A[1]}" x2="${B[0]}" y2="${B[1]}"/><line class="tk ${cls}" x1="${A[0]-nx}" y1="${A[1]-ny}" x2="${A[0]+nx}" y2="${A[1]+ny}"/><line class="tk ${cls}" x1="${B[0]-nx}" y1="${B[1]-ny}" x2="${B[0]+nx}" y2="${B[1]+ny}"/>`+
+        (label?`<text x="${mx+nx*1.6}" y="${my+ny*1.6}" text-anchor="middle" dominant-baseline="middle">${esc(label)}</text>`:"")};
+    const lab=(a,b)=>{const L=this.lenIn(a,b);return L==null?"set the scale":ftin(L/12)};
+    let h="";(S.meas[this.pageKey]||[]).forEach(s=>{h+=seg(s.a,s.b,"",lab(s.a,s.b))});
+    if(this.calSeg)h+=seg(this.calSeg.a,this.calSeg.b,"cal","");
+    if(this.pts&&this.hover){h+=seg(this.pts,this.hover,S.tool==="cal"?"cal":"",S.tool==="cal"?"":lab(this.pts,this.hover))}
+    else if(this.pts){const A=P2(this.pts);h+=`<circle cx="${A[0]}" cy="${A[1]}" r="4"/>`}
+    sv.innerHTML=h}
+  renderMbox(){
+    const b=this.mbox;if(!b)return;
+    if(S.tool==="pan"||!this.page||this!==act()){b.hidden=true;return}
+    b.hidden=false;const sc=this.scale(),v=this.page.getViewport({scale:1}),i=this.idx;
+    const pw=Math.round(v.width/72*10)/10,ph=Math.round(v.height/72*10)/10;
+    let h=`<h4>Ruler</h4>`;
+    h+=`<div class="k">${sc?`Scale: <b style="color:var(--ink)">${esc(sc.label)}</b> ${sc.how==="dimension"?`(set from a dimension${sc.err?", within about "+(Math.round(sc.err*1000)/10||0.1)+"%":""})`:'(printed scale)'}`:'<span class="warn">Set the scale for this sheet first.</span>'}</div>`;
+    if(S.tool==="cal"){
+      h+=this.calSeg?`<div class="row2">That dimension is <input id="calIn${i}" size="10" placeholder="e.g. 12'-6&quot;"><button class="pri" data-m="calset">Set scale</button><button data-m="calcancel">Cancel</button></div>
+        <div class="k">Type it as printed: 12'-6", 150, or 3048 mm.</div>`
+        :`<div class="row2"><b>Click both ends of a dimension printed on the drawing.</b></div><div class="k">Zoom in close on each end: the closer you zoom, the more accurate the scale.</div><div class="row2"><button data-m="calcancel">Cancel</button></div>`;
+    }else{
+      h+=`<div class="row2"><button data-m="cal" class="${sc?"":"pri"}">Set from a dimension</button><select data-m="printed" title="Only right when the PDF is the drawing's full paper size"><option value="">Printed scale…</option>${PRINTED_SCALES.map(s=>`<option value="${s[1]}">${esc(s[0])}</option>`).join("")}</select></div>`;
+      h+=`<div class="k">This PDF page is ${pw} × ${ph} in.${sc&&sc.how==="printed"?' <span class="warn">Check it: measure a dimension printed on the drawing.</span>':""}</div>`;
+      const ms=S.meas[this.pageKey]||[],last=ms[ms.length-1];
+      if(last&&sc){const L=this.lenIn(last.a,last.b),T=this.tolIn(last.a,last.b);
+        h+=`<div class="res">${esc(ftin(L/12))} <span class="k" style="font-size:12.5px;font-weight:400">${esc(inStr(L/12))} in · ${Math.round(L*25.4).toLocaleString()} mm · within about ${esc(tolStr(T))}${T>0.25?" (zoom in for closer)":""}</span></div>`;
+        const r=selRow();if(r)h+=`<div class="row2"><button class="pri" data-m="use">Use ${esc(ftin(L/12))} as the length of ${esc(r.member_mark||"this line")}</button><span class="k">now ${esc(ftin(r.length_ft))}</span></div><div class="edmsg" id="mMsg${i}"></div>`;
+        else h+=`<div class="k">Select a line to use this as its length.</div>`}
+      h+=`<div class="k" style="margin-top:6px">Click two points to measure. Hold Shift for a straight line. Esc stops.</div>`+(ms.length?`<div class="row2"><button data-m="clear">Clear measurements</button></div>`:"");
+    }
+    b.innerHTML=h;
+    const lm=S.lastMsg;if(lm&&Date.now()<lm.until){const el=document.getElementById(lm.id);if(el&&b.contains(el)){el.className=lm.cls;el.innerHTML=lm.html}}
+  }
+  mboxClick(e){
+    const el=e.target.closest("[data-m]");if(!el||el.tagName==="SELECT")return;const m=el.dataset.m;
+    if(m==="cal"){setTool("cal");return}
+    if(m==="calcancel"){this.calSeg=null;setTool("measure");return}
+    if(m==="clear"){delete S.meas[this.pageKey];this.drawMeas();this.renderMbox();return}
+    if(m==="calset"){const inp=this.mbox.querySelector("#calIn"+this.idx),raw=String(inp&&inp.value||"").trim();
+      let inches=null;const mm=raw.match(/^(\d+(?:\.\d+)?)\s*mm$/i);if(mm)inches=Number(mm[1])/25.4;else{const ft=parseLen(raw);if(ft)inches=ft*12}
+      if(!(inches>0)){inp&&inp.focus();const k=this.mbox.querySelector(".k:last-child");if(k){k.className="k warn";k.textContent="Not a length. Type it as printed: 12'-6\", 150 (inches) or 3048 mm."}return}
+      const s=this.calSeg,d=Math.hypot(s.b[0]-s.a[0],s.b[1]-s.a[1]),pk=this.pageKey;
+      const sc={in_per_pt:inches/d,how:"dimension",label:raw+" dimension",err:2/(this.calS||this.view.s)/d,at:new Date().toISOString()};
+      const why=applyChange(R=>{R.scales=R.scales&&typeof R.scales==="object"?R.scales:{};R.scales[pk]=sc});
+      this.calSeg=null;if(why){alert("Scale not saved: "+why);return}
+      S.R.scales=Object.assign({},S.R.scales||{},{[pk]:sc});setTool("measure");return}
+    if(m==="use"){const r=selRow(),ms=S.meas[this.pageKey]||[],last=ms[ms.length-1];if(!r||!last)return;
+      const L=this.lenIn(last.a,last.b);if(!(L>0))return;
+      doEdit("length",{i:rowIdx(r),fp:fpOf(r),value:L/12,how:"measured on the drawing"},document.getElementById("mMsg"+this.idx)).then(()=>this.renderMbox());return}
+  }
+  mboxChange(e){const el=e.target.closest('select[data-m="printed"]');if(!el||!el.value)return;
+    const v=Number(el.value),lab=el.options[el.selectedIndex].text,pk=this.pageKey;
+    const sc={in_per_pt:v/72,how:"printed",label:lab,err:0,at:new Date().toISOString()};
+    const why=applyChange(R=>{R.scales=R.scales&&typeof R.scales==="object"?R.scales:{};R.scales[pk]=sc});
+    if(why){alert("Scale not saved: "+why);return}
+    S.R.scales=Object.assign({},S.R.scales||{},{[pk]:sc});this.drawMeas();this.renderMbox()}
   bind(){
     const st=this.stage;
     st.addEventListener("wheel",e=>{e.preventDefault();const r=st.getBoundingClientRect();this.zoomAt(e.deltaY>0?1/1.15:1.15,e.clientX-r.left,e.clientY-r.top)},{passive:false});
     st.addEventListener("pointerdown",e=>{
       setActive(this.idx);
-      const bx=e.target.closest(".ov i");
+      if(e.target.closest(".mbox"))return;
+      const bx=S.tool==="pan"&&e.target.closest(".ov i");
       if(bx){this.boxI=+bx.dataset.box;this.drawBoxes();const g=S.sheets[this.cur],ri=g?g.rows.findIndex(r=>normMark(r.member_mark)===S.selMark):-1;
         if(ri>-1){S.selG=this.cur;S.sel=ri;renderList()}renderUsed();return}
       if(!this.page||e.target.closest(".topctl,.msg"))return;
-      this.drag={x:e.clientX,y:e.clientY,tx:this.view.tx,ty:this.view.ty};st.setPointerCapture(e.pointerId);st.classList.add("drag")});
-    st.addEventListener("pointermove",e=>{const d=this.drag;if(!d)return;this.view.tx=d.tx+e.clientX-d.x;this.view.ty=d.ty+e.clientY-d.y;this.draw()});
-    const end=()=>{this.drag=null;st.classList.remove("drag")};st.addEventListener("pointerup",end);st.addEventListener("pointercancel",end);
+      this.drag={x:e.clientX,y:e.clientY,tx:this.view.tx,ty:this.view.ty,moved:false};st.setPointerCapture(e.pointerId);st.classList.add("drag")});
+    // With the ruler on, a click places a point and a drag still pans.
+    st.addEventListener("pointermove",e=>{const d=this.drag;
+      if(!d){if(S.tool!=="pan"&&this.pts&&!e.target.closest(".mbox")){this.hover=this.lock(this.toPage(e),e.shiftKey);this.drawMeas()}return}
+      if(Math.abs(e.clientX-d.x)+Math.abs(e.clientY-d.y)>4)d.moved=true;
+      this.view.tx=d.tx+e.clientX-d.x;this.view.ty=d.ty+e.clientY-d.y;this.draw()});
+    const end=e=>{const d=this.drag;this.drag=null;st.classList.remove("drag");
+      if(d&&!d.moved&&e&&e.type==="pointerup"&&S.tool!=="pan"){this.view.tx=d.tx;this.view.ty=d.ty;this.draw();this.measClick(this.toPage(e),e.shiftKey)}};
+    st.addEventListener("pointerup",end);st.addEventListener("pointercancel",end);
+    this.mbox.addEventListener("click",e=>this.mboxClick(e));this.mbox.addEventListener("change",e=>this.mboxChange(e));
+    this.mbox.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="calIn"+this.idx){e.preventDefault();this.mbox.querySelector('[data-m="calset"]')?.click()}});
+    this.mbox.addEventListener("pointerdown",e=>e.stopPropagation());
     this.partsEl.addEventListener("click",e=>{const b=e.target.closest("[data-part]");if(b)this.open(this.cur,false,+b.dataset.part)});
     this.followEl.addEventListener("click",e=>{const b=e.target.closest("[data-f]");if(!b)return;
       if(b.dataset.f==="x"){clearPart();return}this.follow(+b.dataset.f)});
@@ -414,6 +617,14 @@ class Pane{
     new ResizeObserver(()=>{if(this.page)this.draw()}).observe(st);
   }
 }
+// Printed scales: [label, real inches per inch of paper]. Only right on a full-size PDF.
+const PRINTED_SCALES=[['3" = 1\'-0"',4],['1-1/2" = 1\'-0"',8],['1" = 1\'-0"',12],['3/4" = 1\'-0"',16],['1/2" = 1\'-0"',24],['3/8" = 1\'-0"',32],
+  ['1/4" = 1\'-0"',48],['3/16" = 1\'-0"',64],['1/8" = 1\'-0"',96],['3/32" = 1\'-0"',128],['1/16" = 1\'-0"',192],
+  ['1" = 10\'',120],['1" = 20\'',240],['1" = 30\'',360],['1" = 40\'',480],['1" = 50\'',600],
+  ['Full size (1:1)',1],['1:2',2],['1:4',4],['1:5',5],['1:8',8],['1:10',10],['1:16',16],['1:20',20],['1:25',25],['1:50',50],['1:100',100]];
+function tolStr(x){if(!(x>0))return'1/16"';if(x>=1)return(Math.round(x*10)/10)+'"';let n=Math.max(1,Math.ceil(x*16)),d=16;while(n%2===0&&d>1){n/=2;d/=2}return n+"/"+d+'"'}
+function setTool(tool){S.tool=tool;$("measBtn").classList.toggle("on",tool!=="pan");
+  S.panes.forEach(p=>{p.stage.classList.toggle("meas",tool!=="pan");p.pts=null;p.hover=null;if(tool!=="cal")p.calSeg=null;p.drawMeas();p.renderMbox()})}
 function getDoc(fileId){
   if(!S.docs[fileId])S.docs[fileId]=(async()=>{
     const r=await fetch(API+"/api/files/project/"+encodeURIComponent(P.project_id)+"/"+encodeURIComponent(fileId));
@@ -427,7 +638,7 @@ function openFor(pane,gi){
   if(pane.cur===gi&&pane.part===part&&pane.page){pane.boxI=-1;pane.drawBoxes();if(hitsOn(pane.pageKey,S.selMark).length)pane.focusBox(0);pane.renderFollow();if(pane===act()){renderList();renderUsed()}return}
   return pane.open(gi,false,part)}
 function setActive(i){if(S.active===i||!S.panes[i]||S.panes[i].el.hidden)return;S.active=i;
-  S.panes.forEach((p,j)=>p.el.classList.toggle("on",j===i));renderNav();renderList();renderUsed()}
+  S.panes.forEach((p,j)=>{p.el.classList.toggle("on",j===i);p.renderMbox()});renderNav();renderList();renderUsed()}
 function setSplit(on){
   S.split=on;const B=S.panes[1];$("stages").classList.toggle("split",on);B.el.hidden=!on;$("splitBtn").classList.toggle("on",on);
   if(on){const A=S.panes[0];let gi=A.cur;
@@ -483,7 +694,7 @@ async function pollMarks(){
   try{const d=await getJSON("/api/takeoff/marks/"+encodeURIComponent(P.project_id)+(S.mnow?"?since="+encodeURIComponent(S.mnow):""));
     if(d&&d.ok){Object.assign(S.marks,d.pages||{});S.mnow=d.now||S.mnow;
       visiblePanes().forEach(p=>{if(d.pages&&d.pages[p.pageKey]){p.drawBoxes();if(S.selMark&&p.boxI<0&&hitsOn(p.pageKey,S.selMark).length)p.focusBox(0)}p.renderFollow()});
-      renderOcr();renderUsed();
+      renderOcr();renderUsed();if(S.tab==="confirm"&&d.pages&&Object.keys(d.pages).length)renderList();
       if(ocrTargets().some(x=>!S.marks[x.key]))ocrTimer=setTimeout(pollMarks,d.status&&(d.status.running||d.status.queued)?4000:15000)}}
   catch(e){ocrTimer=setTimeout(pollMarks,15000)}
 }
@@ -499,8 +710,8 @@ async function startOcr(firstKey,onlyFirst){
 function selectRow(gi,ri){
   const g=S.sheets[gi],r=g&&g.rows[ri];S.selG=gi;S.sel=ri;S.selMark=r?normMark(r.member_mark):null;
   visiblePanes().forEach(p=>{if(p!==act()){p.boxI=-1;p.drawBoxes();if(hitsOn(p.pageKey,S.selMark).length)p.focusBox(0);p.renderFollow()}});
-  openFor(act(),gi);renderList();renderUsed();
-  document.querySelector(`.row[data-g="${gi}"][data-r="${ri}"]`)?.scrollIntoView({block:"nearest"});
+  openFor(act(),gi);renderList();renderUsed();visiblePanes().forEach(p=>p.renderMbox());
+  document.querySelector(`.row[data-g="${gi}"][data-r="${ri}"],.cl[data-r="${ri}"]`)?.scrollIntoView({block:"nearest"});
 }
 
 /* ---- the review page talks to this window ----
@@ -516,7 +727,7 @@ function showFromReview(m){
   clearPart();act().open(gi);return true}
 let reloadTimer=null;
 function reloadTakeoff(){
-  let R=null;try{const s=localStorage.getItem("mc_takeoff_"+P.project_id);if(s)R=JSON.parse(s)}catch(e){}
+  const R=STORE&&STORE.read();
   if(!R||!arr(R.rows).length)return;
   const nums=S.panes.map(p=>S.sheets[p.cur]&&S.sheets[p.cur].number),selNum=S.sheets[S.selG]&&S.sheets[S.selG].number;
   S.R=R;buildSheets();
@@ -525,36 +736,35 @@ function reloadTakeoff(){
   S.sel=S.selG>-1&&S.selMark?S.sheets[S.selG].rows.findIndex(r=>normMark(r.member_mark)===S.selMark):-1;
   if(S.afterAdd){const a=S.afterAdd;S.afterAdd=null;const gi=S.sheets.findIndex(g=>g.number===a.sheet);
     const ri=gi>-1?S.sheets[gi].rows.findIndex(r=>normMark(r.member_mark)===a.mark):-1;if(ri>-1){S.selG=gi;S.sel=ri}}
-  renderCheck();renderList();renderNav();renderUsed();visiblePanes().forEach(p=>p.renderFollow());
+  renderCheck();renderList();renderNav();renderUsed();visiblePanes().forEach(p=>{p.renderFollow();p.drawMeas();p.renderMbox()});
 }
-let CH=null;const pendingEdits={};let editSeq=0;
-try{if("BroadcastChannel" in window&&P.project_id){CH=new BroadcastChannel("mc-drawings-"+P.project_id);
-  CH.onmessage=e=>{const m=e.data||{};
-    if((m.type==="edited"||m.type==="editFailed")&&pendingEdits[m.id]){const f=pendingEdits[m.id];delete pendingEdits[m.id];f({ok:m.type==="edited",why:m.why});return}
-    if(!S.R)return;
-    if(m.type==="show")showFromReview(m);
-    else if(m.type==="changed"){clearTimeout(reloadTimer);reloadTimer=setTimeout(reloadTakeoff,300)}}}}catch(e){}
+const CH=STORE&&STORE.channel;
+if(CH)CH.onmessage=e=>{const m=e.data||{};if(!S.R)return;
+  if(m.type==="show")showFromReview(m);
+  else if(m.type==="changed"&&m.from!=="drawings"){clearTimeout(reloadTimer);reloadTimer=setTimeout(reloadTakeoff,300)}};
 
-/* ---- fixes, made here and saved by the review page ----
-   This window never saves the take-off: it sends the fix to the review page, which applies it with
-   its own functions and saves it, then says "changed" and this view re-reads it. When the review
-   page is not open, nothing is saved and the line says so. */
-const fpOf=r=>[r.member_mark,r.source_sheet,r.size,r.quantity,r.length_ft].map(x=>String(x==null?"":x)).join("|");
-function sendEdit(op,payload){return new Promise(res=>{
-  if(!CH){res({ok:false,why:"This browser can't link the two pages. Make the change on the review page."});return}
-  const id=++editSeq;pendingEdits[id]=res;
-  try{CH.postMessage(Object.assign({type:"edit",id,op},payload))}catch(e){delete pendingEdits[id];res({ok:false,why:String(e.message||e)});return}
-  setTimeout(()=>{if(pendingEdits[id]){delete pendingEdits[id];res({ok:false,why:"noreview"})}},3000)})}
+/* ---- fixes, made and saved here ----
+   Each fix names its line by index AND a fingerprint (TakeoffStore.fp), and is applied to the newest
+   copy of the take-off, so a line changed meanwhile on the review page is refused, not overwritten. */
+const fpOf=r=>TakeoffStore.fp(r);
+function applyChange(fn){if(!STORE)return"This page can't save. Reload it.";let why="";
+  try{STORE.change(R=>{why=fn(R)||"";return why?false:undefined})}catch(e){why=String(e.message||e)}
+  return why}
 async function doEdit(op,payload,msgEl){
-  if(msgEl){msgEl.className="edmsg";msgEl.innerHTML='<span class="spin"></span>Saving…'}
-  const r=await sendEdit(op,payload);
-  if(!msgEl)return r;
-  if(r.ok){msgEl.className="edmsg ok";msgEl.textContent="Saved on the review page ✓"}
-  else{msgEl.className="edmsg bad";msgEl.innerHTML=r.why==="noreview"
-    ?'Not saved: the review page isn\'t open. Changes are saved there. <a href="#" data-openreview="1">Open it</a>, then try again.'
-    :"Not saved: "+esc(r.why)}
-  S.lastMsg={id:msgEl.id,cls:msgEl.className,html:msgEl.innerHTML,until:Date.now()+(r.ok?5000:20000)};
+  const why=applyChange(R=>TakeoffStore.applyEdit(R,Object.assign({op},payload)));
+  const r={ok:!why,why};
+  if(msgEl){msgEl.className="edmsg "+(r.ok?"ok":"bad");msgEl.textContent=r.ok?"Saved ✓":"Not saved: "+why;
+    S.lastMsg={id:msgEl.id,cls:msgEl.className,html:msgEl.innerHTML,until:Date.now()+(r.ok?5000:20000)}}
+  reloadTakeoff();
   return r}
+function renderSave(s,detail){const el=$("foot");if(!el)return;
+  const at=STORE&&STORE.savedAt(),tm=at?new Date(at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"";
+  el.style.color=s==="failed"||s==="full"?"var(--red)":s==="saved"?"var(--grn)":"var(--mute)";
+  el.textContent=s==="pending"?"Changes kept in this browser; saving to the project shortly."
+    :s==="saving"?"Saving to the project…":s==="saved"?"Saved to the project"+(tm?" · "+tm:"")+"."
+    :s==="failed"?"Not saved to the project yet"+(detail?": "+detail:"")+". Your changes are kept in this browser and save with your next change."
+    :s==="full"?detail:"Changes you make here are saved to the project."}
+if(STORE)STORE.onStatus(renderSave);
 // Inches as the shop writes them: 50 3/16, 50.19, 4'-2 3/16", 4' 2-3/16.
 function parseLen(s){
   s=String(s||"").trim().replace(/[”″]/g,'"').replace(/[’′]/g,"'");if(!s)return null;
@@ -611,18 +821,34 @@ $("used").addEventListener("click",e=>{
     if(!(v>0)){const el=$("addMsg");el.className="edmsg bad";el.textContent="Type the quantity per assembly first.";return}
     // Once added, the line exists here: select it, and show the "Saved" on its editor.
     S.afterAdd={sheet:g.number,mark:m};
-    doEdit("add",{from:rowIdx(t),fp:fpOf(t),sheet:g.number,value:v},$("addMsg")).then(res=>{if(res.ok&&S.lastMsg){S.lastMsg.id="edMsg";S.lastMsg.html="Line added and saved on the review page ✓"}else S.afterAdd=null});return}
-  if(e.target.closest("[data-openreview]")){e.preventDefault();
-    try{if(window.opener&&!window.opener.closed){window.opener.focus();return}}catch(x){}
-    window.open("/takeoff/review.html?project_id="+encodeURIComponent(P.project_id)+"&manufacturer_id="+encodeURIComponent(P.manufacturer_id),"_blank");return}
+    doEdit("add",{from:rowIdx(t),fp:fpOf(t),sheet:g.number,value:v},$("addMsg")).then(res=>{if(res.ok&&S.lastMsg){S.lastMsg.id="edMsg";S.lastMsg.html="Line added and saved ✓"}else S.afterAdd=null});return}
   const st=e.target.closest("[data-step]");if(st){e.preventDefault();act().focusBox(act().boxI+1);return}
   const tr=e.target.closest("tr.go");if(!tr)return;const gi=+tr.dataset.g,ri=+tr.dataset.r;
   if(ri>-1)selectRow(gi,ri);else openFor(act(),gi)});
-$("find").onclick=()=>$("q").focus();
+function setTab(tb){S.tab=tb;$("tabConfirm").classList.toggle("on",tb==="confirm");$("tabLines").classList.toggle("on",tb==="lines");$("srow").hidden=tb!=="lines";renderList()}
+$("tabConfirm").onclick=()=>setTab("confirm");$("tabLines").onclick=()=>setTab("lines");
+$("prog").onclick=()=>{setTab("confirm");const A=act(),n=nextTodo(A.cur);if(n>-1&&n!==A.cur){clearPart();A.open(n)}};
+$("measBtn").onclick=()=>setTool(S.tool==="pan"?"measure":"pan");
+// The Confirm material panel: a line or a flag selects it (its fix box opens below); a part printed
+// with no line selects the part on this drawing (the "Add a line" box opens below).
+function selectMark(m){S.selMark=m;S.sel=-1;S.selG=-1;
+  visiblePanes().forEach(p=>{p.boxI=-1;p.drawBoxes();if(hitsOn(p.pageKey,m).length)p.focusBox(0);p.renderFollow();p.renderMbox()});renderList();renderUsed()}
+function confClick(e){
+  const cf=e.target.closest("[data-cf]");
+  if(cf){const g=S.sheets[act().cur];if(!g)return;const k=cf.dataset.cf;
+    if(k==="yes"){if(sheetIssues(g).n&&!S.confAsk){S.confAsk=true;renderList();return}confirmAndNext()}
+    else if(k==="force")confirmAndNext();
+    else if(k==="cancel"){S.confAsk=false;renderList()}
+    else if(k==="undo"){const why=setConfirm(g,false);if(why)alert(why)}
+    else if(k==="next"){const n=nextTodo(act().cur);if(n>-1){clearPart();act().open(n)}}
+    return}
+  const mk=e.target.closest("[data-mk]");if(mk){selectMark(mk.dataset.mk);return}
+  const rw=e.target.closest(".cf [data-r]");if(rw){selectRow(act().cur,+rw.dataset.r);return}}
+$("find").onclick=()=>{setTab("lines");$("q").focus()};
 $("q").oninput=e=>{S.q=e.target.value.trim().toLowerCase();renderList()};
 const pick=el=>{const g=+el.dataset.g;if(el.dataset.r!=null)return selectRow(g,+el.dataset.r);if(g!==act().cur)act().open(g);else renderList()};
-$("list").addEventListener("click",e=>{const el=e.target.closest("[data-g]");if(el)pick(el)});
-$("list").addEventListener("keydown",e=>{if(e.key==="Enter"){const el=e.target.closest("[data-g]");if(el)pick(el)}});
+$("list").addEventListener("click",e=>{if(S.tab==="confirm")return confClick(e);const el=e.target.closest("[data-g]");if(el)pick(el)});
+$("list").addEventListener("keydown",e=>{if(e.key!=="Enter")return;if(S.tab==="confirm")return confClick(e);const el=e.target.closest("[data-g]");if(el)pick(el)});
 $("mapnote").addEventListener("click",async e=>{if(e.target.id!=="build")return;const b=e.target;b.disabled=true;b.innerHTML='<span class="spin"></span>Reading drawing numbers…';
   try{const d=await getJSON("/api/takeoff/sheet-map/"+encodeURIComponent(P.project_id)+"/build",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({manufacturer_id:P.manufacturer_id})});
     if(!d.ok)throw new Error(d.error||"failed");S.map=d.map;S.stale=false;const cur=S.sheets[act().cur]&&S.sheets[act().cur].number;buildSheets();
@@ -631,7 +857,8 @@ $("mapnote").addEventListener("click",async e=>{if(e.target.id!=="build")return;
 addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT")return;const A=act();
   if(e.key==="PageDown"||e.key==="]")$("next").click();else if(e.key==="PageUp"||e.key==="[")$("prev").click();
   else if(e.key==="+"||e.key==="=")A.zoomAt(1.25);else if(e.key==="-")A.zoomAt(.8);else if(e.key==="0")A.fit();
-  else if(e.key==="Escape"&&S.selMark)clearPart();});
+  else if(e.key==="m"||e.key==="M")setTool(S.tool==="pan"?"measure":"pan");
+  else if(e.key==="Escape"){if(S.tool!=="pan"){if(A.pts){A.pts=null;A.hover=null;A.drawMeas()}else setTool("pan")}else if(S.selMark)clearPart()}});
 $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)history.back();else location.href="/takeoff/review.html?project_id="+encodeURIComponent(P.project_id)+"&manufacturer_id="+encodeURIComponent(P.manufacturer_id)};
 
 /* ---- start ---- */
@@ -641,7 +868,7 @@ $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)
   if(!P.project_id){A.msg("<b>No project was given.</b><br>Open this page from a take-off's review page.");$("job").firstChild.textContent="AI Take-off";return}
   if(!window.pdfjsLib){A.msg("<b>The drawing viewer didn't load.</b><br>Check the internet connection and reload the page.");return}
   const [R,map,scope,cat]=await Promise.all([
-    loadTakeoff().catch(()=>null),
+    loadTakeoff().catch(e=>({__err:String(e.message||e)})),
     getJSON("/api/takeoff/sheet-map/"+encodeURIComponent(P.project_id)).catch(()=>null),
     getJSON("/api/takeoff/project-scope/"+encodeURIComponent(P.project_id)).catch(()=>null),
     getJSON("/api/takeoff/catalog-index").catch(()=>null)]);
@@ -650,6 +877,7 @@ $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)
   const name=S.head?[S.head.number,S.head.name].filter(Boolean).join(" · "):((R&&R.project&&R.project.name)||"AI Take-off");
   $("job").innerHTML=esc(name)+"<small>AI Take-off · Drawings</small>";document.title=name+" · Drawings";
   if(map&&map.ok){S.files=arr(map.files);S.map=map.map||null;S.stale=!!map.stale}
+  if(R&&R.__err){A.msg("<b>The take-off couldn’t be opened.</b><br>"+esc(R.__err));return}
   if(!R){A.msg("<b>This project has no saved take-off yet.</b><br>Run the take-off first, then open its drawings.");return}
   S.R=R;buildSheets();renderCheck();renderList();renderNav();
   if(!S.sheets.length){A.msg("<b>The take-off has no lines to show.</b>");return}

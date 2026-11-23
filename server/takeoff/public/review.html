@@ -222,7 +222,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.123 · 2026-11-22 · part-mark buttons open the drawing (were a faint ⌖)";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.124 · 2026-11-22 · picks up fixes saved in the Drawings view";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -301,49 +301,32 @@
     if(show&&DRAW_CH){ try{ DRAW_CH.postMessage({type:"show",sheet:show.sheet||"",mark:show.mark||""}); }catch(e){} }
     try{ w.focus(); }catch(e){}
   }
-  // FIXES MADE IN THE DRAWINGS VIEW. That window never saves the take-off itself: it sends the fix
-  // here, this page applies it with its own functions (editQty, wcFixLength, ...) and saves as
-  // always, then tells it "changed". One writer, so the two pages cannot overwrite each other.
-  // Each fix names its row by index AND a fingerprint, so a fix aimed at a row that has since
-  // moved or changed is refused, not applied to the wrong row.
-  function drawFp(r){ return [r.member_mark,r.source_sheet,r.size,r.quantity,r.length_ft].map(function(x){ return String(x==null?"":x); }).join("|"); }
+  // FIXES MADE IN THE DRAWINGS VIEW are applied and saved by that page itself (takeoff-store.js), on the
+  // same browser copy and project save as this page. It says "changed" and this page re-reads the copy.
   if(DRAW_CH) DRAW_CH.onmessage=function(e){
     const m=e.data||{};
     if(m.type==="ping"){ try{ DRAW_CH.postMessage({type:"pong"}); }catch(x){} return; }
-    if(m.type!=="edit") return;
-    const reply=function(ok,why){ try{ DRAW_CH.postMessage({type:ok?"edited":"editFailed",id:m.id,why:why||""}); }catch(x){} };
-    try{
-      const R=loadResult(); if(!R||R.__demo||!Array.isArray(R.rows)) return reply(false,"No take-off is open on the review page.");
-      const i=Number(m.i), r=R.rows[i];
-      if(m.op!=="add" && (!r || drawFp(r)!==m.fp)) return reply(false,"That line changed on the review page. It has been refreshed here; try again.");
-      if(m.op==="qty"){ const v=Number(m.value); if(!(v>=0)) return reply(false,"Not a quantity."); if(r.qty_was==null) r.qty_was=r.quantity; editQty(i,v); }
-      else if(m.op==="length"){ const v=Number(m.value); if(!(v>0)) return reply(false,"Not a length.");
-        wcRowsDo(function(R2){ const x=R2.rows[i]; if(x.length_was_ft==null) x.length_was_ft=x.length_ft; x.length_ft=Math.round(v*10000)/10000; x.length_fixed="set in the Drawings view"; }); }
-      else if(m.op==="useMm") wcFixLength(i);
-      else if(m.op==="keepMm") wcKeepLength(i);
-      else if(m.op==="dblFix"){ if(!wcIsDouble(r)) return reply(false,"That line is no longer flagged.");
-        wcRowsDo(function(R2){ const x=R2.rows[i], u=Math.max(1,Math.round(Number(x.units)||1)); x.qty_was=x.quantity; x.quantity=Math.max(1,Math.round(Number(x.quantity)/u)); x.qty_per_unit=x.quantity; x.quantity_total=x.quantity*u; x.dbl_ok=true; }); }
-      else if(m.op==="dblKeep") wcRowsDo(function(R2){ R2.rows[i].dbl_ok=true; });
-      else if(m.op==="add"){
-        // A part printed on a drawing with no take-off line there: a copy of the same part from
-        // another drawing (size, length, material), on this drawing, with the quantity typed in.
-        const t=R.rows[Number(m.from)]; if(!t||drawFp(t)!==m.fp) return reply(false,"That line changed on the review page. It has been refreshed here; try again.");
-        const q=Math.max(1,Math.round(Number(m.value)||0)); if(!(Number(m.value)>0)) return reply(false,"Type the quantity first.");
-        wcRowsDo(function(R2){
-          const same=R2.rows.filter(function(x){ return x && !x.deleted && sameSheet(x.source_sheet,m.sheet); }), base=same[0]||{};
-          const nr={form_type:t.form_type, material_type:t.material_type, specification:t.specification, size:t.size, length_ft:t.length_ft,
-            width_ft:t.width_ft, member_mark:t.member_mark, galvanized:t.galvanized, disposition:t.disposition||"fabricate",
-            component:base.component||t.component, units:base.units||1, sheet_qty:base.sheet_qty, source_sheet:String(m.sheet),
-            quantity:q, confidence:null, added_from:"drawings view",
-            note:"Added in the Drawings view: "+(t.member_mark||"part")+" is printed on "+m.sheet+" with no take-off line; size and length copied from "+(t.source_sheet||"another drawing")+"."};
-          nr.qty_per_unit=nr.quantity; nr.quantity_total=nr.quantity*Math.max(1,Math.round(Number(nr.units)||1));
-          const at=same.length?R2.rows.lastIndexOf(same[same.length-1])+1:R2.rows.length;
-          R2.rows.splice(at,0,nr);
-        }); }
-      else return reply(false,"Unknown change.");
-      reply(true);
-    }catch(err){ console.error("[drawings edit]",err); reply(false,"The review page could not apply it: "+(err&&err.message||err)); }
+    // The Drawings view now saves by itself (takeoff-store.js): re-read the copy it wrote, so this
+    // page shows its change and never saves an older copy over it.
+    if(m.type==="changed" && m.from==="drawings"){ syncFromDrawings(); return; }
   };
+  function syncFromDrawings(){
+      try{ const k=lsKey(), s=k&&localStorage.getItem(k); if(!s) return; const R=JSON.parse(s); if(!R||!Array.isArray(R.rows)) return;
+        R.__project=params.project_id;
+        // IN PLACE: work still running on this page (a labor estimate, an AI answer) holds the old object and
+        // saves it when it finishes. Updating that same object means it saves onto the new copy, not over it.
+        const cur=window.TAKEOFF_RESULT;
+        if(cur && cur!==R && sameProj(cur)){ Object.keys(cur).forEach(function(k){ delete cur[k]; }); Object.assign(cur,R); } else window.TAKEOFF_RESULT=R;
+        try{ sessionStorage.setItem("takeoff_result",s); }catch(x){}
+        recomputeCsv(window.TAKEOFF_RESULT); render(); }catch(x){ console.error("[drawings changed]",x); }
+  }
+  // A background tab can miss or delay the message: when this tab is shown again, take the shared
+  // copy if the Drawings view wrote a newer one (stamped __w by takeoff-store.js).
+  document.addEventListener("visibilitychange",function(){
+    if(document.visibilityState!=="visible") return;
+    try{ const k=lsKey(), s=k&&localStorage.getItem(k); if(!s) return; const L=JSON.parse(s), cur=window.TAKEOFF_RESULT;
+      if(L && L.__w && L.__w.by==="drawings" && (!cur || !cur.__w || cur.__w.at!==L.__w.at)) syncFromDrawings(); }catch(x){}
+  });
   // ⌖ buttons: a row by its index, or a drawing by the number in data-s (never quoted into onclick).
   function showRowOnDrawing(i){ const r=arr(loadResult().rows)[i]; if(r) openDrawings({sheet:String(r.source_sheet||""),mark:String(r.member_mark||"")}); }
   function showSheetOnDrawing(el){ openDrawings({sheet:String(el&&el.getAttribute("data-s")||"")}); }
@@ -356,6 +339,7 @@
   function saveResult(result){
     if(result && result.__demo) return;   // the sample is never stored, tagged or treated as this project's take-off
     if(result && params.project_id) result.__project = params.project_id;  // tag so it can't leak across projects
+    if(result) result.__w = {by:"review", at:Date.now()};   // who wrote the shared copy last (takeoff-store.js stamps "drawings")
     window.TAKEOFF_RESULT = result;
     if(result && result.__demo) return;   // never persist demo/sample data (was polluting localStorage)
     // The project page's "Load take-off outside costs" reads this snapshot (server/takeoff/projectOutside.js).
@@ -363,8 +347,8 @@
     try { sessionStorage.setItem("takeoff_result", JSON.stringify(result)); } catch(e){}
     // Say so if the browser refuses its copy (usually: it has grown past the browser's storage limit).
     // The project save still runs, but closing the tab before it succeeds would lose the work.
-    try { const k=lsKey(); if(k) localStorage.setItem(k, JSON.stringify(result)); }
-    catch(e){ console.error("[review] browser copy refused:",e); setSaveInd("⚠ this browser couldn’t keep a copy — wait for 💾 saved before closing","var(--red)"); }
+    try { const k=lsKey(); if(k) localStorage.setItem(k, JSON.stringify(result)); LS_FULL=false; }
+    catch(e){ LS_FULL=true; console.error("[review] browser copy refused:",e); setSaveInd("⚠ this browser couldn’t keep a copy — wait for 💾 saved before closing","var(--red)"); }
     scheduleZohoSave();   // also persist to the project record in Zoho (debounced)
     if(DRAW_CH){ try{ DRAW_CH.postMessage({type:"changed"}); }catch(e){} }
   }
@@ -393,8 +377,11 @@
   function flushZohoSave(){ if(_zohoTimer){ clearTimeout(_zohoTimer); _zohoTimer=null; doZohoSave(); } }
   document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="hidden") flushZohoSave(); });
   window.addEventListener("pagehide",flushZohoSave);
+  let LS_FULL=false;   // set when this browser refused the copy: then this page's own copy is the newest
   async function doZohoSave(){
-    const R=loadResult();
+    let R=loadResult();
+    // The Drawings view writes the shared browser copy too: save the newest, never an older copy.
+    if(!LS_FULL){ try{ const k=lsKey(), s=k&&localStorage.getItem(k); if(s){ const L=JSON.parse(s); if(L && Array.isArray(L.rows) && L.rows.length && sameProj(Object.assign({__project:params.project_id},L))) R=L; } }catch(e){} }
     if(!R || R.__demo || !params.project_id || !Array.isArray(R.rows) || !R.rows.length) return;
     // drawing_files travels with the package so Approve can still put the PDFs on their
     // drawing records after this take-off is re-opened on another day or another machine.
@@ -406,7 +393,8 @@
     const pkg={ rows:R.rows, fittings:R.fittings, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd, drawing_files:R.drawing_files||[], labor:R.labor||null, quote_notes:R.quote_notes||[],
                 superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[], check:R.check||null, checked_v1:!!R.checked_v1,
                 fittings_written:R.fittings_written||[], welds:R.welds||[], features:R.features||[], labor_extras:R.labor_extras||null,
-                weld_rules:R.weld_rules||[], drawing_counts:R.drawing_counts||{}, labels_at:R.labels_at||null, labor_methods:R.labor_methods||null, cost_summary:R.cost_summary||null };
+                weld_rules:R.weld_rules||[], drawing_counts:R.drawing_counts||{}, labels_at:R.labels_at||null, labor_methods:R.labor_methods||null, cost_summary:R.cost_summary||null,
+                material_confirm:R.material_confirm||null, scales:R.scales||null };   // the Drawings view's "Material confirmed" ticks and drawing scales (takeoff-store.js PKG_FIELDS)
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}
@@ -4352,7 +4340,7 @@
       const R=loadResult();
       const r=await fetch(RAILWAY_URL+"/api/takeoff/repair",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:arr(R.rows)})});
       const d=await r.json();
-      if(d && d.ok){
+      if(d && d.ok && Array.isArray(d.rows)){   // never take an answer without rows: it would empty the take-off
         const R2=loadResult();
         R2.rows=d.rows; R2.check={fixed:arr(d.metric_fixed),flagged:arr(d.metric_flagged),dup:arr(d.dup_removed),repaired:true};
         R2.checked_v1=true; recomputeCsv(R2); saveResult(R2); render();

@@ -1972,7 +1972,10 @@ async function loadSavedTakeoff(project_id) {
   try {
     const q = await axios.get(base + '/report/AI_Takeoff_Saved_Report?criteria=(Project_ID=="' + project_id + '")&limit=1', { headers: zohoHeaders(token) });
     rec = q.data && q.data.data && q.data.data[0];
-  } catch (e) { /* no records */ }
+    // Daily data allowance used up: Zoho answers 200 + code 4000 and no rows. That is NOT "no saved
+    // take-off" — saying so told the pages the project had none (2026-11-22). Say what it is.
+    if (!rec && q.data && Number(q.data.code) === 4000) { const e = new Error('daily data limit reached'); e.quota = true; throw e; }
+  } catch (e) { if (e.quota) throw e; /* no records */ }
   if (rec && rec.ID) { const ids = takeoffSavedIds(); if (ids[project_id] !== String(rec.ID)) { ids[project_id] = String(rec.ID); saveTakeoffSavedIds(ids); } }
   if (!rec || !rec.Package) return { found: false };
   try {
@@ -2016,6 +2019,7 @@ app.get('/api/takeoff/saved/:project_id', async (req, res) => {
     if (!s.found) return res.json(s.damaged ? { ok: true, found: false, damaged: true } : { ok: true, found: false });
     return res.json({ ok: true, found: true, package: s.package, updated_at: s.updated_at, id: s.id });
   } catch (err) {
+    if (err.quota) return res.status(503).json({ ok: false, quota: true, error: "The daily data limit is used up, so the saved take-off can't be read until it resets at midnight. A copy kept in this browser still opens." });
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('takeoff load error:', detail);
     return res.status(500).json({ ok: false, error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
