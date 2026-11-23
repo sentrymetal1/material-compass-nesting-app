@@ -1927,6 +1927,36 @@ export default function App() {
   }
 
   // ─── Weight Summary Calculations ───
+  // BALANCE SHEET (Mark 2026-11-23: "a balance sheet of what is to nest"): per BOM part, how many the
+  // BOM needs and where each one comes from — nested on full stock, bought cut to size (a converted
+  // low-use piece, or a row sent straight to cut-to-size on Configure) — and how many nothing covers.
+  // Counts come from the SELECTED patterns, so an unticked pattern shows up as "not covered".
+  function calcBalance() {
+    if (!results) return [];
+    const { selected_1d, selected_2d } = getSelectedResults();
+    const nested = {}, cts = {};
+    const keyOf = (c) => String(c.bom_line_id ?? '') || ('mark:' + String(c.part_mark ?? ''));
+    for (const r of [...selected_1d, ...selected_2d]) {
+      if (r.error || !r.cuts?.length) continue;
+      const bucket = r.cut_to_size ? cts : nested;
+      for (const c of r.cuts) { const k = keyOf(c); bucket[k] = (bucket[k] || 0) + (c.quantity_on_this_stock || 1); }
+    }
+    const direct = new Set(ctsBom.map((b) => String(b.id)));
+    return selectedBom.map((row) => {
+      const id = String(row.id), qty = parseInt(row.quantity, 10) || 0;
+      const n = (nested[id] || 0) + (nested['mark:' + String(row.bom_item)] && !nested[id] ? nested['mark:' + String(row.bom_item)] : 0);
+      const c = direct.has(id) ? qty : (cts[id] || 0);
+      const wpf = parseFloat(row.weight_per_ft) || 0, L = parseFloat(row.length_nest) || 0;
+      const W = row.nest_type === 'Panel' ? (parseFloat(row.width_nest) || 0) : 0;
+      const each = wpf > 0 && L > 0 ? calcUnitWeight(wpf, L, W) : 0;
+      return {
+        id, mark: row.bom_item, what: [row.form_type_name, row.material_name || row.material_type_name].filter(Boolean).join(' · '),
+        size: W ? `${L}" × ${W}"` : `${L}"`, qty, nested: n, cts: c, short: Math.max(qty - n - c, 0), lbs: each * qty,
+        direct: direct.has(id),
+      };
+    });
+  }
+
   function calcWeightSummary() {
     if (!results) return { totalAllocated: 0, totalWaste: 0, totalStock: 0 };
     const { selected_1d, selected_2d } = getSelectedResults();
@@ -2226,6 +2256,7 @@ export default function App() {
 
   const selectedPatternCount = selectedPatterns.size;
   const weightSummary = (step === 3 && results) ? calcWeightSummary() : null;
+  const balance = (step === 3 && results) ? calcBalance() : [];
   const stockShortages = (() => {
     if (step !== 3 || !results) return [];
     const usage = {};
@@ -3384,6 +3415,56 @@ export default function App() {
                     <> {weightSummary.unpriced} part(s) have no Weight_Per_Ft, so both figures understate.</>
                   )}
                 </div>
+              );
+            })()}
+
+            {balance.length > 0 && (() => {
+              const tot = balance.reduce((t, b) => ({ qty: t.qty + b.qty, nested: t.nested + b.nested, cts: t.cts + b.cts, short: t.short + b.short, lbs: t.lbs + b.lbs }),
+                { qty: 0, nested: 0, cts: 0, short: 0, lbs: 0 });
+              const th = { textAlign: 'right', padding: '6px 10px', fontSize: 11, color: 'var(--gray-500, #6b7280)', fontWeight: 600, letterSpacing: '.04em' };
+              const td = { textAlign: 'right', padding: '5px 10px', fontSize: 13, fontVariantNumeric: 'tabular-nums' };
+              return (
+                <details open style={{ marginBottom: 14, border: '1px solid #d6dde5', borderRadius: 6, background: '#fff' }}>
+                  <summary style={{ cursor: 'pointer', padding: '9px 14px', fontWeight: 700, fontSize: 13, letterSpacing: '.04em' }}>
+                    BALANCE SHEET — WHAT IS NESTED
+                    <span style={{ fontWeight: 400, marginLeft: 10, color: tot.short ? '#7a4a12' : '#1b5e20' }}>
+                      {tot.qty} pcs needed · {tot.nested} on full stock · {tot.cts} cut to size{tot.short ? ` · ${tot.short} not covered` : ' · all covered'}
+                    </span>
+                  </summary>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead><tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                        <th style={{ ...th, textAlign: 'left' }}>MARK</th><th style={{ ...th, textAlign: 'left' }}>MATERIAL</th><th style={{ ...th, textAlign: 'left' }}>SIZE</th>
+                        <th style={th}>BOM QTY</th><th style={th}>ON FULL STOCK</th><th style={th}>CUT TO SIZE</th><th style={th}>NOT COVERED</th><th style={th}>LBS</th>
+                      </tr></thead>
+                      <tbody>
+                        {balance.map((b) => (
+                          <tr key={b.id} style={{ borderBottom: '1px solid #f1f3f5', background: b.short ? '#fdf3e3' : undefined }}>
+                            <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{b.mark}</td>
+                            <td style={{ ...td, textAlign: 'left' }}>{b.what}</td>
+                            <td style={{ ...td, textAlign: 'left' }}>{b.size}</td>
+                            <td style={td}>{b.qty}</td>
+                            <td style={td}>{b.nested || '—'}</td>
+                            <td style={td} title={b.direct ? 'Set to cut to size on Configure' : undefined}>{b.cts || '—'}{b.direct ? ' *' : ''}</td>
+                            <td style={{ ...td, fontWeight: b.short ? 700 : 400, color: b.short ? '#b06a1f' : undefined }}>{b.short || '—'}</td>
+                            <td style={td}>{b.lbs ? fmtLbs(b.lbs) : '—'}</td>
+                          </tr>
+                        ))}
+                        <tr style={{ borderTop: '2px solid #d6dde5', fontWeight: 700 }}>
+                          <td style={{ ...td, textAlign: 'left' }} colSpan={3}>Total</td>
+                          <td style={td}>{tot.qty}</td><td style={td}>{tot.nested}</td><td style={td}>{tot.cts}</td>
+                          <td style={{ ...td, color: tot.short ? '#b06a1f' : '#1b5e20' }}>{tot.short || '✓ 0'}</td><td style={td}>{fmtLbs(tot.lbs)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {balance.some((b) => b.direct) && (
+                    <div style={{ fontSize: 11.5, color: '#6b7280', padding: '6px 14px 10px' }}>* set to cut to size on Configure: bought to size, never nested.</div>
+                  )}
+                  {tot.short > 0 && (
+                    <div style={{ fontSize: 12, color: '#7a4a12', padding: '6px 14px 10px' }}>Not covered: a pattern holding these parts is unticked, its group was not run, or the nester could not place them.</div>
+                  )}
+                </details>
               );
             })()}
 
