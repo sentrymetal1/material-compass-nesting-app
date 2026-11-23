@@ -7,7 +7,7 @@
   <script src="/takeoff/outside-types.js"></script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>AI Take-off — Project Review</title>
+<title>AI Take-off Assistant — Classic view</title>
 <!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
 <script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
 <script src="mc-dialog.js"></script>
@@ -171,6 +171,16 @@
   .tabs button.on .tbadge{background:rgba(255,255,255,.25);color:#fff;}
   .tbadge.warn{background:var(--ylwbg);color:var(--ylw);} .tbadge.bad{background:var(--redbg);color:var(--red);}
   .tabpane{display:none;} .tabpane.on{display:block;}
+  /* Panel mode: one section inside the AI Take-off Assistant (see setPanel). */
+  html.pm body{background:#fff;}
+  html.pm .appbar, html.pm #wrap > :not(.tabpane):not(.footerdock):not(.commit){display:none !important;}
+  html.pm .wrap{max-width:none;margin:0;padding:12px 16px;}
+  html.pm .footerdock{display:none;}
+  html.pm-ai .footerdock, html.pm-quote .footerdock{display:flex;}
+  html.pm-ai .footerdock .bar, html.pm-quote .footerdock .chatdock{display:none;}
+  html.pm-labor #workCard{display:none;}
+  html.pm-subs .tabpane[data-tab="labor"] > :not(#workCard){display:none;}
+  html.pm-subs #summaryCard > h2, html.pm-subs #summaryCard .body > :not(.sum-out), html.pm-quote #summaryCard .sum-out{display:none !important;}
   .tabpane[data-tab="ai"] .chatthread{max-height:62vh;}
   .lab-bk{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px;}
   .lab-bk span{font-size:12px;border:1px solid var(--line);border-radius:6px;padding:4px 9px;background:#fafbfc;color:#334;}
@@ -207,7 +217,7 @@
 </head>
 <body>
 <div id="busy" class="busy"></div>
-<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span class="projhead" id="projHead"></span><span id="saveInd" role="button" tabindex="0" title="Saves by itself after every change. Click to save now." onclick="saveNow()" style="font-size:11px;color:var(--mut);margin-left:12px;cursor:pointer"></span>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off Assistant · Classic view</span><span class="projhead" id="projHead"></span><span id="saveInd" role="button" tabindex="0" title="Saves by itself after every change. Click to save now." onclick="saveNow()" style="font-size:11px;color:var(--mut);margin-left:12px;cursor:pointer"></span>
   <span id="aiCost" class="aicost" style="display:none"></span>
   <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
   <a id="drawBtn" href="#" onclick="openDrawings(null);return false;" title="The drawings beside the take-off lines. Read-only, opens in a new tab." style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">▦ Drawings view (new)</a>
@@ -222,7 +232,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.124 · 2026-11-22 · picks up fixes saved in the Drawings view";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.125 · 2026-11-23 · panel mode for the AI Take-off Assistant tabs";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -292,6 +302,8 @@
   }
   function openDrawings(show){
     if(!params.project_id) return;
+    // Inside the Assistant the drawings are the page around this frame: ask it to show the sheet.
+    if(PANEL&&window.parent!==window){ try{ window.parent.postMessage({type:"mc-show",sheet:(show&&show.sheet)||"",mark:(show&&show.mark)||""},location.origin); }catch(e){} return; }
     flushZohoSave();
     const name="mc_drawings_"+params.project_id;
     let w=null; try{ w=window.open("",name); }catch(e){}
@@ -651,7 +663,7 @@
     const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json();
     if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
-    if(d.warning) mcAlert("Added, but: "+d.warning,{title:"AI Take-off"});   // e.g. bidirectional link name rejected
+    if(d.warning) mcAlert("Added, but: "+d.warning,{title:"AI Take-off Assistant"});   // e.g. bidirectional link name rejected
     PROJECT_SCOPE=PROJECT_SCOPE||{components:[],drawings:[]};
     if(kind==='component') PROJECT_SCOPE.components.push({id:d.id,name:value});
     else PROJECT_SCOPE.drawings.push({id:d.id,number:value});
@@ -660,16 +672,16 @@
   async function reconAddIdx(kind,i){
     const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(!t) return;
     try{ await reconAdd(kind,t.value); render(); }
-    catch(e){ mcAlert("Add to project failed: "+e.message,{title:"AI Take-off"}); }
+    catch(e){ mcAlert("Add to project failed: "+e.message,{title:"AI Take-off Assistant"}); }
   }
   // Bulk add only. Components go first so drawings can attach to the records just created.
   async function reconAddAll(kind){
     const list=(RECON[kind]&&RECON[kind].takeoffOnly||[]).slice(); if(!list.length) return;
-    if(!(await mcConfirm("Add "+list.length+" "+kind+(list.length===1?"":"s")+" to the project?",{title:"AI Take-off",okText:"Add"}))) return;
+    if(!(await mcConfirm("Add "+list.length+" "+kind+(list.length===1?"":"s")+" to the project?",{title:"AI Take-off Assistant",okText:"Add"}))) return;
     const failed=[];
     for(let i=0;i<list.length;i++){ try{ await reconAdd(kind,list[i].value); }catch(e){ failed.push(list[i].value+" — "+e.message); } }
     render();
-    if(failed.length) mcAlert("Added "+(list.length-failed.length)+" of "+list.length+".\n\nFailed:\n"+failed.join("\n"),{title:"AI Take-off"});
+    if(failed.length) mcAlert("Added "+(list.length-failed.length)+" of "+list.length+".\n\nFailed:\n"+failed.join("\n"),{title:"AI Take-off Assistant"});
   }
 
   // Free-text rename straight from the "On your project" box — the one control that covers
@@ -710,7 +722,7 @@
 
   async function reconRenameIdx(kind,i){
     const p=RECON[kind]&&RECON[kind].near[i]; if(!p) return;
-    if(!(await mcConfirm('Rename "'+p.entered.name+'" to "'+p.takeoff.value+'" on the project?',{title:"AI Take-off",okText:"Rename"}))) return;
+    if(!(await mcConfirm('Rename "'+p.entered.name+'" to "'+p.takeoff.value+'" on the project?',{title:"AI Take-off Assistant",okText:"Rename"}))) return;
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/update",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({kind:kind,id:p.entered.id,value:p.takeoff.value})});
@@ -719,22 +731,22 @@
       const list=kind==='component'?arr(PROJECT_SCOPE.components):arr(PROJECT_SCOPE.drawings);
       list.forEach(function(x){ if(String(x.id)===String(p.entered.id)){ if(kind==='component') x.name=p.takeoff.value; else x.number=p.takeoff.value; } });
       render();
-    }catch(e){ mcAlert("Rename failed: "+e.message,{title:"AI Take-off"}); }
+    }catch(e){ mcAlert("Rename failed: "+e.message,{title:"AI Take-off Assistant"}); }
   }
 
   async function reconDeleteIdx(kind,i){
     const e=RECON[kind]&&RECON[kind].enteredOnly[i]; if(!e) return;
-    if(!(await mcConfirm('Delete "'+e.name+'" from the project?\n\nThis removes the record permanently. It is blocked if anything is still linked to it.',{title:"AI Take-off",okText:"Delete",danger:true}))) return;
+    if(!(await mcConfirm('Delete "'+e.name+'" from the project?\n\nThis removes the record permanently. It is blocked if anything is still linked to it.',{title:"AI Take-off Assistant",okText:"Delete",danger:true}))) return;
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/delete",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({kind:kind,id:e.id})});
       const d=await r.json();
-      if(r.status===409){ mcAlert("Can't delete \""+e.name+"\".\n\n"+d.error,{title:"AI Take-off"}); return; }
+      if(r.status===409){ mcAlert("Can't delete \""+e.name+"\".\n\n"+d.error,{title:"AI Take-off Assistant"}); return; }
       if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
       if(kind==='component') PROJECT_SCOPE.components=arr(PROJECT_SCOPE.components).filter(function(x){return String(x.id)!==String(e.id);});
       else PROJECT_SCOPE.drawings=arr(PROJECT_SCOPE.drawings).filter(function(x){return String(x.id)!==String(e.id);});
       render();
-    }catch(e2){ mcAlert("Delete failed: "+e2.message,{title:"AI Take-off"}); }
+    }catch(e2){ mcAlert("Delete failed: "+e2.message,{title:"AI Take-off Assistant"}); }
   }
   // How much of the BOM the take-off actually tagged. When this is zero the panel has nothing to
   // compare against, and "0 matched" reads as a matching failure when it's really an input failure
@@ -1824,11 +1836,11 @@
           '<tr class="wt-total"><td><b>Total</b></td><td class="num"><b id="sumCostTot">'+money(T.grand)+'</b></td><td></td><td class="num"><b id="sumMuTot">'+money(T.muTot)+'</b></td><td class="num"><b id="sumSellTot">'+money(T.quote)+'</b></td></tr>'+
           '</tbody></table></div>';
       })()+
-      (open?'<div class="lab-stale" style="margin-bottom:10px">'+open+' cost'+(open===1?'':'s')+' below '+(open===1?'looks':'look')+' likely on this job but '+(open===1?'has':'have')+' no answer yet. Enter an amount, or mark '+(open===1?'it':'them')+' not needed or by others.</div>':'')+
+      '<div class="sum-out">'+(open?'<div class="lab-stale" style="margin-bottom:10px">'+open+' cost'+(open===1?'':'s')+' below '+(open===1?'looks':'look')+' likely on this job but '+(open===1?'has':'have')+' no answer yet. Enter an amount, or mark '+(open===1?'it':'them')+' not needed or by others.</div>':'')+
       '<h3 style="font-size:14px;margin:6px 0">Outside costs</h3>'+
       '<div style="overflow-x:auto"><table><thead><tr><th>Cost — and what on this take-off points to it</th><th>Answer</th><th class="num">Qty</th><th class="num">$ each</th><th class="num">$ total</th><th>Note</th></tr></thead><tbody>'+outRows+'</tbody></table></div>'+
       '<div style="margin:6px 0 14px"><span class="pillbtn" style="margin-left:0" onclick="sumAddOther()">+ add another cost</span></div>'+
-      projOutPanelHtml(R)+
+      projOutPanelHtml(R)+'</div>'+
       '<h3 style="font-size:14px;margin:6px 0">Material <span class="lt" style="font-weight:400;font-size:12px;color:var(--mut)">— fabricated steel by weight; real prices come from nesting and supplier quotes</span></h3>'+
       '<table><thead><tr><th>Material</th><th class="num">Weight</th><th class="num">$/lb</th><th class="num">$</th></tr></thead><tbody>'+(matRows||'<tr><td colspan="4" style="color:var(--mut)">No fabricated rows.</td></tr>')+'</tbody></table>'+
       '<h3 style="font-size:14px;margin:14px 0 6px">Shop labor <span class="lt" style="font-weight:400;font-size:12px;color:var(--mut)">— hours from the Labor tab × your labor rates</span></h3>'+
@@ -2174,14 +2186,27 @@
   const TABS=[["overview","Overview"],["checks","Checks"],["drawings","By drawing"],["addenda","Addenda"],["material","Material"],["fittings","Fittings"],["labor","Labor"],["summary","Summary"],["ai","Ask the AI"]];
   function tabKey(){ return "mc_review_tab_"+(params.project_id||"sample"); }
   let TAB=(function(){ try{ return sessionStorage.getItem(tabKey())||"overview"; }catch(e){ return "overview"; } })();
+  const PANEL_OF={material:["material","fittings","addenda"],labor:["labor"],subs:["labor","summary"],quote:["summary"],ai:["ai"]};
+  let PANEL=(function(){ try{ const p=new URLSearchParams(location.search).get("panel")||""; return PANEL_OF[p]?p:""; }catch(e){ return ""; } })();
   function setTab(t){
     if(t==="welds") t="labor";   // Welds & features now lives at the foot of the Labor tab
     if(!TABS.some(function(x){ return x[0]===t; })) t="overview";
     TAB=t; try{ sessionStorage.setItem(tabKey(),t); }catch(e){}
     applyTab();
   }
+  // PANEL MODE: the AI Take-off Assistant (drawings.html) shows this page inside its own tabs,
+  // ?panel=material|labor|subs|quote|ai, with this page's own header, tab strip and footer hidden.
+  // One frame serves every tab: the Assistant switches it with postMessage {type:"mc-panel"}.
+  function applyPanelClass(){
+    const h=document.documentElement; h.className=h.className.replace(/\bpm(-\w+)?\b/g,"").trim();
+    if(PANEL){ h.classList.add("pm","pm-"+PANEL); }
+  }
+  function setPanel(p){ if(!PANEL_OF[p]) return; PANEL=p; TAB=PANEL_OF[p][0]; applyPanelClass(); applyTab(); try{ window.scrollTo(0,0); }catch(e){} }
+  applyPanelClass(); if(PANEL) TAB=PANEL_OF[PANEL][0];
+  window.addEventListener("message",function(e){ if(e.origin!==location.origin) return; const d=e.data||{}; if(d.type==="mc-panel") setPanel(d.panel); });
   function applyTab(){
-    document.querySelectorAll(".tabpane").forEach(function(p){ p.classList.toggle("on", p.getAttribute("data-tab")===TAB); });
+    const panes=PANEL?PANEL_OF[PANEL]:[TAB];
+    document.querySelectorAll(".tabpane").forEach(function(p){ p.classList.toggle("on", panes.indexOf(p.getAttribute("data-tab"))>-1); });
     document.querySelectorAll(".tabs button").forEach(function(b){ b.classList.toggle("on", b.getAttribute("data-tab")===TAB); });
     if(TAB==="ai") scrollChatToBottom();
   }
@@ -3731,7 +3756,7 @@
           '</div></div>'+
       '</div>'+
       '<div class="commit" id="commit"></div>'+
-      '<div class="foot">Material Compass · AI Take-off · '+(haveLive()?'live':'sample data')+' · '+VERSION+'</div>';
+      '<div class="foot">Material Compass · AI Take-off Assistant · '+(haveLive()?'live':'sample data')+' · '+VERSION+'</div>';
 
     if(_aiKeep){ const _ai=document.getElementById("aiInput"); if(_ai) _ai.value=_aiKeep; }  // restore typed chat text
     renderDecisions();
@@ -4741,12 +4766,12 @@
         const isImg=/^image\//.test(f.type)||["png","jpg","jpeg","webp","gif"].indexOf(ext)>-1;
         const isPdf=f.type==="application/pdf"||ext==="pdf";
         const isText=["csv","txt"].indexOf(ext)>-1||/^text\//.test(f.type);
-        if(f.size>20*1024*1024){ mcAlert("“"+f.name+"” is over 20 MB — attach a smaller file.",{title:"AI Take-off"}); continue; }
+        if(f.size>20*1024*1024){ mcAlert("“"+f.name+"” is over 20 MB — attach a smaller file.",{title:"AI Take-off Assistant"}); continue; }
         if(isText){ REVISE_ATTACHMENTS.push({kind:"text",name:f.name,text:await f.text()}); }
         else if(isImg){ REVISE_ATTACHMENTS.push({kind:"image",name:f.name,media_type:f.type||"image/png",data:await fileB64(f)}); }
         else if(isPdf){ REVISE_ATTACHMENTS.push({kind:"pdf",name:f.name,media_type:"application/pdf",data:await fileB64(f)}); }
-        else { mcAlert("“"+f.name+"” — unsupported type. Use PDF, image, or CSV/TXT. (Excel: save as PDF or CSV first.)",{title:"AI Take-off"}); }
-      }catch(e){ mcAlert("Could not read “"+f.name+"”: "+e.message,{title:"AI Take-off"}); }
+        else { mcAlert("“"+f.name+"” — unsupported type. Use PDF, image, or CSV/TXT. (Excel: save as PDF or CSV first.)",{title:"AI Take-off Assistant"}); }
+      }catch(e){ mcAlert("Could not read “"+f.name+"”: "+e.message,{title:"AI Take-off Assistant"}); }
     }
     input.value="";
     render();
@@ -4764,14 +4789,14 @@
   }
   async function addPastedImage(f, mime){
     try{
-      if(f.size>20*1024*1024){ mcAlert("Pasted image is over 20 MB — paste a smaller crop.",{title:"AI Take-off"}); return; }
+      if(f.size>20*1024*1024){ mcAlert("Pasted image is over 20 MB — paste a smaller crop.",{title:"AI Take-off Assistant"}); return; }
       const keep=(document.getElementById("aiInput")||{}).value;
       const data=await fileB64(f);
       const n=REVISE_ATTACHMENTS.filter(function(a){return a.kind==="image";}).length+1;
       REVISE_ATTACHMENTS.push({kind:"image", name:"screenshot-"+n+".png", media_type:mime||f.type||"image/png", data:data});
       render();
       const inp=document.getElementById("aiInput"); if(inp){ inp.value=keep||""; inp.focus(); }
-    }catch(err){ mcAlert("Could not read pasted image: "+err.message,{title:"AI Take-off"}); }
+    }catch(err){ mcAlert("Could not read pasted image: "+err.message,{title:"AI Take-off Assistant"}); }
   }
   function attachChipsHtml(){
     return REVISE_ATTACHMENTS.map(function(a,i){

@@ -4,7 +4,7 @@
   <script src="/takeoff/mc-token.js"></script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Material Take-off</title>
+  <title>AI Take-off Assistant</title>
 
   <!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
   <script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
@@ -466,9 +466,9 @@
   </style>
 </head>
 <body>
-  <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off</span><span class="projhead" id="projHead"></span><span id="aiCost" class="aicost" style="display:none"></span></div>
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off Assistant</span><span class="projhead" id="projHead"></span><span id="aiCost" class="aicost" style="display:none"></span></div>
   <div class="card">
-    <h1>AI Material Take-off</h1>
+    <h1>AI Take-off Assistant</h1>
     <p class="sub">Upload everything the job comes with (PDF — select several at once): drawings,
        bills of material and parts lists, and the Division-05 spec. Every file is listed below, whether
        or not it has title blocks, and Material Compass AI suggests how it all breaks down into
@@ -499,9 +499,9 @@
     <div id="resume" style="display:none;margin:0 0 16px;padding:11px 13px;background:#f0f6fc;
          border:1px solid #cfe0f2;border-radius:8px;font-size:13px;color:#334;">
       💾 You have a saved take-off for this project.
-      <a id="resumeLink" href="#" style="color:var(--blue);font-weight:600;text-decoration:none;">Open it →</a>
+      <a id="resumeLink" href="#" style="color:var(--blue);font-weight:600;text-decoration:none;">Open it in the AI Take-off Assistant →</a>
       <span style="color:#8893a0;">·</span>
-      <a id="drawingsLink" href="#" style="color:var(--blue);font-weight:600;text-decoration:none;">See it beside the drawings (new) →</a>
+      <a id="drawingsLink" href="#" style="color:var(--blue);font-weight:600;text-decoration:none;">Classic view</a>
       <span style="color:#8893a0;">or run a new one below.</span>
     </div>
 
@@ -633,7 +633,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.122 (2026-11-23)";   // Drawings ruler: scale details fold away once set
+    const BUILD_TAG = "Material Compass · AI Take-off Assistant — v0.123 (2026-11-23)";   // Assistant: tabs + status line; intake opens the Assistant after a run
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -676,6 +676,9 @@
       return { project_id: q.get("project_id"), manufacturer_id: q.get("manufacturer_id") };
     }
     let params = getParams();
+    // Opened in the AI Take-off Assistant's Setup tab (drawings.html adds in=assistant).
+    const IN_ASSISTANT = new URLSearchParams(window.location.search).get("in") === "assistant" && window.parent !== window;
+    if (IN_ASSISTANT) { const st = document.createElement("style"); st.textContent = ".appbar{display:none!important}body{background:#fff}"; document.head.appendChild(st); }
 
     // ---- AI cost of this project --------------------------------------------
     // The running total of what this project's AI calls have cost (preview, questions, take-off,
@@ -719,12 +722,12 @@
           has = !!(d && d.ok && d.found);
         } catch (e) {}
       }
-      if (!has) return;
+      if (!has || IN_ASSISTANT) return;
       const el = document.getElementById("resume"), lk = document.getElementById("resumeLink");
-      if (lk) lk.href = "review.html?project_id=" + encodeURIComponent(params.project_id) +
+      if (lk) lk.href = "drawings.html?project_id=" + encodeURIComponent(params.project_id) +
         "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
       const dl = document.getElementById("drawingsLink");   // the drawing workspace (drawings.html), read-only
-      if (dl) dl.href = "drawings.html?project_id=" + encodeURIComponent(params.project_id) +
+      if (dl) dl.href = "review.html?project_id=" + encodeURIComponent(params.project_id) +
         "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
       if (el) el.style.display = "block";
     }
@@ -1933,7 +1936,7 @@
             if (await mcConfirm("Move all " + n + " drawing" + (n === 1 ? "" : "s") + " from “" + from.name +
                 "” into “" + into.name + "” on the project?\n\n" +
                 "That's how you clear up a duplicate component — the drawings move, they aren't dropped.",
-                { title: "AI Take-off", okText: "Move drawings" })) {
+                { title: "AI Take-off Assistant", okText: "Move drawings" })) {
               const failed = [];
               for (let z = 0; z < from.drawings.length; z++) {
                 const d = from.drawings[z];
@@ -1979,7 +1982,7 @@
           const recs = from.drawings.filter((x) => _norm(x.number) === _norm(d.number));
           if (!(await mcConfirm("Move drawing " + d.number + (recs.length > 1 ? " (" + recs.length + " sheets)" : "") +
               " from “" + from.name + "” to “" + scope[ci].name + "” on the project?",
-              { title: "AI Take-off", okText: "Move it" }))) { renderScope(); return; }
+              { title: "AI Take-off Assistant", okText: "Move it" }))) { renderScope(); return; }
           setScopeStatus('<span class="spin"></span>Moving ' + escHtml(d.number) + " to " + escHtml(scope[ci].name) + "…");
           try {
             for (const x of recs) {
@@ -2143,7 +2146,7 @@
       if (!(await mcConfirm("Delete the " + what + " “" + label + "” from the PROJECT?\n\n" +
           "This removes the record from the project itself — not just from this take-off.\n" +
           "(To leave it out of this take-off only, use ✕.)",
-          { title: "AI Take-off", okText: "Delete", danger: true }))) return;
+          { title: "AI Take-off Assistant", okText: "Delete", danger: true }))) return;
       setScopeStatus('<span class="spin"></span>Deleting “' + escHtml(label) + "” on the project…");
       try {
         await scopeApi("delete", { kind: kind, id: id });
@@ -3143,7 +3146,7 @@
         " to the project under “" + scope[ci].name + "”" + (asRef ? " as REFERENCE ONLY" : "") + "?\n\n" +
         "That creates " + list.length + " drawing record" + (list.length === 1 ? "" : "s") + " on the project" +
         (asRef ? ", and the take-off will read them for context without raising BOM rows from them." : "."),
-        { title: "AI Take-off", okText: "Add drawings" }))) return;
+        { title: "AI Take-off Assistant", okText: "Add drawings" }))) return;
       const failed = [];
       for (let n = 0; n < list.length; n++) {
         const s = list[n];
@@ -3799,7 +3802,7 @@
             go.disabled = false;
             mcAlert("The project's components or drawings changed since this screen loaded, so " +
               "the list has been refreshed.\n\nCheck it over and start the take-off again — this is " +
-              "the list the AI tags every BOM row against.", { title: "AI Take-off" });
+              "the list the AI tags every BOM row against.", { title: "AI Take-off Assistant" });
             setScopeStatus("Re-read the project — the components and drawings on screen had changed. " +
               "Check them, then run again.");
             return;
@@ -3924,7 +3927,9 @@
           data.__project = proj;  // tag so the review page can't confuse it with another project's take-off
           try { sessionStorage.setItem("takeoff_result", JSON.stringify(data)); } catch (e) {}
           try { if (proj) localStorage.setItem("mc_takeoff_" + proj, JSON.stringify(data)); } catch (e) {}
-          location.href = "review.html?project_id=" + encodeURIComponent(proj) +
+          // Inside the Assistant (its Setup tab): tell it, and it opens the new take-off on its Drawings tab.
+          if (IN_ASSISTANT) { try { window.parent.postMessage({ type: "mc-run-done" }, location.origin); } catch (e) {} hideBusy && hideBusy(); return; }
+          location.href = "drawings.html?project_id=" + encodeURIComponent(proj) +
             "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
           return;
         }

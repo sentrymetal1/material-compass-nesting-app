@@ -26,7 +26,33 @@ button,select,input{font:inherit;color:inherit}
 button{cursor:pointer;border:1px solid var(--line);background:var(--card);border-radius:8px;min-height:34px;padding:0 12px}
 button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--brand);outline-offset:1px}
 button:disabled{opacity:.5;cursor:default}
-.app{display:grid;grid-template-rows:auto minmax(0,1fr);height:100vh}
+.app{display:grid;grid-template-rows:auto auto auto minmax(0,1fr);height:100vh}
+/* AI Take-off Assistant: the steps as tabs, and what this take-off has done as a line of chips. */
+.atabs{display:flex;gap:2px;padding:0 10px;background:#fff;border-bottom:1px solid var(--line);overflow-x:auto}
+.atabs button{display:flex;align-items:center;gap:7px;border:0;border-radius:0;background:transparent;min-height:44px;padding:0 12px;font-size:14px;color:#44525f;white-space:nowrap;border-bottom:3px solid transparent}
+.atabs button:hover{background:var(--soft)}
+.atabs button.on{color:var(--ink);font-weight:700;border-bottom-color:var(--brand)}
+.atabs .n{width:21px;height:21px;border-radius:50%;display:inline-grid;place-items:center;font-size:11.5px;font-weight:700;background:#e3e9ef;color:#44525f}
+.atabs button.on .n{background:var(--brand);color:#fff}
+.atabs .bd{font-size:11.5px;font-weight:600;border-radius:99px;padding:1px 8px;background:#eef2f5;color:#44525f}
+.atabs .bd.ok{background:var(--grnbg);color:#1f6b37}.atabs .bd.warn{background:#fff1dc;color:#8a4b00}.atabs .bd.bad{background:var(--redbg);color:#a32020}
+.atabs .ask{margin-left:auto;align-self:center;min-height:34px;border:1px solid var(--brand);border-radius:8px;color:#1d4670;font-weight:600;padding:0 12px;border-bottom-width:1px}
+.atabs .ask.on{background:var(--brand);color:#fff}
+.stat{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 14px;background:var(--soft);border-bottom:1px solid var(--line);font-size:12.5px}
+.stat b{color:#24476b;margin-right:4px}
+.stat button{min-height:26px;border-radius:99px;padding:0 10px;font-size:12px;font-weight:600;border:1px solid}
+.stat .ok{background:var(--grnbg);border-color:#b7dfc4;color:#1f6b37}.stat .warn{background:var(--ylwbg);border-color:#f0cf94;color:#8a4b00}
+.stat .bad{background:var(--redbg);border-color:#f3b7b7;color:#a32020}.stat .plain{background:#fff;border-color:#c9d3dc;color:#44525f}
+.main[hidden],.host[hidden],.host iframe[hidden]{display:none}
+.host{display:flex;flex-direction:column;min-height:0;background:#fff}
+.host iframe{flex:1;width:100%;border:0;min-height:0}
+.host .hosthd{display:none;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.host.drawer{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:100%;z-index:30;box-shadow:-12px 0 30px -14px #0007}
+.host.drawer .hosthd,.host.ai .hosthd{display:flex}
+.phide{float:right;min-height:28px;font-size:12px;padding:0 8px;margin:-4px -4px 6px 8px}
+.pshow{position:absolute;right:10px;top:10px;z-index:5;min-height:34px;font-size:13px;font-weight:600;border-color:var(--brand);color:#1d4670;box-shadow:0 4px 14px -6px #0004}
+.pshow[hidden]{display:none}
+.main.nopanel{grid-template-columns:48px minmax(0,1fr)}.main.nopanel .panel{display:none}
 .bar{display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--bar);color:#fff;flex-wrap:wrap}
 .bar .job{font-weight:600;line-height:1.2;max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bar .job small{display:block;font-weight:400;opacity:.8;font-size:12px}
@@ -38,7 +64,8 @@ button:disabled{opacity:.5;cursor:default}
 .bar a{color:#cfe0f0;font-size:13px;text-decoration:none}.bar a:hover{color:#fff}
 .mapnote{display:flex;align-items:center;gap:8px;font-size:13px;background:#f3a712;color:#1d1300;border-radius:8px;padding:4px 6px 4px 10px}
 .mapnote button{min-height:30px;border:0;background:#1d1300;color:#fff;font-weight:600}
-.main{display:grid;grid-template-columns:48px minmax(0,1fr) 400px;min-height:0}
+.main{display:grid;grid-template-columns:48px minmax(0,1fr) 310px;min-height:0;position:relative}
+.panel{font-size:12.5px}
 .tools{display:flex;flex-direction:column;gap:6px;padding:10px 4px;background:var(--card);border-right:1px solid var(--line)}
 .tools button{width:40px;height:40px;padding:0;display:grid;place-items:center;border:0;background:transparent}
 .tools button:hover{background:var(--soft)}.tools button.on{background:var(--soft);color:#1d4670}
@@ -117,6 +144,19 @@ button:disabled{opacity:.5;cursor:default}
 .ed button{min-height:30px;font-size:12.5px;padding:0 10px;margin-left:6px}.ed button.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
 .edflag{color:var(--red);font-weight:600;margin-top:6px;font-size:12.5px}
 .edmsg{font-size:12.5px;margin-top:4px;min-height:1em}.edmsg.ok{color:var(--grn);font-weight:600}.edmsg.bad{color:var(--red)}
+/* The lines panel is smaller in the Assistant: the drawing is the focus. */
+.panel .ph,.panel .cf{padding:10px 12px}
+.panel .wc{padding:8px 10px}.panel .wc b{font-size:14px}.panel .wc small,.panel .wc p{font-size:11.5px}
+.panel .search{font-size:13px;min-height:34px}
+.panel .ptabs button{font-size:12.5px;min-height:30px}
+.panel .grp{font-size:12px;padding:7px 12px}
+.panel .row{padding:5px 12px;grid-template-columns:54px minmax(0,1fr) auto}
+.panel .row .m,.panel .row .s,.panel .row .w{font-size:12.5px}.panel .row .meta,.panel .row .fl{font-size:11.5px}
+.panel .cl{font-size:12.5px;grid-template-columns:18px 50px minmax(0,1fr) auto}.panel .cl .meta{font-size:11.5px}
+.panel .cfh h3{font-size:14.5px}.panel .cfs{font-size:11px}.panel .iss{font-size:12px;padding:6px 8px}
+.panel .cfbtn{font-size:13.5px;min-height:40px}.panel .pill{font-size:11px}
+.panel .ed{font-size:12px}.panel .ed input{font-size:13px}
+.panel .used,.panel .used table{font-size:12px}.panel .foot{font-size:11.5px}
 @media(prefers-reduced-motion:reduce){.ov i.cur{animation:none}}
 /* Material confirmed: progress in the bar, and the per-drawing check in the panel. */
 .prog{display:flex;align-items:center;gap:8px;background:#1a3754;border:0;color:#fff;border-radius:8px;min-height:36px;padding:0 12px;font-size:13px}
@@ -169,7 +209,7 @@ button:disabled{opacity:.5;cursor:default}
 <div class="app">
   <div class="bar">
     <svg width="28" height="28" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="19" fill="#fff"/><path d="M20 5l3.2 11.8L35 20l-11.8 3.2L20 35l-3.2-11.8L5 20l11.8-3.2z" fill="#5286B4"/></svg>
-    <div class="job" id="job">Loading…<small>AI Take-off · Drawings</small></div>
+    <div class="job" id="job">Loading…<small>AI Take-off Assistant</small></div>
     <div class="nav"><button id="prev" aria-label="Previous drawing">&larr;</button><select id="sheet" aria-label="Drawing"></select><span class="of" id="of"></span><button id="next" aria-label="Next drawing">&rarr;</button></div>
     <button id="prog" class="prog" title="Go to the next drawing not confirmed yet" hidden></button>
     <span id="mapnote"></span>
@@ -177,7 +217,10 @@ button:disabled{opacity:.5;cursor:default}
     <span class="sp"></span>
     <a id="back" href="#" title="The review page, with every tab">Classic view</a>
   </div>
-  <div class="main">
+  <nav class="atabs" id="atabs" aria-label="Take-off steps"></nav>
+  <div class="stat" id="stat"></div>
+  <div class="main" id="main">
+    <button class="pshow" id="pshow" hidden title="Show the lines panel">‹ Show lines</button>
     <div class="tools" role="toolbar" aria-label="Drawing tools">
       <button id="zin" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M10 7v6M7 10h6M15 15l5 5"/></svg></button>
       <button id="zout" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M7 10h6M15 15l5 5"/></svg></button>
@@ -188,7 +231,7 @@ button:disabled{opacity:.5;cursor:default}
     </div>
     <div class="stages" id="stages"></div>
     <aside class="panel">
-      <div class="ph"><div id="wcheck"></div>
+      <div class="ph"><button class="phide" id="phide" title="Hide this panel: the drawing gets the full width">Hide ›</button><div id="wcheck"></div>
         <div class="ptabs" role="tablist"><button id="tabConfirm" class="on" role="tab">Confirm material</button><button id="tabLines" role="tab">All lines</button></div>
         <div class="srow" id="srow" hidden><input class="search" id="q" placeholder="Find a mark or size, e.g. p512" aria-label="Find a mark or size"><button id="flagBtn" class="flagbtn" hidden></button></div></div>
       <div class="list" id="list"></div>
@@ -196,12 +239,17 @@ button:disabled{opacity:.5;cursor:default}
       <div class="foot" id="foot">Changes you make here are saved to the project.</div>
     </aside>
   </div>
+  <div class="host" id="host" hidden>
+    <div class="hosthd"><b style="flex:1">Ask AI about this take-off</b><button id="aiClose" aria-label="Close Ask AI">✕</button></div>
+    <iframe id="setupFrame" title="Setup" hidden></iframe>
+    <iframe id="revFrame" title="Take-off details" hidden></iframe>
+  </div>
 </div>
 <script>
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v0.9 · 2026-11-23 · scale details fold away once set";
+const VERSION="drawings v1.0 · 2026-11-23 · AI Take-off Assistant: tabs, status line, smaller lines panel";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -344,7 +392,7 @@ function sheetIssues(g){
 function printedOnSheet(g,r){const m=normMark(r.member_mark);if(!m)return null;let read=0,n=0;
   partsOf(g).forEach(p=>{const e=S.marks[keyOf(p)];if(e&&e.words){read++;n+=hitsOn(keyOf(p),m).length}});return read?n>0:null}
 function nextTodo(from){const n=S.sheets.length;for(let k=1;k<=n;k++){const gi=(from+k+n)%n;if(confOf(S.sheets[gi]).state!=="done")return gi}return -1}
-function renderProg(){const b=$("prog");if(!b)return;const n=S.sheets.length;if(!n){b.hidden=true;return}
+function renderProg(){renderStatus();const b=$("prog");if(!b)return;const n=S.sheets.length;if(!n){b.hidden=true;return}
   const d=S.sheets.filter(g=>confOf(g).state==="done").length;b.hidden=false;b.classList.toggle("all",d===n);
   b.innerHTML=`<span>Material confirmed</span><span class="pb"><i style="width:${Math.round(d/n*100)}%"></i></span><b>${d} of ${n}</b>`;
   b.title=d===n?"Every drawing's material is confirmed.":"Go to the next drawing not confirmed yet"}
@@ -882,11 +930,73 @@ addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==
   else if(e.key==="Escape"){if(S.tool!=="pan"){if(A.pts){A.pts=null;A.hover=null;A.drawMeas()}else setTool("pan")}else if(S.selMark)clearPart()}});
 $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)history.back();else location.href="/takeoff/review.html?project_id="+encodeURIComponent(P.project_id)+"&manufacturer_id="+encodeURIComponent(P.manufacturer_id)};
 
+/* ---- AI TAKE-OFF ASSISTANT: the steps around the drawings ----
+   Drawings is the hub. Setup shows the intake page (index.html?in=assistant); Material list, Labor,
+   Subcontractors and Quote show the review page's own sections (review.html?panel=…) in ONE frame,
+   switched by postMessage, so the review page loads once. Both pages share the take-off's browser copy
+   and save it themselves; a change on either is passed over the "mc-drawings-<project>" channel. */
+const ATABS=[["setup","Setup"],["drawings","Drawings"],["material","Material list"],["labor","Labor"],["subs","Subcontractors"],["quote","Quote"]];
+S.atab="drawings";S.ai=false;
+try{S.panelOff=localStorage.getItem("mc_dw_panel_off")==="1"}catch(e){}
+const withQ=extra=>{const u=new URLSearchParams(location.search);for(const k in extra)u.set(k,extra[k]);return "?"+u.toString()};
+function wtState(){const live=arr(S.R&&S.R.rows).filter(r=>r&&!r.deleted&&Number(r.quantity)>0);let lb=0;live.forEach(r=>{const w=rowWeight(r);if(w)lb+=w});
+  const ew=Number(S.R&&S.R.expected_weight_lb)>0?Number(S.R.expected_weight_lb):null,pw=S.head&&Number(S.head.total_weight)>0?Number(S.head.total_weight):null,ref=ew||pw;
+  if(!ref)return null;const p=(lb-ref)/ref*100;return{p,ok:Math.abs(p)<=3}}
+function takeoffState(){
+  const R=S.R,n=S.sheets.length,d=S.sheets.filter(g=>confOf(g).state==="done").length;
+  const live=arr(R&&R.rows).filter(r=>r&&!r.deleted&&Number(r.quantity)>0);
+  const flagged=live.filter(r=>flagsOf(r).length).length,wt=wtState();
+  const labor=!!(R&&R.labor&&arr(R.labor.components).length);
+  const left=[n&&d<n,!!flagged,!wt||!wt.ok,!labor].filter(Boolean).length;
+  return{ran:!!live.length,n,d,lines:live.length,flagged,wt,labor,left}}
+function renderATabs(){const el=$("atabs");if(!el)return;const t=S.R?takeoffState():null;
+  const badge={setup:t&&t.ran?["ok","✓"]:null,drawings:t&&t.n?[t.d===t.n?"ok":"warn",t.d+" of "+t.n]:null,material:t?["",t.lines+" lines"]:null,
+    labor:t?(t.labor?["ok","✓"]:["warn","to do"]):null,subs:null,quote:t?(t.left?["warn",t.left+" left"]:["ok","ready"]):null};
+  el.innerHTML=ATABS.map(([id,lab],i)=>{const b=badge[id];return `<button data-at="${id}" class="${S.atab===id?"on":""}" role="tab" aria-selected="${S.atab===id}"><span class="n">${i+1}</span>${esc(lab)}${b?` <span class="bd ${b[0]}">${esc(b[1])}</span>`:""}</button>`}).join("")+
+    `<button class="ask ${S.ai?"on":""}" id="askBtn" title="Ask the AI about this take-off">Ask AI</button>`}
+function renderStatus(){renderATabs();const el=$("stat");if(!el)return;if(!S.R){el.innerHTML="";return}const t=takeoffState();
+  const c=(kind,text,go,title)=>`<button class="${kind}" data-go="${go}"${title?` title="${esc(title)}"`:""}>${esc(text)}</button>`;
+  el.innerHTML="<b>This take-off:</b>"+
+    c(t.ran?"ok":"warn",t.ran?"✓ Take-off run":"Not run yet","setup")+
+    (t.n?c(t.d===t.n?"ok":"warn",(t.d===t.n?"✓ ":"")+"Material confirmed "+t.d+" of "+t.n,"next"):"")+
+    (t.flagged?c("bad",t.flagged+" line"+(t.flagged===1?"":"s")+" to check","flags"):"")+
+    (t.wt?c(t.wt.ok?"ok":"bad",t.wt.ok?"✓ Weight matches the project BOM":"Weight "+(t.wt.p>=0?"+":"")+t.wt.p.toFixed(1)+"% vs project BOM","material","Within 3% of the project BOM is a match")
+      :c("warn","No project weight to check against","material"))+
+    c(t.labor?"ok":"warn",t.labor?"✓ Labor worked out":"Labor not worked out","labor")+
+    c("plain","Subcontractors","subs","Work sent outside the shop: galvanizing, painting, bending and the like")+
+    c(t.left?"plain":"ok",t.left?"Quote: "+t.left+" item"+(t.left===1?"":"s")+" left":"✓ Ready to quote","quote")}
+function panelTo(p){const f=$("revFrame");
+  if(!f.dataset.loaded){f.dataset.loaded="1";f.src="review.html"+withQ({panel:p});return}
+  try{f.contentWindow.postMessage({type:"mc-panel",panel:p},location.origin)}catch(e){}}
+function layout(){
+  const t=S.atab,onDw=t==="drawings",drawer=S.ai&&onDw;
+  $("main").hidden=!onDw;$("main").classList.toggle("nopanel",!!S.panelOff);$("pshow").hidden=!S.panelOff;
+  const h=$("host");h.hidden=onDw&&!S.ai;h.classList.toggle("drawer",drawer);h.classList.toggle("ai",S.ai&&!onDw);
+  const setup=t==="setup"&&!S.ai;$("setupFrame").hidden=!setup;$("revFrame").hidden=setup;
+  if(setup){const f=$("setupFrame");if(!f.src)f.src="index.html"+withQ({in:"assistant"})}
+  else if(S.ai)panelTo("ai");else if(!onDw)panelTo(t);
+  renderStatus();
+  if(onDw)requestAnimationFrame(()=>dispatchEvent(new Event("resize")))}
+function setATab(t){if(!ATABS.some(a=>a[0]===t))return;S.atab=t;S.ai=false;layout()}
+$("atabs").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
+  if(b.id==="askBtn"){S.ai=!S.ai;layout();return}setATab(b.dataset.at)});
+$("stat").addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(!b)return;const g=b.dataset.go;
+  if(g==="next"){setATab("drawings");setTab("confirm");const n=nextTodo(act().cur);if(n>-1&&n!==act().cur){clearPart();act().open(n)}return}
+  if(g==="flags"){setATab("drawings");if(S.panelOff){S.panelOff=false;layout()}S.onlyFlags=true;setTab("lines");return}
+  setATab(g)});
+$("aiClose").onclick=()=>{S.ai=false;layout()};
+const panelVis=off=>{S.panelOff=off;try{localStorage.setItem("mc_dw_panel_off",off?"1":"0")}catch(e){}layout()};
+$("phide").onclick=()=>panelVis(true);$("pshow").onclick=()=>panelVis(false);
+// From the frames: a line clicked in the Material list shows its drawing; a new run reloads the Assistant.
+addEventListener("message",e=>{if(e.origin!==location.origin)return;const m=e.data||{};
+  if(m.type==="mc-show"){setATab("drawings");if(S.R)showFromReview(m)}
+  else if(m.type==="mc-run-done")location.reload()});
+
 /* ---- start ---- */
 (async function init(){
   S.panes=[new Pane(0),new Pane(1)];const A=S.panes[0];
-  A.msg('<span class="spin"></span>Loading the drawings…');
-  if(!P.project_id){A.msg("<b>No project was given.</b><br>Open this page from a take-off's review page.");$("job").firstChild.textContent="AI Take-off";return}
+  A.msg('<span class="spin"></span>Loading the drawings…');layout();
+  if(!P.project_id){A.msg("<b>No project was given.</b><br>Open this page from a take-off's review page.");$("job").firstChild.textContent="AI Take-off Assistant";return}
   if(!window.pdfjsLib){A.msg("<b>The drawing viewer didn't load.</b><br>Check the internet connection and reload the page.");return}
   const [R,map,scope,cat]=await Promise.all([
     loadTakeoff().catch(e=>({__err:String(e.message||e)})),
@@ -895,11 +1005,12 @@ $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)
     getJSON("/api/takeoff/catalog-index").catch(()=>null)]);
   if(cat&&cat.ok)CAT_WEIGHTS=cat.weights||{};
   if(scope&&scope.ok)S.head=scope.project||null;
-  const name=S.head?[S.head.number,S.head.name].filter(Boolean).join(" · "):((R&&R.project&&R.project.name)||"AI Take-off");
-  $("job").innerHTML=esc(name)+"<small>AI Take-off · Drawings</small>";document.title=name+" · Drawings";
+  const name=S.head?[S.head.number,S.head.name].filter(Boolean).join(" · "):((R&&R.project&&R.project.name)||"AI Take-off Assistant");
+  $("job").innerHTML=esc(name)+"<small>AI Take-off Assistant</small>";document.title=name+" · AI Take-off Assistant";
   if(map&&map.ok){S.files=arr(map.files);S.map=map.map||null;S.stale=!!map.stale}
   if(R&&R.__err){A.msg("<b>The take-off couldn’t be opened.</b><br>"+esc(R.__err));return}
-  if(!R){A.msg("<b>This project has no saved take-off yet.</b><br>Run the take-off first, then open its drawings.");return}
+  // No take-off yet: start on Setup, where the documents are placed and the take-off is run.
+  if(!R){A.msg("<b>This project has no take-off yet.</b><br>Place the documents and run it on the Setup tab.");setATab("setup");return}
   S.R=R;buildSheets();renderCheck();renderList();renderNav();
   if(!S.sheets.length){A.msg("<b>The take-off has no lines to show.</b>");return}
   // Opened from a ⌖ on the review page: straight to that drawing and part. Else the first drawing.
