@@ -182,7 +182,14 @@ button:disabled{opacity:.5;cursor:default}
 .cl .m{font-weight:700;overflow:hidden;text-overflow:ellipsis}.cl .w{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .cl .meta{grid-column:3/5;font-size:12px;color:var(--mute)}
 .cfbtn{width:100%;margin-top:14px;min-height:44px;font-weight:700;font-size:15px;border:0;border-radius:10px;background:var(--grn);color:#fff}
-.cfbtn.warn{background:#b45309}.cfask{margin-top:10px;font-size:13px;background:var(--ylwbg);border:1px solid #ecc98a;border-radius:8px;padding:10px}
+.cfbtn.warn{background:#b45309}.cmp{display:flex;align-items:center;gap:8px;margin-top:8px;padding:7px 8px;border-radius:8px;border:1px solid var(--line);background:#f8fafc}
+.cmp.todo{border-color:#f0cf94;background:var(--ylwbg)}.cmp.ok{border-color:#b7dfc4;background:var(--grnbg)}
+.cmp label{font-weight:700;font-size:12px}.cmp select{flex:1;min-width:0;min-height:30px;border:1px solid #c9d3dc;border-radius:6px;font-size:12.5px;background:#fff}.cmp .k{font-size:12px;color:var(--mute);white-space:nowrap}
+.cmpnote{font-size:12px;color:#8a4b00;margin-top:4px}.cmpnote button{min-height:26px;font-size:12px;margin-left:4px}
+.cmpnew{margin-top:6px;padding:8px;border:1px dashed var(--brand);border-radius:8px;background:var(--soft);font-size:12.5px}
+.cmpnew input,.cmpnew select{min-height:30px;border:1px solid #c9d3dc;border-radius:6px;padding:0 6px;font-size:13px;margin-left:4px}
+.cmpnew button{min-height:30px;font-size:12.5px;margin-right:6px}.cmpnew button.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+.cfask{margin-top:10px;font-size:13px;background:var(--ylwbg);border:1px solid #ecc98a;border-radius:8px;padding:10px}
 .cfask button{margin:8px 8px 0 0}.cfdone{margin-top:14px;font-size:13px;color:var(--grn);background:var(--grnbg);border-radius:8px;padding:10px}
 .cfdone button,.cfnext{min-height:30px;font-size:12.5px;margin-left:6px}
 .grp .ok{color:var(--grn);font-weight:700}
@@ -253,7 +260,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.2 · 2026-11-23 · no take-off yet: tabs say so, no sample data";
+const VERSION="drawings v1.3 · 2026-11-23 · components chosen drawing by drawing";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -407,6 +414,7 @@ function renderConfirm(){
   let h=`<div class="cf"><div class="cfh"><h3>${esc(g.number)}</h3><span class="t">${esc(g.title)}</span>
     <span class="pill ${c.state}">${c.state==="done"?"✓ Confirmed":c.state==="changed"?"Changed since confirmed":"Not confirmed"}</span></div>
     <div style="font-size:13px;color:var(--mute);margin-top:2px">${g.rows.length} line${g.rows.length===1?"":"s"}${lb?" · "+fmtLb(lb)+" lb":""}</div>`;
+  h+=compPickerHtml(g);
   if(is.n){h+=`<div class="cfs">To check (${is.n})</div>`;
     is.flagged.forEach(x=>{h+=`<div class="iss bad" data-r="${x.i}" role="button" tabindex="0"><b>⚠ ${esc(x.r.member_mark||"–")}</b><span>${esc(x.f.join(" · "))}</span></div>`});
     is.missing.forEach(x=>{h+=`<div class="iss miss" data-mk="${esc(x.m)}" role="button" tabindex="0"><b>✗ ${esc(markLabel(x.m))}</b><span>Printed on this drawing (${x.n}×) with no take-off line here. Check for a missed quantity.</span></div>`})}
@@ -418,10 +426,11 @@ function renderConfirm(){
     const ic=fl?'<span class="ic bad" title="Flagged">⚠</span>':pr===true?'<span class="ic ok" title="Found printed on this drawing">✓</span>':pr===false?'<span class="ic no" title="Not found printed on this drawing by the reader. Check it is on this drawing.">?</span>':'<span class="ic no">·</span>';
     h+=`<div class="cl ${gi===S.selG&&i===S.sel?"sel":""}" data-r="${i}" tabindex="0" role="button">${ic}<span class="m">${esc(r.member_mark||"–")}</span><span>${esc(r.size||"")} <span style="color:var(--mute)">${esc(r.form_type||"")}</span></span><span class="w">${w?fmtLb(w)+" lb":"–"}</span><span class="meta">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}${pr===false?" · not found printed here":""}</span></div>`});
   if(c.state==="done")h+=`<div class="cfdone">✓ Material confirmed${c.at?" on "+esc(new Date(c.at).toLocaleDateString()):""}. <button data-cf="undo">Undo</button>${nx>-1?'<button class="cfnext" data-cf="next">Next to confirm ›</button>':""}</div>`;
-  else if(S.confAsk&&is.n)h+=`<div class="cfask"><b>${is.n} thing${is.n===1?"":"s"} still to check on this drawing.</b> Confirm the material anyway?<br><button data-cf="force">Confirm anyway</button><button data-cf="cancel">Check them first</button></div>`;
+  else if(S.confAsk&&(is.n||!sheetSorted(g)))h+=`<div class="cfask"><b>${[is.n?is.n+" thing"+(is.n===1?"":"s")+" still to check":"",sheetSorted(g)?"":"no project component chosen"].filter(Boolean).join(" and ")} on this drawing.</b> Confirm the material anyway?<br><button data-cf="force">Confirm anyway</button><button data-cf="cancel">Check them first</button></div>`;
   else h+=`<button class="cfbtn ${is.n?"warn":""}" data-cf="yes">${c.state==="changed"?"Confirm again":"Material confirmed"}${nx>-1&&nx!==gi?" · next drawing ›":""}</button>
     <div style="font-size:12px;color:var(--mute);margin-top:6px">Confirm when every part on this drawing has the right line: quantity, size and length.</div>`;
   $("list").innerHTML=h+"</div>";
+  const lm=S.lastMsg;if(lm&&Date.now()<lm.until){const el=document.getElementById(lm.id);if(el&&$("list").contains(el)){el.className=lm.cls;el.innerHTML=lm.html}}
   renderProg();
 }
 function setConfirm(g,on){
@@ -908,12 +917,14 @@ function selectMark(m){S.selMark=m;S.sel=-1;S.selG=-1;
 function confClick(e){
   const cf=e.target.closest("[data-cf]");
   if(cf){const g=S.sheets[act().cur];if(!g)return;const k=cf.dataset.cf;
-    if(k==="yes"){if(sheetIssues(g).n&&!S.confAsk){S.confAsk=true;renderList();return}confirmAndNext()}
+    if(k==="yes"){if((sheetIssues(g).n||!sheetSorted(g))&&!S.confAsk){S.confAsk=true;renderList();return}confirmAndNext()}
     else if(k==="force")confirmAndNext();
     else if(k==="cancel"){S.confAsk=false;renderList()}
     else if(k==="undo"){const why=setConfirm(g,false);if(why)alert(why)}
     else if(k==="next"){const n=nextTodo(act().cur);if(n>-1){clearPart();act().open(n)}}
     return}
+  const cm=e.target.closest("[data-cm]");if(cm){const g=S.sheets[act().cur];if(!g)return;const k=cm.dataset.cm;
+    if(k==="save")newComp(g);else if(k==="cancel"){S.cmpNew=null;renderList()}else if(k==="addSugg")openNewComp(g,sheetComps(g)[0]||"");return}
   const mk=e.target.closest("[data-mk]");if(mk){selectMark(mk.dataset.mk);return}
   const rw=e.target.closest(".cf [data-r]");if(rw){selectRow(act().cur,+rw.dataset.r);return}}
 $("find").onclick=()=>{setTab("lines");$("q").focus()};
@@ -934,6 +945,78 @@ addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==
   else if(e.key==="Escape"){if(S.tool!=="pan"){if(A.pts){A.pts=null;A.hover=null;A.drawMeas()}else setTool("pan")}else if(S.selMark)clearPart()}});
 $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)history.back();else location.href="/takeoff/review.html?project_id="+encodeURIComponent(P.project_id)+"&manufacturer_id="+encodeURIComponent(P.manufacturer_id)};
 
+/* ---- COMPONENTS, drawing by drawing (Mark 2026-11-23: "put components in with the drawings, so as
+   they confirm drawings it can be categorized") ----
+   Each drawing's lines carry r.component (the name) and r.units (how many of it the job builds).
+   Choosing a component here re-tags every line on the drawing, sets units from the component, and
+   files the drawing under that component on the project (Drawing_Details.Components). A name the
+   take-off suggested that is not on the project yet is added to the project first (it needs the
+   Type of project chosen in Setup). A drawing is "sorted" when all its lines name a project component. */
+const cname=s=>String(s==null?"":s).trim();
+const projComps=()=>arr(S.scope&&S.scope.components);
+const compOnProject=n=>{const k=cname(n).toLowerCase();return k?projComps().find(c=>cname(c.name).toLowerCase()===k)||null:null};
+function sheetComps(g){return[...new Set(g.rows.map(r=>cname(r.component)).filter(Boolean))]}
+function sheetSorted(g){return g.rows.length>0&&g.rows.every(r=>compOnProject(r.component))}
+function ptypeId(){try{return localStorage.getItem("mc_ptype_"+P.project_id)||""}catch(e){return""}}
+async function scopePost(path,body){const r=await fetch(API+"/api/takeoff/project-scope/"+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.assign({project_id:P.project_id},body))});
+  let d={};try{d=await r.json()}catch(e){}if(!r.ok||d.ok===false)throw new Error((d&&d.error)||("HTTP "+r.status));return d}
+function compPickerHtml(g){
+  const names=sheetComps(g),cur=names.length===1?names[0]:"",pc=compOnProject(cur);
+  const sugg=[...new Set(S.sheets.flatMap(x=>x.rows.map(r=>cname(r.component))).filter(n=>n&&!compOnProject(n)))].sort();
+  const sel=names.length>1?"__mixed":pc?"p:"+pc.id:cur?"s:"+cur:"";
+  let o=(sel===""?'<option value="" selected>— choose a component —</option>':"")+(names.length>1?`<option value="__mixed" selected disabled>Mixed: ${esc(names.join(", "))}</option>`:"");
+  if(projComps().length)o+=`<optgroup label="On the project">${projComps().map(c=>`<option value="p:${esc(c.id)}"${sel==="p:"+c.id?" selected":""}>${esc(c.name)} (× ${c.quantity})</option>`).join("")}</optgroup>`;
+  if(sugg.length)o+=`<optgroup label="Suggested by the take-off, not on the project yet">${sugg.map(n=>`<option value="s:${esc(n)}"${sel==="s:"+n?" selected":""}>${esc(n)}</option>`).join("")}</optgroup>`;
+  o+='<option value="__new">+ New component…</option>';
+  const u=pc?pc.quantity:Math.max(1,Math.round(Number(g.rows[0]&&g.rows[0].units)||1));
+  let h=`<div class="cmp ${sheetSorted(g)?"ok":"todo"}"><label for="cmpSel">Component</label><select id="cmpSel" aria-label="Component for this drawing">${o}</select><span class="k">× ${u} built</span></div>`;
+  if(cur&&!pc&&!S.cmpNew)h+=`<div class="cmpnote">“${esc(cur)}” is the take-off's name; it isn't on the project yet. <button data-cm="addSugg">Add it to the project</button></div>`;
+  if(S.cmpNew){const types=arr(S.ptypes),need=!ptypeId();
+    h+=`<div class="cmpnew"><div class="edrow"><label>Name <input id="cmpName" value="${esc(S.cmpNew.name||"")}" style="width:150px"></label><label>Built <input id="cmpQty" type="number" min="1" step="1" value="${esc(S.cmpNew.qty||u)}" style="width:56px"></label></div>`+
+      (need?`<div class="edrow" style="margin-top:6px"><label>Type of project <select id="cmpType"><option value="">${types.length?"— choose —":"loading…"}</option>${types.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("")}</select></label></div>`:"")+
+      `<div class="edrow" style="margin-top:6px"><button class="pri" data-cm="save">Add to the project</button><button data-cm="cancel">Cancel</button></div></div>`}
+  h+=`<div class="edmsg" id="cmpMsg"></div>`;
+  return h}
+function cmpMsg(html,cls){S.lastMsg={id:"cmpMsg",html,cls:"edmsg "+(cls||""),until:Date.now()+6000};const el=$("cmpMsg");if(el){el.className="edmsg "+(cls||"");el.innerHTML=html}}
+// Re-tag the drawing's lines and file the drawing under the component on the project.
+async function assignComp(g,comp){
+  const want=new Set(g.rows.map(fpOf));
+  const why=applyChange(R=>{arr(R.rows).forEach(r=>{if(r&&!r.deleted&&want.has(fpOf(r))){r.component=comp.name;
+    r.units=comp.quantity;r.quantity_total=(Number(r.quantity)||0)*comp.quantity}})});
+  if(why){cmpMsg(esc(why),"bad");return}
+  reloadTakeoff();cmpMsg('<span class="spin"></span>Filing '+esc(g.number)+" under "+esc(comp.name)+" on the project…");
+  try{
+    if(!comp.id)throw new Error("the component has no project record");
+    const ds=arr(S.scope&&S.scope.drawings),d=ds.find(x=>key(x.number)===key(g.number));
+    if(d){if(String(d.component_id)!==String(comp.id)){await scopePost("update",{kind:"drawing",id:d.id,value:d.number,component_id:comp.id});d.component_id=String(comp.id)}}
+    else{const r=await scopePost("add",{kind:"drawing",value:g.number,component_id:comp.id,description:g.title||""});ds.push({id:r.id,number:g.number,component_id:String(comp.id)});if(S.scope)S.scope.drawings=ds}
+    cmpMsg("✓ "+esc(g.number)+" is filed under "+esc(comp.name)+" on the project.","ok")}
+  catch(e){cmpMsg("The lines are re-tagged, but the drawing couldn't be filed on the project: "+esc(e.message||e),"bad")}}
+async function newComp(g){
+  const name=cname($("cmpName")&&$("cmpName").value),qty=Math.round(Number($("cmpQty")&&$("cmpQty").value)||0);
+  const type=ptypeId()||($("cmpType")&&$("cmpType").value)||"";
+  if(!name){cmpMsg("Give the component a name.","bad");return}if(!(qty>=1)){cmpMsg("How many does the job build? 1 or more.","bad");return}
+  if(!type){cmpMsg("Choose the Type of project. The project needs it on every component.","bad");return}
+  const have=compOnProject(name);if(have){S.cmpNew=null;await assignComp(g,have);return}
+  cmpMsg('<span class="spin"></span>Adding '+esc(name)+" to the project…");
+  try{const r=await scopePost("add",{kind:"component",value:name,type_of_project:type});
+    if(!r.id)throw new Error("the project did not return the new component");
+    if(qty>1)await scopePost("update",{kind:"component",id:r.id,quantity:qty});
+    try{localStorage.setItem("mc_ptype_"+P.project_id,type)}catch(e){}
+    const comp={id:String(r.id),name,quantity:qty};S.scope=S.scope||{components:[],drawings:[]};S.scope.components=projComps().concat([comp]);
+    S.cmpNew=null;await assignComp(g,comp)}
+  catch(e){cmpMsg("Couldn't add the component: "+esc(e.message||e),"bad")}}
+async function loadPtypes(){if(S.ptypes||ptypeId())return;S.ptypes=[];
+  try{const d=await getJSON("/api/takeoff/project-types?manufacturer_id="+encodeURIComponent(P.manufacturer_id));S.ptypes=arr(d&&d.types);
+    if(S.ptypes.length===1)try{localStorage.setItem("mc_ptype_"+P.project_id,S.ptypes[0].id)}catch(e){}}catch(e){}
+  renderList()}
+function openNewComp(g,name){const n=name||"";S.cmpNew={name:n,qty:Math.max(1,Math.round(Number(g.rows[0]&&g.rows[0].units)||1))};loadPtypes();renderList();
+  setTimeout(()=>{const el=$("cmpName");if(el){el.focus();el.select()}},0)}
+$("list").addEventListener("change",e=>{if(e.target.id!=="cmpSel")return;const g=S.sheets[act().cur];if(!g)return;const v=e.target.value;
+  if(v==="__new")return openNewComp(g,"");
+  if(v.startsWith("s:"))return openNewComp(g,v.slice(2));
+  if(v.startsWith("p:")){const c=projComps().find(x=>String(x.id)===v.slice(2));if(c){S.cmpNew=null;assignComp(g,c)}}});
+
 /* ---- AI TAKE-OFF ASSISTANT: the steps around the drawings ----
    Drawings is the hub. Setup shows the intake page (index.html?in=assistant); Material list, Labor,
    Subcontractors and Quote show the review page's own sections (review.html?panel=…) in ONE frame,
@@ -952,7 +1035,8 @@ function takeoffState(){
   const flagged=live.filter(r=>flagsOf(r).length).length,wt=wtState();
   const labor=!!(R&&R.labor&&arr(R.labor.components).length);
   const left=[n&&d<n,!!flagged,!wt||!wt.ok,!labor].filter(Boolean).length;
-  return{ran:!!live.length,n,d,lines:live.length,flagged,wt,labor,left}}
+  const sorted=S.sheets.filter(sheetSorted).length;
+  return{ran:!!live.length,n,d,sorted,lines:live.length,flagged,wt,labor,left}}
 function renderATabs(){const el=$("atabs");if(!el)return;const t=S.R?takeoffState():null;
   const badge={setup:t&&t.ran?["ok","✓"]:null,drawings:t&&t.n?[t.d===t.n?"ok":"warn",t.d+" of "+t.n]:null,material:t?["",t.lines+" lines"]:null,
     labor:t?(t.labor?["ok","✓"]:["warn","to do"]):null,subs:null,quote:t?(t.left?["warn",t.left+" left"]:["ok","ready"]):null};
@@ -962,6 +1046,7 @@ function renderStatus(){renderATabs();const el=$("stat");if(!el)return;if(!S.R){
   const c=(kind,text,go,title)=>`<button class="${kind}" data-go="${go}"${title?` title="${esc(title)}"`:""}>${esc(text)}</button>`;
   el.innerHTML="<b>This take-off:</b>"+
     c(t.ran?"ok":"warn",t.ran?"✓ Take-off run":"Not run yet","setup")+
+    (t.n?c(t.sorted===t.n?"ok":"warn",(t.sorted===t.n?"✓ ":"")+"Drawings sorted into components "+t.sorted+" of "+t.n,"unsorted","Each drawing filed under a component on the project"):"")+
     (t.n?c(t.d===t.n?"ok":"warn",(t.d===t.n?"✓ ":"")+"Material confirmed "+t.d+" of "+t.n,"next"):"")+
     (t.flagged?c("bad",t.flagged+" line"+(t.flagged===1?"":"s")+" to check","flags"):"")+
     (t.wt?c(t.wt.ok?"ok":"bad",t.wt.ok?"✓ Weight matches the project BOM":"Weight "+(t.wt.p>=0?"+":"")+t.wt.p.toFixed(1)+"% vs project BOM","material","Within 3% of the project BOM is a match")
@@ -989,6 +1074,7 @@ $("atabs").addEventListener("click",e=>{const b=e.target.closest("button");if(!b
   if(b.id==="askBtn"){S.ai=!S.ai;layout();return}setATab(b.dataset.at)});
 $("stat").addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(!b)return;const g=b.dataset.go;
   if(g==="next"){setATab("drawings");setTab("confirm");const n=nextTodo(act().cur);if(n>-1&&n!==act().cur){clearPart();act().open(n)}return}
+  if(g==="unsorted"){setATab("drawings");setTab("confirm");const n=S.sheets.findIndex(x=>!sheetSorted(x));if(n>-1&&n!==act().cur){clearPart();act().open(n)}return}
   if(g==="flags"){setATab("drawings");if(S.panelOff){S.panelOff=false;layout()}S.onlyFlags=true;setTab("lines");return}
   setATab(g)});
 $("aiClose").onclick=()=>{S.ai=false;layout()};
@@ -1012,7 +1098,7 @@ addEventListener("message",e=>{if(e.origin!==location.origin)return;const m=e.da
     getJSON("/api/takeoff/project-scope/"+encodeURIComponent(P.project_id)).catch(()=>null),
     getJSON("/api/takeoff/catalog-index").catch(()=>null)]);
   if(cat&&cat.ok)CAT_WEIGHTS=cat.weights||{};
-  if(scope&&scope.ok)S.head=scope.project||null;
+  if(scope&&scope.ok){S.head=scope.project||null;S.scope=scope}
   const name=S.head?[S.head.number,S.head.name].filter(Boolean).join(" · "):((R&&R.project&&R.project.name)||"AI Take-off Assistant");
   $("job").innerHTML=esc(name)+"<small>AI Take-off Assistant</small>";document.title=name+" · AI Take-off Assistant";
   if(map&&map.ok){S.files=arr(map.files);S.map=map.map||null;S.stale=!!map.stale}
