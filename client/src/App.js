@@ -138,8 +138,11 @@ function calcUnitWeight(weightPerFt, lengthIn, widthIn) {
 // utilization is exactly (stock - remnant) / stock — which is 100 minus the
 // reported waste_percentage. So this is a pure transform over the returned
 // plan, and the packing algorithm is left alone.
+// Mark 2026-11-23: "You can recommend a size, but want the option of stock sizes are what I enter."
+// So the threshold now SUGGESTS cut to size on a low-use piece; it only converts on its own when
+// "enabled" (auto) is switched on in Nesting settings.
 const CTS_DEFAULTS = {
-  enabled: true,
+  enabled: false,          // auto-convert; off = suggest only
   utilThresholdPct: 35,   // convert a piece using less than this % of its stock
   trimLinearIn: 0,        // optional extra length on a linear buy (0 = exact)
   trimPanelIn: 0,         // optional extra per side on a plate buy (0 = exact)
@@ -1699,8 +1702,21 @@ export default function App() {
         ? `${inToFt(r.original_stock_length_in)} × ${inToFt(r.original_stock_width_in)}`
         : inToFt(r.original_stock_length_in))
       : '';
+    // Not converted, but barely used: recommend the cut-to-size buy and let the estimator choose.
+    const utilPct = 100 - (parseFloat(r.waste_percentage) || 0);
+    const sugg = !isCts && utilPct < cts.utilThresholdPct
+      ? (is2D ? ctsPanelBuy(r, ctsOpts, false) : ctsLinearBuy(r, ctsOpts, false)) : null;
+    const suggDesc = sugg ? (is2D ? `${inToFt(sugg.stock_length_in)} × ${inToFt(sugg.stock_width_in)}` : inToFt(sugg.stock_length_in)) : '';
     return (
       <>
+        {sugg && (
+          <span
+            title="Your stock size is used. Click Cut to size to buy this piece cut to size instead."
+            style={{ padding: '2px 8px', background: '#fdf3e3', color: '#7a4a12', border: '1px solid #b06a1f', borderRadius: 3, fontSize: 11, fontWeight: 'bold', letterSpacing: '0.02em' }}
+          >
+            ONLY {Math.round(utilPct)}% USED — suggest {suggDesc} cut to size
+          </span>
+        )}
         {isCts && (
           <span
             className="cts-badge"
@@ -1720,7 +1736,7 @@ export default function App() {
           title={isCts ? 'Buy full stock and nest out of it instead' : 'Buy a piece cut to this size instead'}
           onClick={() => setCtsForPattern(pattern, !isCts)}
         >
-          {isCts ? 'Use full stock' : 'Cut to size'}
+          {isCts ? 'Use full stock' : sugg ? `Cut to size (${suggDesc})` : 'Cut to size'}
         </button>
         {overridden && (
           <button
@@ -2799,7 +2815,7 @@ export default function App() {
                     <span className="hint" style={{ margin: 0 }}>
                       Kerf {kerf1D}" / {kerf2D}"
                       {' · '}
-                      {cts.enabled ? `re-quote under ${cts.utilThresholdPct}%` : 're-quote off'}
+                      {cts.enabled ? `auto cut to size under ${cts.utilThresholdPct}%` : `suggest cut to size under ${cts.utilThresholdPct}%`}
                       {' · '}
                       {(cts.trimLinearIn > 0 || cts.trimPanelIn > 0)
                         ? `trim ${cts.trimLinearIn}" / ${cts.trimPanelIn}"`
@@ -2828,8 +2844,9 @@ export default function App() {
 
                 <h3 style={{ marginTop: 0, gridColumn: '1 / -1' }}>Cut To Size</h3>
                 <p className="hint" style={{ marginTop: -6 }}>
-                  Any stock piece that ends up barely used gets re-quoted as a piece
-                  cut to size instead of a full length or full sheet. Applies after
+                  The plan uses the stock sizes you enter. A piece that ends up barely used
+                  gets a suggestion to buy it cut to size instead, and you choose per pattern.
+                  Switch on automatic to have those pieces converted for you. Applies after
                   nesting — change it any time without re-running.
                 </p>
                 <div className="field">
@@ -2839,15 +2856,14 @@ export default function App() {
                       checked={cts.enabled}
                       onChange={e => setCts(p => ({ ...p, enabled: e.target.checked }))}
                     />
-                    Re-quote low-utilization pieces as cut to size
+                    Automatically switch low-use pieces to cut to size (off = suggest only)
                   </label>
                 </div>
                 <div className="field">
-                  <label>Convert below this utilization (%)</label>
+                  <label>Suggest (or switch) below this utilization (%)</label>
                   <input
                     type="number" min="0" max="100" step="5" className="input"
                     value={cts.utilThresholdPct}
-                    disabled={!cts.enabled}
                     onChange={e => setCts(p => ({ ...p, utilThresholdPct: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 100) }))}
                   />
                   <p className="hint">
