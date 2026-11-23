@@ -52,7 +52,10 @@ button:disabled{opacity:.5;cursor:default}
 .phide{float:right;min-height:28px;font-size:12px;padding:0 8px;margin:-4px -4px 6px 8px}
 .pshow{position:absolute;right:10px;top:10px;z-index:5;min-height:34px;font-size:13px;font-weight:600;border-color:var(--brand);color:#1d4670;box-shadow:0 4px 14px -6px #0004}
 .pshow[hidden]{display:none}
-.main.nopanel{grid-template-columns:48px minmax(0,1fr)}.main.nopanel .panel{display:none}
+.main.nopanel,.main.notk{grid-template-columns:48px minmax(0,1fr)}.main.nopanel .panel,.main.notk .panel{display:none}
+.main.notk .pshow{display:none}
+.hostmsg{flex:1;display:grid;place-items:center;padding:24px;text-align:center;color:var(--mute);background:var(--bg)}.hostmsg[hidden]{display:none}
+.hostmsg div{max-width:440px;background:#fff;border-radius:12px;padding:18px 22px;box-shadow:0 6px 24px -10px #0004}.hostmsg b{color:var(--ink)}
 .bar{display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--bar);color:#fff;flex-wrap:wrap}
 .bar .job{font-weight:600;line-height:1.2;max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bar .job small{display:block;font-weight:400;opacity:.8;font-size:12px}
@@ -241,6 +244,7 @@ button:disabled{opacity:.5;cursor:default}
   </div>
   <div class="host" id="host" hidden>
     <div class="hosthd"><b style="flex:1">Ask AI about this take-off</b><button id="aiClose" aria-label="Close Ask AI">✕</button></div>
+    <div class="hostmsg" id="hostMsg" hidden><div><b>This project has no take-off yet.</b><br>Place the documents and run it on the <a href="#" data-go-setup>Setup</a> tab. The material list, labor, subcontractors and quote fill in from it.</div></div>
     <iframe id="setupFrame" title="Setup" hidden></iframe>
     <iframe id="revFrame" title="Take-off details" hidden></iframe>
   </div>
@@ -249,7 +253,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.1 · 2026-11-23 · the entry from a project; ?tab= opens a tab";
+const VERSION="drawings v1.2 · 2026-11-23 · no take-off yet: tabs say so, no sample data";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -972,8 +976,11 @@ function layout(){
   const t=S.atab,onDw=t==="drawings",drawer=S.ai&&onDw;
   $("main").hidden=!onDw;$("main").classList.toggle("nopanel",!!S.panelOff);$("pshow").hidden=!S.panelOff;
   const h=$("host");h.hidden=onDw&&!S.ai;h.classList.toggle("drawer",drawer);h.classList.toggle("ai",S.ai&&!onDw);
-  const setup=t==="setup"&&!S.ai;$("setupFrame").hidden=!setup;$("revFrame").hidden=setup;
+  // With no take-off yet, the tabs that show it say so (and the review page is not loaded at all).
+  const setup=t==="setup"&&!S.ai,none=!setup&&!S.R&&S.noTakeoff;
+  $("setupFrame").hidden=!setup;$("revFrame").hidden=setup||none;$("hostMsg").hidden=!none;
   if(setup){const f=$("setupFrame");if(!f.src)f.src="index.html"+withQ({in:"assistant"})}
+  else if(none){}
   else if(S.ai)panelTo("ai");else if(!onDw)panelTo(t);
   renderStatus();
   if(onDw)requestAnimationFrame(()=>dispatchEvent(new Event("resize")))}
@@ -985,6 +992,7 @@ $("stat").addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(
   if(g==="flags"){setATab("drawings");if(S.panelOff){S.panelOff=false;layout()}S.onlyFlags=true;setTab("lines");return}
   setATab(g)});
 $("aiClose").onclick=()=>{S.ai=false;layout()};
+$("hostMsg").addEventListener("click",e=>{if(e.target.closest("[data-go-setup]")){e.preventDefault();setATab("setup")}});
 const panelVis=off=>{S.panelOff=off;try{localStorage.setItem("mc_dw_panel_off",off?"1":"0")}catch(e){}layout()};
 $("phide").onclick=()=>panelVis(true);$("pshow").onclick=()=>panelVis(false);
 // From the frames: a line clicked in the Material list shows its drawing; a new run reloads the Assistant.
@@ -1010,7 +1018,8 @@ addEventListener("message",e=>{if(e.origin!==location.origin)return;const m=e.da
   if(map&&map.ok){S.files=arr(map.files);S.map=map.map||null;S.stale=!!map.stale}
   if(R&&R.__err){A.msg("<b>The take-off couldn’t be opened.</b><br>"+esc(R.__err));return}
   // No take-off yet: start on Setup, where the documents are placed and the take-off is run.
-  if(!R){A.msg("<b>This project has no take-off yet.</b><br>Place the documents and run it on the Setup tab.");setATab("setup");return}
+  if(!R){S.noTakeoff=true;$("main").classList.add("notk");$("sheet").closest(".nav").style.display="none";
+    A.msg("<b>This project has no take-off yet.</b><br>Place the documents and run it on the Setup tab.");setATab("setup");return}
   S.R=R;buildSheets();renderCheck();renderList();renderNav();
   if(!S.sheets.length){A.msg("<b>The take-off has no lines to show.</b>");return}
   // Opened from a ⌖ on the review page: straight to that drawing and part. Else the first drawing.

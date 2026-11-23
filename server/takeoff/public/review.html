@@ -233,7 +233,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.126 · 2026-11-23 · labor component names full width; New take-off opens the Assistant Setup";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.127 · 2026-11-23 · Assistant tabs never show the sample take-off";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -3610,6 +3610,8 @@
     // added at the top only, and shown as their own figure.
     const WT=sumWt(fabIdx), FW=fittingsWeight(R);
     const isLive = haveLive();
+    // Inside the Assistant never show the built-in sample: with no take-off the tabs say so instead.
+    if(PANEL && !isLive){ document.getElementById("wrap").innerHTML='<div class="card"><div class="body" style="padding:22px"><b>This project has no take-off yet.</b> Place the documents and run it on the <b>Setup</b> tab.</div></div>'; return; }
     document.getElementById("wrap").innerHTML =
       (isLive ? '' :
         '<div class="card" style="background:#fff7ed;border-color:#fcd9a8;"><div class="body" style="padding:12px 16px;color:#b45309;font-size:13px;">'+
