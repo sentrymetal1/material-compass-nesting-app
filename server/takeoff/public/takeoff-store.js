@@ -157,6 +157,8 @@
         member_mark: String(x.member_mark || "").trim(), galvanized: base.galvanized, disposition: "fabricate",
         component: base.component, units: base.units || 1, sheet_qty: base.sheet_qty, source_sheet: String(m.sheet),
         quantity: q, confidence: null, added_from: "drawings view (by hand)",
+        // Where it was boxed on the drawing: {pk: "<file>:<page>", x, y, w, h} as page fractions.
+        box: x.box && typeof x.box === "object" && x.box.pk ? { pk: String(x.box.pk), x: +x.box.x || 0, y: +x.box.y || 0, w: +x.box.w || 0, h: +x.box.h || 0 } : undefined,
         note: "Added by hand in the Drawings view: the take-off had no line for it." };
       nr.qty_per_unit = nr.quantity; nr.quantity_total = nr.quantity * units(nr);
       const at = same.length ? rows.lastIndexOf(same[same.length - 1]) + 1 : rows.length;

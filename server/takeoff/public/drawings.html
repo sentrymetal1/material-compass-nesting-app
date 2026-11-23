@@ -187,6 +187,10 @@ button:disabled{opacity:.5;cursor:default}
 .nlg .w2{grid-column:1/-1}.nlg input,.nlg select{min-height:26px;border:1px solid #c9d3dc;border-radius:6px;padding:0 6px;font-size:11.5px;color:var(--ink);background:#fff;width:100%}
 .nlmeas{min-height:24px;font-size:10.5px;margin-bottom:4px}.nlprev{font-size:11px;margin:2px 0 6px}
 .nl .edrow button{min-height:26px;font-size:11px}.nl .edrow button.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+.mv rect.bx{fill:#7c3aed1f;stroke:#7c3aed;stroke-width:2;stroke-dasharray:6 4}.mv rect.bx.kept{stroke-dasharray:none;fill:#7c3aed14}
+.stage.boxing{cursor:crosshair}.nlmk{min-height:22px;font-size:10.5px;padding:0 7px;border-radius:99px;margin:1px 2px}.nlmk.on{background:#7c3aed;border-color:#7c3aed;color:#fff;font-weight:600}.nlread{font-size:10.5px;color:var(--mute);margin:-2px 0 6px}.nlread b{color:var(--ink)}
+.also{margin-top:8px;padding:7px 8px;border:1px solid #d8c8f5;background:#f6f1fe;border-radius:8px;font-size:11px}
+.also .ar{display:flex;align-items:center;gap:6px;margin-top:4px}.also .ar span{flex:1}.also button{min-height:24px;font-size:10.5px}
 @media(prefers-reduced-motion:reduce){.ov i.cur{animation:none}}
 /* Material confirmed: progress in the bar, and the per-drawing check in the panel. */
 .prog{display:flex;align-items:center;gap:8px;background:#1a3754;border:0;color:#fff;border-radius:8px;min-height:36px;padding:0 12px;font-size:13px}
@@ -264,6 +268,7 @@ button:disabled{opacity:.5;cursor:default}
       <button id="fit" title="Fit the sheet" aria-label="Fit the sheet"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
       <button id="splitBtn" title="Open a second drawing beside this one" aria-label="Open a drawing beside this one"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="16" rx="1"/><rect x="13" y="4" width="8" height="16" rx="1"/></svg></button>
       <button id="measBtn" title="Ruler: measure on the drawing (M)" aria-label="Ruler"><svg viewBox="0 0 24 24"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg></button>
+      <button id="boxBtn" title="Box an item the take-off missed: drag a box around it on the drawing (B)" aria-label="Box a missed item"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1" stroke-dasharray="3 2"/><path d="M12 9v6M9 12h6"/></svg></button>
       <button id="find" title="Find a mark or size" aria-label="Find a mark or size"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="17" cy="16" r="3"/><path d="M19.5 18.5L22 21"/></svg></button>
     </div>
     <div class="stages" id="stages"></div>
@@ -287,7 +292,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.5 · 2026-11-23 · add a line the take-off missed";
+const VERSION="drawings v1.6 · 2026-11-23 · box a missed item; find it on other drawings";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -451,7 +456,7 @@ function renderConfirm(){
   g.rows.forEach((r,i)=>{const fl=flagsOf(r).length,pr=printedOnSheet(g,r),w=rowWeight(r);
     const ic=fl?'<span class="ic bad" title="Flagged">⚠</span>':pr===true?'<span class="ic ok" title="Found printed on this drawing">✓</span>':pr===false?'<span class="ic no" title="Not found printed on this drawing by the reader. Check it is on this drawing.">?</span>':'<span class="ic no">·</span>';
     h+=`<div class="cl ${gi===S.selG&&i===S.sel?"sel":""}" data-r="${i}" tabindex="0" role="button" title="${esc([r.size,r.form_type].filter(Boolean).join(" "))}${pr===false?" · not found printed on this drawing":""}">${ic}<span class="m">${esc(r.member_mark||"–")}</span><span class="s">${esc(String(r.size||"").replace(/\s*\([^)]*\)/g,""))}</span><span class="q">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}</span><span class="w">${w?fmtLb(w)+" lb":"–"}</span></div>`});
-  h+=newLineHtml(g)+'<div class="edmsg" id="nlDone"></div>';
+  h+=newLineHtml(g)+'<div class="edmsg" id="nlDone"></div>'+alsoHtml();
   if(c.state==="done")h+=`<div class="cfdone">✓ Material confirmed${c.at?" on "+esc(new Date(c.at).toLocaleDateString()):""}. <button data-cf="undo">Undo</button>${nx>-1?'<button class="cfnext" data-cf="next">Next to confirm ›</button>':""}</div>`;
   else if(S.confAsk&&(is.n||!sheetSorted(g)))h+=`<div class="cfask"><b>${[is.n?is.n+" thing"+(is.n===1?"":"s")+" still to check":"",sheetSorted(g)?"":"no project component chosen"].filter(Boolean).join(" and ")} on this drawing.</b> Confirm the material anyway?<br><button data-cf="force">Confirm anyway</button><button data-cf="cancel">Check them first</button></div>`;
   else h+=`<button class="cfbtn ${is.n?"warn":""}" data-cf="yes" title="Confirm when every part on this drawing has the right line: quantity, size and length.">${c.state==="changed"?"Confirm again":"Material confirmed"}${nx>-1&&nx!==gi?" · next drawing ›":""}</button>
@@ -632,10 +637,15 @@ class Pane{
     if(this.calSeg)h+=seg(this.calSeg.a,this.calSeg.b,"cal","");
     if(this.pts&&this.hover){h+=seg(this.pts,this.hover,S.tool==="cal"?"cal":"",S.tool==="cal"?"":lab(this.pts,this.hover))}
     else if(this.pts){const A=P2(this.pts);h+=`<circle cx="${A[0]}" cy="${A[1]}" r="4"/>`}
+    const rect=(a,b,cls)=>{const A=P2(a),B=P2(b);return `<rect class="${cls}" x="${Math.min(A[0],B[0])}" y="${Math.min(A[1],B[1])}" width="${Math.abs(B[0]-A[0])}" height="${Math.abs(B[1]-A[1])}"/>`};
+    if(this.boxDraw)h+=rect(this.boxDraw.a,this.boxDraw.b,"bx");
+    const sr=this===act()&&selRow(),v1=this.page.getViewport({scale:1});
+    if(sr&&sr.box&&sr.box.pk===this.pageKey){const x=sr.box;h+=rect([x.x*v1.width,x.y*v1.height],[(x.x+x.w)*v1.width,(x.y+x.h)*v1.height],"bx kept")}
+    if(S.addLine&&S.addLine.box&&S.addLine.box.pk===this.pageKey){const x=S.addLine.box;h+=rect([x.x*v1.width,x.y*v1.height],[(x.x+x.w)*v1.width,(x.y+x.h)*v1.height],"bx kept")}
     sv.innerHTML=h}
   renderMbox(){
     const b=this.mbox;if(!b)return;
-    if(S.tool==="pan"||!this.page||this!==act()){b.hidden=true;return}
+    if(S.tool==="pan"||S.tool==="box"||!this.page||this!==act()){b.hidden=true;return}
     b.hidden=false;const sc=this.scale(),v=this.page.getViewport({scale:1}),i=this.idx;
     const pw=Math.round(v.width/72*10)/10,ph=Math.round(v.height/72*10)/10;
     const ms=S.meas[this.pageKey]||[],last=ms[ms.length-1];
@@ -704,13 +714,16 @@ class Pane{
       if(bx){this.boxI=+bx.dataset.box;this.drawBoxes();const g=S.sheets[this.cur],ri=g?g.rows.findIndex(r=>normMark(r.member_mark)===S.selMark):-1;
         if(ri>-1){S.selG=this.cur;S.sel=ri;renderList()}renderUsed();return}
       if(!this.page||e.target.closest(".topctl,.msg"))return;
+      if(S.tool==="box"){this.boxDraw={a:this.toPage(e),b:this.toPage(e)};st.setPointerCapture(e.pointerId);return}
       this.drag={x:e.clientX,y:e.clientY,tx:this.view.tx,ty:this.view.ty,moved:false};st.setPointerCapture(e.pointerId);st.classList.add("drag")});
     // With the ruler on, a click places a point and a drag still pans.
     st.addEventListener("pointermove",e=>{const d=this.drag;
+      if(this.boxDraw){this.boxDraw.b=this.toPage(e);this.drawMeas();return}
       if(!d){if(S.tool!=="pan"&&this.pts&&!e.target.closest(".mbox")){this.hover=this.lock(this.toPage(e),e.shiftKey);this.drawMeas()}return}
       if(Math.abs(e.clientX-d.x)+Math.abs(e.clientY-d.y)>4)d.moved=true;
       this.view.tx=d.tx+e.clientX-d.x;this.view.ty=d.ty+e.clientY-d.y;this.draw()});
-    const end=e=>{const d=this.drag;this.drag=null;st.classList.remove("drag");
+    const end=e=>{if(this.boxDraw){const bd=this.boxDraw;this.boxDraw=null;this.drawMeas();if(e&&e.type==="pointerup")boxDone(this,bd.a,bd.b);return}
+      const d=this.drag;this.drag=null;st.classList.remove("drag");
       if(d&&!d.moved&&e&&e.type==="pointerup"&&S.tool!=="pan"){this.view.tx=d.tx;this.view.ty=d.ty;this.draw();this.measClick(this.toPage(e),e.shiftKey)}};
     st.addEventListener("pointerup",end);st.addEventListener("pointercancel",end);
     this.mbox.addEventListener("click",e=>this.mboxClick(e));this.mbox.addEventListener("change",e=>this.mboxChange(e));
@@ -730,7 +743,7 @@ const PRINTED_SCALES=[['3" = 1\'-0"',4],['1-1/2" = 1\'-0"',8],['1" = 1\'-0"',12]
   ['1" = 10\'',120],['1" = 20\'',240],['1" = 30\'',360],['1" = 40\'',480],['1" = 50\'',600],
   ['Full size (1:1)',1],['1:2',2],['1:4',4],['1:5',5],['1:8',8],['1:10',10],['1:16',16],['1:20',20],['1:25',25],['1:50',50],['1:100',100]];
 function tolStr(x){if(!(x>0))return'1/16"';if(x>=1)return(Math.round(x*10)/10)+'"';let n=Math.max(1,Math.ceil(x*16)),d=16;while(n%2===0&&d>1){n/=2;d/=2}return n+"/"+d+'"'}
-function setTool(tool){S.tool=tool;$("measBtn").classList.toggle("on",tool!=="pan");
+function setTool(tool){S.tool=tool;S.panes.forEach(p=>p.stage.classList.toggle("boxing",tool==="box"));$("measBtn").classList.toggle("on",tool==="measure"||tool==="cal");$("boxBtn").classList.toggle("on",tool==="box");
   S.panes.forEach(p=>{p.stage.classList.toggle("meas",tool!=="pan");p.pts=null;p.hover=null;if(tool!=="cal")p.calSeg=null;p.drawMeas();p.renderMbox()})}
 function getDoc(fileId){
   if(!S.docs[fileId])S.docs[fileId]=(async()=>{
@@ -936,7 +949,8 @@ $("used").addEventListener("click",e=>{
 function setTab(tb){S.tab=tb;$("tabConfirm").classList.toggle("on",tb==="confirm");$("tabLines").classList.toggle("on",tb==="lines");$("srow").hidden=tb!=="lines";renderList()}
 $("tabConfirm").onclick=()=>setTab("confirm");$("tabLines").onclick=()=>setTab("lines");
 $("prog").onclick=()=>{setTab("confirm");const A=act(),n=nextTodo(A.cur);if(n>-1&&n!==A.cur){clearPart();A.open(n)}};
-$("measBtn").onclick=()=>setTool(S.tool==="pan"?"measure":"pan");
+$("measBtn").onclick=()=>setTool(S.tool==="measure"||S.tool==="cal"?"pan":"measure");
+$("boxBtn").onclick=()=>setTool(S.tool==="box"?"pan":"box");
 // The Confirm material panel: a line or a flag selects it (its fix box opens below); a part printed
 // with no line selects the part on this drawing (the "Add a line" box opens below).
 function selectMark(m){S.selMark=m;S.sel=-1;S.selG=-1;
@@ -950,8 +964,12 @@ function confClick(e){
     else if(k==="undo"){const why=setConfirm(g,false);if(why)alert(why)}
     else if(k==="next"){const n=nextTodo(act().cur);if(n>-1){clearPart();act().open(n)}}
     return}
+  const al=e.target.closest("[data-al]");if(al){if(al.dataset.al==="close"){S.also=null;renderList();return}
+    const gi=+al.dataset.gi,a=S.also;if(!a)return;S.addLine=Object.assign({qty:"",units:1},a.tpl);a.list=a.list.filter(x=>x.gi!==gi);if(!a.list.length)S.also=null;
+    clearPart();act().open(gi).then(()=>{renderList();setTimeout(()=>{const e=$("nlQty");if(e)e.focus()},0)});return}
   const nl=e.target.closest("[data-nl]");if(nl){const g=S.sheets[act().cur];if(!g)return;const k=nl.dataset.nl;
-    if(k==="open")nlOpen(g);else if(k==="cancel"){S.addLine=null;renderList()}else if(k==="save")nlSave(g);
+    if(k==="mk"){nlRead();S.addLine.mark=nl.dataset.v;renderList();return}
+    if(k==="open")nlOpen(g);else if(k==="cancel"){S.addLine=null;renderList();visiblePanes().forEach(p=>p.drawMeas())}else if(k==="save")nlSave(g);
     else if(k==="meas"){nlRead();const ms=S.meas[act().pageKey]||[],l=ms[ms.length-1],L=l?act().lenIn(l.a,l.b):null;if(L){S.addLine.len=inStr(L/12);renderList()}}return}
   const cm=e.target.closest("[data-cm]");if(cm){const g=S.sheets[act().cur];if(!g)return;const k=cm.dataset.cm;
     if(k==="save")newComp(g);else if(k==="cancel"){S.cmpNew=null;renderList()}else if(k==="addSugg")openNewComp(g,sheetComps(g)[0]||"");return}
@@ -971,6 +989,7 @@ addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==
   if(e.key==="PageDown"||e.key==="]")$("next").click();else if(e.key==="PageUp"||e.key==="[")$("prev").click();
   else if(e.key==="+"||e.key==="=")A.zoomAt(1.25);else if(e.key==="-")A.zoomAt(.8);else if(e.key==="0")A.fit();
   else if(e.key==="m"||e.key==="M")setTool(S.tool==="pan"?"measure":"pan");
+  else if(e.key==="b"||e.key==="B")setTool(S.tool==="box"?"pan":"box");
   else if((e.key==="c"||e.key==="C")&&S.tool==="measure"&&A&&(S.meas[A.pageKey]||[]).length){delete S.meas[A.pageKey];A.pts=null;A.hover=null;A.drawMeas();A.renderMbox()}
   else if(e.key==="Escape"){if(S.tool!=="pan"){if(A.pts){A.pts=null;A.hover=null;A.drawMeas()}else setTool("pan")}else if(S.selMark)clearPart()}});
 $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)history.back();else location.href="/takeoff/review.html?project_id="+encodeURIComponent(P.project_id)+"&manufacturer_id="+encodeURIComponent(P.manufacturer_id)};
@@ -993,7 +1012,9 @@ function newLineHtml(g){
   const d=S.addLine,L=catLists(),forms=Object.keys(L).sort(),mats=d.form&&L[d.form]?Object.keys(L[d.form]).sort():[];
   const sizes=d.form&&d.mat&&L[d.form]&&L[d.form][d.mat]?L[d.form][d.mat]:[];
   const ms=S.meas[act().pageKey]||[],last=ms[ms.length-1],mIn=last?act().lenIn(last.a,last.b):null;
-  return`<div class="nl"><div class="edh">New line on ${esc(g.number)}</div>
+  const rd=d.box?(d.boxText==null?'<div class="nlread">This drawing hasn\'t been read for text yet, so type what is in the box.</div>':d.boxText?`<div class="nlread">Read in the box: <b>${esc(d.boxText.slice(0,140))}</b></div>`:'<div class="nlread">No printed text found in the box: type what it is.</div>'):"";
+  const mk=d.marks&&d.marks.length>1?`<div class="nlread">Which mark is it? ${d.marks.map(m=>`<button class="nlmk${m===d.mark?" on":""}" data-nl="mk" data-v="${esc(m)}">${esc(m)}</button>`).join(" ")}</div>`:"";
+  return`<div class="nl"><div class="edh">New line on ${esc(g.number)}${d.box?" · from your box":""}</div>${rd}${mk}
    <div class="nlg"><label>Form <select id="nlForm"><option value="">— choose —</option>${forms.map(f=>`<option${f===d.form?" selected":""}>${esc(f)}</option>`).join("")}</select></label>
    <label>Material <select id="nlMat">${mats.length?mats.map(m=>`<option${m===d.mat?" selected":""}>${esc(m)}</option>`).join(""):'<option value="">—</option>'}</select></label>
    <label class="w2">Size <input id="nlSize" list="nlSizes" value="${esc(d.size||"")}" placeholder="${esc(sizes[0]||"e.g. L4 x 4 x 1/4")}" autocomplete="off"></label>
@@ -1006,6 +1027,52 @@ function newLineHtml(g){
    <div class="nlprev" id="nlPrev">${nlPreview()}</div>
    <div class="edrow"><button class="pri" data-nl="save">Add the line</button><button data-nl="cancel">Cancel</button></div>
    <div class="edmsg" id="nlMsg"></div></div>`}
+// The box: the words the drawing reader found inside it, a part mark and a size picked out of them,
+// the catalog entry for that size, and the box itself kept with the line it becomes.
+const SIZE_RES=[/\bL\s*\d+(?:[-\s]\d+\/\d+)?\s*[xX×]\s*\d+(?:[-\s]\d+\/\d+)?\s*[xX×]\s*\d+(?:[-\s]\d+\/\d+|\/\d+)?/,
+  /\b(?:W|S|HP|M|C|MC|WT|ST|MT|HSS)\s*\d+(?:\.\d+)?\s*[xX×]\s*[\d.\/-]+(?:\s*[xX×]\s*[\d.\/-]+)?/,
+  /\bPL\s*\d+(?:[-\s]\d+)?(?:\/\d+)?(?:\s*["”])?(?:\s*[xX×]\s*[\d.\/-]+(?:\s*["”])?)?/i,
+  /\b\d+(?:[-\s]\d+\/\d+)?\s*["”]?\s*(?:SCH|STD|XS|XXS)\b\s*\d*/i];
+function catFind(size,prefMat){const k=_wn(size).replace(/×/g,"x");if(!k||!CAT_WEIGHTS)return null;let hit=null;
+  for(const key of Object.keys(CAT_WEIGHTS)){const p=key.split("|");if(_wn(p.slice(2).join("|"))!==k)continue;const c={form:p[0],mat:p[1],size:p.slice(2).join("|")};
+    if(!hit||(prefMat&&c.mat===prefMat))hit=c;if(prefMat&&c.mat===prefMat)break}
+  return hit}
+function wordsIn(pk,x0,y0,x1,y1){const e=S.marks[pk];if(!e||!e.words)return null;
+  return e.words.filter(w=>{const cx=w[1]+w[3]/2,cy=w[2]+w[4]/2;return cx>=x0&&cx<=x1&&cy>=y0&&cy<=y1})
+    .sort((a,b)=>Math.abs(a[2]-b[2])<0.004?a[1]-b[1]:a[2]-b[2])}
+const isMarkTok=t=>/^[a-z]{1,3}\d{1,5}[a-z]?$/.test(normMark(t));
+function boxDone(pane,a,b){
+  const v=pane.page.getViewport({scale:1}),g=S.sheets[pane.cur];if(!g)return;
+  const x0=Math.max(0,Math.min(a[0],b[0])/v.width),y0=Math.max(0,Math.min(a[1],b[1])/v.height),x1=Math.min(1,Math.max(a[0],b[0])/v.width),y1=Math.min(1,Math.max(a[1],b[1])/v.height);
+  if((x1-x0)*v.width<6||(y1-y0)*v.height<6)return;            // a click, not a box
+  setActive(pane.idx);
+  const ws=wordsIn(pane.pageKey,x0,y0,x1,y1),text=ws?ws.map(w=>w[0]).join(" "):"";
+  const markTok=ws?(ws.find(w=>isMarkTok(w[0]))||[])[0]:"";
+  let size="";for(const re of SIZE_RES){const m=text.replace(/×/g,"x").match(re);if(m){size=m[0].trim();break}}
+  const base=g.rows[0]||{},cat=size?catFind(size,base.material_type):null;
+  S.addLine={form:cat?cat.form:(base.form_type||""),mat:cat?cat.mat:(base.material_type||""),size:cat?cat.size:size,qty:"",len:"",wid:"",
+    mark:markTok?String(markTok).trim():"",units:Math.max(1,Math.round(Number(base.units)||1)),
+    marks:ws?[...new Set(ws.filter(w=>isMarkTok(w[0])).map(w=>String(w[0]).trim()))]:[],
+    box:{pk:pane.pageKey,x:+x0.toFixed(5),y:+y0.toFixed(5),w:+(x1-x0).toFixed(5),h:+(y1-y0).toFixed(5)},boxText:ws?text:null};
+  const L=catLists();if(S.addLine.form&&!L[S.addLine.form])S.addLine.form="";
+  if(S.addLine.form&&!(L[S.addLine.form]||{})[S.addLine.mat])S.addLine.mat=Object.keys(L[S.addLine.form]||{}).sort()[0]||"";
+  S.also=null;setTool("pan");
+  if(S.panelOff){S.panelOff=false;layout()}
+  setTab("confirm");pane.drawMeas();
+  setTimeout(()=>{const e=$(S.addLine&&S.addLine.size?"nlQty":"nlSize");if(e)e.focus()},0)}
+// After a boxed line is added: every other drawing where its mark (or the size text) is printed with no line.
+function textHits(g,needle){let n=0;partsOf(g).forEach(p=>{const e=S.marks[keyOf(p)];if(!e||!e.words)return;
+  const all=e.words.map(w=>_wn(w[0]).replace(/×/g,"x")).join("");let i=all.indexOf(needle);while(i>-1){n++;i=all.indexOf(needle,i+needle.length)}});return n}
+function alsoOn(g,row){const mk=normMark(row.member_mark),nd=_wn(row.size).replace(/×/g,"x"),out=[];
+  S.sheets.forEach((h,gi)=>{if(h===g)return;
+    const n=mk?printedOnly(h,mk):(nd.length>=4&&!h.rows.some(r=>_wn(r.size)===_wn(row.size))?textHits(h,nd):0);if(n)out.push({gi,number:h.number,n})});
+  const reading=S.sheets.some(h=>partsOf(h).some(p=>!S.marks[keyOf(p)]));
+  return{by:mk?"mark "+row.member_mark:"size "+row.size,list:out,reading,tpl:{form:row.form_type,mat:row.material_type,size:row.size,len:inStr(row.length_ft),wid:row.width_ft?inStr(row.width_ft):"",mark:row.member_mark||""}}}
+function alsoHtml(){const a=S.also;if(!a)return"";
+  if(!a.list.length)return`<div class="also">The ${esc(a.by)} isn't printed on any other drawing${a.reading?" read so far (some are still being read)":""}.<div class="ar"><span></span><button data-al="close">OK</button></div></div>`;
+  return`<div class="also"><b>The ${esc(a.by)} is also printed on ${a.list.length} other drawing${a.list.length===1?"":"s"}</b> with no line for it. Printed counts include views and callouts, so check the quantity on each.`+
+    a.list.slice(0,12).map(x=>`<div class="ar"><span>${esc(x.number)} · printed ${x.n}×</span><button data-al="go" data-gi="${x.gi}">Open &amp; add</button></div>`).join("")+
+    (a.list.length>12?`<div class="ar"><span>…and ${a.list.length-12} more</span></div>`:"")+`<div class="ar"><span></span><button data-al="close">Done</button></div></div>`}
 function nlRead(){const v=id=>{const e=$(id);return e?e.value:undefined};const d=S.addLine;if(!d)return;
   ["form:nlForm","mat:nlMat","size:nlSize","qty:nlQty","len:nlLen","wid:nlWid","mark:nlMark"].forEach(p=>{const[k,id]=p.split(":"),x=v(id);if(x!==undefined)d[k]=x})}
 function nlOpen(g){const sel=S.selG===act().cur?g.rows[S.sel]:null,base=sel||g.rows[0]||{};
@@ -1018,7 +1085,8 @@ function nlSave(g){nlRead();const r=nlDraft(),m=$("nlMsg"),bad=t=>{m.className="
   if(!(r.quantity>0))return bad("Type the quantity.");if(!(r.length_ft>0))return bad("Type the length: inches, or feet and inches like 4'-2 3/16\".");
   if(isAreaForm(r.form_type)&&!(r.width_ft>0))return bad("Type the width too: plate is weighed by its area.");
   S.afterAdd={sheet:g.number,mark:r.member_mark};
-  doEdit("new",{sheet:g.number,row:r},m).then(res=>{if(res.ok){S.addLine=null;S.lastMsg={id:"nlDone",html:"✓ Line added and saved",cls:"edmsg ok",until:Date.now()+5000};renderList()}else S.afterAdd=null})}
+  if(S.addLine.box)r.box=S.addLine.box;const boxed=!!S.addLine.box;
+  doEdit("new",{sheet:g.number,row:r},m).then(res=>{if(res.ok){S.addLine=null;S.also=boxed?alsoOn(g,r):null;visiblePanes().forEach(p=>p.drawMeas());S.lastMsg={id:"nlDone",html:"✓ Line added and saved",cls:"edmsg ok",until:Date.now()+5000};renderList()}else S.afterAdd=null})}
 $("list").addEventListener("change",e=>{if(!S.addLine||!e.target.closest(".nl"))return;nlRead();
   if(e.target.id==="nlForm"){const L=catLists();S.addLine.mat=Object.keys(L[S.addLine.form]||{}).sort()[0]||"";S.addLine.size="";renderList()}
   else if(e.target.id==="nlMat")renderList();
