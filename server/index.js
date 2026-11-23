@@ -61,6 +61,17 @@ app.use(['/api/supplier/me/autofill', '/api/mfg/supplier-quotes/autofill', '/api
 app.use('/api/clients/import', express.json({ limit: '40mb' })); // an uploaded customer list (base64) or its rows; same reason, same placement
 app.use('/api/teach', express.json({ limit: '45mb' })); // one past-job document (base64); same reason, same placement
 app.use(express.json({ limit: '10mb' }));
+// A change the server makes to a project clears its cached scope (see project-scope below). Here, after
+// the body parser and before every route, so every write passes through it.
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && _scopeCache.size) {
+    const ids = new Set((String(req.path).match(/d{12,25}/g) || []));
+    const b = req.body && typeof req.body === 'object' ? req.body : {};
+    ['project_id', 'projectId', 'project'].forEach((k) => { if (/^d{12,25}$/.test(String(b[k] || ''))) ids.add(String(b[k])); });
+    ids.forEach((id) => _scopeCache.delete(id));
+  }
+  next();
+});
 
 // ── NO VENDOR NAMES IN WHAT USERS SEE ─────────────────────────────────────────────────────────
 // Material Compass is the product; the data store behind it is never named to a user (Mark,
@@ -245,13 +256,21 @@ async function deductTakeoffBalance(mfgId, price) {
       if (r.data && r.data.code && r.data.code !== 3000) console.error('balance patch non-3000', r.data.code, r.data.message);
     } catch (e) { console.error('balance write failed (is Takeoff_Balance field added?)', e.message); }
   }
+  _acctCache.delete(String(mfgId));
   return { balance: newBal, was: balance, found: found };
 }
 
 // Current banked balance + price (widget green-bar display).
+// CACHED 5 min per shop: every take-off page load asked, and each ask reads the shop list — 585 of
+// the day's 1,150 Zoho calls on 2026-11-22. A charge (deductTakeoffBalance) reads fresh and clears it.
+const _acctCache = new Map();
 app.get('/api/takeoff/account/:manufacturer_id', async (req, res) => {
   try {
-    const { balance, found } = await getTakeoffBalance(req.params.manufacturer_id);
+    const mid = String(req.params.manufacturer_id || '');
+    const hit = _acctCache.get(mid);
+    let balance, found;
+    if (hit && Date.now() - hit.t < 5 * 60 * 1000) ({ balance, found } = hit.v);
+    else { ({ balance, found } = await getTakeoffBalance(mid)); if (found) _acctCache.set(mid, { t: Date.now(), v: { balance, found } }); }   // never cache a miss (a spent daily allowance reads as one)
     res.json({ ok: true, balance: Number(balance.toFixed(2)), price: TAKEOFF_PRICE_BY_MODEL, found: found, buy_url: TAKEOFF_BUY_URL });
   } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
 });
@@ -309,7 +328,16 @@ async function projectHeader(pid, token, base) {
 // component again.
 const QUOTA_SCOPE_MSG = "Material Compass has reached its daily data limit, so the project's components and drawings " +
   "could not be read. Nothing is wrong with the project. It resets overnight; reload the page then.";
+// CACHED 60 s per project: the intake, review and Drawings pages each read it on open (201 calls on
+// 2026-11-22), and a project whose drawings report lacks the parent column costs a call per component.
+// ?fresh=1 reads anew; any non-GET request naming the project clears it (scopeBust below).
+const _scopeCache = new Map();
 app.get('/api/takeoff/project-scope/:project_id', async (req, res) => {
+  const _pid = String(req.params.project_id || '');
+  const _hit = !req.query.fresh && _scopeCache.get(_pid);
+  if (_hit && Date.now() - _hit.t < 60 * 1000) return res.json(_hit.body);
+  const _json = res.json.bind(res);
+  res.json = (body) => { if (body && body.ok && res.statusCode < 300) _scopeCache.set(_pid, { t: Date.now(), body }); return _json(body); };
   try {
     const pid = req.params.project_id;
     const token = await getAccessToken();
