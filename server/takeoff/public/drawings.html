@@ -180,6 +180,13 @@ button:disabled{opacity:.5;cursor:default}
 .panel .used .sub{font-size:10.5px;margin-bottom:4px}.panel .used .tot{font-size:11px;gap:10px;margin:3px 0 5px}.panel .used .tot b{font-size:12px}
 .panel .used table{font-size:10.5px}.panel .used th{font-size:9.5px;padding:2px 4px}.panel .used td{padding:2px 4px}
 .panel .foot{font-size:10px;padding:5px 10px}
+.nlbtn{width:100%;margin-top:8px;min-height:28px;border:1px dashed var(--brand);background:#fff;color:#1d4670;font-weight:600;border-radius:7px;font-size:11px}
+.nlbtn:hover{background:var(--soft)}
+.nl{margin-top:8px;padding:8px;border:1px solid var(--brand);border-radius:8px;background:var(--soft);font-size:11px}
+.nlg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 8px;margin:4px 0 6px}.nlg label{display:flex;flex-direction:column;gap:2px;font-size:10px;font-weight:600;color:var(--mute)}
+.nlg .w2{grid-column:1/-1}.nlg input,.nlg select{min-height:26px;border:1px solid #c9d3dc;border-radius:6px;padding:0 6px;font-size:11.5px;color:var(--ink);background:#fff;width:100%}
+.nlmeas{min-height:24px;font-size:10.5px;margin-bottom:4px}.nlprev{font-size:11px;margin:2px 0 6px}
+.nl .edrow button{min-height:26px;font-size:11px}.nl .edrow button.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
 @media(prefers-reduced-motion:reduce){.ov i.cur{animation:none}}
 /* Material confirmed: progress in the bar, and the per-drawing check in the panel. */
 .prog{display:flex;align-items:center;gap:8px;background:#1a3754;border:0;color:#fff;border-radius:8px;min-height:36px;padding:0 12px;font-size:13px}
@@ -280,7 +287,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.4 · 2026-11-23 · quieter, smaller lines panel";
+const VERSION="drawings v1.5 · 2026-11-23 · add a line the take-off missed";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -444,6 +451,7 @@ function renderConfirm(){
   g.rows.forEach((r,i)=>{const fl=flagsOf(r).length,pr=printedOnSheet(g,r),w=rowWeight(r);
     const ic=fl?'<span class="ic bad" title="Flagged">⚠</span>':pr===true?'<span class="ic ok" title="Found printed on this drawing">✓</span>':pr===false?'<span class="ic no" title="Not found printed on this drawing by the reader. Check it is on this drawing.">?</span>':'<span class="ic no">·</span>';
     h+=`<div class="cl ${gi===S.selG&&i===S.sel?"sel":""}" data-r="${i}" tabindex="0" role="button" title="${esc([r.size,r.form_type].filter(Boolean).join(" "))}${pr===false?" · not found printed on this drawing":""}">${ic}<span class="m">${esc(r.member_mark||"–")}</span><span class="s">${esc(String(r.size||"").replace(/\s*\([^)]*\)/g,""))}</span><span class="q">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}</span><span class="w">${w?fmtLb(w)+" lb":"–"}</span></div>`});
+  h+=newLineHtml(g)+'<div class="edmsg" id="nlDone"></div>';
   if(c.state==="done")h+=`<div class="cfdone">✓ Material confirmed${c.at?" on "+esc(new Date(c.at).toLocaleDateString()):""}. <button data-cf="undo">Undo</button>${nx>-1?'<button class="cfnext" data-cf="next">Next to confirm ›</button>':""}</div>`;
   else if(S.confAsk&&(is.n||!sheetSorted(g)))h+=`<div class="cfask"><b>${[is.n?is.n+" thing"+(is.n===1?"":"s")+" still to check":"",sheetSorted(g)?"":"no project component chosen"].filter(Boolean).join(" and ")} on this drawing.</b> Confirm the material anyway?<br><button data-cf="force">Confirm anyway</button><button data-cf="cancel">Check them first</button></div>`;
   else h+=`<button class="cfbtn ${is.n?"warn":""}" data-cf="yes" title="Confirm when every part on this drawing has the right line: quantity, size and length.">${c.state==="changed"?"Confirm again":"Material confirmed"}${nx>-1&&nx!==gi?" · next drawing ›":""}</button>
@@ -942,6 +950,9 @@ function confClick(e){
     else if(k==="undo"){const why=setConfirm(g,false);if(why)alert(why)}
     else if(k==="next"){const n=nextTodo(act().cur);if(n>-1){clearPart();act().open(n)}}
     return}
+  const nl=e.target.closest("[data-nl]");if(nl){const g=S.sheets[act().cur];if(!g)return;const k=nl.dataset.nl;
+    if(k==="open")nlOpen(g);else if(k==="cancel"){S.addLine=null;renderList()}else if(k==="save")nlSave(g);
+    else if(k==="meas"){nlRead();const ms=S.meas[act().pageKey]||[],l=ms[ms.length-1],L=l?act().lenIn(l.a,l.b):null;if(L){S.addLine.len=inStr(L/12);renderList()}}return}
   const cm=e.target.closest("[data-cm]");if(cm){const g=S.sheets[act().cur];if(!g)return;const k=cm.dataset.cm;
     if(k==="save")newComp(g);else if(k==="cancel"){S.cmpNew=null;renderList()}else if(k==="addSugg")openNewComp(g,sheetComps(g)[0]||"");return}
   const mk=e.target.closest("[data-mk]");if(mk){selectMark(mk.dataset.mk);return}
@@ -963,6 +974,57 @@ addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"||e.target.tagName==
   else if((e.key==="c"||e.key==="C")&&S.tool==="measure"&&A&&(S.meas[A.pageKey]||[]).length){delete S.meas[A.pageKey];A.pts=null;A.hover=null;A.drawMeas();A.renderMbox()}
   else if(e.key==="Escape"){if(S.tool!=="pan"){if(A.pts){A.pts=null;A.hover=null;A.drawMeas()}else setTool("pan")}else if(S.selMark)clearPart()}});
 $("back").onclick=e=>{e.preventDefault();if(history.length>1&&document.referrer)history.back();else location.href="/takeoff/review.html?project_id="+encodeURIComponent(P.project_id)+"&manufacturer_id="+encodeURIComponent(P.manufacturer_id)};
+
+/* ---- ADD A LINE the take-off missed, on the drawing being confirmed (Mark 11-23: "what to do if there
+   is material that was not captured by AI? how does someone manually add a line item") ----
+   Form, material and size come from the material catalog, so the new line is weighed like the rest;
+   component and units follow the drawing's other lines. The length can come from the ruler. */
+function catLists(){if(S.catL&&S.catLsrc===CAT_WEIGHTS)return S.catL;const forms={};
+  Object.keys(CAT_WEIGHTS||{}).forEach(k=>{const p=k.split("|");const f=p[0],m=p[1],z=p.slice(2).join("|");
+    ((forms[f]=forms[f]||{})[m]=forms[f][m]||[]).push(z)});
+  S.catLsrc=CAT_WEIGHTS;return(S.catL=forms)}
+const isAreaForm=f=>/plate|sheet|grating|expanded|deck/i.test(String(f||""));
+function nlDraft(){const d=S.addLine||{};return{form_type:d.form||"",material_type:d.mat||"",size:d.size||"",member_mark:d.mark||"",
+  quantity:Math.round(Number(d.qty)||0),length_ft:parseLen(d.len)||0,width_ft:isAreaForm(d.form)?(parseLen(d.wid)||0):0,units:d.units||1}}
+function nlPreview(){const r=nlDraft(),w=rowWeight(r);
+  return r.size&&r.quantity&&r.length_ft?(w?`${orderQtyOf(r)} pcs · <b>${fmtLb(w)} lb</b>`:'<span style="color:var(--ylw)">Not in the catalog: no weight for this size. Check the spelling, or it is added without a weight.</span>'):"Type the size, qty and length."}
+function newLineHtml(g){
+  if(!S.addLine)return`<button class="nlbtn" data-nl="open" title="Add material the take-off missed on this drawing">+ Add a line</button>`;
+  const d=S.addLine,L=catLists(),forms=Object.keys(L).sort(),mats=d.form&&L[d.form]?Object.keys(L[d.form]).sort():[];
+  const sizes=d.form&&d.mat&&L[d.form]&&L[d.form][d.mat]?L[d.form][d.mat]:[];
+  const ms=S.meas[act().pageKey]||[],last=ms[ms.length-1],mIn=last?act().lenIn(last.a,last.b):null;
+  return`<div class="nl"><div class="edh">New line on ${esc(g.number)}</div>
+   <div class="nlg"><label>Form <select id="nlForm"><option value="">— choose —</option>${forms.map(f=>`<option${f===d.form?" selected":""}>${esc(f)}</option>`).join("")}</select></label>
+   <label>Material <select id="nlMat">${mats.length?mats.map(m=>`<option${m===d.mat?" selected":""}>${esc(m)}</option>`).join(""):'<option value="">—</option>'}</select></label>
+   <label class="w2">Size <input id="nlSize" list="nlSizes" value="${esc(d.size||"")}" placeholder="${esc(sizes[0]||"e.g. L4 x 4 x 1/4")}" autocomplete="off"></label>
+   <datalist id="nlSizes">${sizes.slice(0,600).map(z=>`<option value="${esc(z)}">`).join("")}</datalist>
+   <label>Qty <input id="nlQty" type="number" min="1" step="1" value="${esc(d.qty||"")}"></label>
+   <label>Length <input id="nlLen" value="${esc(d.len||"")}" placeholder="4'-2 3/16&quot;"></label>
+   ${isAreaForm(d.form)?`<label>Width <input id="nlWid" value="${esc(d.wid||"")}" placeholder="12&quot;"></label>`:""}
+   <label>Mark <input id="nlMark" value="${esc(d.mark||"")}" placeholder="optional"></label></div>
+   ${mIn?`<button class="nlmeas" data-nl="meas">📏 Use the ruler's ${esc(ftin(mIn/12))} as the length</button>`:""}
+   <div class="nlprev" id="nlPrev">${nlPreview()}</div>
+   <div class="edrow"><button class="pri" data-nl="save">Add the line</button><button data-nl="cancel">Cancel</button></div>
+   <div class="edmsg" id="nlMsg"></div></div>`}
+function nlRead(){const v=id=>{const e=$(id);return e?e.value:undefined};const d=S.addLine;if(!d)return;
+  ["form:nlForm","mat:nlMat","size:nlSize","qty:nlQty","len:nlLen","wid:nlWid","mark:nlMark"].forEach(p=>{const[k,id]=p.split(":"),x=v(id);if(x!==undefined)d[k]=x})}
+function nlOpen(g){const sel=S.selG===act().cur?g.rows[S.sel]:null,base=sel||g.rows[0]||{};
+  S.addLine={form:base.form_type||"",mat:base.material_type||"",size:"",qty:"",len:"",wid:"",mark:"",units:Math.max(1,Math.round(Number(base.units)||1))};
+  const L=catLists();if(S.addLine.form&&!L[S.addLine.form])S.addLine.form="";
+  if(S.addLine.form&&!(L[S.addLine.form]||{})[S.addLine.mat])S.addLine.mat=Object.keys(L[S.addLine.form]||{})[0]||"";
+  renderList();setTimeout(()=>{const e=$(S.addLine.form?"nlSize":"nlForm");if(e)e.focus()},0)}
+function nlSave(g){nlRead();const r=nlDraft(),m=$("nlMsg"),bad=t=>{m.className="edmsg bad";m.textContent=t};
+  if(!r.form_type)return bad("Choose the form.");if(!r.size.trim())return bad("Type the size.");
+  if(!(r.quantity>0))return bad("Type the quantity.");if(!(r.length_ft>0))return bad("Type the length: inches, or feet and inches like 4'-2 3/16\".");
+  if(isAreaForm(r.form_type)&&!(r.width_ft>0))return bad("Type the width too: plate is weighed by its area.");
+  S.afterAdd={sheet:g.number,mark:r.member_mark};
+  doEdit("new",{sheet:g.number,row:r},m).then(res=>{if(res.ok){S.addLine=null;S.lastMsg={id:"nlDone",html:"✓ Line added and saved",cls:"edmsg ok",until:Date.now()+5000};renderList()}else S.afterAdd=null})}
+$("list").addEventListener("change",e=>{if(!S.addLine||!e.target.closest(".nl"))return;nlRead();
+  if(e.target.id==="nlForm"){const L=catLists();S.addLine.mat=Object.keys(L[S.addLine.form]||{}).sort()[0]||"";S.addLine.size="";renderList()}
+  else if(e.target.id==="nlMat")renderList();
+  else{const p=$("nlPrev");if(p)p.innerHTML=nlPreview()}});
+$("list").addEventListener("input",e=>{if(!S.addLine||!e.target.closest(".nl"))return;nlRead();const p=$("nlPrev");if(p)p.innerHTML=nlPreview()});
+$("list").addEventListener("keydown",e=>{if(e.key==="Enter"&&S.addLine&&e.target.closest(".nl")&&e.target.tagName==="INPUT"){e.preventDefault();e.stopPropagation();const g=S.sheets[act().cur];if(g)nlSave(g)}},true);
 
 /* ---- COMPONENTS, drawing by drawing (Mark 2026-11-23: "put components in with the drawings, so as
    they confirm drawings it can be categorized") ----

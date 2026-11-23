@@ -113,7 +113,7 @@
   const units = (r) => Math.max(1, Math.round(Number(r.units) || 1));
   function applyEdit(R, m) {
     const rows = arr(R.rows), i = Number(m.i), r = rows[i];
-    if (m.op !== "add" && (!r || fp(r) !== m.fp)) return "That line changed a moment ago. It has been refreshed; try again.";
+    if (m.op !== "add" && m.op !== "new" && (!r || fp(r) !== m.fp)) return "That line changed a moment ago. It has been refreshed; try again.";
     if (m.op === "qty") {
       const v = Number(m.value); if (!(v >= 0)) return "Not a quantity.";
       if (r.qty_was == null) r.qty_was = r.quantity;
@@ -140,6 +140,24 @@
         component: base.component || t.component, units: base.units || 1, sheet_qty: base.sheet_qty, source_sheet: String(m.sheet),
         quantity: q, confidence: null, added_from: "drawings view",
         note: "Added in the Drawings view: " + (t.member_mark || "part") + " is printed on " + m.sheet + " with no take-off line; size and length copied from " + (t.source_sheet || "another drawing") + "." };
+      nr.qty_per_unit = nr.quantity; nr.quantity_total = nr.quantity * units(nr);
+      const at = same.length ? rows.lastIndexOf(same[same.length - 1]) + 1 : rows.length;
+      rows.splice(at, 0, nr);
+    } else if (m.op === "new") {
+      // A line the take-off missed, typed in by hand on its drawing (Mark 11-23: "how does someone
+      // manually add a line item"). Component and units come from the drawing's other lines.
+      const x = m.row || {}, q = Math.round(Number(x.quantity) || 0), L = Number(x.length_ft) || 0;
+      if (!String(x.size || "").trim()) return "Type the size.";
+      if (!(q > 0)) return "Type the quantity.";
+      if (!(L > 0)) return "Type the length.";
+      const same = rows.filter((y) => y && !y.deleted && sameSheet(y.source_sheet, m.sheet)), base = same[0] || {};
+      const nr = { form_type: String(x.form_type || "").trim(), material_type: String(x.material_type || "").trim() || base.material_type,
+        specification: base.specification, size: String(x.size).trim(), length_ft: Math.round(L * 10000) / 10000,
+        width_ft: Number(x.width_ft) > 0 ? Math.round(Number(x.width_ft) * 10000) / 10000 : undefined,
+        member_mark: String(x.member_mark || "").trim(), galvanized: base.galvanized, disposition: "fabricate",
+        component: base.component, units: base.units || 1, sheet_qty: base.sheet_qty, source_sheet: String(m.sheet),
+        quantity: q, confidence: null, added_from: "drawings view (by hand)",
+        note: "Added by hand in the Drawings view: the take-off had no line for it." };
       nr.qty_per_unit = nr.quantity; nr.quantity_total = nr.quantity * units(nr);
       const at = same.length ? rows.lastIndexOf(same[same.length - 1]) + 1 : rows.length;
       rows.splice(at, 0, nr);
