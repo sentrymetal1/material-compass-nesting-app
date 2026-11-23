@@ -846,6 +846,75 @@ function matDesc(group) {
   return parts.join(' | ');
 }
 
+// ─── Manual parts: quicker entry (Mark 2026-11-23) ───────────────────────────
+// Tags default to the form's shop abbreviation + a running number per form (PL-1, PL-2, FB-1…),
+// unless the estimator types their own. Lengths are typed (5-5/8, 2'-6 3/8", 30.5) and resolved to
+// the Length_INCH / plate-width lookup records the saved run needs.
+const FORM_ABBR = {
+  'plate': 'PL', 'sheet': 'SH', 'tread plate': 'TP', 'bar - flat': 'FB', 'bar - round': 'RB', 'bar - square': 'SB',
+  'bar - hex': 'HB', 'angle': 'L', 'beam - w': 'W', 'beam - s': 'S', 'beam - hp': 'HP', 'beam - i': 'I', 'beam - wt': 'WT',
+  'tee': 'T', 'channel': 'C', 'channel - mc': 'MC', 'pipe': 'P', 'tube - square': 'TS', 'tube - rectangle': 'TR',
+  'tube - round': 'RT', 'grating': 'GR', 'expanded metal': 'EM', 'rebar': 'RE', 'strapping': 'ST', 'structural': 'SS', 'other': 'X',
+};
+function formAbbr(name) {
+  const k = String(name || '').trim().toLowerCase();
+  if (!k) return '';
+  if (FORM_ABBR[k]) return FORM_ABBR[k];
+  return k.split(/[^a-z0-9]+/).filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 3);
+}
+function nextFormTag(parts, prefix, skipIdx) {
+  if (!prefix) return '';
+  const re = new RegExp('^' + prefix.replace(/[^A-Za-z0-9]/g, '') + '-(\\d+)$', 'i');
+  let max = 0;
+  parts.forEach((p, i) => { if (i === skipIdx) return; const m = String(p.tag || '').trim().match(re); if (m) max = Math.max(max, parseInt(m[1], 10)); });
+  return `${prefix}-${max + 1}`;
+}
+// Inches from what a shop types: 5-5/8, 5 5/8, 9.125, 2'-6 3/8", 2' 6, 30".
+function parseInchesText(s) {
+  s = String(s || '').trim().replace(/[”″]/g, '"').replace(/[’′]/g, "'");
+  if (!s) return null;
+  const num = (t) => {
+    t = String(t || '').trim().replace(/"$/, '').trim(); if (!t) return 0;
+    let m = t.match(/^(\d+(?:\.\d+)?)[\s-]+(\d+)\/(\d+)$/); if (m) return +m[1] + (+m[2]) / (+m[3]);
+    m = t.match(/^(\d+)\/(\d+)$/); if (m) return (+m[1]) / (+m[2]);
+    return /^\d+(?:\.\d+)?$/.test(t) ? +t : NaN;
+  };
+  const ft = s.match(/^(\d+(?:\.\d+)?)\s*'\s*-?\s*(.*)$/);
+  const v = ft ? (+ft[1]) * 12 + num(ft[2]) : num(s);
+  return Number.isFinite(v) && v >= 0 ? v : null;
+}
+// Total inches -> whole feet + the nearest Length_INCH record. `off` is how far that record is from
+// what was typed (the table holds the shop's usual steps, not every 1/16").
+function inchesToLookup(total, lengthInch) {
+  let ft = Math.floor(total / 12 + 1e-9), rem = total - ft * 12;
+  let best = null, bestD = Infinity;
+  for (const r of lengthInch || []) { const d = Math.abs((parseFloat(r.result) || 0) - rem); if (d < bestD) { best = r; bestD = d; } }
+  // 11-31/32" is closer to the next foot than to the table's last step.
+  if (12 - rem < bestD) { const z = (lengthInch || []).find(r => (parseFloat(r.result) || 0) === 0); if (z) { ft += 1; best = z; bestD = 12 - rem; } }
+  return best ? { ft, rec: best, off: bestD } : null;
+}
+function lookupInches(ft, inchId, lengthInch) {
+  const r = (lengthInch || []).find(x => String(x.id) === String(inchId));
+  return (parseInt(ft, 10) || 0) * 12 + (r ? parseFloat(r.result) || 0 : 0);
+}
+function fmtInchesText(total) {
+  if (!(total > 0)) return '';
+  const ft = Math.floor(total / 12), rem = Math.round((total - ft * 12) * 16) / 16;
+  const w = Math.floor(rem), fr = Math.round((rem - w) * 16);
+  let frac = ''; if (fr) { let n = fr, d = 16; while (n % 2 === 0) { n /= 2; d /= 2; } frac = `${n}/${d}`; }
+  const inch = w && frac ? `${w}-${frac}` : frac || String(w);
+  return ft ? `${ft}'-${inch}"` : `${inch}`;
+}
+// The spec most shops mean for a form, when none has been used before.
+function defaultSpec(formName, specs) {
+  if (!specs || !specs.length) return null;
+  if (specs.length === 1) return specs[0];
+  const f = String(formName || '').toLowerCase();
+  const pref = /beam - w|beam - wt|beam - hp/.test(f) ? ['A992', 'A572', 'A36'] : /tube/.test(f) ? ['A500', 'A513'] : /pipe/.test(f) ? ['A53', 'A106'] : ['A36', 'A572'];
+  for (const p of pref) { const s = specs.find(x => String(x.name || '').toUpperCase().indexOf(p) > -1); if (s) return s; }
+  return null;
+}
+
 function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded }) {
   const [formTypes, setFormTypes] = useState(lookupTables?.formTypes || []);
   const [matTypes, setMatTypes] = useState(lookupTables?.matTypes || []);
@@ -907,6 +976,48 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
     const next = parts.map((p, i) => i === idx ? { ...p, ...patch } : p);
     onChange(next);
   }
+
+  // Spec: pick it for the estimator — the last one used for this form + material type, else the
+  // usual one (A36 plate/bar, A992 W, A500 tube, A53 pipe). They can still change it.
+  const lastSpecKey = (f, m) => `mc_nest_spec_${f}|${m}`;
+  useEffect(() => {
+    let changed = false;
+    const next = parts.map(p => {
+      if (!p.form_type_id || !p.material_type_id || p.specification_id) return p;
+      const c = cascadeCache[`${p.form_type_id}|${p.material_type_id}`];
+      if (!c || !c.specs.length) return p;
+      let s = null;
+      try { const was = localStorage.getItem(lastSpecKey(p.form_type_id, p.material_type_id)); if (was) s = c.specs.find(x => String(x.id) === was) || null; } catch (e) {}
+      s = s || defaultSpec(p.form_type_name, c.specs);
+      if (!s) return p;
+      changed = true;
+      return { ...p, specification_id: s.id, spec_name: s.name || '' };
+    });
+    if (changed) onChange(next);
+  }, [parts, cascadeCache]); // eslint-disable-line
+
+  // Typed length / width: resolve to the lookup records; keep the text while it doesn't parse.
+  function setLength(idx, text) {
+    const p = parts[idx], v = parseInchesText(text);
+    if (v == null || !(v > 0)) { updateRow(idx, { _lenText: text, _lenBad: !!String(text).trim() }); return; }
+    const r = inchesToLookup(v, lengthInch);
+    if (!r) { updateRow(idx, { _lenText: text, _lenBad: true }); return; }
+    updateRow(idx, { length_ft: r.ft, length_inch_id: r.rec.id, _lenText: undefined, _lenBad: false,
+      _lenNote: r.off > 1 / 64 ? `rounded to ${fmtInchesText(r.ft * 12 + (parseFloat(r.rec.result) || 0))}` : '' });
+    void p;
+  }
+  function setWidth(idx, text) {
+    const v = parseInchesText(text);
+    if (v == null || !(v > 0)) { updateRow(idx, { _widText: text, _widBad: !!String(text).trim() }); return; }
+    const r = inchesToLookup(v, lengthInch);
+    const wf = r && plateWidths.find(w => Number(w.width_ft) === r.ft);
+    if (!r || !wf) { updateRow(idx, { _widText: text, _widBad: true, _widNote: r ? `widths go up to ${Math.max(...plateWidths.map(w => Number(w.width_ft) || 0))}'` : '' }); return; }
+    updateRow(idx, { width_ft_id: wf.id, width_inch_id: r.rec.id, _widText: undefined, _widBad: false, _widNote: r.off > 1 / 64 ? `rounded to ${fmtInchesText(r.ft * 12 + (parseFloat(r.rec.result) || 0))}` : '' });
+  }
+  function widthInches(p) {
+    const wf = plateWidths.find(w => String(w.id) === String(p.width_ft_id));
+    return (wf ? (Number(wf.width_ft) || 0) * 12 : 0) + lookupInches(0, p.width_inch_id, lengthInch);
+  }
   function addRow() {
     const newId = `part_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     // Copy form/mat/spec/material from the last row to speed up similar-part entry; user can change.
@@ -928,18 +1039,14 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
       width_ft_id: ZERO_FT_WIDTH_ID,
       nest_type: 'Linear'
     };
-    let newTag;
-    if (last && last.tag && last.tag.trim()) {
-      newTag = nextTag(last.tag);
-    } else if (!last) {
-      // First part — pre-populate so the auto-increment pattern works from row 2 onward.
-      newTag = 'P-1';
-    } else {
-      // Previous row exists but tag is empty — default to position-based sequence
-      newTag = `P-${parts.length + 1}`;
-    }
+    // Tag: the form's abbreviation + the next number for that form (PL-3), filled in once a form is
+    // picked if this row has none yet. A row whose previous tag was typed by hand keeps that pattern.
+    let newTag, tagAuto = true;
+    const pre = formAbbr(seed.form_type_name);
+    if (last && last.tag && last.tag.trim() && last.tag_auto === false) { newTag = nextTag(last.tag); tagAuto = false; }
+    else newTag = pre ? nextFormTag(parts, pre) : '';
     onChange([...parts, {
-      client_part_id: newId, tag: newTag, component: '', drawing: '',
+      client_part_id: newId, tag: newTag, tag_auto: tagAuto, component: '', drawing: '',
       ...seed,
       quantity: 1, length_ft: 0, length_inch_id: ZERO_INCH_ID, width_inch_id: ZERO_INCH_ID,
       galv: false, plate_sa: false
@@ -980,10 +1087,8 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                 <th>Spec</th>
                 <th>Material</th>
                 <th>Qty</th>
-                <th>FT(L)</th>
-                <th>INCH(L)</th>
-                <th>FT(W)</th>
-                <th>INCH(W)</th>
+                <th>Length</th>
+                <th>Width</th>
                 <th>Nest Type</th>
               </tr>
             </thead>
@@ -997,13 +1102,18 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                 return (
                   <tr key={p.client_part_id} style={!valid && (p.form_type_id || p.material_type_id) ? { background: '#fff8e1' } : {}}>
                     <td style={{ width: 30 }}><button onClick={() => removeRow(idx)} className="btn btn-small btn-danger" title="Remove row" style={{ padding: '2px 6px' }}>×</button></td>
-                    <td><input type="text" value={p.tag} onChange={e => updateRow(idx, { tag: e.target.value })} placeholder="P-1" style={{ width: 60 }} /></td>
+                    <td><input type="text" value={p.tag} onChange={e => updateRow(idx, { tag: e.target.value, tag_auto: false })} placeholder={formAbbr(p.form_type_name) ? `${formAbbr(p.form_type_name)}-1` : 'tag'} title="Filled in from the form (PL-1, FB-1…). Type your own to keep it." style={{ width: 60 }} /></td>
                     <td>
                       <select value={p.form_type_id} onChange={e => {
                         const ft = formTypes.find(f => String(f.id) === String(e.target.value));
                         const measurement = ft?.measurement || '';
                         const newNestType = measurement === 'Panel' ? 'Panel' : (measurement === 'Linear' ? 'Linear' : p.nest_type);
+                        // Material type defaults to Carbon Steel; the tag follows the form unless typed by hand.
+                        const cs = !p.material_type_id ? matTypes.find(m => /^carbon steel$/i.test(String(m.name || '').trim())) : null;
+                        const autoTag = p.tag_auto !== false && (p.tag_auto === true || !p.tag);
                         updateRow(idx, {
+                          ...(cs ? { material_type_id: cs.id, material_type_name: cs.name } : {}),
+                          ...(autoTag ? { tag: nextFormTag(parts, formAbbr(ft?.name), idx), tag_auto: true } : {}),
                           form_type_id: e.target.value,
                           form_type_name: ft?.name || '',
                           specification_id: '', spec_name: '',
@@ -1012,7 +1122,7 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                           // Reset width fields to zero IDs if switching to Linear
                           ...(newNestType === 'Linear' ? { width_ft_id: ZERO_FT_WIDTH_ID, width_inch_id: ZERO_INCH_ID } : {})
                         });
-                        ensureCascade(e.target.value, p.material_type_id);
+                        ensureCascade(e.target.value, p.material_type_id || (cs && cs.id));
                       }}>
                         <option value="">—</option>
                         {formTypes.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
@@ -1037,42 +1147,43 @@ function ManualPartsEntry({ parts, onChange, lookupTables, onLookupTablesLoaded 
                       <select value={p.specification_id} onChange={e => {
                         const s = specs.find(x => String(x.id) === String(e.target.value));
                         updateRow(idx, { specification_id: e.target.value, spec_name: s?.name || '' });
+                        try { if (e.target.value) localStorage.setItem(lastSpecKey(p.form_type_id, p.material_type_id), String(e.target.value)); } catch (err) {}
                       }} disabled={specs.length === 0} style={{ minWidth: 130 }}>
                         <option value="">—</option>
                         {specs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                     </td>
                     <td>
-                      <select value={p.material_id} onChange={e => {
-                        const m = mats.find(x => String(x.id) === String(e.target.value));
-                        updateRow(idx, {
-                          material_id: e.target.value,
-                          material_name: m?.name || '',
-                          weight_per_ft: m?.weight_per_ft || 0,
-                          dim1: m?.dim1 || 0,
-                          density: m?.density || 0
-                        });
-                      }} disabled={mats.length === 0} style={{ minWidth: 180 }}>
-                        <option value="">—</option>
-                        {mats.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                      </select>
+                      {/* Type to search the sizes for this form + material type ("3/8", "x 8"). */}
+                      <input list={`mats-${idx}`} value={p._matText != null ? p._matText : (p.material_name || '')}
+                        disabled={mats.length === 0} placeholder={mats.length ? 'type a size…' : '—'}
+                        onFocus={e => e.target.select()}
+                        onChange={e => {
+                          const t = e.target.value;
+                          const m = mats.find(x => String(x.name || '').trim().toLowerCase() === t.trim().toLowerCase());
+                          if (m) updateRow(idx, { material_id: m.id, material_name: m.name || '', weight_per_ft: m.weight_per_ft || 0, dim1: m.dim1 || 0, density: m.density || 0, _matText: undefined });
+                          else updateRow(idx, { _matText: t, ...(t.trim() ? {} : { material_id: '', material_name: '' }) });
+                        }}
+                        style={{ minWidth: 170, borderColor: p._matText && p._matText.trim() ? '#c62828' : undefined }}
+                        title={p._matText && p._matText.trim() ? 'Pick one of the listed sizes' : ''} />
+                      <datalist id={`mats-${idx}`}>{mats.map(m => <option key={m.id} value={m.name} />)}</datalist>
                     </td>
                     <td><input type="number" min="1" value={p.quantity} onChange={e => updateRow(idx, { quantity: parseInt(e.target.value) || 0 })} style={{ width: 50 }} /></td>
-                    <td><input type="number" min="0" step="1" value={p.length_ft} onChange={e => updateRow(idx, { length_ft: parseInt(e.target.value) || 0 })} style={{ width: 50 }} /></td>
                     <td>
-                      <select value={p.length_inch_id || ZERO_INCH_ID} onChange={e => updateRow(idx, { length_inch_id: e.target.value })}>
-                        {lengthInch.map(li => <option key={li.id} value={li.id}>{li.description}</option>)}
-                      </select>
+                      <input value={p._lenText != null ? p._lenText : fmtInchesText(lookupInches(p.length_ft, p.length_inch_id, lengthInch))}
+                        onChange={e => updateRow(idx, { _lenText: e.target.value })} onBlur={e => setLength(idx, e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                        placeholder={`5-5/8 or 2'-6"`} style={{ width: 92, borderColor: p._lenBad ? '#c62828' : undefined }}
+                        title="Inches (5-5/8, 9 1/8, 30.5) or feet and inches (2'-6 3/8&quot;)" />
+                      {p._lenNote ? <div style={{ fontSize: 10, color: '#8a5a00' }}>{p._lenNote}</div> : null}
                     </td>
                     <td>
-                      <select value={p.width_ft_id || ZERO_FT_WIDTH_ID} onChange={e => updateRow(idx, { width_ft_id: e.target.value })} disabled={p.nest_type !== 'Panel'}>
-                        {plateWidths.map(pw => <option key={pw.id} value={pw.id}>{pw.description || pw.width_ft + "'"}</option>)}
-                      </select>
-                    </td>
-                    <td>
-                      <select value={p.width_inch_id || ZERO_INCH_ID} onChange={e => updateRow(idx, { width_inch_id: e.target.value })} disabled={p.nest_type !== 'Panel'}>
-                        {lengthInch.map(li => <option key={li.id} value={li.id}>{li.description}</option>)}
-                      </select>
+                      <input value={p.nest_type !== 'Panel' ? '' : (p._widText != null ? p._widText : fmtInchesText(widthInches(p)))}
+                        disabled={p.nest_type !== 'Panel'}
+                        onChange={e => updateRow(idx, { _widText: e.target.value })} onBlur={e => setWidth(idx, e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                        placeholder={p.nest_type === 'Panel' ? '9-1/8' : '—'} style={{ width: 92, borderColor: p._widBad ? '#c62828' : undefined }} />
+                      {p._widNote ? <div style={{ fontSize: 10, color: '#8a5a00' }}>{p._widNote}</div> : null}
                     </td>
                     <td>
                       {p.nest_type === 'Linear' ? (
@@ -1136,6 +1247,15 @@ export default function App() {
   const [project, setProject] = useState(null);
   const [bom, setBom] = useState([]);
   const [stock, setStock] = useState([]);
+  // The stock library's sizes, for the size chips on each nest group. Loaded on its own so a manual
+  // (standalone) job gets them too — they used to load only with a project — and so loading a saved
+  // run, which replaces `stock`, never takes them away.
+  const [libStock, setLibStock] = useState([]);
+  useEffect(() => {
+    let live = true;
+    fetch(`${API}/api/stock`).then(r => (r.ok ? r.json() : [])).then(d => { if (live && Array.isArray(d)) setLibStock(d.map(s => ({ ...s, source: 'library' }))); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
   const [selected, setSelected] = useState(new Set());
   const [kerf1D, setKerf1D] = useState(0.125);
   const [kerf2D, setKerf2D] = useState(0.125);
@@ -2939,7 +3059,7 @@ export default function App() {
                   const groupCts = group.rows.filter(r => ctsItems.has(r.id));
                   const allCts = groupCts.length === group.rows.length;
                   const someCts = groupCts.length > 0 && !allCts;
-                  const chips = groupChips(group, stock);
+                  const chips = groupChips(group, stock.concat(libStock));
                   const stdChips = chips.filter(c => c.standard);
                   const ownChips = chips.filter(c => !c.standard);
                   const fill = groupFillPct(group, entries);
