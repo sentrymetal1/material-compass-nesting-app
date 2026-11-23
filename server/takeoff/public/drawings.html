@@ -249,7 +249,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.0 · 2026-11-23 · AI Take-off Assistant: tabs, status line, smaller lines panel";
+const VERSION="drawings v1.1 · 2026-11-23 · the entry from a project; ?tab= opens a tab";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -1016,6 +1016,7 @@ addEventListener("message",e=>{if(e.origin!==location.origin)return;const m=e.da
   // Opened from a ⌖ on the review page: straight to that drawing and part. Else the first drawing.
   const ask={sheet:q.get("sheet")||"",mark:q.get("mark")||""};
   if(!((ask.sheet||ask.mark)&&showFromReview(ask)))await A.open(Math.max(0,S.sheets.findIndex(g=>g.loc)));
+  const t0=q.get("tab");if(t0&&t0!=="drawings")setATab(t0);   // e.g. ?tab=setup from "New take-off"
   pollMarks().then(()=>startOcr(A.pageKey,false));
 })();
 }

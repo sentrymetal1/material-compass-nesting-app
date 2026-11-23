@@ -198,6 +198,7 @@
   table.lab-mx th:first-child{text-align:left;}
   table.lab-mx td{padding:4px 4px;vertical-align:top;}
   table.lab-mx .lab-in{width:60px;padding:2px 5px;}
+  table.lab-mx .lab-in.txt{width:100%;min-width:150px;text-align:left;}
   table.lab-mx td.mx{text-align:right;white-space:nowrap;}
   table.lab-mx .opn{display:block;font-size:10.5px;color:#7b8a9b;cursor:pointer;user-select:none;margin-top:1px;}
   table.lab-mx .opn.on{color:var(--blue);font-weight:600;}
@@ -232,7 +233,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.125 · 2026-11-23 · panel mode for the AI Take-off Assistant tabs";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.126 · 2026-11-23 · labor component names full width; New take-off opens the Assistant Setup";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -5344,7 +5345,7 @@
   // (keyed by project) so closing & reopening this page restores it instead of losing the run.
   (function(){ try{ const s=sessionStorage.getItem("takeoff_result"); const k=lsKey(); if(s&&k){ const R=JSON.parse(s); if(sameProj(R)) localStorage.setItem(k,s); } }catch(e){} })();
   // "New take-off" link → back to the uploader for this project
-  (function(){ const lk=document.getElementById("newRun"); if(lk && params.project_id){ lk.href="index.html?project_id="+encodeURIComponent(params.project_id)+"&manufacturer_id="+encodeURIComponent(params.manufacturer_id||""); } })();
+  (function(){ const lk=document.getElementById("newRun"); if(lk && params.project_id){ lk.href="drawings.html?project_id="+encodeURIComponent(params.project_id)+"&manufacturer_id="+encodeURIComponent(params.manufacturer_id||"")+"&tab=setup"; } })();
   (async function init(){
     render();                                  // show local/sample immediately
     fetchAccount();                            // prepaid balance for the green bar (Phase 0 visual)

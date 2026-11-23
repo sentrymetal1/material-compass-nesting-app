@@ -2,6 +2,13 @@
 <html lang="en">
 <head>
   <script src="/takeoff/mc-token.js"></script>
+  <script>
+    // The AI Take-off Assistant (drawings.html) is where a project's take-off is worked: a project opened
+    // here goes straight there (Setup tab when there is no take-off yet). The Assistant shows this page in
+    // its Setup tab with in=assistant; intake=1 keeps the plain page.
+    (function () { var q = new URLSearchParams(location.search);
+      if (q.get("project_id") && q.get("in") !== "assistant" && q.get("intake") !== "1") { window.__MC_GO = 1; location.replace("drawings.html" + location.search); } })();
+  </script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Take-off Assistant</title>
@@ -632,8 +639,9 @@
   </div>
 
   <script>
+    if (window.__MC_GO) throw new Error("Opening the AI Take-off Assistant");   // see the redirect in <head>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off Assistant — v0.123 (2026-11-23)";   // Assistant: tabs + status line; intake opens the Assistant after a run
+    const BUILD_TAG = "Material Compass · AI Take-off Assistant — v0.124 (2026-11-23)";   // a project opened on the intake page goes to the Assistant
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
