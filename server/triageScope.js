@@ -68,6 +68,14 @@ const OPS_GROUPS = [
     { key: 'end_miter', label: 'Miter', kind: 'where' },
     { key: 'end_bevel', label: 'Bevel for weld', kind: 'where' },
   ] },
+  // Mark 2026-11-23: "could add beveling as another labor action". Weld prep on plate and shapes;
+  // pipe ends keep their own "Bevel for weld" above.
+  { key: 'beveling', label: 'Beveling', options: [
+    { key: 'bev_plate', label: 'Plate edges (weld prep)', kind: 'where' },
+    { key: 'bev_shapes', label: 'Beams, channels & angles', kind: 'where' },
+    { key: 'bev_machine', label: 'Machine bevel (J-groove, land)', kind: 'where' },
+    { key: 'bev_back_gouge', label: 'Back-gouge (CJP)', kind: 'where' },
+  ] },
   { key: 'forming', label: 'Forming', options: [
     { key: 'form_brake', label: 'Brake / bend', kind: 'where' },
     { key: 'form_roll', label: 'Roll', kind: 'where' },
