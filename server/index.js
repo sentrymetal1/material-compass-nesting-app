@@ -2003,7 +2003,16 @@ async function loadSavedTakeoff(project_id) {
     // Daily data allowance used up: Zoho answers 200 + code 4000 and no rows. That is NOT "no saved
     // take-off" — saying so told the pages the project had none (2026-11-22). Say what it is.
     if (!rec && q.data && Number(q.data.code) === 4000) { const e = new Error('daily data limit reached'); e.quota = true; throw e; }
-  } catch (e) { if (e.quota) throw e; /* no records */ }
+  } catch (e) {
+    if (e.quota) throw e;
+    // ONLY Zoho's own "no records match" (400 / code 9280) means there is no saved take-off. Anything
+    // else — Zoho down for maintenance (5xx, an HTML "We'll be right back" page), a timeout, an
+    // expired token — is "can't read it right now". Treating those as "none" on 2026-11-23 told the
+    // Assistant MCP-10109 had no take-off and sent the estimator to Setup to run (and pay for) another.
+    const zc = e.response && e.response.data && Number(e.response.data.code);
+    const noMatch = e.response && e.response.status === 400 && (zc === 9280 || zc === 3100);
+    if (!noMatch) { const u = new Error('the data service is not answering'); u.unavailable = true; u.detail = (e.response && e.response.status) || e.code || e.message; throw u; }
+  }
   if (rec && rec.ID) { const ids = takeoffSavedIds(); if (ids[project_id] !== String(rec.ID)) { ids[project_id] = String(rec.ID); saveTakeoffSavedIds(ids); } }
   if (!rec || !rec.Package) return { found: false };
   try {
@@ -2047,6 +2056,8 @@ app.get('/api/takeoff/saved/:project_id', async (req, res) => {
     if (!s.found) return res.json(s.damaged ? { ok: true, found: false, damaged: true } : { ok: true, found: false });
     return res.json({ ok: true, found: true, package: s.package, updated_at: s.updated_at, id: s.id });
   } catch (err) {
+    if (err.unavailable) { console.error('takeoff load: data service unavailable:', err.detail);
+      return res.status(503).json({ ok: false, unavailable: true, error: "The saved take-off can't be read right now: the data service isn't answering (it may be down for maintenance). Nothing is lost. Try again in a few minutes; a copy kept in this browser still opens." }); }
     if (err.quota) return res.status(503).json({ ok: false, quota: true, error: "The daily data limit is used up, so the saved take-off can't be read until it resets at midnight. A copy kept in this browser still opens." });
     const detail = err.response ? err.response.data : (err.message || String(err));
     console.error('takeoff load error:', detail);
