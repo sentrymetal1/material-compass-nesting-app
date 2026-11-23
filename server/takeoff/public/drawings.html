@@ -201,7 +201,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v0.8 · 2026-11-23 · scale from a known dimension; clearer Clear";
+const VERSION="drawings v0.9 · 2026-11-23 · scale details fold away once set";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -552,20 +552,23 @@ class Pane{
     const pw=Math.round(v.width/72*10)/10,ph=Math.round(v.height/72*10)/10;
     const ms=S.meas[this.pageKey]||[],last=ms[ms.length-1];
     let h=`<div class="mtop"><h4>Ruler</h4>${ms.length&&S.tool!=="cal"?`<button class="clr" data-m="clear" title="Remove the lines measured on this sheet (C)">✕ Clear ${ms.length} measurement${ms.length>1?"s":""}</button>`:""}</div>`;
-    h+=`<div class="k">${sc?`Scale: <b style="color:var(--ink)">${esc(sc.label)}</b> ${sc.how==="dimension"?`(set from a dimension${sc.err?", within about "+(Math.round(sc.err*1000)/10||0.1)+"%":""})`:'(printed scale)'}`:'<span class="warn">No scale on this sheet yet.</span>'}</div>`;
+    // Once the sheet has a scale its controls fold away; "Show scale" opens them again.
+    const open=!sc||S.tool==="cal"||S.scaleOpen;
+    if(sc&&!open)h+=`<div class="k"><span class="ok">✓ Scale set</span> · <a href="#" data-m="scaleshow">Show scale</a></div>`;
+    else h+=`<div class="k">${sc?`Scale: <b style="color:var(--ink)">${esc(sc.label)}</b> ${sc.how==="dimension"?`(set from a dimension${sc.err?", within about "+(Math.round(sc.err*1000)/10||0.1)+"%":""})`:'(printed scale)'}${S.tool!=="cal"?` · <a href="#" data-m="scalehide">Hide</a>`:""}`:'<span class="warn">No scale on this sheet yet.</span>'}</div>`;
     if(S.tool==="cal"){
       h+=this.calSeg?`<div class="row2">That dimension is <input id="calIn${i}" size="10" placeholder="e.g. 5'-1-3/8&quot;"><button class="pri" data-m="calset">Set scale</button><button data-m="calcancel">Cancel</button></div>
         <div class="k">Type it as printed: 5'-1-3/8", 61 3/8 (inches), or 1559 mm.</div>`
         :`<div class="row2"><b>Click both ends of a dimension printed on the drawing.</b></div><div class="k">Zoom in close on each end: the closer you zoom, the more accurate the scale.</div><div class="row2"><button data-m="calcancel">Cancel</button></div>`;
     }else{
-      h+=`<div class="row2"><button data-m="cal" class="${sc?"":"pri"}">${sc?"Re-scale from a known dimension":"Scale from a known dimension"}</button><select data-m="printed" title="Only right when the PDF is the drawing's full paper size"><option value="">Printed scale…</option>${PRINTED_SCALES.map(s=>`<option value="${s[1]}">${esc(s[0])}</option>`).join("")}</select></div>`;
-      h+=`<div class="k">This PDF page is ${pw} × ${ph} in.${sc&&sc.how==="printed"?' <span class="warn">Check it: measure a dimension printed on the drawing.</span>':""}</div>`;
+      if(open){h+=`<div class="row2"><button data-m="cal" class="${sc?"":"pri"}">${sc?"Re-scale from a known dimension":"Scale from a known dimension"}</button><select data-m="printed" title="Only right when the PDF is the drawing's full paper size"><option value="">Printed scale…</option>${PRINTED_SCALES.map(s=>`<option value="${s[1]}">${esc(s[0])}</option>`).join("")}</select></div>`;
+        h+=`<div class="k">This PDF page is ${pw} × ${ph} in.${sc&&sc.how==="printed"?' <span class="warn">Check it: measure a dimension printed on the drawing.</span>':""}</div>`}
       if(last&&sc){const L=this.lenIn(last.a,last.b),T=this.tolIn(last.a,last.b);
         h+=`<div class="res">${esc(ftin(L/12))} <span class="k" style="font-size:12.5px;font-weight:400">${esc(inStr(L/12))} in · ${Math.round(L*25.4).toLocaleString()} mm · within about ${esc(tolStr(T))}${T>0.25?" (zoom in for closer)":""}</span></div>`;
         const r=selRow();if(r)h+=`<div class="row2"><button class="pri" data-m="use">Use ${esc(ftin(L/12))} as the length of ${esc(r.member_mark||"this line")}</button><span class="k">now ${esc(ftin(r.length_ft))}</span></div><div class="edmsg" id="mMsg${i}"></div>`;
         else h+=`<div class="k">Select a line to use this as its length.</div>`}
       // The line just measured is a dimension the drawing prints: scale the sheet from it.
-      if(last)h+=`<div class="known"><div class="k" style="color:var(--ink)"><b>${sc?"Is this line a known dimension?":"You measured a line. What does the drawing say it is?"}</b></div>
+      if(last&&open)h+=`<div class="known"><div class="k" style="color:var(--ink)"><b>${sc?"Is this line a known dimension?":"You measured a line. What does the drawing say it is?"}</b></div>
         <div class="row2">It is <input id="knIn${i}" size="10" placeholder="e.g. 5'-1-3/8&quot;"><button class="${sc?"":"pri"}" data-m="known">Scale from this line</button></div>
         <div class="k" id="knMsg${i}">The sheet is scaled so this line reads that length.</div></div>`;
       h+=`<div class="k" style="margin-top:6px">Click two points to measure. Hold Shift for a straight line. C clears. Esc stops.</div>`;
@@ -575,6 +578,7 @@ class Pane{
   }
   mboxClick(e){
     const el=e.target.closest("[data-m]");if(!el||el.tagName==="SELECT")return;const m=el.dataset.m;
+    if(m==="scaleshow"||m==="scalehide"){e.preventDefault();S.scaleOpen=m==="scaleshow";this.renderMbox();return}
     if(m==="cal"){setTool("cal");return}
     if(m==="calcancel"){this.calSeg=null;setTool("measure");return}
     if(m==="clear"){delete S.meas[this.pageKey];this.drawMeas();this.renderMbox();return}
@@ -595,13 +599,13 @@ class Pane{
     const sc={in_per_pt:inches/d,how:"dimension",label:raw+" dimension",err:2/(zs||this.view.s)/d,at:new Date().toISOString()};
     const why=applyChange(R=>{R.scales=R.scales&&typeof R.scales==="object"?R.scales:{};R.scales[pk]=sc});
     if(why){alert("Scale not saved: "+why);return false}
-    S.R.scales=Object.assign({},S.R.scales||{},{[pk]:sc});return true}
+    S.R.scales=Object.assign({},S.R.scales||{},{[pk]:sc});S.scaleOpen=false;return true}
   mboxChange(e){const el=e.target.closest('select[data-m="printed"]');if(!el||!el.value)return;
     const v=Number(el.value),lab=el.options[el.selectedIndex].text,pk=this.pageKey;
     const sc={in_per_pt:v/72,how:"printed",label:lab,err:0,at:new Date().toISOString()};
     const why=applyChange(R=>{R.scales=R.scales&&typeof R.scales==="object"?R.scales:{};R.scales[pk]=sc});
     if(why){alert("Scale not saved: "+why);return}
-    S.R.scales=Object.assign({},S.R.scales||{},{[pk]:sc});this.drawMeas();this.renderMbox()}
+    S.R.scales=Object.assign({},S.R.scales||{},{[pk]:sc});S.scaleOpen=false;this.drawMeas();this.renderMbox()}
   bind(){
     const st=this.stage;
     st.addEventListener("wheel",e=>{e.preventDefault();const r=st.getBoundingClientRect();this.zoomAt(e.deltaY>0?1/1.15:1.15,e.clientX-r.left,e.clientY-r.top)},{passive:false});
