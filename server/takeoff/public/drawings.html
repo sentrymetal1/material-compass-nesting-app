@@ -292,7 +292,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.6 · 2026-11-23 · box a missed item; find it on other drawings";
+const VERSION="drawings v1.7 · 2026-11-23 · fittings chip; Material list sub-tabs";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -1185,9 +1185,11 @@ function takeoffState(){
   const labor=!!(R&&R.labor&&arr(R.labor.components).length);
   const left=[n&&d<n,!!flagged,!wt||!wt.ok,!labor].filter(Boolean).length;
   const sorted=S.sheets.filter(sheetSorted).length;
-  return{ran:!!live.length,n,d,sorted,lines:live.length,flagged,wt,labor,left}}
+  const fits=arr(R&&R.fittings).filter(f=>f&&!f.deleted&&Number(f.quantity)>0).length,fl=(R&&R.cost_summary&&R.cost_summary.lines&&R.cost_summary.lines.fittings)||{};
+  const fitPriced=fl.status==="include"&&Number(fl.total)>0;
+  return{ran:!!live.length,n,d,sorted,lines:live.length,flagged,wt,labor,left:left+(fits&&!fitPriced?1:0),fits,fitPriced}}
 function renderATabs(){const el=$("atabs");if(!el)return;const t=S.R?takeoffState():null;
-  const badge={setup:t&&t.ran?["ok","✓"]:null,drawings:t&&t.n?[t.d===t.n?"ok":"warn",t.d+" of "+t.n]:null,material:t?["",t.lines+" lines"]:null,
+  const badge={setup:t&&t.ran?["ok","✓"]:null,drawings:t&&t.n?[t.d===t.n?"ok":"warn",t.d+" of "+t.n]:null,material:t?[t.fits&&!t.fitPriced?"warn":"",t.lines+" lines"+(t.fits?" · "+t.fits+" fitting"+(t.fits===1?"":"s"):"")]:null,
     labor:t?(t.labor?["ok","✓"]:["warn","to do"]):null,subs:null,quote:t?(t.left?["warn",t.left+" left"]:["ok","ready"]):null};
   el.innerHTML=ATABS.map(([id,lab],i)=>{const b=badge[id];return `<button data-at="${id}" class="${S.atab===id?"on":""}" role="tab" aria-selected="${S.atab===id}"><span class="n">${i+1}</span>${esc(lab)}${b?` <span class="bd ${b[0]}">${esc(b[1])}</span>`:""}</button>`}).join("")+
     `<button class="ask ${S.ai?"on":""}" id="askBtn" title="Ask the AI about this take-off">Ask AI</button>`}
@@ -1200,12 +1202,13 @@ function renderStatus(){renderATabs();const el=$("stat");if(!el)return;if(!S.R){
     (t.flagged?c("bad",t.flagged+" line"+(t.flagged===1?"":"s")+" to check","flags"):"")+
     (t.wt?c(t.wt.ok?"ok":"bad",t.wt.ok?"✓ Weight matches the project BOM":"Weight "+(t.wt.p>=0?"+":"")+t.wt.p.toFixed(1)+"% vs project BOM","material","Within 3% of the project BOM is a match")
       :c("warn","No project weight to check against","material"))+
+    (t.fits?c(t.fitPriced?"ok":"warn",t.fitPriced?"✓ Fittings priced":t.fits+" fitting line"+(t.fits===1?"":"s")+" not priced","fittings","Price them on the Fittings tab of the Material list"):"")+
     c(t.labor?"ok":"warn",t.labor?"✓ Labor worked out":"Labor not worked out","labor")+
     c("plain","Subcontractors","subs","Work sent outside the shop: galvanizing, painting, bending and the like")+
     c(t.left?"plain":"ok",t.left?"Quote: "+t.left+" item"+(t.left===1?"":"s")+" left":"✓ Ready to quote","quote")}
-function panelTo(p){const f=$("revFrame");
-  if(!f.dataset.loaded){f.dataset.loaded="1";f.src="review.html"+withQ({panel:p});return}
-  try{f.contentWindow.postMessage({type:"mc-panel",panel:p},location.origin)}catch(e){}}
+function panelTo(p){const f=$("revFrame"),sub=p==="material"&&S.msub?S.msub:"";S.msub="";
+  if(!f.dataset.loaded){f.dataset.loaded="1";f.src="review.html"+withQ(sub?{panel:p,sub}:{panel:p});return}
+  try{f.contentWindow.postMessage({type:"mc-panel",panel:p,sub},location.origin)}catch(e){}}
 function layout(){
   const t=S.atab,onDw=t==="drawings",drawer=S.ai&&onDw;
   $("main").hidden=!onDw;$("main").classList.toggle("nopanel",!!S.panelOff);$("pshow").hidden=!S.panelOff;
@@ -1224,6 +1227,7 @@ $("atabs").addEventListener("click",e=>{const b=e.target.closest("button");if(!b
 $("stat").addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(!b)return;const g=b.dataset.go;
   if(g==="next"){setATab("drawings");setTab("confirm");const n=nextTodo(act().cur);if(n>-1&&n!==act().cur){clearPart();act().open(n)}return}
   if(g==="unsorted"){setATab("drawings");setTab("confirm");const n=S.sheets.findIndex(x=>!sheetSorted(x));if(n>-1&&n!==act().cur){clearPart();act().open(n)}return}
+  if(g==="fittings"){S.atab="material";S.ai=false;S.msub="fittings";layout();return}
   if(g==="flags"){setATab("drawings");if(S.panelOff){S.panelOff=false;layout()}S.onlyFlags=true;setTab("lines");return}
   setATab(g)});
 $("aiClose").onclick=()=>{S.ai=false;layout()};

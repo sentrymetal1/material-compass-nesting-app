@@ -173,12 +173,16 @@
   .tabpane{display:none;} .tabpane.on{display:block;}
   /* Panel mode: one section inside the AI Take-off Assistant (see setPanel). */
   html.pm body{background:#fff;}
-  html.pm .appbar, html.pm #wrap > :not(.tabpane):not(.footerdock):not(.commit){display:none !important;}
+  html.pm .appbar, html.pm #wrap > :not(.tabpane):not(.footerdock):not(.commit):not(.pmnav){display:none !important;}
   html.pm .wrap{max-width:none;margin:0;padding:12px 16px;}
   html.pm .footerdock{display:none;}
   html.pm-ai .footerdock, html.pm-quote .footerdock{display:flex;}
   html.pm-ai .footerdock .bar, html.pm-quote .footerdock .chatdock{display:none;}
   html.pm-labor #workCard{display:none;}
+  .pmnav{display:none;} html.pm-material #wrap > .pmnav{display:flex !important;gap:6px;align-items:center;position:sticky;top:0;z-index:5;background:#fff;padding:8px 0 10px;margin-bottom:6px;border-bottom:1px solid #e3e8ef;}
+  .pmnav button{border:1px solid #cfd8e3;background:#fff;border-radius:99px;padding:5px 14px;font-size:13px;font-weight:600;color:#44525f;cursor:pointer;}
+  .pmnav button.on{background:#5286B4;border-color:#5286B4;color:#fff;} .pmnav button.on .tbadge{background:#ffffff33;color:#fff;}
+  .pmnav .pmbom{border-radius:8px;background:#5286B4;border-color:#5286B4;color:#fff;}
   html.pm-subs .tabpane[data-tab="labor"] > :not(#workCard){display:none;}
   html.pm-subs #summaryCard > h2, html.pm-subs #summaryCard .body > :not(.sum-out), html.pm-quote #summaryCard .sum-out{display:none !important;}
   .tabpane[data-tab="ai"] .chatthread{max-height:62vh;}
@@ -233,7 +237,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.127 · 2026-11-23 · Assistant tabs never show the sample take-off";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.128 · 2026-11-23 · Material list sub-tabs (Structural, Fittings, Addenda), BOM Editor up top, Price the fittings";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -2189,6 +2193,9 @@
   let TAB=(function(){ try{ return sessionStorage.getItem(tabKey())||"overview"; }catch(e){ return "overview"; } })();
   const PANEL_OF={material:["material","fittings","addenda"],labor:["labor"],subs:["labor","summary"],quote:["summary"],ai:["ai"]};
   let PANEL=(function(){ try{ const p=new URLSearchParams(location.search).get("panel")||""; return PANEL_OF[p]?p:""; }catch(e){ return ""; } })();
+  // The Material list's own sub-tab (Mark 11-23: "the fittings are way down on the bottom and can be missed").
+  let MSUB=(function(){ try{ const v=new URLSearchParams(location.search).get("sub")||""; return ["material","fittings","addenda"].indexOf(v)>-1?v:"material"; }catch(e){ return "material"; } })();
+  function setMsub(v){ MSUB=v; applyTab(); document.querySelectorAll(".pmnav [data-ms]").forEach(function(b){ b.classList.toggle("on", b.getAttribute("data-ms")===v); }); try{ window.scrollTo(0,0); }catch(e){} }
   function setTab(t){
     if(t==="welds") t="labor";   // Welds & features now lives at the foot of the Labor tab
     if(!TABS.some(function(x){ return x[0]===t; })) t="overview";
@@ -2204,9 +2211,9 @@
   }
   function setPanel(p){ if(!PANEL_OF[p]) return; PANEL=p; TAB=PANEL_OF[p][0]; applyPanelClass(); applyTab(); try{ window.scrollTo(0,0); }catch(e){} }
   applyPanelClass(); if(PANEL) TAB=PANEL_OF[PANEL][0];
-  window.addEventListener("message",function(e){ if(e.origin!==location.origin) return; const d=e.data||{}; if(d.type==="mc-panel") setPanel(d.panel); });
+  window.addEventListener("message",function(e){ if(e.origin!==location.origin) return; const d=e.data||{}; if(d.type==="mc-panel"){ if(d.sub) MSUB=d.sub; setPanel(d.panel); if(d.panel==="material") setMsub(MSUB); } });
   function applyTab(){
-    const panes=PANEL?PANEL_OF[PANEL]:[TAB];
+    const panes=PANEL==="material"?[MSUB]:PANEL?PANEL_OF[PANEL]:[TAB];
     document.querySelectorAll(".tabpane").forEach(function(p){ p.classList.toggle("on", panes.indexOf(p.getAttribute("data-tab"))>-1); });
     document.querySelectorAll(".tabs button").forEach(function(b){ b.classList.toggle("on", b.getAttribute("data-tab")===TAB); });
     if(TAB==="ai") scrollChatToBottom();
@@ -3630,7 +3637,7 @@
       weightCheckHtml(R, WT, FW)+
 
       // tabs — one area of the review at a time; the header above and the dock below stay put
-      tabStripHtml(R, fab, gaps, conflicts)+
+      tabStripHtml(R, fab, gaps, conflicts)+pmNavHtml(R, fab)+
 
       '<div class="tabpane" data-tab="overview">'+
       componentsCardHtml(R)+
@@ -3713,7 +3720,7 @@
       '</div>'+
 
       // pipe fittings — their own stream, deliberately outside the BOM
-      '<div class="tabpane" data-tab="fittings">'+
+      '<div class="tabpane" data-tab="fittings">'+fitPriceHtml(R)+
       (fittingsCardHtml(R.fittings)||'<div class="card"><div class="body" style="color:var(--mut);font-size:13px">No pipe fittings on this take-off.</div></div>')+
       '</div>'+
 
@@ -4309,6 +4316,35 @@
   // WHAT GETS ORDERED: the Qty on screen × the component's units. Always worked out, never read from
   // a stored total. An AI edit changed a row's Qty and left its stored job total behind, so the
   // screen showed 350 while the BOM import would have ordered 24 (2026-10-06).
+  // ---- Assistant Material list: sub-tabs and the fittings price -------------------------------------
+  function fitLive(R){ return arr(R.fittings).filter(function(f){ return f && !f.deleted && Number(f.quantity)>0; }); }
+  function fitPriced(R){ const l=(sumState(R).lines||{}).fittings||{}; return l.status==="include" && l.total!=null && Number(l.total)>0; }
+  function pmNavHtml(R, fab){
+    if(PANEL!=="material") return "";
+    const nf=fitLive(R).length, na=arr(R.superseded).length;
+    const b=function(id,label,badge,cls){ return '<button data-ms="'+id+'" class="'+(MSUB===id?'on':'')+'" onclick="setMsub(\''+id+'\')">'+label+(badge!=null?' <span class="tbadge '+(cls||'')+'">'+esc(badge)+'</span>':'')+'</button>'; };
+    return '<div class="pmnav">'+b("material","Structural",arr(fab).length+" lines")+
+      b("fittings","Fittings",nf?(fitPriced(R)?nf+" · priced":nf+" · not priced"):"none",nf&&!fitPriced(R)?"warn":"")+
+      b("addenda","Addenda",na||null)+
+      '<span style="flex:1"></span><button class="pmbom" onclick="openBomEditor()">▤ Open the BOM Editor</button></div>';
+  }
+  // The fittings' price, where the fittings are: the same "Fittings (bought in)" line the Summary
+  // and the project page read. A supplier quote replaces it later.
+  function fitPriceHtml(R){
+    const fit=fitLive(R); if(!fit.length) return "";
+    const l=(sumState(R).lines||{}).fittings||{}, qty=fit.reduce(function(a,f){ return a+orderQtyOf(f); },0), ok=fitPriced(R);
+    return '<div class="card" style="padding:12px 16px;'+(ok?'':'border-color:#f0cf94;background:#fffaf0')+'"><div style="font-weight:700;font-size:14px">'+(ok?'✓ Fittings priced':'⚠ Price the fittings')+
+      ' <span class="lt" style="font-weight:400;font-size:12px;color:var(--mut)">— '+fit.length+' line'+(fit.length===1?'':'s')+', '+qty+' pcs. On the quote as “Fittings (bought in)”; a supplier quote replaces it later.</span></div>'+
+      '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px">'+qty+' pcs × $'+
+      '<input class="lab-in" style="width:80px" placeholder="each" value="'+escAttr(l.unit_amt!=null?sumNum(l.unit_amt,4):"")+'" onchange="fitPrice(\'unit_amt\',this)"> = $'+
+      '<input class="lab-in" style="width:96px" placeholder="total" value="'+escAttr(l.total!=null?sumNum(l.total,2,2):"")+'" onchange="fitPrice(\'total\',this)">'+
+      '<input class="lab-in txt" style="width:200px" placeholder="supplier, quote #, note" value="'+escAttr(l.note||"")+'" onchange="sumLine(\'fittings\',\'note\',this)"></div></div>';
+  }
+  function fitPrice(field,el){
+    const l=(sumState(loadResult()).lines||{}).fittings||{};
+    if(l.status!=="include") sumLine("fittings","status",{value:"include"});
+    sumLine("fittings",field,el);
+  }
   function orderQtyOf(r){ return (Number(r && r.quantity)||0)*Math.max(1,Math.round(Number(r && r.units)||1)); }
   // One-time repair of packages saved before that fix: bring every stored total back in line with
   // its Qty, and keep a list of what moved so the estimator can check those rows.
