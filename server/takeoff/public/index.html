@@ -641,7 +641,7 @@
   <script>
     if (window.__MC_GO) throw new Error("Opening the AI Take-off Assistant");   // see the redirect in <head>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off Assistant — v0.125 (2026-11-23)";   // Setup in the Assistant laid out as 4 steps + a run bar
+    const BUILD_TAG = "Material Compass · AI Take-off Assistant — v0.126 (2026-11-23)";   // Run's "before you run" check no longer opens inside closed step 1
     // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
     // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
     // entirely; the absolute URL is only needed by the GitHub Pages copy.
@@ -737,7 +737,11 @@
             S3 = step(3, "Components &amp; drawings" + opt), S4 = step(4, "Ask about the documents" + opt);
       [S1, S2, S3, S4].forEach((s) => card.insertBefore(s, toprow));
       const b = (s) => s.querySelector(".sb");
-      [$id("fromRfq"), docPanel, $id("preflight")].forEach((n) => { if (n) b(S1).appendChild(n); });
+      [$id("fromRfq"), docPanel].forEach((n) => { if (n) b(S1).appendChild(n); });
+      // The "Before you run" check Run opens must stay OUTSIDE the steps: inside closed step 1 it
+      // opened out of sight and Run looked dead (Mark 11-23). It sits after step 4, by the Run bar.
+      const pf = $id("preflight");
+      if (pf) { card.insertBefore(pf, toprow); pf.style.scrollMarginBottom = "110px"; }
       b(S2).appendChild(scopeBox); scopeBox.style.margin = "0";
       b(S3).innerHTML = '<div style="font-size:12.5px;color:#5b6b7a;margin-bottom:10px">Optional here: you can also put each drawing under its component while you confirm material on the <b>Drawings</b> tab.</div>';
       if (cols) b(S3).appendChild(cols);
@@ -3842,7 +3846,9 @@
       }
       document.getElementById("preflight").innerHTML = preflightHtml();
       const el = document.getElementById("preflight");
-      if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+      // A blocker points at "Still to resolve", which lives in step 3 on the Setup tab: open it.
+      if (IN_ASSISTANT && el.querySelector(".pfstop")) { const s3 = document.getElementById("coverage"); const d = s3 && s3.closest("details"); if (d) d.open = true; }
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: IN_ASSISTANT ? "end" : "nearest", behavior: "smooth" });
     });
     document.getElementById("preflight").addEventListener("change", async (e) => {
       const t = e.target;
