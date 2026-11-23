@@ -292,7 +292,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.7 · 2026-11-23 · fittings chip; Material list sub-tabs";
+const VERSION="drawings v1.8 · 2026-11-23 · part-mark reading re-asks when the server lost its queue";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -806,16 +806,24 @@ function renderUsed(){
 function ocrTargets(){const ks={},out=[];S.sheets.forEach(g=>partsOf(g).forEach(p=>{const k=keyOf(p);if(!ks[k]){ks[k]=1;out.push({file_id:p.file_id,page:p.page||1,key:k})}}));return out}
 function renderOcr(){
   const t=ocrTargets(),done=t.filter(x=>S.marks[x.key]).length;
-  $("ocrnote").innerHTML=!t.length||done>=t.length?"":`<span class="spin"></span>Reading part marks off the drawings: ${done} of ${t.length}`;
+  $("ocrnote").innerHTML=!t.length||done>=t.length?"":S.ocrStuck?`Part marks read off ${done} of ${t.length} drawings · <a href="#" id="ocrRetry" style="color:inherit;text-decoration:underline">try again</a>`
+    :`<span class="spin"></span>Reading part marks off the drawings: ${done} of ${t.length}`;
 }
+document.addEventListener("click",e=>{if(e.target.id!=="ocrRetry")return;e.preventDefault();S.ocrKick=0;S.ocrStuck=false;renderOcr();startOcr()});
 let ocrTimer=null;
 async function pollMarks(){
   clearTimeout(ocrTimer);
   try{const d=await getJSON("/api/takeoff/marks/"+encodeURIComponent(P.project_id)+(S.mnow?"?since="+encodeURIComponent(S.mnow):""));
     if(d&&d.ok){Object.assign(S.marks,d.pages||{});S.mnow=d.now||S.mnow;
       visiblePanes().forEach(p=>{if(d.pages&&d.pages[p.pageKey]){p.drawBoxes();if(S.selMark&&p.boxI<0&&hitsOn(p.pageKey,S.selMark).length)p.focusBox(0)}p.renderFollow()});
+      // Sheets still unread but the server has nothing queued: its queue was lost (a restart drops it —
+      // MCP-10116 sat at "0 of 2" for good on 11-23). Ask again, a few times, instead of waiting forever.
+      const busy=d.status&&(d.status.running||d.status.queued);
+      S.ocrStuck=!busy&&(S.ocrKick||0)>=3;
       renderOcr();renderUsed();if(S.tab==="confirm"&&d.pages&&Object.keys(d.pages).length)renderList();
-      if(ocrTargets().some(x=>!S.marks[x.key]))ocrTimer=setTimeout(pollMarks,d.status&&(d.status.running||d.status.queued)?4000:15000)}}
+      if(ocrTargets().some(x=>!S.marks[x.key])){
+        if(!busy&&(S.ocrKick||0)<3){S.ocrKick=(S.ocrKick||0)+1;ocrTimer=setTimeout(()=>startOcr(),S.ocrKick*5000);return}
+        ocrTimer=setTimeout(pollMarks,busy?4000:15000)}}}
   catch(e){ocrTimer=setTimeout(pollMarks,15000)}
 }
 async function startOcr(firstKey,onlyFirst){

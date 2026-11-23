@@ -93,6 +93,9 @@ async function pump() {
       if (idx.pages[job.key] && !idx.pages[job.key].err) { s.done++; continue; }
       let entry;
       const t0 = Date.now();
+      // Logged at the START too: if the server dies mid-read, the log shows which sheet it was on
+      // (11-23: MCP-10116 restarted with no [marks] line, so nobody could tell).
+      console.log("[marks] " + job.pid + " " + job.key + ": reading, memory " + Math.round(process.memoryUsage().rss / 1048576) + " MB");
       // Stamped when the read FINISHES: the page asks for "newer than my last look", and a sheet
       // stamped at its start would be older than a look taken while it was being read.
       try { const words = await readPage(job.pid, job.file_id, job.page); entry = { at: new Date().toISOString(), words: words }; }
