@@ -147,19 +147,39 @@ button:disabled{opacity:.5;cursor:default}
 .ed button{min-height:30px;font-size:12.5px;padding:0 10px;margin-left:6px}.ed button.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
 .edflag{color:var(--red);font-weight:600;margin-top:6px;font-size:12.5px}
 .edmsg{font-size:12.5px;margin-top:4px;min-height:1em}.edmsg.ok{color:var(--grn);font-weight:600}.edmsg.bad{color:var(--red)}
-/* The lines panel is smaller in the Assistant: the drawing is the focus. */
-.panel .ph,.panel .cf{padding:10px 12px}
-.panel .wc{padding:8px 10px}.panel .wc b{font-size:14px}.panel .wc small,.panel .wc p{font-size:11.5px}
-.panel .search{font-size:13px;min-height:34px}
-.panel .ptabs button{font-size:12.5px;min-height:30px}
-.panel .grp{font-size:12px;padding:7px 12px}
-.panel .row{padding:5px 12px;grid-template-columns:54px minmax(0,1fr) auto}
-.panel .row .m,.panel .row .s,.panel .row .w{font-size:12.5px}.panel .row .meta,.panel .row .fl{font-size:11.5px}
-.panel .cl{font-size:12.5px;grid-template-columns:18px 50px minmax(0,1fr) auto}.panel .cl .meta{font-size:11.5px}
-.panel .cfh h3{font-size:14.5px}.panel .cfs{font-size:11px}.panel .iss{font-size:12px;padding:6px 8px}
-.panel .cfbtn{font-size:13.5px;min-height:40px}.panel .pill{font-size:11px}
-.panel .ed{font-size:12px}.panel .ed input{font-size:13px}
-.panel .used,.panel .used table{font-size:12px}.panel .foot{font-size:11.5px}
+/* The lines panel in the Assistant: small and quiet, the drawing is the focus (Mark 11-23:
+   "too busy … smaller font"). About 11px text, one line per take-off line, explanations in tooltips. */
+.panel{font-size:11px;line-height:1.35}
+.panel .ph,.panel .cf{padding:8px 10px}
+.panel .phide{min-height:22px;font-size:10.5px;padding:0 6px;margin:-2px -2px 4px 6px}
+.panel .wc{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;padding:5px 8px;border-radius:7px}
+.panel .wc>div{display:flex;align-items:baseline;gap:4px}.panel .wc small{font-size:10px;display:inline}
+.panel .wc b{font-size:11.5px}.panel .wc p{font-size:10.5px;flex-basis:100%;margin:0}.panel .wc.ok p{display:none}
+.panel .search{font-size:11.5px;min-height:28px;padding:0 8px}.panel .srow{margin-top:6px}
+.panel .flagbtn{font-size:11px;min-height:28px}
+.panel .ptabs{margin-top:6px;padding:2px}.panel .ptabs button{font-size:11px;min-height:24px}
+.panel .grp{font-size:11px;padding:5px 10px}
+.panel .row{padding:3px 10px;grid-template-columns:48px minmax(0,1fr) auto}
+.panel .row .m,.panel .row .s,.panel .row .w{font-size:11px}.panel .row .meta,.panel .row .fl{font-size:10px}
+.panel .cfh{gap:6px}.panel .cfh h3{font-size:13px}.panel .cfh .t{font-size:10.5px}
+.panel .cfs{font-size:9.5px;margin:9px 0 3px}.panel .iss{font-size:10.5px;padding:4px 7px;margin:3px 0}
+.panel .cl{font-size:11px;grid-template-columns:12px 44px minmax(0,1fr) auto auto;gap:0 6px;align-items:center;padding:3px 2px}
+.panel .cl .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.panel .cl .q{color:var(--mute);white-space:nowrap;font-size:10.5px;font-variant-numeric:tabular-nums}
+.panel .cl .w{font-size:10.5px;min-width:42px}
+.panel .cfbtn{font-size:12px;min-height:34px;margin-top:10px;border-radius:8px}.panel .pill{font-size:10px;padding:1px 7px}
+.panel .cfdone,.panel .cfask{font-size:11px;padding:7px 8px;margin-top:10px}.panel .cfdone button,.panel .cfask button{min-height:24px;font-size:10.5px}
+.panel .cmp{margin-top:6px;padding:4px 6px;gap:6px}.panel .cmp label{font-size:10.5px}
+.panel .cmp select{min-height:24px;font-size:11px}.panel .cmp .k{font-size:10.5px}
+.panel .cmpnote{font-size:10.5px}.panel .cmpnote button{min-height:22px;font-size:10.5px}
+.panel .cmpnew{font-size:11px;padding:6px}.panel .cmpnew input,.panel .cmpnew select{min-height:24px;font-size:11px}.panel .cmpnew button{min-height:24px;font-size:11px}
+.panel .ed{font-size:11px;padding:6px 8px;margin:6px 0}.panel .edh{margin-bottom:3px}
+.panel .edrow{gap:4px 10px}.panel .ed input{font-size:11.5px;min-height:24px;width:64px}
+.panel .ed button{min-height:22px;font-size:10.5px}.panel .edflag,.panel .edmsg{font-size:10.5px}
+.panel .used{padding:6px 10px;max-height:46%}.panel .used h4{font-size:12px}
+.panel .used .sub{font-size:10.5px;margin-bottom:4px}.panel .used .tot{font-size:11px;gap:10px;margin:3px 0 5px}.panel .used .tot b{font-size:12px}
+.panel .used table{font-size:10.5px}.panel .used th{font-size:9.5px;padding:2px 4px}.panel .used td{padding:2px 4px}
+.panel .foot{font-size:10px;padding:5px 10px}
 @media(prefers-reduced-motion:reduce){.ov i.cur{animation:none}}
 /* Material confirmed: progress in the bar, and the per-drawing check in the panel. */
 .prog{display:flex;align-items:center;gap:8px;background:#1a3754;border:0;color:#fff;border-radius:8px;min-height:36px;padding:0 12px;font-size:13px}
@@ -260,7 +280,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.3 · 2026-11-23 · components chosen drawing by drawing";
+const VERSION="drawings v1.4 · 2026-11-23 · quieter, smaller lines panel";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -411,9 +431,8 @@ function renderConfirm(){
   const A=act(),gi=A?A.cur:-1,g=S.sheets[gi];
   if(!g){$("list").innerHTML='<div class="cf" style="color:var(--mute)">Open a drawing to confirm its material.</div>';renderProg();return}
   const c=confOf(g),is=sheetIssues(g),lb=g.lb,nx=nextTodo(gi);
-  let h=`<div class="cf"><div class="cfh"><h3>${esc(g.number)}</h3><span class="t">${esc(g.title)}</span>
-    <span class="pill ${c.state}">${c.state==="done"?"✓ Confirmed":c.state==="changed"?"Changed since confirmed":"Not confirmed"}</span></div>
-    <div style="font-size:13px;color:var(--mute);margin-top:2px">${g.rows.length} line${g.rows.length===1?"":"s"}${lb?" · "+fmtLb(lb)+" lb":""}</div>`;
+  let h=`<div class="cf"><div class="cfh"><h3>${esc(g.number)}</h3><span class="t" title="${esc(g.title)}">${g.rows.length} line${g.rows.length===1?"":"s"}${lb?" · "+fmtLb(lb)+" lb":""}${g.title?" · "+esc(g.title):""}</span>
+    <span class="pill ${c.state}">${c.state==="done"?"✓ Confirmed":c.state==="changed"?"Changed since confirmed":"Not confirmed"}</span></div>`;
   h+=compPickerHtml(g);
   if(is.n){h+=`<div class="cfs">To check (${is.n})</div>`;
     is.flagged.forEach(x=>{h+=`<div class="iss bad" data-r="${x.i}" role="button" tabindex="0"><b>⚠ ${esc(x.r.member_mark||"–")}</b><span>${esc(x.f.join(" · "))}</span></div>`});
@@ -424,11 +443,11 @@ function renderConfirm(){
   h+=`<div class="cfs">Lines on this drawing</div>`;
   g.rows.forEach((r,i)=>{const fl=flagsOf(r).length,pr=printedOnSheet(g,r),w=rowWeight(r);
     const ic=fl?'<span class="ic bad" title="Flagged">⚠</span>':pr===true?'<span class="ic ok" title="Found printed on this drawing">✓</span>':pr===false?'<span class="ic no" title="Not found printed on this drawing by the reader. Check it is on this drawing.">?</span>':'<span class="ic no">·</span>';
-    h+=`<div class="cl ${gi===S.selG&&i===S.sel?"sel":""}" data-r="${i}" tabindex="0" role="button">${ic}<span class="m">${esc(r.member_mark||"–")}</span><span>${esc(r.size||"")} <span style="color:var(--mute)">${esc(r.form_type||"")}</span></span><span class="w">${w?fmtLb(w)+" lb":"–"}</span><span class="meta">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}${pr===false?" · not found printed here":""}</span></div>`});
+    h+=`<div class="cl ${gi===S.selG&&i===S.sel?"sel":""}" data-r="${i}" tabindex="0" role="button" title="${esc([r.size,r.form_type].filter(Boolean).join(" "))}${pr===false?" · not found printed on this drawing":""}">${ic}<span class="m">${esc(r.member_mark||"–")}</span><span class="s">${esc(String(r.size||"").replace(/s*([^)]*)/g,""))}</span><span class="q">${orderQtyOf(r)} × ${esc(ftin(r.length_ft))}</span><span class="w">${w?fmtLb(w)+" lb":"–"}</span></div>`});
   if(c.state==="done")h+=`<div class="cfdone">✓ Material confirmed${c.at?" on "+esc(new Date(c.at).toLocaleDateString()):""}. <button data-cf="undo">Undo</button>${nx>-1?'<button class="cfnext" data-cf="next">Next to confirm ›</button>':""}</div>`;
   else if(S.confAsk&&(is.n||!sheetSorted(g)))h+=`<div class="cfask"><b>${[is.n?is.n+" thing"+(is.n===1?"":"s")+" still to check":"",sheetSorted(g)?"":"no project component chosen"].filter(Boolean).join(" and ")} on this drawing.</b> Confirm the material anyway?<br><button data-cf="force">Confirm anyway</button><button data-cf="cancel">Check them first</button></div>`;
-  else h+=`<button class="cfbtn ${is.n?"warn":""}" data-cf="yes">${c.state==="changed"?"Confirm again":"Material confirmed"}${nx>-1&&nx!==gi?" · next drawing ›":""}</button>
-    <div style="font-size:12px;color:var(--mute);margin-top:6px">Confirm when every part on this drawing has the right line: quantity, size and length.</div>`;
+  else h+=`<button class="cfbtn ${is.n?"warn":""}" data-cf="yes" title="Confirm when every part on this drawing has the right line: quantity, size and length.">${c.state==="changed"?"Confirm again":"Material confirmed"}${nx>-1&&nx!==gi?" · next drawing ›":""}</button>
+`;
   $("list").innerHTML=h+"</div>";
   const lm=S.lastMsg;if(lm&&Date.now()<lm.until){const el=document.getElementById(lm.id);if(el&&$("list").contains(el)){el.className=lm.cls;el.innerHTML=lm.html}}
   renderProg();
@@ -755,11 +774,11 @@ function renderUsed(){
    ${editorHtml()}${addHtml()}
    ${miss.length?`<div class="sub warn">Also printed on ${miss.length} drawing${miss.length===1?"":"s"} with no take-off line for it. Check ${miss.length===1?"it":"them"} for a missed quantity.</div>`:""}
    ${hk?`<div class="sub">${S.marks[hk]&&S.marks[hk].words?(hereHits?`Boxed on this sheet: <b>${hereHits}</b> place${hereHits===1?"":"s"}${pa?" (printed as <b>"+esc(pa)+"</b>)":""}${hereHits>1?' · <a href="#" data-step="1">next ›</a>':""}`:"Not found printed on this sheet by the drawing reader."):S.marks[hk]&&S.marks[hk].err?"This sheet couldn't be read for part marks.":'<span class="spin"></span>This sheet is still being read for part marks.'}</div>`:""}
-   <table><thead><tr><th>Drawing</th><th class="n">Qty</th><th class="n">lb</th><th class="n" title="How often the mark is printed on the drawing: views, callouts and the parts list. Not a quantity.">Printed</th></tr></thead><tbody>
+   ${all.length>1?`<table><thead><tr><th>Drawing</th><th class="n">Qty</th><th class="n">lb</th><th class="n" title="How often the mark is printed on the drawing: views, callouts and the parts list. Not a quantity.">Printed</th></tr></thead><tbody>
    ${all.map(p=>p.miss?`<tr class="go miss ${p.gi===A.cur?"here":""}" data-g="${p.gi}" data-r="-1" title="Printed on this drawing, but the take-off has no line for it here"><td>${esc(p.g.number)} ⚠</td><td class="n">not in take-off</td><td class="n">–</td><td class="n">${p.miss}</td></tr>`
       :`<tr class="go ${p.gi===A.cur?"here":""}" data-g="${p.gi}" data-r="${p.row}"><td>${esc(p.g.number)}</td><td class="n">${p.q.toLocaleString()}</td><td class="n">${p.w?fmtLb(p.w):"–"}</td><td class="n">${cell(p.h)}</td></tr>`).join("")}
-   </tbody></table>
-   <div class="note">Qty is the take-off's own count (pieces × assemblies built). Printed is how often the drawing reader found the mark on the sheet (views, callouts, the parts list), shown as a check, not a count.${pending?" Some drawings are still being read, so more may appear.":""}</div>`;
+   </tbody></table>`:""}
+   ${pending?'<div class="note">Some drawings are still being read, so more may appear.</div>':""}`;
   // Keep the last "Saved ✓" / "Not saved" across redraws, for a few seconds.
   const lm=S.lastMsg;if(lm&&Date.now()<lm.until){const el=$(lm.id);if(el){el.className=lm.cls;el.innerHTML=lm.html}}
 }
