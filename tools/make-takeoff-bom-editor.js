@@ -72,6 +72,19 @@ const SHIM = `
   });
   post("takeoff:ready");                      // the parent waits for this before sending rows
 
+  // A lookup picked in a cell is saved as its bare record ID. Real records read back as
+  // {ID, display_value}; here the row IS the read-back, so it is given its name from the editor's own
+  // lookup cache. Without this the take-off stored "4111484000005482938" as the size (2026-11-24).
+  var LK = { Form_Type: "Form_Types_Report", Material_Type: "Material_Types_Report", Specification: "Material_Form_Detail_Report",
+    Material: "Beam_Channel_Tee_Lookup_Report", Component: "Project_Components", Length_INCH: "All_Length_Inch_Lookups",
+    Width_FT: "All_Plate_Standard_Sizes", Width_INCH: "All_Length_Inch_Lookups" };
+  function withLabel(k, v) {
+    if (!LK[k] || v == null || v === "" || typeof v === "object") return v;
+    var lbl = "";
+    try { var c = (typeof lookupCache !== "undefined") && lookupCache[LK[k]]; lbl = c && c.byId && c.byId[String(v)]; } catch (e) {}
+    return lbl ? { ID: String(v), display_value: String(lbl) } : v;
+  }
+
   var OK = { code: 3000, result: "success" };
   window.ZOHO = {
     CREATOR: {
@@ -92,14 +105,14 @@ const SHIM = `
         updateRecord: function (a) {
           var r = byId(a && a.id), d = (a && a.data && a.data.data) || {};
           if (!r) return Promise.reject(new Error("no such row: " + (a && a.id)));
-          for (var k in d) r[k] = d[k];
+          for (var k in d) r[k] = withLabel(k, d[k]);
           changed();
           return Promise.resolve(OK);
         },
         addRecord: function (a) {
           var d = (a && a.data && a.data.data) || {};
           var rec = { ID: "T-new-" + (++seq) };
-          for (var k in d) rec[k] = d[k];
+          for (var k in d) rec[k] = withLabel(k, d[k]);
           rows.push(rec);
           changed();
           return Promise.resolve({ code: 3000, data: rec });

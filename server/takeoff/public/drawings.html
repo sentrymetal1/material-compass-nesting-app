@@ -296,7 +296,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.12 · 2026-11-24 · inch-length slips and stainless grade flagged with one-click fixes; fixes teach the next take-off";
+const VERSION="drawings v1.13 · 2026-11-24 · flags lines whose size or shape shows a record number";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -401,6 +401,9 @@ const isDouble=r=>r&&!r.deleted&&Number(r.quantity)>0&&!r.dbl_ok&&Math.round(Num
 function flagsOf(r){const f=[],m=noteMmMismatch(r);
   if(m)f.push(`Length ${Math.round(m.row_in*10)/10}" but its note says ${m.mm} mm = ${Math.round(m.note_in*10)/10}"`);
   if(isDouble(r))f.push("May be counted twice: the Qty already covers the assemblies");
+  // A record number where a name belongs: what the BOM Editor wrote back before 2026-11-24's fix.
+  const lost=["form_type","material_type","specification","size"].filter(k=>/^\d{12,}$/.test(String(r[k]||"").trim()));
+  if(lost.length)f.push(`Its ${lost.map(k=>({form_type:"shape",material_type:"material",specification:"grade",size:"size"})[k]).join(" and ")} shows a record number, not a name — pick it again in the BOM Editor on the Material list`);
   const ni=TakeoffStore.noteIn(r);if(ni)f.push(`Length ${inStr(r.length_ft)}" but its note says ${ni.note_in}"`);
   const gm=TakeoffStore.gradeMismatch(r);if(gm)f.push(`The drawing says ${gm.drawing} stainless; this line is ${gm.line}`);
   return f}
@@ -975,6 +978,7 @@ function editorHtml(){
    ${dbl?`<div class="edflag">⚠ May be counted twice: the Qty already covers the assemblies <button data-ed="dblFix">Qty ÷ ${u}</button><button data-ed="dblKeep">Keep</button></div>`:""}
    ${ni?`<div class="edflag">⚠ Length ${esc(inStr(r.length_ft))}" but the note says ${ni.note_in}" — a conversion slip <button data-ed="useIn">Use ${ni.note_in}"</button><button data-ed="keepIn">Keep ${esc(inStr(r.length_ft))}"</button></div>`:""}
    ${gm?`<div class="edflag">⚠ The drawing says ${gm.drawing} stainless; this line is ${esc(gm.line)}. Change the spec on the Material list, or <button data-ed="gradeOk">${esc(gm.line)} is right</button></div>`:""}
+   ${flagsOf(r).filter(t=>/record number/.test(t)).map(t=>`<div class="edflag">⚠ ${esc(t)}</div>`).join("")}
    <div class="edmsg" id="edMsg"></div></div>`}
 // On a drawing where the part is printed but not taken off: add a line for it here.
 function addHtml(){

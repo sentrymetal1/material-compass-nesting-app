@@ -263,7 +263,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.130 · 2026-11-24 · Subcontractors: outside costs on top, component accordions with in/out/not-needed totals, Complete Job Breakdown, pills stay in place";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.131 · 2026-11-24 · BOM Editor edits no longer store record numbers or cut lengths to whole feet";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -3343,6 +3343,8 @@
     const frame = document.getElementById("bomEditorFrame");
     // The editor tells us when its shim is listening; only then are the rows sent.
     window.__editorRecords = arr(preview.records);
+    // What the grid was given, by row — so only what the estimator actually changed is copied back.
+    EDITOR_ORIG = {}; arr(preview.records).forEach(function(x){ EDITOR_ORIG[String(x.ID)] = JSON.parse(JSON.stringify(x)); });
     // The editor is generated into the backend's own /takeoff/ folder, so address it there rather
     // than relatively: the GitHub Pages copy of this page has no bom-editor.html beside it and the
     // frame would 404. Cross-origin is fine — the two talk over postMessage either way.
@@ -3368,10 +3370,20 @@
   // Editor records → take-off rows. Only fields the editor actually owns are copied
   // back; anything it doesn't touch (confidence, cross-check, notes, disposition) is
   // left exactly as the take-off produced it.
+  // 2026-11-24: an estimator's BOM Editor session wrote record IDs ("4111484000005482938") over sizes
+  // and forms, and cut 209.6" lengths to 17 ft with widths at 0. Two causes: a lookup picked in a cell
+  // came back as a bare ID, and Length_Nest/Width_Nest were taken back whenever present — but the grid
+  // only knows whole feet + a listed inch value, so 5.6" (no such list entry) became 0. Now a field is
+  // copied back only when it CHANGED from what the grid was given; a lookup only as its name, never an
+  // ID; a length or width only when its feet / inches cells were edited.
+  let EDITOR_ORIG = {};
+  const isRecId = function(s){ return /^\d{12,}$/.test(String(s||"").trim()); };
+  const sameLk = function(a,b){ const id=function(v){ return v&&typeof v==="object" ? String(v.ID||"") : String(v==null?"":v); }; return id(a)===id(b); };
   function applyEditorRecords(records){
     const R = loadResult();
     const rows = arr(R.rows);
-    const dv = function(v){ return (v&&typeof v==="object") ? (v.display_value||v.zc_display_value||"") : (v||""); };
+    const dv0 = function(v){ return (v&&typeof v==="object") ? (v.display_value||v.zc_display_value||"") : (v||""); };
+    const dv = function(v){ const s=String(dv0(v)); return isRecId(s)?"":s; };   // a bare ID is not a name: keep the take-off's
     const kept = [];
     records.forEach(function(rec){
       const i = Number(rec._takeoff_index);
@@ -3382,12 +3394,17 @@
       base.quantity_total = total;
       base.quantity = units>1 ? Math.round((total/units)*10000)/10000 : total;   // the editor edits the TOTAL
       base.qty_per_unit = base.quantity;
-      // Length/width come back as the editor's nest dimensions (inches) when it recomputed
-      // them; otherwise the take-off's own value stands.
-      if(rec.Length_Nest!=null && rec.Length_Nest!=="") base.length_ft = Math.round((Number(rec.Length_Nest)/12)*10000)/10000;
-      if(rec.Width_Nest!=null && rec.Width_Nest!=="")  base.width_ft  = Math.round((Number(rec.Width_Nest)/12)*10000)/10000;
-      const f=dv(rec.Form_Type), mt=dv(rec.Material_Type), sp=dv(rec.Specification), mz=dv(rec.Material),
-            cp=dv(rec.Component), dw=dv(rec.Scope_LU);
+      // Length/width: only when the estimator edited the feet or inches cells, and then from those
+      // cells (the editor's nest dimensions). Untouched, the take-off's own exact value stands.
+      const o = EDITOR_ORIG[String(rec.ID)] || null;
+      const lenEdited = !o || !sameLk(rec.Length_FT,o.Length_FT) || !sameLk(rec.Length_INCH,o.Length_INCH);
+      const widEdited = !o || !sameLk(rec.Width_FT,o.Width_FT) || !sameLk(rec.Width_INCH,o.Width_INCH);
+      if(lenEdited && rec.Length_Nest!=null && rec.Length_Nest!=="" && Number(rec.Length_Nest)>0) base.length_ft = Math.round((Number(rec.Length_Nest)/12)*10000)/10000;
+      if(widEdited && rec.Width_Nest!=null && rec.Width_Nest!=="")  base.width_ft  = Math.round((Number(rec.Width_Nest)/12)*10000)/10000;
+      // Lookups: copied back only when changed, and only as a name.
+      const ch = function(k){ return !o || !sameLk(rec[k], o[k]) ? dv(rec[k]) : ""; };
+      const f=ch("Form_Type"), mt=ch("Material_Type"), sp=ch("Specification"), mz=ch("Material"),
+            cp=ch("Component"), dw=ch("Scope_LU");
       if(f) base.form_type=f; if(mt) base.material_type=mt; if(sp) base.specification=sp;
       if(mz) base.size=mz;    if(cp) base.component=cp;     if(dw) base.source_sheet=dw;
       if(rec.BOM_Item) base.member_mark=rec.BOM_Item;
