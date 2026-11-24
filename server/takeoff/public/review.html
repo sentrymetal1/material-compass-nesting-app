@@ -437,7 +437,7 @@
                 superseded:R.superseded||[], addendum_notices:R.addendum_notices||[], addenda:R.addenda||null, out_of_scope:R.out_of_scope||[], check:R.check||null, checked_v1:!!R.checked_v1,
                 fittings_written:R.fittings_written||[], welds:R.welds||[], features:R.features||[], labor_extras:R.labor_extras||null,
                 weld_rules:R.weld_rules||[], drawing_counts:R.drawing_counts||{}, labels_at:R.labels_at||null, labor_methods:R.labor_methods||null, cost_summary:R.cost_summary||null,
-                material_confirm:R.material_confirm||null, scales:R.scales||null };   // the Drawings view's "Material confirmed" ticks and drawing scales (takeoff-store.js PKG_FIELDS)
+                material_confirm:R.material_confirm||null, scales:R.scales||null, work:R.work||null };   // work = the In house / Outside / Not needed choices (Subcontractors)   // the Drawings view's "Material confirmed" ticks and drawing scales (takeoff-store.js PKG_FIELDS)
     const body=JSON.stringify({project_id:params.project_id, package:pkg});
     const sig=pkgSig(body);
     let last=null; try{ last=localStorage.getItem(savedSigKey()); }catch(e){}

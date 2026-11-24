@@ -17,7 +17,7 @@
   const PKG_FIELDS = { rows: null, fittings: null, synopsis: null, notes: null, cost_usd: null, drawing_files: [], labor: null, quote_notes: [],
     superseded: [], addendum_notices: [], addenda: null, out_of_scope: [], check: null, checked_v1: false,
     fittings_written: [], welds: [], features: [], labor_extras: null, weld_rules: [], drawing_counts: {}, labels_at: null,
-    labor_methods: null, cost_summary: null, material_confirm: null, scales: null };
+    labor_methods: null, cost_summary: null, material_confirm: null, scales: null, work: null };
   const arr = (a) => (Array.isArray(a) ? a : []);
 
   function pkgOf(R) {
@@ -91,7 +91,10 @@
     const flush = () => { if (timer) saveNow(); };
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
     window.addEventListener("pagehide", flush);
-    return { load, read, change, saveNow, flush, channel: ch, onStatus: (f) => listeners.push(f), get status() { return status; },
+    // Is the browser copy ahead of what the project holds? (the Save chip on the Assistant)
+    function dirty() { const R = read(); if (!R) return false; let last = null; try { last = localStorage.getItem(sigKey); } catch (e) {}
+      return last !== sig(JSON.stringify({ project_id: projectId, package: pkgOf(R) })); }
+    return { load, read, change, saveNow, flush, dirty, channel: ch, onStatus: (f) => listeners.push(f), get status() { return status; },
       savedAt: () => { try { return localStorage.getItem(sigKey + "_at"); } catch (e) { return null; } } };
   }
 

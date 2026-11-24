@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="/takeoff/takeoff-store.js"></script>
+<script src="/takeoff/takeoff-store.js?v=1.11"></script>
 <!--
   DRAWING WORKSPACE (read-only). v0.4: two panes side by side, a part followed across every drawing
   it is on, and drawings where it is printed but not taken off. Step 1: The project's own drawings in the middle, the take-off
@@ -38,6 +38,10 @@ button:disabled{opacity:.5;cursor:default}
 .atabs .bd.ok{background:var(--grnbg);color:#1f6b37}.atabs .bd.warn{background:#fff1dc;color:#8a4b00}.atabs .bd.bad{background:var(--redbg);color:#a32020}
 .atabs .ask{margin-left:auto;align-self:center;min-height:34px;border:1px solid var(--brand);border-radius:8px;color:#1d4670;font-weight:600;padding:0 12px;border-bottom-width:1px}
 .atabs .ask.on{background:var(--brand);color:#fff}
+.savechip{margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;white-space:nowrap}
+.savechip.ok{color:var(--grn)}.savechip.warn{color:#a26a00}.savechip.bad{color:var(--red)}
+.savechip button{font:inherit;font-size:12px;font-weight:700;padding:3px 12px;border-radius:6px;border:1px solid #5286B4;background:#5286B4;color:#fff;cursor:pointer}
+.savechip button:disabled{opacity:.5;cursor:default}
 .stat{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 14px;background:var(--soft);border-bottom:1px solid var(--line);font-size:12.5px}
 .stat b{color:#24476b;margin-right:4px}
 .stat button{min-height:26px;border-radius:99px;padding:0 10px;font-size:12px;font-weight:600;border:1px solid}
@@ -292,7 +296,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.10 · 2026-11-24 · item numbers box the parts-list ITEM column, not a 1 inside other text";
+const VERSION="drawings v1.11 · 2026-11-24 · Save button + saved time on the status bar; Subcontractors choices saved with the take-off";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -921,6 +925,7 @@ function renderSave(s,detail){const el=$("foot");if(!el)return;
     :s==="failed"?"Not saved to the project yet"+(detail?": "+detail:"")+". Your changes are kept in this browser and save with your next change."
     :s==="full"?detail:"Changes you make here are saved to the project."}
 if(STORE)STORE.onStatus(renderSave);
+if(STORE)STORE.onStatus(()=>renderSaveChip());
 // Inches as the shop writes them: 50 3/16, 50.19, 4'-2 3/16", 4' 2-3/16.
 function parseLen(s){
   s=String(s||"").trim().replace(/[”″]/g,'"').replace(/[’′]/g,"'")
@@ -1241,7 +1246,16 @@ function renderStatus(){renderATabs();const el=$("stat");if(!el)return;if(!S.R){
     (t.fits?c(t.fitPriced?"ok":"warn",t.fitPriced?"✓ Fittings priced":t.fits+" fitting line"+(t.fits===1?"":"s")+" not priced","fittings","Price them on the Fittings tab of the Material list"):"")+
     c(t.labor?"ok":"warn",t.labor?"✓ Labor worked out":"Labor not worked out","labor")+
     c("plain","Subcontractors","subs","Work sent outside the shop: galvanizing, painting, bending and the like")+
-    c(t.left?"plain":"ok",t.left?"Quote: "+t.left+" item"+(t.left===1?"":"s")+" left":"✓ Ready to quote","quote")}
+    c(t.left?"plain":"ok",t.left?"Quote: "+t.left+" item"+(t.left===1?"":"s")+" left":"✓ Ready to quote","quote")+
+    `<span class="savechip" id="saveChip"></span>`;renderSaveChip()}
+/* SAVE (Mark 11-24: "where is there save on the take-off?"). Every change saves to the project by itself
+   (15 s after the last edit, or when the tab is closed); this shows where that stands and saves now on a click. */
+function renderSaveChip(){const el=$("saveChip");if(!el||!STORE)return;const st=STORE.status,at=STORE.savedAt(),dirty=st!=="saving"&&STORE.dirty();
+  const tm=at?new Date(at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"";
+  const txt=st==="saving"?"<span class=\"spin\"></span> Saving…":st==="failed"||st==="full"?"⚠ Not saved yet":dirty?"● Changes not saved yet":"✓ Saved"+(tm?" "+tm:"");
+  el.className="savechip "+(st==="failed"||st==="full"?"bad":dirty||st==="saving"?"warn":"ok");
+  el.innerHTML=`<span title="Every change saves to the project by itself shortly after you make it">${txt}</span><button data-go="save"${st==="saving"?" disabled":""} title="Save every change to the project now">Save</button>`}
+setInterval(renderSaveChip,5000);
 function panelTo(p){const f=$("revFrame"),sub=p==="material"&&S.msub?S.msub:"";S.msub="";
   if(!f.dataset.loaded){f.dataset.loaded="1";f.src="review.html"+withQ(sub?{panel:p,sub}:{panel:p});return}
   try{f.contentWindow.postMessage({type:"mc-panel",panel:p,sub},location.origin)}catch(e){}}
@@ -1261,6 +1275,7 @@ function setATab(t){if(!ATABS.some(a=>a[0]===t))return;S.atab=t;S.ai=false;layou
 $("atabs").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
   if(b.id==="askBtn"){S.ai=!S.ai;layout();return}setATab(b.dataset.at)});
 $("stat").addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(!b)return;const g=b.dataset.go;
+  if(g==="save"){if(STORE)STORE.saveNow().then(renderSaveChip);renderSaveChip();return}
   if(g==="next"){setATab("drawings");setTab("confirm");const n=nextTodo(act().cur);if(n>-1&&n!==act().cur){clearPart();act().open(n)}return}
   if(g==="unsorted"){setATab("drawings");setTab("confirm");const n=S.sheets.findIndex(x=>!sheetSorted(x));if(n>-1&&n!==act().cur){clearPart();act().open(n)}return}
   if(g==="fittings"){S.atab="material";S.ai=false;S.msub="fittings";layout();return}
