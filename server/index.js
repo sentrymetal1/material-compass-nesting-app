@@ -2080,7 +2080,8 @@ async function fetchShopLearning(mfg) {
   // it from a menu, which is not what it is and not how the model should apply it.
   const kind = function (r) {
     const s = String(r.Source || '').toLowerCase().trim();
-    return (s === 'instruction' || s === 'material' || s === 'fitting' || s === 'history') ? s : 'decision';
+    if (/^\[edit\] /.test(String(r.Context || ''))) return 'edit';
+    return (s === 'instruction' || s === 'material' || s === 'fitting' || s === 'history' || s === 'edit') ? s : 'decision';
   };
 
   // 1. DECISIONS — tally the human's choice per judgment call; the prevailing one is the default.
@@ -2186,6 +2187,26 @@ async function fetchShopLearning(mfg) {
     out.push("FITTING WORDING THIS SHOP HAS CORRECTED — the left side is what a take-off wrote, the right side " +
       "is what their fitting catalog calls the same thing. Use the right-hand spelling:\n" + fitting.join('\n'));
   }
+  // 6. FIXES ESTIMATORS MADE TO PAST TAKE-OFFS (Source = edit, from the Drawings view): a quantity or
+  // length the take-off got wrong, or a line it missed. These are about OTHER drawings, so — like the
+  // chat instructions above — they are never rules or numbers to copy (a "qty 1 -> 2" applied to the
+  // next job would corrupt it). They are shown as the kinds of readings to double-check. Newest first,
+  // one per part, capped.
+  const seenEd = {}, edits = [];
+  recs.filter(function (r) { return kind(r) === 'edit'; })
+    .sort(function (a, b) { return String(b.Created || '').localeCompare(String(a.Created || '')); })
+    .forEach(function (r) {
+      const ctx = String(r.Context || '').replace(/^\[edit\] /, '').trim(); const k = ctx.toLowerCase();
+      if (!ctx || seenEd[k] || edits.length >= 20) return;
+      seenEd[k] = 1;
+      edits.push('- ' + ctx + ': the take-off had ' + String(r.AI_Value || '').trim() + ', the estimator corrected it to ' + String(r.Human_Value || '').trim());
+    });
+  if (edits.length) {
+    out.push("MISTAKES ESTIMATORS HAVE CORRECTED ON THIS SHOP'S PAST TAKE-OFFS. These are from OTHER drawings: do NOT copy " +
+      "any quantity, length or part from them. Use them only to know which readings went wrong before, and check those " +
+      "readings twice on this job — the QTY column of each parts-list row (parts that come in pairs, one per end, are " +
+      "easy to under-count), and every inch-to-foot conversion (inches / 12, to 4 decimals):\n" + edits.join('\n'));
+  }
   return out.join('\n\n');
 }
 
@@ -2210,10 +2231,13 @@ app.post('/api/takeoff/learn', async (req, res) => {
         Source: String(c.source || 'decision').slice(0, 250),
         Created: now,
       };
-      try {
-        const r = await axios.post(base + '/form/Takeoff_Correction', { data }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } });
-        if (r.data && r.data.code === 3000) stored++;
-      } catch (e) { /* skip one bad row */ }
+      const post = function (d) { return axios.post(base + '/form/Takeoff_Correction', { data: d }, { headers: { ...zohoHeaders(token), 'Content-Type': 'application/json' } })
+        .then(function (r) { return !!(r.data && r.data.code === 3000); }, function () { return false; }); };
+      let ok = await post(data);
+      // An "edit" lesson (Drawings-view fix) refused — e.g. Source is a pick list without "edit" — is kept
+      // under an accepted Source with its Context tagged "[edit] ", which fetchShopLearning reads as an edit.
+      if (!ok && data.Source === 'edit') ok = await post(Object.assign({}, data, { Source: 'instruction', Context: ('[edit] ' + data.Context).slice(0, 250) }));
+      if (ok) stored++;
     }
     return res.json({ ok: true, stored: stored });
   } catch (err) {

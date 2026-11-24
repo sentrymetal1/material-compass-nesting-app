@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="/takeoff/takeoff-store.js?v=1.11"></script>
+<script src="/takeoff/takeoff-store.js?v=1.12"></script>
 <!--
   DRAWING WORKSPACE (read-only). v0.4: two panes side by side, a part followed across every drawing
   it is on, and drawings where it is printed but not taken off. Step 1: The project's own drawings in the middle, the take-off
@@ -296,7 +296,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.11 · 2026-11-24 · Save button + saved time on the status bar; Subcontractors choices saved with the take-off";
+const VERSION="drawings v1.12 · 2026-11-24 · inch-length slips and stainless grade flagged with one-click fixes; fixes teach the next take-off";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -401,6 +401,8 @@ const isDouble=r=>r&&!r.deleted&&Number(r.quantity)>0&&!r.dbl_ok&&Math.round(Num
 function flagsOf(r){const f=[],m=noteMmMismatch(r);
   if(m)f.push(`Length ${Math.round(m.row_in*10)/10}" but its note says ${m.mm} mm = ${Math.round(m.note_in*10)/10}"`);
   if(isDouble(r))f.push("May be counted twice: the Qty already covers the assemblies");
+  const ni=TakeoffStore.noteIn(r);if(ni)f.push(`Length ${inStr(r.length_ft)}" but its note says ${ni.note_in}"`);
+  const gm=TakeoffStore.gradeMismatch(r);if(gm)f.push(`The drawing says ${gm.drawing} stainless; this line is ${gm.line}`);
   return f}
 function rowMatch(r){if(S.onlyFlags&&!flagsOf(r).length)return false;if(!S.q)return true;const t=(r.member_mark+" "+r.size+" "+r.form_type+" "+r.source_sheet+" "+(r.note||"")).toLowerCase();return t.indexOf(S.q)>-1}
 function renderList(){
@@ -910,9 +912,32 @@ const fpOf=r=>TakeoffStore.fp(r);
 function applyChange(fn){if(!STORE)return"This page can't save. Reload it.";let why="";
   try{STORE.change(R=>{why=fn(R)||"";return why?false:undefined})}catch(e){why=String(e.message||e)}
   return why}
+/* LEARNING FROM FIXES (Mark 11-24: "track what went wrong … prevented the next time"). A quantity or
+   length an estimator corrects here, and a line they had to add, is sent to the shop's correction
+   store (Takeoff_Correction, Source "edit"). The next take-off for this shop is shown these as
+   MISTAKES TO DOUBLE-CHECK — never as numbers to copy (see fetchShopLearning in index.js). The value
+   recorded is always the AI's original (qty_was / length_was_ft) → the estimator's latest. */
+const LEARN_OPS={qty:1,length:1,useIn:1,useMm:1,dblFix:1,add:1,"new":1};
+function learnEdit(op,payload){
+  if(!LEARN_OPS[op]||!P.manufacturer_id)return;
+  try{const R=STORE&&STORE.read();if(!R)return;const rows=arr(R.rows);
+    const ptype=(R.synopsis&&R.synopsis.project&&R.synopsis.project.type)||"";
+    const desc=r=>[r.form_type,r.size,r.member_mark?"item "+r.member_mark:""].filter(Boolean).join(" ")+(r.note?" — "+String(r.note).slice(0,90):"");
+    let c=null;
+    if(op==="new"||op==="add"){const x=op==="new"?payload.row||{}:rows.find(y=>y&&fpOf(y)===payload.fp)||{};
+      c={context:"missed line on "+String(payload.sheet||"")+": "+desc(x),ai_value:"(no line)",human_value:"added: qty "+(op==="new"?x.quantity:payload.value)+(x.length_ft?", "+inStr(x.length_ft)+" in":"")}}
+    else{const r=rows[Number(payload.i)];if(!r)return;
+      if(op==="qty"||op==="dblFix"){if(r.qty_was==null||String(r.qty_was)===String(r.quantity))return;
+        c={context:"quantity of "+desc(r),ai_value:"qty "+r.qty_was,human_value:"qty "+r.quantity}}
+      else{if(r.length_was_ft==null||Math.abs(Number(r.length_was_ft)-Number(r.length_ft))<1e-4)return;
+        c={context:"length of "+desc(r),ai_value:inStr(r.length_was_ft)+" in",human_value:inStr(r.length_ft)+" in"+(r.length_fixed?" ("+r.length_fixed+")":"")}}}
+    if(!c)return;c.source="edit";
+    fetch(API+"/api/takeoff/learn",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({manufacturer_id:P.manufacturer_id,project_type:ptype,corrections:[c]})}).catch(()=>{})}catch(e){}}
 async function doEdit(op,payload,msgEl){
   const why=applyChange(R=>TakeoffStore.applyEdit(R,Object.assign({op},payload)));
   const r={ok:!why,why};
+  if(r.ok)learnEdit(op,payload);
   if(msgEl){msgEl.className="edmsg "+(r.ok?"ok":"bad");msgEl.textContent=r.ok?"Saved ✓":"Not saved: "+why;
     S.lastMsg={id:msgEl.id,cls:msgEl.className,html:msgEl.innerHTML,until:Date.now()+(r.ok?5000:20000)}}
   reloadTakeoff();
@@ -941,13 +966,15 @@ function inStr(ft){const L=(Number(ft)||0)*12;if(!(L>0))return"";let w=Math.floo
   if(!fr)return String(w);let n=fr,d=16;while(n%2===0){n/=2;d/=2}return w+" "+n+"/"+d}
 function editorHtml(){
   const g=S.sheets[S.selG],r=g&&g.rows[S.sel];if(!r)return"";
-  const u=Math.max(1,Math.round(Number(r.units)||1)),mm=noteMmMismatch(r),dbl=isDouble(r);
+  const u=Math.max(1,Math.round(Number(r.units)||1)),mm=noteMmMismatch(r),dbl=isDouble(r),ni=TakeoffStore.noteIn(r),gm=TakeoffStore.gradeMismatch(r);
   return `<div class="ed"><div class="edh">This line on ${esc(g.number)}</div>
    <div class="edrow"><label>Qty <input id="edQty" type="number" min="0" step="1" value="${esc(r.quantity)}"></label>${u>1?`<span class="k">× ${u} built = <b>${orderQtyOf(r)}</b></span>`:""}
    <label>Length <input id="edLen" value="${esc(inStr(r.length_ft))}" title="Inches: 50 3/16, 50.19, or 4'-2 3/16&quot;"> in</label></div>
    ${r.qty_was!=null||r.length_was_ft!=null?`<div class="k">${r.qty_was!=null?"Qty was "+esc(r.qty_was)+". ":""}${r.length_was_ft!=null?"Length was "+esc(inStr(r.length_was_ft))+" in.":""}</div>`:""}
    ${mm?`<div class="edflag">⚠ Length ${Math.round(mm.row_in*10)/10}" but the note says ${mm.mm} mm = ${Math.round(mm.note_in*10)/10}" <button data-ed="useMm">Use ${Math.round(mm.note_in*10)/10}"</button><button data-ed="keepMm">Keep ${Math.round(mm.row_in*10)/10}"</button></div>`:""}
    ${dbl?`<div class="edflag">⚠ May be counted twice: the Qty already covers the assemblies <button data-ed="dblFix">Qty ÷ ${u}</button><button data-ed="dblKeep">Keep</button></div>`:""}
+   ${ni?`<div class="edflag">⚠ Length ${esc(inStr(r.length_ft))}" but the note says ${ni.note_in}" — a conversion slip <button data-ed="useIn">Use ${ni.note_in}"</button><button data-ed="keepIn">Keep ${esc(inStr(r.length_ft))}"</button></div>`:""}
+   ${gm?`<div class="edflag">⚠ The drawing says ${gm.drawing} stainless; this line is ${esc(gm.line)}. Change the spec on the Material list, or <button data-ed="gradeOk">${esc(gm.line)} is right</button></div>`:""}
    <div class="edmsg" id="edMsg"></div></div>`}
 // On a drawing where the part is printed but not taken off: add a line for it here.
 function addHtml(){

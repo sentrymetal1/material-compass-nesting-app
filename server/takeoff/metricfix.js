@@ -116,8 +116,42 @@ function fixMetric(rows) {
         }
       }
     }
+    // 4. INCH LENGTH quoted in the note, converted wrong (2026-11-24):
+    //    a tube beam note read "209.6 LG (209.6\" = 17.42 ft)" and the row was 17.417 ft; 209.6 / 12 = 17.467.
+    //    Only a near miss (within 1%) is corrected — a farther one may be a different dimension, not a slip.
+    const Lin = Number(r.length_ft) || 0;
+    if (Lin > 0 && !mm.length) {
+      const ins = inchValues(note);
+      const exact = ins.some(function (v) { return Math.abs(Lin - v / 12) <= 0.011; });
+      if (ins.length && !exact) {
+        let best = null;
+        ins.forEach(function (v) { const c = v / 12, d = Math.abs(Lin - c) / c; if (d < 0.01 && (!best || d < best.d)) best = { v: v, d: d }; });
+        if (best) {
+          const now = Math.round(best.v / 12 * 10000) / 10000;
+          fixed.push({ what: what, field: "length_ft", was: Lin, now: now, why: best.v + "\" on the drawing = " + now.toFixed(3) + " ft (was " + Lin.toFixed(3) + ")" });
+          r.length_ft = now;
+        }
+      }
+    }
+
+    // 5. STAINLESS GRADE: the note quotes the drawing's grade (304SS) and the spec says another (316).
+    //    Flagged, not changed — the catalog may not carry that grade in that shape.
+    const gN = (note.match(/\b(304|316|321|410|430|2205)\s*L?\s*(?:SS|S\/S|STAINLESS)\b/i) || [])[1];
+    const gS = (String(r.specification || "").match(/\b(304|316|321|410|430|2205)\b/) || [])[1];
+    if (gN && gS && gN !== gS && /stainless/i.test(String(r.material_type || ""))) {
+      flagged.push({ what: what, why: "the drawing says " + gN + " stainless but the line is " + r.specification + " — change the spec, or add " + gN + " in this size to your catalog" });
+    }
   });
   return { fixed: fixed, flagged: flagged };
+}
+
+// Inch values a note quotes as lengths: 209.6", 209.6 LG, 211 LONG, 48 in. Six inches and up, so
+// thicknesses and widths ("1.5 THK", "3/8"") are left out.
+function inchValues(note) {
+  const out = [], re = /(\d{1,4}(?:\.\d+)?)\s*(?:"|″|''|in\.?(?![a-z])|LG\b|LONG\b|LENGTH\b)/gi;
+  let m;
+  while ((m = re.exec(String(note || "")))) { const v = Number(m[1]); if (v >= 6 && out.indexOf(v) < 0) out.push(v); }
+  return out;
 }
 
 // ---- THE SAME PART RAISED FROM TWO PAGES OF ONE DRAWING ----------------------------------------
@@ -161,4 +195,4 @@ function dedupeSheets(rows) {
   return removed;
 }
 
-module.exports = { fixMetric, dedupeSheets, frac16, mmValues, squareSide };
+module.exports = { fixMetric, dedupeSheets, frac16, mmValues, inchValues, squareSide };

@@ -114,6 +114,23 @@
   const isDouble = (r) => r && !r.deleted && Number(r.quantity) > 0 && !r.dbl_ok && Math.round(Number(r.units) || 1) > 1 &&
     /\(\s*\d+\s*assy|\d+\s*assy\b|assemblies\)|x\s*\d+\s*assy/i.test(String(r.note || ""));
   const units = (r) => Math.max(1, Math.round(Number(r.units) || 1));
+  // The note quotes a length in inches ("209.6 LG", "211\"") a hair off the row: a conversion slip
+  // (2026-11-24: 209.6" stored as 17.417 ft, not 17.467). Within 1% only; the server makes the same
+  // repair on new take-offs (metricfix.js rule 4) — this catches take-offs saved before it.
+  function noteIn(r) {
+    const note = String((r && r.note) || ""), L = Number(r && r.length_ft) || 0; if (!(L > 0) || r.in_ok || /\d\s*mm\b/i.test(note)) return null;
+    const ins = []; note.replace(/(\d{1,4}(?:\.\d+)?)\s*(?:"|″|in\.?(?![a-z])|LG\b|LONG\b)/gi, (_, n) => { if (Number(n) >= 6) ins.push(Number(n)); return _; });
+    if (!ins.length || ins.some((v) => Math.abs(L - v / 12) <= 0.011)) return null;
+    let best = null; ins.forEach((v) => { const d = Math.abs(L - v / 12) / (v / 12); if (d < 0.01 && (!best || d < best.d)) best = { v, d }; });
+    return best ? { note_in: best.v, row_in: L * 12 } : null;
+  }
+  // The drawing says one stainless grade (304SS) and the line carries another (316/316L).
+  function gradeMismatch(r) {
+    if (!r || r.grade_ok || !/stainless/i.test(String(r.material_type || ""))) return null;
+    const n = (String(r.note || "").match(/\b(304|316|321|410|430|2205)\s*L?\s*(?:SS|S\/S|STAINLESS)\b/i) || [])[1];
+    const sp = (String(r.specification || "").match(/\b(304|316|321|410|430|2205)\b/) || [])[1];
+    return n && sp && n !== sp ? { drawing: n, line: String(r.specification || "") } : null;
+  }
   function applyEdit(R, m) {
     const rows = arr(R.rows), i = Number(m.i), r = rows[i];
     if (m.op !== "add" && m.op !== "new" && (!r || fp(r) !== m.fp)) return "That line changed a moment ago. It has been refreshed; try again.";
@@ -129,6 +146,11 @@
       const x = noteMm(r); if (!x) return "That line is no longer flagged.";
       r.length_was_ft = r.length_ft; r.length_ft = Math.round(x.mm / 304.8 * 10000) / 10000; r.length_fixed = "note " + x.mm + " mm";
     } else if (m.op === "keepMm") r.mm_ok = true;
+    else if (m.op === "useIn") {
+      const x = noteIn(r); if (!x) return "That line is no longer flagged.";
+      r.length_was_ft = r.length_ft; r.length_ft = Math.round(x.note_in / 12 * 10000) / 10000; r.length_fixed = "note " + x.note_in + " in";
+    } else if (m.op === "keepIn") r.in_ok = true;
+    else if (m.op === "gradeOk") r.grade_ok = true;
     else if (m.op === "dblFix") {
       if (!isDouble(r)) return "That line is no longer flagged.";
       const u = units(r); r.qty_was = r.quantity; r.quantity = Math.max(1, Math.round(Number(r.quantity) / u));
@@ -170,5 +192,5 @@
     return "";
   }
 
-  window.TakeoffStore = { create, applyEdit, fp, noteMm, isDouble, sameSheet, PKG_FIELDS: Object.keys(PKG_FIELDS) };
+  window.TakeoffStore = { create, applyEdit, fp, noteMm, noteIn, gradeMismatch, isDouble, sameSheet, PKG_FIELDS: Object.keys(PKG_FIELDS) };
 })();
