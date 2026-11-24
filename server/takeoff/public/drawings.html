@@ -292,7 +292,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.8 · 2026-11-23 · part-mark reading re-asks when the server lost its queue";
+const VERSION="drawings v1.9 · 2026-11-23 · every sheet of a multi-page drawing (Sheet 1 of 4…)";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -332,7 +332,7 @@ function ftin(ft){const L=Number(ft)||0;if(!(L>0))return"";let f=Math.floor(L),i
 // One take-off, up to two drawing panes. The ACTIVE pane (the one last clicked) is the one the
 // drawing picker, the arrows, the tools and the list drive.
 const S={marks:{},mnow:"",selMark:null,sel:-1,selG:-1,R:null,head:null,files:[],map:null,stale:false,sheets:[],q:"",docs:{},panes:[],active:0,split:false,
-  tab:"confirm",tool:"pan",meas:{},lastMeas:null,cal:null,confAsk:false};
+  tab:"confirm",tool:"pan",meas:{},lastMeas:null,cal:null,confAsk:false,npages:{}};
 // This page saves the take-off itself (takeoff-store.js): the same browser copy and project save as
 // the review page, which re-reads it whenever this page changes it.
 const STORE=window.TakeoffStore?TakeoffStore.create(P.project_id,{from:"drawings"}):null;
@@ -345,7 +345,9 @@ async function loadTakeoff(){return STORE?STORE.load():null}
 /* Drawing number → {file_id, page}. The saved page map first; then a file named after the drawing. */
 function locate(num){
   const k=key(num);if(!k)return null;
-  if(S.map&&!S.stale){const s=arr(S.map.sheets).find(x=>key(x.number)===k);if(s)return{file_id:s.file_id,page:s.page||1,how:"map"}}
+  // Every page that carries the number: one drawing is often several sheets ("SHEET 1 OF 4").
+  if(S.map&&!S.stale){const ss=arr(S.map.sheets).filter(x=>key(x.number)===k);
+    if(ss.length)return{file_id:ss[0].file_id,page:ss[0].page||1,how:"map",more:ss.length>1?ss.map(s=>({file_id:s.file_id,page:s.page||1,name:s.title||""})):undefined}}
   // A file named after the drawing: "ML001-...-8065_R0-1 OF 2.pdf". A whole part of the name
   // equal to the number wins over the number merely appearing inside a longer one. A drawing
   // split over several files ("1 OF 2", "2 OF 2") keeps every part, in name order.
@@ -353,7 +355,10 @@ function locate(num){
   let hits=S.files.filter(f=>base(f).split(/[^A-Za-z0-9]+/).map(key).indexOf(k)>-1);
   if(!hits.length)hits=S.files.filter(f=>key(base(f)).indexOf(k)>-1);
   if(hits.length){hits.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
-    return{file_id:hits[0].id,page:1,how:"name",more:hits.map(f=>({file_id:f.id,page:1,name:f.name}))}}
+    // Every page of every file: a drawing's PDF often holds all its sheets (MCP-10116: one file,
+    // "SHEET 1 OF 4" … "4 OF 4", and only page 1 could be opened). Page counts come from S.npages.
+    const more=[];hits.forEach(f=>{const n=S.npages[f.id]||1;for(let i=1;i<=n;i++)more.push({file_id:f.id,page:i,name:f.name+(n>1?" · page "+i:"")})});
+    return{file_id:hits[0].id,page:1,how:"name",more}}
   return null}
 
 function buildSheets(){
@@ -543,6 +548,10 @@ class Pane{
     this.msg('<span class="spin"></span>Opening '+esc(g.number)+"…");
     try{
       const doc=await getDoc(loc.file_id);
+      // First time this file is opened: learn its page count, and if the drawing has more sheets
+      // than we knew of, re-open with the full Sheet 1…n switcher.
+      if(S.npages[loc.file_id]==null){S.npages[loc.file_id]=doc.numPages;
+        if(doc.numPages>1&&g.loc.how==="name"){g.loc=locate(g.number);if(this.cur===gi)return this.open(gi,keepView,this.part)}}
       const page=await doc.getPage(Math.min(loc.page,doc.numPages));
       if(this.cur!==gi||this.pageKey!==pk)return;
       this.page=page;this.rs=0;this.msg("");this.zoomtag.hidden=false;
@@ -1267,6 +1276,9 @@ addEventListener("message",e=>{if(e.origin!==location.origin)return;const m=e.da
   // No take-off yet: start on Setup, where the documents are placed and the take-off is run.
   if(!R){S.noTakeoff=true;$("main").classList.add("notk");$("sheet").closest(".nav").style.display="none";
     A.msg("<b>This project has no take-off yet.</b><br>Place the documents and run it on the Setup tab.");setATab("setup");return}
+  // Page counts up front on a small set, so every sheet is listed (and read for part marks) from
+  // the start. A big set learns them as each file is opened.
+  if(S.files.length&&S.files.length<=12&&!(S.map&&!S.stale))await Promise.all(S.files.map(f=>getDoc(f.id).then(d=>{S.npages[f.id]=d.numPages}).catch(()=>{})));
   S.R=R;buildSheets();renderCheck();renderList();renderNav();
   if(!S.sheets.length){A.msg("<b>The take-off has no lines to show.</b>");return}
   // Opened from a ⌖ on the review page: straight to that drawing and part. Else the first drawing.
