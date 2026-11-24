@@ -333,6 +333,14 @@ const SYNOPSIS_SCHEMA = {
                         by:   { type: "string", description: "'by others', 'other trade', 'buyout' (we supply but buy it in), or 'not shown — verify'." },
                       }, required: ["item"] } },
           notes:    { type: "string", description: "One line, only if something about this sheet's scope needs saying (e.g. 'demolition only — no new steel')." },
+          // How well the sheet could be READ (2026-11-24: an upside-down scan's QTY 2 was taken as 1 and
+          // nobody was told the read was hard). Shown to the estimator on the take-off.
+          legibility: { type: "object", description: "REQUIRED for every sheet: how well you could actually read it. Be honest — the estimator uses this to decide what to check by hand.",
+                        properties: {
+                          quality:  { type: "string", enum: ["good", "fair", "poor"], description: "'good' = every number and table cell read clearly; 'fair' = readable with effort (small text, a scan, rotated, faint) — a few values may be wrong; 'poor' = blurry, low-resolution, cut off, badly rotated/mirrored or smudged — values could not be read reliably." },
+                          problems: { type: "string", description: "What made it hard, in shop terms (e.g. 'scanned upside down; BOM text small and faint'). Empty when good." },
+                          unreadable: { type: "array", items: { type: "string" }, description: "Each specific value you could NOT read for certain, named so a person can find it (e.g. 'BOM item 1 QTY', 'item 3 width', 'detail B weld size'). Every one must also lower that row's confidence." },
+                        }, required: ["quality"] },
           // The drawing's own printed total — the check that catches a misread BOM at a glance.
           stated_weight: { type: "object", description: "The TOTAL WEIGHT printed on this drawing (title block or parts table), if any, exactly as printed. Omit if the drawing states none.",
                            properties: { value: { type: "number" }, unit: { type: "string", description: "'kg' or 'lb' — the unit the number is printed in (see synopsis.weight_unit; most drawings don't label it)." } }, required: ["value"] },
@@ -566,6 +574,10 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "synopsis.reconciliation.mismatches AND add a `decisions` entry whose first option is the BOM value. If a " +
     "BOM cell is unreadable (a poor or rotated scan), say so, set that row's confidence to 0 and raise a gap " +
     "naming the cell — never guess it.\n\n" +
+    "SAY WHEN A DRAWING IS HARD TO READ. For every sheet, fill synopsis.drawing_scope[].legibility honestly: a " +
+    "scan, a rotated or mirrored page, small or faint text, blur, low resolution, or a cut-off edge is 'fair' or " +
+    "'poor', with the problem described and every value you were not sure of listed in `unreadable`. A take-off " +
+    "that looks confident on a drawing it could barely read is worse than one that says so.\n\n" +
     "THEN RECONCILE THE LISTS AGAINST THE DRAWINGS — this is a required step, not an optional one. Work " +
     "each list against what the sheets actually show, and account for every line three ways:\n" +
     "  • in BOTH and agreeing → one row, cross_check 'both', higher confidence.\n" +

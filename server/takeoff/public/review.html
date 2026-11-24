@@ -263,7 +263,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.131 · 2026-11-24 · BOM Editor edits no longer store record numbers or cut lengths to whole feet";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.132 · 2026-11-24 · says when the AI had trouble reading a drawing";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -3815,7 +3815,7 @@
       reconCardHtml()+
       '</div>'+
 
-      '<div class="tabpane" data-tab="material">'+weightUnitNoticeHtml(R)+checkNoticeHtml(R)+qtyFixedHtml(R)+
+      '<div class="tabpane" data-tab="material">'+legibilityNoticeHtml(R)+weightUnitNoticeHtml(R)+checkNoticeHtml(R)+qtyFixedHtml(R)+
       // BOM
       '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, grouped by component → drawing</span></h2><div class="body" style="padding:0;">'+
         '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>'+(anyMulti?'Qty / unit → total':'Qty')+'</th><th>Dimensions</th><th class="num">Unit wt (lb)</th><th class="num">Total wt (lb)</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
@@ -4544,6 +4544,18 @@
   }
   // The unit the drawings print their weights in, stated plainly at the top of the BOM. Everything on
   // this page is pounds; this says what the drawings themselves use and how that was decided.
+  // Drawings the AI said it could NOT read cleanly (Mark 11-24: "if AI is having issues reading a drawing,
+  // it should say so. If the quality is poor, note it on the take off.") — from synopsis.drawing_scope[].legibility.
+  function legibilityNoticeHtml(R){
+    const hard=arr((R.synopsis||{}).drawing_scope).filter(function(d){ return d&&d.legibility&&/^(fair|poor)$/i.test(String(d.legibility.quality||"")); });
+    if(!hard.length) return "";
+    const poor=hard.some(function(d){ return /poor/i.test(d.legibility.quality); });
+    return '<div class="card" style="border-color:'+(poor?'#efb4b4':'#f1dfb0')+'"><div class="body" style="background:'+(poor?'#fdeeee':'#fff8e6')+';font-size:13px;line-height:1.5">'+
+      '<b>⚠ The AI had trouble reading '+(hard.length===1?'a drawing':hard.length+' drawings')+'. Check these values against the drawing before quoting.</b>'+
+      '<ul style="margin:4px 0 0 18px;padding:0">'+hard.map(function(d){ const L=d.legibility, u=arr(L.unreadable);
+        return '<li><b>'+esc(d.sheet||'')+'</b> — '+(/poor/i.test(L.quality)?'poor quality':'hard to read in places')+(L.problems?': '+esc(L.problems):'')+
+          (u.length?'. Not sure of: '+esc(u.join(', ')):'')+'</li>'; }).join('')+'</ul></div></div>';
+  }
   function weightUnitNoticeHtml(R){
     const wu=(R.synopsis||{}).weight_unit;
     const anyKg=arr((R.synopsis||{}).drawing_scope).some(function(d){ return d&&d.stated_weight&&/kg/i.test(String(d.stated_weight.unit||"")); });

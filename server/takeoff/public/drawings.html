@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="/takeoff/takeoff-store.js?v=1.12"></script>
+<script src="/takeoff/takeoff-store.js?v=1.14"></script>
 <!--
   DRAWING WORKSPACE (read-only). v0.4: two panes side by side, a part followed across every drawing
   it is on, and drawings where it is printed but not taken off. Step 1: The project's own drawings in the middle, the take-off
@@ -39,6 +39,7 @@ button:disabled{opacity:.5;cursor:default}
 .atabs .ask{margin-left:auto;align-self:center;min-height:34px;border:1px solid var(--brand);border-radius:8px;color:#1d4670;font-weight:600;padding:0 12px;border-bottom-width:1px}
 .atabs .ask.on{background:var(--brand);color:#fff}
 .savechip{margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;white-space:nowrap}
+.legw{margin:8px 0;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:1.4;background:var(--ylwbg);border:1px solid #f0cf94;color:#6b3d00}.legw.poor{background:var(--redbg);border-color:#efb4b4;color:#7a1a1a}
 .savechip.ok{color:var(--grn)}.savechip.warn{color:#a26a00}.savechip.bad{color:var(--red)}
 .savechip button{font:inherit;font-size:12px;font-weight:700;padding:3px 12px;border-radius:6px;border:1px solid #5286B4;background:#5286B4;color:#fff;cursor:pointer}
 .savechip button:disabled{opacity:.5;cursor:default}
@@ -296,7 +297,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.13 · 2026-11-24 · flags lines whose size or shape shows a record number";
+const VERSION="drawings v1.14 · 2026-11-24 · says when the AI had trouble reading a drawing";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -406,7 +407,11 @@ function flagsOf(r){const f=[],m=noteMmMismatch(r);
   if(lost.length)f.push(`Its ${lost.map(k=>({form_type:"shape",material_type:"material",specification:"grade",size:"size"})[k]).join(" and ")} shows a record number, not a name — pick it again in the BOM Editor on the Material list`);
   const ni=TakeoffStore.noteIn(r);if(ni)f.push(`Length ${inStr(r.length_ft)}" but its note says ${ni.note_in}"`);
   const gm=TakeoffStore.gradeMismatch(r);if(gm)f.push(`The drawing says ${gm.drawing} stainless; this line is ${gm.line}`);
+  const rd=TakeoffStore.readDoubt(S.R,r);if(rd)f.push(rdText(rd));
   return f}
+// The AI said it couldn't read this drawing (or this value) clearly.
+function rdText(rd){return (rd.what.length?"The AI wasn't sure of "+rd.what.join(", "):"The AI had trouble reading this drawing")+
+  (rd.problems?" ("+rd.problems+")":"")+". Check this line against the drawing"}
 function rowMatch(r){if(S.onlyFlags&&!flagsOf(r).length)return false;if(!S.q)return true;const t=(r.member_mark+" "+r.size+" "+r.form_type+" "+r.source_sheet+" "+(r.note||"")).toLowerCase();return t.indexOf(S.q)>-1}
 function renderList(){
   if(S.tab==="confirm")return renderConfirm();
@@ -460,6 +465,8 @@ function renderConfirm(){
   let h=`<div class="cf"><div class="cfh"><h3>${esc(g.number)}</h3><span class="t" title="${esc(g.title)}">${g.rows.length} line${g.rows.length===1?"":"s"}${lb?" · "+fmtLb(lb)+" lb":""}${g.title?" · "+esc(g.title):""}</span>
     <span class="pill ${c.state}">${c.state==="done"?"✓ Confirmed":c.state==="changed"?"Changed since confirmed":"Not confirmed"}</span></div>`;
   h+=compPickerHtml(g);
+  const lg=TakeoffStore.sheetLegibility(S.R,g.number);
+  if(lg)h+=`<div class="legw ${lg.quality}"><b>⚠ ${lg.quality==="poor"?"Poor-quality drawing":"Hard to read in places"}:</b> the AI said it had trouble reading this drawing${lg.problems?" — "+esc(lg.problems):""}.${lg.unreadable.length?" Not sure of: "+esc(lg.unreadable.join(", "))+".":""} Check ${lg.quality==="poor"?"every line":"those values"} against the drawing before confirming.</div>`;
   if(is.n){h+=`<div class="cfs">To check (${is.n})</div>`;
     is.flagged.forEach(x=>{h+=`<div class="iss bad" data-r="${x.i}" role="button" tabindex="0"><b>⚠ ${esc(x.r.member_mark||"–")}</b><span>${esc(x.f.join(" · "))}</span></div>`});
     is.missing.forEach(x=>{h+=`<div class="iss miss" data-mk="${esc(x.m)}" role="button" tabindex="0"><b>✗ ${esc(markLabel(x.m))}</b><span>Printed on this drawing (${x.n}×) with no take-off line here. Check for a missed quantity.</span></div>`})}
@@ -979,6 +986,7 @@ function editorHtml(){
    ${ni?`<div class="edflag">⚠ Length ${esc(inStr(r.length_ft))}" but the note says ${ni.note_in}" — a conversion slip <button data-ed="useIn">Use ${ni.note_in}"</button><button data-ed="keepIn">Keep ${esc(inStr(r.length_ft))}"</button></div>`:""}
    ${gm?`<div class="edflag">⚠ The drawing says ${gm.drawing} stainless; this line is ${esc(gm.line)}. Change the spec on the Material list, or <button data-ed="gradeOk">${esc(gm.line)} is right</button></div>`:""}
    ${flagsOf(r).filter(t=>/record number/.test(t)).map(t=>`<div class="edflag">⚠ ${esc(t)}</div>`).join("")}
+   ${(rd=>rd?`<div class="edflag">⚠ ${esc(rdText(rd))}. <button data-ed="readOk">Checked against the drawing</button></div>`:"")(TakeoffStore.readDoubt(S.R,r))}
    <div class="edmsg" id="edMsg"></div></div>`}
 // On a drawing where the part is printed but not taken off: add a line for it here.
 function addHtml(){
@@ -1259,7 +1267,7 @@ function takeoffState(){
   const sorted=S.sheets.filter(sheetSorted).length;
   const fits=arr(R&&R.fittings).filter(f=>f&&!f.deleted&&Number(f.quantity)>0).length,fl=(R&&R.cost_summary&&R.cost_summary.lines&&R.cost_summary.lines.fittings)||{};
   const fitPriced=fl.status==="include"&&Number(fl.total)>0;
-  return{ran:!!live.length,n,d,sorted,lines:live.length,flagged,wt,labor,left:left+(fits&&!fitPriced?1:0),fits,fitPriced}}
+  return{hard:TakeoffStore.hardSheets(R),ran:!!live.length,n,d,sorted,lines:live.length,flagged,wt,labor,left:left+(fits&&!fitPriced?1:0),fits,fitPriced}}
 function renderATabs(){const el=$("atabs");if(!el)return;const t=S.R?takeoffState():null;
   const badge={setup:t&&t.ran?["ok","✓"]:null,drawings:t&&t.n?[t.d===t.n?"ok":"warn",t.d+" of "+t.n]:null,material:t?[t.fits&&!t.fitPriced?"warn":"",t.lines+" lines"+(t.fits?" · "+t.fits+" fitting"+(t.fits===1?"":"s"):"")]:null,
     labor:t?(t.labor?["ok","✓"]:["warn","to do"]):null,subs:null,quote:t?(t.left?["warn",t.left+" left"]:["ok","ready"]):null};
@@ -1272,6 +1280,8 @@ function renderStatus(){renderATabs();const el=$("stat");if(!el)return;if(!S.R){
     (t.n?c(t.sorted===t.n?"ok":"warn",(t.sorted===t.n?"✓ ":"")+"Drawings sorted into components "+t.sorted+" of "+t.n,"unsorted","Each drawing filed under a component on the project"):"")+
     (t.n?c(t.d===t.n?"ok":"warn",(t.d===t.n?"✓ ":"")+"Material confirmed "+t.d+" of "+t.n,"next"):"")+
     (t.flagged?c("bad",t.flagged+" line"+(t.flagged===1?"":"s")+" to check","flags"):"")+
+    (t.hard.length?c(t.hard.some(h=>h.quality==="poor")?"bad":"warn",t.hard.length+" drawing"+(t.hard.length===1?"":"s")+" hard to read","flags",
+      "The AI said it had trouble reading: "+t.hard.map(h=>h.sheet+" ("+h.quality+(h.problems?", "+h.problems:"")+")").join("; ")):"")+
     (t.wt?c(t.wt.ok?"ok":"bad",t.wt.ok?"✓ Weight matches the project BOM":"Weight "+(t.wt.p>=0?"+":"")+t.wt.p.toFixed(1)+"% vs project BOM","material","Within 3% of the project BOM is a match")
       :c("warn","No project weight to check against","material"))+
     (t.fits?c(t.fitPriced?"ok":"warn",t.fitPriced?"✓ Fittings priced":t.fits+" fitting line"+(t.fits===1?"":"s")+" not priced","fittings","Price them on the Fittings tab of the Material list"):"")+

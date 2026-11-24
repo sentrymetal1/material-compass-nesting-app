@@ -515,6 +515,16 @@ async function takeoffHandler(req, res, deps) {
       credits_left: balance ? balance.credits_left : null,
       free_left: balance ? balance.free_left : null,
       parts_list: partsList,
+      // Sheets the AI says it could NOT read cleanly (scan, rotated, faint, blurry). The take-off shows
+      // these at the top so the estimator checks those values by hand instead of trusting them.
+      legibility: (function () {
+        const ds = out.synopsis && Array.isArray(out.synopsis.drawing_scope) ? out.synopsis.drawing_scope : [];
+        return ds.filter(function (d) { return d && d.legibility && /^(fair|poor)$/i.test(String(d.legibility.quality || "")); })
+          .map(function (d) {
+            return { sheet: String(d.sheet || ""), quality: String(d.legibility.quality).toLowerCase(),
+              problems: String(d.legibility.problems || ""), unreadable: Array.isArray(d.legibility.unreadable) ? d.legibility.unreadable.map(String) : [] };
+          });
+      })(),
       // How each file was read (text or drawing, what was trimmed) and how many requests it took.
       reading: docprep.summary(prepared, plan),
     });

@@ -131,6 +131,25 @@
     const sp = (String(r.specification || "").match(/\b(304|316|321|410|430|2205)\b/) || [])[1];
     return n && sp && n !== sp ? { drawing: n, line: String(r.specification || "") } : null;
   }
+  // HOW WELL THE AI COULD READ A DRAWING (Mark 11-24: "if AI is having issues reading a drawing it should
+  // say so"). The take-off reports it per sheet in synopsis.drawing_scope[].legibility; only fair/poor count.
+  function hardSheets(R) {
+    return arr(R && R.synopsis && R.synopsis.drawing_scope).filter((d) => d && d.legibility && /^(fair|poor)$/i.test(String(d.legibility.quality || "")))
+      .map((d) => ({ sheet: String(d.sheet || ""), quality: String(d.legibility.quality).toLowerCase(), problems: String(d.legibility.problems || ""),
+        unreadable: arr(d.legibility.unreadable).map(String) }));
+  }
+  function sheetLegibility(R, sheet) { return hardSheets(R).find((h) => sameSheet(h.sheet, sheet)) || null; }
+  // A line to double-check because of that: every line on a POOR sheet, or a line the AI named as unsure.
+  function readDoubt(R, r) {
+    if (!r || r.read_ok) return null;
+    const h = sheetLegibility(R, r.source_sheet); if (!h) return null;
+    const mk = String(r.member_mark || "").trim().toLowerCase();
+    const named = mk ? h.unreadable.filter((u) => { const t = u.toLowerCase(); let hit = false;
+      t.replace(/\b(?:item|mark|no\.?|#|line)\s*([a-z0-9-]+)/g, (_, n) => { if (n === mk) hit = true; return _; });
+      return hit; }) : [];
+    if (!named.length && h.quality !== "poor") return null;
+    return { quality: h.quality, problems: h.problems, what: named };
+  }
   function applyEdit(R, m) {
     const rows = arr(R.rows), i = Number(m.i), r = rows[i];
     if (m.op !== "add" && m.op !== "new" && (!r || fp(r) !== m.fp)) return "That line changed a moment ago. It has been refreshed; try again.";
@@ -151,6 +170,7 @@
       r.length_was_ft = r.length_ft; r.length_ft = Math.round(x.note_in / 12 * 10000) / 10000; r.length_fixed = "note " + x.note_in + " in";
     } else if (m.op === "keepIn") r.in_ok = true;
     else if (m.op === "gradeOk") r.grade_ok = true;
+    else if (m.op === "readOk") r.read_ok = true;
     else if (m.op === "dblFix") {
       if (!isDouble(r)) return "That line is no longer flagged.";
       const u = units(r); r.qty_was = r.quantity; r.quantity = Math.max(1, Math.round(Number(r.quantity) / u));
@@ -192,5 +212,5 @@
     return "";
   }
 
-  window.TakeoffStore = { create, applyEdit, fp, noteMm, noteIn, gradeMismatch, isDouble, sameSheet, PKG_FIELDS: Object.keys(PKG_FIELDS) };
+  window.TakeoffStore = { create, applyEdit, fp, noteMm, noteIn, gradeMismatch, hardSheets, sheetLegibility, readDoubt, isDouble, sameSheet, PKG_FIELDS: Object.keys(PKG_FIELDS) };
 })();
