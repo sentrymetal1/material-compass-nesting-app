@@ -292,7 +292,7 @@ button:disabled{opacity:.5;cursor:default}
 {
 const MC_HOST="https://material-compass-nesting-app-production.up.railway.app";
 const API=/(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname)?"":MC_HOST;
-const VERSION="drawings v1.9 · 2026-11-23 · every sheet of a multi-page drawing (Sheet 1 of 4…)";
+const VERSION="drawings v1.10 · 2026-11-24 · item numbers box the parts-list ITEM column, not a 1 inside other text";
 console.log("Material Compass "+VERSION);
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const q=new URLSearchParams(location.search);
@@ -495,12 +495,31 @@ const normMark=t=>String(t||"").toLowerCase().replace(/\|/g,"l").replace(/[^a-z0
 const keyOf=loc=>loc?loc.file_id+":"+(loc.page||1):"";
 const partsOf=g=>g&&g.loc?(g.loc.more&&g.loc.more.length?g.loc.more:[g.loc]):[];
 const baseMark=m=>{const x=String(m||"").match(/^([a-z]+\d+)[a-z]$/);return x?x[1]:""};
+// A plain-number mark (an ITEM NO. "1", a balloon "12") is only that number where it stands on its
+// own: not the 1 of 1" THICK, (1 1/2" NOMINAL) or 1 1/8" WIDE (Mark 11-24, MCP-10116). So the word
+// must be just the number (a balloon may read "(1)"), with no non-number word right beside it on
+// its line. A row of balloons (2)(3)(4) is numbers beside numbers, so it still counts.
+const NUMW=/^\(?\d+\)?\.?$/;
+function standsAlone(words,w){const cw=w[3]/Math.max(1,String(w[0]).trim().length),cy=w[2]+w[4]/2;
+  return !words.some(o=>o!==w&&Math.abs(o[2]+o[4]/2-cy)<w[4]*0.6&&Math.max(o[1]-(w[1]+w[3]),w[1]-(o[1]+o[3]))<cw*2.5&&!NUMW.test(String(o[0]).trim()))}
+// The parts list's ITEM column: its numbers are the item's own row, so they come first. The other
+// numbers on those rows (QTY, a size) are cells, not marks; nor are the sheet-border grid numbers.
+function itemCol(words){const hd=words.find(w=>/^item$/i.test(String(w[0]).replace(/[^a-z]/gi,"")));if(!hd)return null;
+  const inCol=w=>{const cx=w[1]+w[3]/2;return w[2]>hd[2]&&cx>hd[1]-hd[3]*0.15&&cx<hd[1]+hd[3]*1.9};
+  const rows=words.filter(w=>inCol(w)&&/^\d+$/.test(w[0]));
+  const onRow=w=>!inCol(w)&&w[1]>hd[1]&&w[1]<hd[1]+hd[3]*35&&rows.some(c=>Math.abs(c[2]+c[4]/2-(w[2]+w[4]/2))<c[4]*0.7);
+  return{inCol,onRow}}
+function matchWords(words,m){
+  if(!/^\d+$/.test(m))return words.filter(w=>normMark(w[0])===m);
+  const ic=words._ic===undefined?(words._ic=itemCol(words)):words._ic;
+  const hits=words.filter(w=>NUMW.test(String(w[0]).trim())&&normMark(w[0])===m&&w[2]>0.03&&w[2]+w[4]<0.97&&standsAlone(words,w)&&!(ic&&ic.onRow(w)));
+  return ic?hits.filter(ic.inCol).concat(hits.filter(w=>!ic.inCol(w))):hits}
 function hitsOn(k,m){const e=S.marks[k];if(!e||!e.words||!m)return[];
-  const exact=e.words.filter(w=>normMark(w[0])===m);if(exact.length)return exact;
+  const exact=matchWords(e.words,m);if(exact.length)return exact;
   // The take-off sometimes adds a letter to tell two lengths of one mark apart ("p285b"); the
   // drawing prints the mark itself ("p285"). Fall back to it, and say so in the panel.
-  const base=baseMark(m);return base?e.words.filter(w=>normMark(w[0])===base):[]}
-function printedAs(k,m){const e=S.marks[k];if(!e||!e.words||!m)return"";if(e.words.some(w=>normMark(w[0])===m))return"";const b=baseMark(m);return b&&e.words.some(w=>normMark(w[0])===b)?b:""}
+  const base=baseMark(m);return base?matchWords(e.words,base):[]}
+function printedAs(k,m){const e=S.marks[k];if(!e||!e.words||!m)return"";if(matchWords(e.words,m).length)return"";const b=baseMark(m);return b&&matchWords(e.words,b).length?b:""}
 function sheetHits(g,m){let n=0,read=0;const ps=partsOf(g);ps.forEach(p=>{const e=S.marks[keyOf(p)];if(e&&e.words){read++;n+=hitsOn(keyOf(p),m).length}});return{n,read,parts:ps.length}}
 // Printed on a drawing that has no take-off line for it. The "p285b → p285" fallback is not
 // used here when the drawing has its own p285 line: that p285 is a different part.
@@ -508,8 +527,8 @@ function printedOnly(g,m){
   if(g.rows.some(r=>normMark(r.member_mark)===m))return 0;
   const b=baseMark(m);let n=0;
   partsOf(g).forEach(p=>{const e=S.marks[keyOf(p)];if(!e||!e.words)return;
-    n+=e.words.filter(w=>normMark(w[0])===m).length;
-    if(b&&!g.rows.some(r=>normMark(r.member_mark)===b))n+=e.words.filter(w=>normMark(w[0])===b).length});
+    n+=matchWords(e.words,m).length;
+    if(b&&!g.rows.some(r=>normMark(r.member_mark)===b))n+=matchWords(e.words,b).length});
   return n}
 // Every drawing the part is on: in the take-off, or printed there. Sheet order.
 function drawingsFor(m){const out=[];if(!m)return out;S.sheets.forEach((g,gi)=>{if(g.rows.some(r=>normMark(r.member_mark)===m)||printedOnly(g,m))out.push(gi)});return out}
