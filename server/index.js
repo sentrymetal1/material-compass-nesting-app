@@ -2159,12 +2159,14 @@ async function fetchShopLearning(mfg) {
   if (history.length) {
     out.push("THIS FABRICATOR'S HABITS FROM ITS OWN PAST JOBS (confirmed by the shop). Apply the ones under the project " +
       "type that matches this job; use the others only where the work is clearly the same kind. Scope habits decide what to " +
-      "include or exclude; outside costs and material prices are what this shop actually paid and quoted:\n" + history.join('\n\n'));
+      "include or exclude; outside costs and material prices are what this shop actually paid and quoted. A habit never " +
+      "changes a quantity, size, length, width or grade printed on this job's BOM:\n" + history.join('\n\n'));
   }
   if (decision.length) {
     out.push("THIS FABRICATOR'S PAST DECISIONS (apply as standing preferences): when the SAME judgment call " +
       "appears in this take-off, pre-resolve it to this shop's prior choice and set that decision's " +
-      "ai_recommendation accordingly. A repeated choice is a strong default. Their history:\n" + decision.join('\n'));
+      "ai_recommendation accordingly. A repeated choice is a strong default — but only for a question this job's BOM " +
+      "leaves open; it never overrides or fills in a BOM value (a past '11 GA' is not this job's thickness). Their history:\n" + decision.join('\n'));
   }
   // CHAT INSTRUCTIONS ARE NOT INJECTED. Nearly all of them are about ONE job — "double splice plate
   // quantities", "Replace W8 x 24 with what I gave", "yes" — and feeding them to every later take-off

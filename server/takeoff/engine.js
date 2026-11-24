@@ -550,6 +550,22 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "MATERIAL TABLE printed on a drawing itself — usually beside or above the title block, with item " +
     "numbers, marks, sizes, lengths and quantities, keyed to balloons on the view. Read every one of them " +
     "line by line. They are usually more precise than scaling a view.\n\n" +
+    // The shop's rule (2026-11-24, said more than once): the BOM IS the material list. On the tube-beam
+    // job the AI read the BOM yet still wrote 316 where it said 304SS, invented a 1/8 x 1 size from a
+    // past job's habit, and took QTY 1 for a QTY 2 line.
+    "THE BOM IS THE MATERIAL LIST — THIS RULE BEATS EVERYTHING ELSE IN THIS PROMPT, INCLUDING THE SHOP'S " +
+    "HABITS, PAST DECISIONS AND CORRECTIONS GIVEN LATER. When the package has a bill of material / parts list " +
+    "/ material table, every row comes from it, and every value is copied EXACTLY as printed on that line: " +
+    "QTY (read the QTY cell of every line — never assume 1), size, length, width, thickness and grade. " +
+    "Convert units exactly (inches / 12, to 4 decimals) — never round a printed length. Do NOT substitute a " +
+    "different grade, size or material because it is in the catalog, is a 'placeholder', or a past job did " +
+    "it that way: 304SS on the BOM means a 304 spec in the take-off; if the catalog has no entry for that " +
+    "exact grade, leave the specification blank and raise a gap. A dimension the BOM does not give stays " +
+    "BLANK with a gap — never fill it from a shop habit or a guess. If the drawing/detail disagrees with the " +
+    "BOM, KEEP THE BOM VALUE in the row and ask the estimator to confirm it: record both values in " +
+    "synopsis.reconciliation.mismatches AND add a `decisions` entry whose first option is the BOM value. If a " +
+    "BOM cell is unreadable (a poor or rotated scan), say so, set that row's confidence to 0 and raise a gap " +
+    "naming the cell — never guess it.\n\n" +
     "THEN RECONCILE THE LISTS AGAINST THE DRAWINGS — this is a required step, not an optional one. Work " +
     "each list against what the sheets actually show, and account for every line three ways:\n" +
     "  • in BOTH and agreeing → one row, cross_check 'both', higher confidence.\n" +
@@ -558,9 +574,9 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
     "  • DRAWN or scheduled but MISSING from the list → add the row, cross_check 'drawing_only', and record " +
     "it in synopsis.reconciliation.only_on_drawings. This is the most valuable thing you can find — an " +
     "omission from the shop's own list becomes missing steel on the floor.\n" +
-    "  • they DISAGREE on quantity, length, size, grade or finish → ONE row using the value you judge " +
-    "correct (default to the list for count and length, the drawing for how the member is used), " +
-    "cross_check 'corrected', and record both values in synopsis.reconciliation.mismatches.\n" +
+    "  • they DISAGREE on quantity, length, size, grade or finish → ONE row carrying the LIST's value " +
+    "(the drawing only tells you how the member is used), cross_check 'corrected', both values in " +
+    "synopsis.reconciliation.mismatches, and a `decisions` entry so the estimator confirms which is right.\n" +
     "NEVER DOUBLE-COUNT: a member that is both listed and drawn is ONE row, never two. If the package has " +
     "no list of any kind, set reconciliation.performed=false and use cross_check 'no_list' — do not " +
     "pretend a check happened.\n\n" +
@@ -645,7 +661,14 @@ function systemBlocks(includeSynopsis, shopLearning, universalKnowledge, project
   // This project's pre-defined components + drawings — per-project, NOT cached.
   if (projectContext && String(projectContext).trim()) blocks.push({ type: "text", text: String(projectContext) });
   // Per-shop learning (Tier 3) — injected, NOT cached (varies per manufacturer).
-  if (shopLearning && String(shopLearning).trim()) blocks.push({ type: "text", text: String(shopLearning) });
+  if (shopLearning && String(shopLearning).trim()) {
+    blocks.push({ type: "text", text: String(shopLearning) });
+    // Last word, after the shop's habits: they apply to judgment calls, never to a value the BOM prints.
+    blocks.push({ type: "text", text: "REMINDER — THE BOM COMES FIRST. Nothing above (habits, past decisions, re-spellings, " +
+      "corrections) may change a quantity, size, length, width or grade printed on this job's bill of material. Use them " +
+      "only where the BOM is silent, and even then a missing dimension stays blank with a gap. Re-spellings change only " +
+      "how a size is WRITTEN, never which steel it is." });
+  }
   return blocks;
 }
 
