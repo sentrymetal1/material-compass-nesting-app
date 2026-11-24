@@ -200,6 +200,20 @@
   tr.out-more td{padding:8px 6px;font-size:12px;color:var(--mut);cursor:pointer;border-bottom:0;}
   tr.out-more td:hover{color:var(--blue);}
   .wk-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:4px 0 6px;border-bottom:1px solid #e3e8ef;}
+  details.wk-sec > summary.wk-top{cursor:pointer;list-style:none;border-bottom:0;padding:6px 0;}
+  details.wk-sec > summary.wk-top::-webkit-details-marker{display:none;}
+  details.wk-sec[open] > summary.wk-top{border-bottom:1px solid #e3e8ef;}
+  details.wk-sec > summary .wk-car{display:inline-block;width:12px;color:var(--mut);transition:transform .15s;}
+  details.wk-sec[open] > summary .wk-car{transform:rotate(90deg);}
+  details.wk-sec > summary:hover b{color:var(--blue);}
+  .wk-chips{display:inline-flex;gap:6px;flex-wrap:wrap;}
+  .wk-chip{font-size:11.5px;padding:1px 8px;border:1px solid;border-radius:999px;}
+  .wk-chip.in{background:#e7f6ec;color:#1e7b3c;border-color:#9ad3ad;}
+  .wk-chip.out{background:#e8f0fb;color:#1f5fa8;border-color:#9fbde6;}
+  .wk-chip.no{background:#f1f3f5;color:#7a8692;border-color:#d5dbe1;}
+  /* Subcontractors: the outside-costs card first, the work under it (Mark 11-24) */
+  html.pm-subs #wrap{display:flex;flex-direction:column;}
+  html.pm-subs #wrap > .tabpane[data-tab="summary"]{order:-1;}
   table.wk{table-layout:fixed;width:100%;}
   table.wk th{font-size:11px;padding:6px 6px 4px;}
   tr.wk-h td{padding:8px 6px 1px;font-size:12.5px;border-bottom:0;}
@@ -249,7 +263,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.129 · 2026-11-24 · Subcontractors: labor refreshes after drawings are filed; tidier Work and Outside costs layout";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.130 · 2026-11-24 · Subcontractors: outside costs on top, component accordions with in/out/not-needed totals, Complete Job Breakdown, pills stay in place";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1159,7 +1173,12 @@
     const all=arr(c.items).concat(arr(c.parked)), by={}, order=[];
     all.forEach(function(i){ if(i.entered||!i.op) return; if(!by[i.op]){ by[i.op]=[]; order.push(i.op); } by[i.op].push(i); });
     const rank=function(op){ return /^rail:/.test(op)?0:op.indexOf("member_")===0?1:op.indexOf("plate_")===0?2:op.indexOf("weld")===0||op==="fitting_welds"?3:op.indexOf("feat_")===0?4:5; };
-    order.sort(function(a,b){ return rank(a)-rank(b); });
+    // A pill click parks a line (Outside / Not needed), which used to drop the work to the bottom of
+    // its list (Mark 11-24). The order is fixed once per component and kept on it, so work stays put.
+    if(!Array.isArray(c.op_order)) c.op_order=order.slice();
+    order.forEach(function(op){ if(c.op_order.indexOf(op)<0) c.op_order.push(op); });
+    const pos=function(op){ return c.op_order.indexOf(op); };
+    order.sort(function(a,b){ return rank(a)-rank(b) || pos(a)-pos(b); });
     return order.map(function(op){ const its=by[op];
       const units={}; its.forEach(function(i){ units[i.unit_label||""]=1; });
       const one=Object.keys(units).length===1 && its.every(function(i){ return Number(i.auto_qty!=null?i.auto_qty:i.qty)>0; });
@@ -1221,6 +1240,7 @@
   // components, so every hour sits under "(no component)". With nothing typed by hand to lose, work it
   // out again straight away; otherwise say so where the hours are shown, with the button.
   let LAB_AUTO_SIG="";
+  const WK_OPEN={};   // which component accordions on the Work card are open, kept across redraws
   function labStaleHtml(R){
     const L=R.labor; if(!L || R.__demo) return "";
     const sig=labSig(R); if(L.sig===sig) return "";
@@ -1344,16 +1364,27 @@
       const ch=W[wKey(c.name)]||{}, groups=workGroups(c);
       const tot=labComp(c), entered=arr(c.items).map(function(it,ii){ return [it,ii]; }).filter(function(x){ return x[0].entered; });
       const cLb=c.name==="Whole job"?jobLb:(Number(c.tons)||0)*2000, cFt=c.rail?Number(c.rail.total_ft)||0:0;
-      html+='<div class="wk-sec"><div class="wk-top"><b style="font-size:15px">'+esc(c.name)+'</b>'+
-        (c.rail?'<span class="src">'+labFmt(c.rail.total_ft,0)+' ft of rail</span>':'')+
+      // Accordion (Mark 11-24): the heading carries the component's totals — weight, hours, and how
+      // much of it is in house, sent outside, or not needed — so it reads closed.
+      const split={in:0,out:0,no:0};
+      groups.forEach(function(g){ const w=(ch[g.op]||{}).where||"in"; split[w]=(split[w]||0)+(Number(g.hours)||0); });
+      entered.forEach(function(x){ split.in+=Number(x[0].hours)||0; });
+      const nm=c.name==="Whole job"?"Complete Job Breakdown":c.name, open=WK_OPEN[ci]===true;
+      const e0=workEq(tot,labDollars(arr(c.items)),cFt,cLb);
+      const chip=function(cls,lbl,h){ return h>0.05?'<span class="wk-chip '+cls+'">'+lbl+' <b>'+labFmt(h,1)+' h</b></span>':''; };
+      html+='<details class="wk-sec"'+(open?' open':'')+' ontoggle="WK_OPEN['+ci+']=this.open"><summary class="wk-top">'+
+        '<span class="wk-car">▸</span><b style="font-size:15px">'+esc(nm)+'</b>'+
+        (cLb>0?'<span class="src" style="font-size:12px">'+Math.round(cLb).toLocaleString()+' lb · '+labFmt(cLb/2000,2)+' t</span>':'')+
+        (c.rail?'<span class="src" style="font-size:12px">'+labFmt(c.rail.total_ft,0)+' ft of rail</span>':'')+
+        '<span class="wk-chips">'+chip("in","In house",split.in)+chip("out","Outside",split.out)+chip("no","Not needed",split.no)+'</span>'+
+        '<span style="margin-left:auto;font-weight:700;font-size:15px">'+labFmt(tot,1)+' h</span>'+
+        '<span class="src" style="font-size:12px" title="The same hours per foot of rail, per hundredweight, and as labor $ per lb at your shop rates">'+
+          (cFt>0?e0.ft+' hr/ft · ':'')+e0.cwt+' hr/cwt · '+e0.lb+'/lb</span></summary>';
+      html+='<div class="wk-top" style="border-bottom:0;padding-top:6px">'+
         (c.name!=="Whole job" && typeof RailPricing!=="undefined"
           ? '<span style="font-size:12px">Priced: '+
               '<span onclick="'+(c.rail?'':'railMode('+ci+',\'per_ft\')')+'" style="cursor:pointer;padding:1px 8px;border:1px solid '+(c.rail?'#1f5fa8':'#d5dbe1')+';border-radius:999px;'+(c.rail?'background:#e8f0fb;color:#1f5fa8;font-weight:600':'color:#7a8692')+'">per foot of rail</span> '+
-              '<span onclick="'+(c.rail?'railMode('+ci+',\'member\')':'')+'" style="cursor:pointer;padding:1px 8px;border:1px solid '+(!c.rail?'#1f5fa8':'#d5dbe1')+';border-radius:999px;'+(!c.rail?'background:#e8f0fb;color:#1f5fa8;font-weight:600':'color:#7a8692')+'">piece by piece</span></span>' : '')+
-        (function(){ const e=workEq(tot,labDollars(arr(c.items)),cFt,cLb);
-          return '<span style="margin-left:auto;font-weight:700">'+labFmt(tot,1)+' h</span>'+
-            '<span class="src" style="font-size:12px" title="The same hours per foot of rail, per hundredweight, and as labor $ per lb at your shop rates">'+
-              (cFt>0?e.ft+' hr/ft · ':'')+e.cwt+' hr/cwt · '+e.lb+'/lb</span>'; })()+'</div>';
+              '<span onclick="'+(c.rail?'railMode('+ci+',\'member\')':'')+'" style="cursor:pointer;padding:1px 8px;border:1px solid '+(!c.rail?'#1f5fa8':'#d5dbe1')+';border-radius:999px;'+(!c.rail?'background:#e8f0fb;color:#1f5fa8;font-weight:600':'color:#7a8692')+'">piece by piece</span></span>' : '')+'</div>';
       // Same fixed columns in every component (and Whole job), so the numbers line up down the page.
       // Hrs / ft only where there is rail to divide by.
       const NC=cFt>0?8:7;
@@ -1400,7 +1431,7 @@
           '<td style="text-align:right"><button class="applybtn" style="background:#c0392b;padding:1px 7px" title="Remove" onclick="laborDelItem('+ci+','+ii+')">✕</button></td></tr>'; });
       html+='<tr><td colspan="'+NC+'" style="padding-top:6px;border-bottom:0"><span class="pillbtn" style="margin-left:0" onclick="workAddLine('+ci+')">+ add work</span></td></tr></tbody></table></div>';
       if(c.rail) html+='<table style="margin-top:2px"><tbody>'+railHtml(R,c,ci)+'</tbody></table>';
-      html+='</div>';
+      html+='</details>';
     });
     html+='<div class="src" style="margin-top:8px;font-size:12px">Your standards live in '+
       '<a href="'+escAttr(setupUrl)+'" target="_blank" style="color:var(--blue);font-weight:600;text-decoration:none">Shop labor setup ↗</a>. A rate changed here is for this job only, unless you click ★ my standard.</div>';
