@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <script src="/takeoff/mc-token.js"></script>
+<script src="/takeoff/mc-shell.js?v=1"></script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Set up your shop</title>
@@ -51,8 +52,8 @@
   <div class="card" id="card">
     <div class="head">
       <h1 id="title">Set up your shop</h1>
-      <div class="small">Do these once, and your first project needs almost no typing. Each step opens in a new tab;
-        come back here and this list updates itself. Anything can be skipped and finished later.</div>
+      <div class="small">Do these once, and your first project needs almost no typing. Each step opens right here;
+        use <b>← Back to shop setup</b> to return and this list updates itself. Anything can be skipped and finished later.</div>
       <div class="prog"><div class="bar"><i id="fill" style="width:0"></i></div><b id="count" style="font-size:13px"></b></div>
     </div>
     <div id="steps"><div class="step small">Checking your shop…</div></div>
@@ -61,7 +62,7 @@
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.2 · 2026-11-21 · Clients page";
+const VERSION = "v0.3 · 2026-11-27 · steps open in place";
 document.getElementById("ver").textContent = VERSION;
 const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
 const $ = (id) => document.getElementById(id);
@@ -71,7 +72,9 @@ let DATA = null, loading = false;
 const ICON = { done: "✓", partial: "!", todo: "", skip: "–", unknown: "?" };
 function btn(a, ghost) {
   if (!a || !a.url) return "";
-  return '<a class="btn' + (ghost ? " ghost" : "") + '" href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a.label) + "</a>";
+  // Our own pages open right here (with "← Back to shop setup"); portal pages take the whole window.
+  const href = a.portal || !/^\/takeoff\//.test(a.url) ? a.url : a.url + (a.url.indexOf("?") > -1 ? "&" : "?") + "from=setup";
+  return '<a class="btn' + (ghost ? " ghost" : "") + '" href="' + esc(href) + '"' + (href === a.url ? ' target="_top"' : "") + ">" + esc(a.label) + "</a>";
 }
 function render() {
   const d = DATA;

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <script src="/takeoff/mc-token.js"></script>
+  <script src="/takeoff/mc-shell.js?v=1" data-embed="off"></script>
   <script src="/takeoff/weld-rules.js"></script>
   <script src="/takeoff/rail-pricing.js"></script>
   <script src="/takeoff/outside-types.js"></script>
@@ -263,7 +264,7 @@
   // the absolute host is only needed by the GitHub Pages copy.
   const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
   const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
-  const VERSION = "v0.132 · 2026-11-24 · says when the AI had trouble reading a drawing";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.133 · 2026-11-27 · Shop labor setup opens over the page, not a new tab";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -1038,7 +1039,7 @@
     const L=R.labor;
     const setupUrl=RAILWAY_URL+"/takeoff/labor-setup.html?manufacturer_id="+encodeURIComponent(params.manufacturer_id||"")+
       (window.MC_TOKEN?"&t="+encodeURIComponent(window.MC_TOKEN):"");
-    const setupLink='<a href="'+escAttr(setupUrl)+'" target="_blank" style="color:var(--blue);font-weight:600;text-decoration:none">Shop labor setup ↗</a>';
+    const setupLink='<a href="'+escAttr(setupUrl)+'" data-mc-panel="Shop labor setup" style="color:var(--blue);font-weight:600;text-decoration:none">Shop labor setup</a>';
     const head='<div class="card" id="laborCard"><h2>⏱ Shop labor <span class="lt">— job, component and item hours, linked</span></h2><div class="body">';
     if(!L){
       // First sight of a take-off with no labor yet: work it out once. The flag goes up before
@@ -1434,7 +1435,7 @@
       html+='</details>';
     });
     html+='<div class="src" style="margin-top:8px;font-size:12px">Your standards live in '+
-      '<a href="'+escAttr(setupUrl)+'" target="_blank" style="color:var(--blue);font-weight:600;text-decoration:none">Shop labor setup ↗</a>. A rate changed here is for this job only, unless you click ★ my standard.</div>';
+      '<a href="'+escAttr(setupUrl)+'" data-mc-panel="Shop labor setup" style="color:var(--blue);font-weight:600;text-decoration:none">Shop labor setup</a>. A rate changed here is for this job only, unless you click ★ my standard.</div>';
     return html+'</div></div>';
   }
 
@@ -1461,6 +1462,11 @@
       .then(function(j){ if(j&&j.ok){ SUM_RATES=j; } else SUM_RATES_ERR=(j&&j.error)||"could not read labor rates"; render(); })
       .catch(function(e){ SUM_RATES_ERR=e.message; render(); });
   }
+  // Shop labor setup opens over this page (mc-shell.js panel): when it closes, read the rates again.
+  window.addEventListener("mc-panel-closed",function(e){
+    if(!/labor-setup\.html/.test((e.detail&&e.detail.url)||"")) return;
+    SUM_RATES_ASKED=false; SUM_RATES_ERR=""; sumLoadRates();
+  });
   function sumState(R){ const s=R.cost_summary&&typeof R.cost_summary==="object"?R.cost_summary:{}; s.lines=s.lines||{}; s.mat_rate=s.mat_rate||{}; s.lab_rate=s.lab_rate||{}; return s; }
   // MARKUP (Mark 2026-11-12: "I would like to show mark-up on the AI Take-Off. But the final quote and
   // submittal goes to the project page"). One % for the job; Material, Shop labor and Outside costs
