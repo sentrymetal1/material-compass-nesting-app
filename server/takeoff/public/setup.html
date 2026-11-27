@@ -62,7 +62,7 @@
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.4 · 2026-11-27 · Company profile button fixed";
+const VERSION = "v0.5 · 2026-11-27 · Company profile button lives on the portal page";
 document.getElementById("ver").textContent = VERSION;
 const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
 const $ = (id) => document.getElementById(id);
@@ -70,8 +70,12 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": 
 let DATA = null, loading = false;
 
 const ICON = { done: "✓", partial: "!", todo: "", skip: "–", unknown: "?" };
+// zl=1: the Zoho page around this frame shows its own Company profile button (Zoho does not let a
+// frame move the whole window, so a portal link in here could only open a new tab).
+const ZL = new URLSearchParams(location.search).get("zl") === "1" && window.top !== window;
 function btn(a, ghost) {
   if (!a || !a.url) return "";
+  if (a.portal && ZL) return '<span class="soon">Use Company profile above ↑</span>';
   // Our own pages open right here (with "← Back to shop setup"); portal pages take the whole window.
   const href = a.portal || !/^\/takeoff\//.test(a.url) ? a.url : a.url + (a.url.indexOf("?") > -1 ? "&" : "?") + "from=setup";
   return '<a class="btn' + (ghost ? " ghost" : "") + '" href="' + esc(href) + '"' + (href === a.url ? ' target="_top" data-portal="1"' : "") + ">" + esc(a.label) + "</a>";
@@ -118,7 +122,8 @@ function render() {
   const r = $("ready");
   r.className = "ready" + (d.ready ? "" : " no");
   r.innerHTML = d.ready
-    ? '<div style="flex:1"><b>You\'re ready to quote.</b><div class="small">Your profile and clients are in. Steps not done yet can be finished any time from here.</div></div><a class="btn" href="' + esc(d.first_project) + '" target="_top" data-portal="1">Start your first project →</a>'
+    ? '<div style="flex:1"><b>You\'re ready to quote.</b><div class="small">Your profile and clients are in. Steps not done yet can be finished any time from here.</div></div>' +
+      (ZL ? '<span class="soon">Start your first project from Dashboard above ↑</span>' : '<a class="btn" href="' + esc(d.first_project) + '" target="_top" data-portal="1">Start your first project →</a>')
     : '<div class="small" style="flex:1">Finish (or skip) the steps marked <b>needed to quote</b> to start your first project.</div>';
 }
 async function load() {
