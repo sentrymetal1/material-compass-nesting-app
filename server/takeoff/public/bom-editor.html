@@ -628,7 +628,7 @@
 <div id="bom-table" style="display:none;"></div>
 
 <div class="footer-note">
-  <span id="build-tag-display">v2.27.0</span> — Tab now always moves to the next editable cell and commits what you picked or typed (dropdowns used to swallow it). New rows get their line number as the Tag. The # column shows in full and can be dragged wider. v2.26.1: blank rows you add are caught on Save or Back to Project.
+  <span id="build-tag-display">v2.27.0</span> — Inch and plate-width lists are in size order. Tab now always moves to the next editable cell and commits what you picked or typed (dropdowns used to swallow it). New rows get their line number as the Tag. The # column shows in full and can be dragged wider. v2.26.1: blank rows you add are caught on Save or Back to Project.
 </div>
 
 <div id="toast" class="toast"></div>
@@ -651,7 +651,7 @@
 </div>
 
 <script>
-const BUILD_TAG = "v2.28.3 (2026-11-27)";
+const BUILD_TAG = "v2.28.4 (2026-11-27)";
 console.log('[BOM Editor] build:', BUILD_TAG);
 // The footer used to carry its own hardcoded version and drifted two releases
 // behind BUILD_TAG, which reads as "the deploy didn't work". Drive it from the
@@ -1549,12 +1549,25 @@ async function loadOneLookup(reportName) {
   cache.recordsById  = {};  // Full Zoho record kept by ID so we can read numeric fields like Result / Width
   for (const r of rows) {
     const id  = String(r.ID);
-    const lbl = String(r[displayField] ?? '');
+    let lbl = String(r[displayField] ?? '');
+    // Some inch records end in " and some don't (11-1/16" next to 11-3/4); the column already says INCH.
+    if (reportName === LOOKUP_INCH) lbl = lbl.replace(/\s*"+\s*$/, '');
     cache.byId[id] = lbl;
     cache.recordsById[id] = r;
     cache.optionsList.push({label: lbl, value: id});
   }
-  cache.optionsList.sort((a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
+  // Inch and plate-width lists go in size order (2-1/8, 2-1/4, 2-3/8, 2-1/2…), not alphabetical
+  // (2-1/2, 2-1/4, 2-1/8…). Other lookups stay alphabetical.
+  const sizeOf = (o) => {
+    const r = cache.recordsById[o.value] || {};
+    const n = parseFloat(reportName === LOOKUP_INCH ? r.Result : r.Width);
+    return isFinite(n) ? n : null;
+  };
+  const bySize = rows.length && rows.every((r) => sizeOf({value: String(r.ID)}) !== null) &&
+    (reportName === LOOKUP_INCH || reportName === LOOKUP_PLATE_FT_W);
+  cache.optionsList.sort(bySize
+    ? (a, b) => sizeOf(a) - sizeOf(b)
+    : (a, b) => a.label.localeCompare(b.label, undefined, {numeric: true}));
 }
 
 // Zoho caps a page at 200, so ask for exactly 200 and keep going while pages come back full.
