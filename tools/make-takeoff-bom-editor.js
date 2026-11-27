@@ -85,6 +85,27 @@ const SHIM = `
     return lbl ? { ID: String(v), display_value: String(lbl) } : v;
   }
 
+  // The INCH and plate FT (W) pick-lists are read through getAllRecords too. Answering them with the
+  // take-off rows gave the PM a list of "1".."5" (the item numbers) with no fractions, and every length
+  // lost its inches (2026-11-24). They come from the server's catalog lists, shaped like the records.
+  var BOM_REPORT = "Project_Bill_Of_Material_Detail_Form_Report", listCache = {};
+  var LISTS = {
+    All_Length_Inch_Lookups: { url: "/api/lookups/length-inch",
+      map: function (x) { return { ID: String(x.id), Description: String(x.description || ""), Result: Number(x.result) || 0 }; } },
+    All_Plate_Standard_Sizes: { url: "/api/lookups/plate-widths",
+      map: function (x) { return { ID: String(x.id), Description: String(x.description || ""), Width: Number(x.width_ft) || 0 }; } },
+  };
+  function listRecords(name, page) {
+    var L = LISTS[name];
+    if (!L || (page && page > 1)) return Promise.resolve({ code: 3000, data: [] });
+    listCache[name] = listCache[name] || fetch(L.url).then(function (r) {
+      if (!r.ok) throw new Error("list " + name + " " + r.status);
+      return r.json();
+    }).then(function (a) { return (Array.isArray(a) ? a : []).map(L.map); })
+      .catch(function (e) { delete listCache[name]; throw e; });
+    return listCache[name].then(function (data) { return { code: 3000, data: data }; });
+  }
+
   var OK = { code: 3000, result: "success" };
   window.ZOHO = {
     CREATOR: {
@@ -98,6 +119,7 @@ const SHIM = `
         // Paged like Zoho: the editor loops while a page comes back full, so handing every
         // row back for every page would never end.
         getAllRecords: function (a) {
+          if (a && a.reportName && a.reportName !== BOM_REPORT) return listRecords(a.reportName, a.page);
           var size = (a && a.pageSize) || 200, page = (a && a.page) || 1;
           return Promise.resolve({ code: 3000, data: rows.slice((page - 1) * size, page * size) });
         },
