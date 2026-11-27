@@ -3,23 +3,23 @@
 The time sheet is a Railway page: `/takeoff/time.html` (server/labor/timeEntry.js). It writes
 Work_Order_Actual_Labor_Details_Form rows and rebuilds the WO's Actual Labor Totals record.
 
+## Page: `Time_Sheet` (2026-11-27 — opens INSIDE the portal, not a new window)
+
+Hidden page, one HTML snippet. Params `manufacturer_id`, `wo` (shop falls back to the login's shop).
+Mints the token with `thisapp.utility.mcToken(v_mfg)` and iframes
+`/takeoff/time.html?manufacturer_id=…&wo=…&t=…` (height calc(100vh - 110px)).
+
 ## Function: `OpenTimeSheet` (Workflow › Functions, Default namespace)
 
 ```
 string OpenTimeSheet(int Manufacture_ID, string WO_ID)
 {
-	mfg = Manufacture_ID.toString();
-	url = "https://material-compass-nesting-app-production.up.railway.app/takeoff/time.html?manufacturer_id=" + mfg;
+	url = "#Page:Time_Sheet?manufacturer_id=" + Manufacture_ID.toString();
 	if(WO_ID != null && WO_ID != "")
 	{
 		url = url + "&wo=" + WO_ID;
 	}
-	tok = thisapp.utility.mcToken(mfg);
-	if(tok != null && tok != "")
-	{
-		url = url + "&t=" + tok;
-	}
-	openUrl(url,"new window");
+	openUrl(url,"same window");
 	return url;
 }
 ```
