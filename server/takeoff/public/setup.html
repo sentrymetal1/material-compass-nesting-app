@@ -62,7 +62,7 @@
   <div class="ver" id="ver"></div>
 </div>
 <script>
-const VERSION = "v0.3 · 2026-11-27 · steps open in place";
+const VERSION = "v0.4 · 2026-11-27 · Company profile button fixed";
 document.getElementById("ver").textContent = VERSION;
 const MFG = new URLSearchParams(location.search).get("manufacturer_id") || "";
 const $ = (id) => document.getElementById(id);
@@ -74,8 +74,34 @@ function btn(a, ghost) {
   if (!a || !a.url) return "";
   // Our own pages open right here (with "← Back to shop setup"); portal pages take the whole window.
   const href = a.portal || !/^\/takeoff\//.test(a.url) ? a.url : a.url + (a.url.indexOf("?") > -1 ? "&" : "?") + "from=setup";
-  return '<a class="btn' + (ghost ? " ghost" : "") + '" href="' + esc(href) + '"' + (href === a.url ? ' target="_top"' : "") + ">" + esc(a.label) + "</a>";
+  return '<a class="btn' + (ghost ? " ghost" : "") + '" href="' + esc(href) + '"' + (href === a.url ? ' target="_top" data-portal="1"' : "") + ">" + esc(a.label) + "</a>";
 }
+// PORTAL LINKS (Company profile, Start your first project) leave this frame for a Zoho page.
+// 1) Use the address the user is actually on: the server's link is the customer portal domain, but
+//    the shop admin may be logged in at creator/creatorapp.zoho.com, where that domain asks to log in.
+// 2) Zoho may not let a frame move the whole window (nothing happens on click). If this page is
+//    still here shortly after asking, open the profile in a new tab instead of doing nothing.
+const CREATOR_APP_PATH = "/mark_sentrymetal/material-compass/";
+function portalHref(url) {
+  try {
+    const ao = location.ancestorOrigins, top = ao && ao.length ? ao[ao.length - 1] : "";
+    const i = url.indexOf("#");
+    if (top && i > -1 && url.indexOf(top) !== 0 && /(^|\.)zoho\.[a-z.]+$/.test(new URL(top).hostname)) return top + CREATOR_APP_PATH + url.slice(i);
+  } catch (e) {}
+  return url;
+}
+document.addEventListener("click", (e) => {
+  const a = e.target.closest && e.target.closest("a[data-portal]");
+  if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+  e.preventDefault();
+  const url = portalHref(a.getAttribute("href"));
+  if (window.top === window) { location.href = url; return; }
+  let gone = false;
+  const bye = () => { gone = true; };
+  window.addEventListener("beforeunload", bye); window.addEventListener("pagehide", bye);
+  try { window.top.location.href = url; } catch (x) { window.open(url, "_blank"); return; }
+  setTimeout(() => { if (!gone && document.visibilityState === "visible") window.open(url, "_blank"); }, 1500);
+});
 function render() {
   const d = DATA;
   $("title").textContent = "Set up " + d.shop.name;
@@ -92,7 +118,7 @@ function render() {
   const r = $("ready");
   r.className = "ready" + (d.ready ? "" : " no");
   r.innerHTML = d.ready
-    ? '<div style="flex:1"><b>You\'re ready to quote.</b><div class="small">Your profile and clients are in. Steps not done yet can be finished any time from here.</div></div><a class="btn" href="' + esc(d.first_project) + '" target="_top">Start your first project →</a>'
+    ? '<div style="flex:1"><b>You\'re ready to quote.</b><div class="small">Your profile and clients are in. Steps not done yet can be finished any time from here.</div></div><a class="btn" href="' + esc(d.first_project) + '" target="_top" data-portal="1">Start your first project →</a>'
     : '<div class="small" style="flex:1">Finish (or skip) the steps marked <b>needed to quote</b> to start your first project.</div>';
 }
 async function load() {
