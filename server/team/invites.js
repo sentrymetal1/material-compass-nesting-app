@@ -298,17 +298,8 @@ function registerTeamInvites(app, deps) {
       if (o.status === 'Cancelled') return res.json({ ok: false, error: JOIN_MSG.gone });
       if (o.status !== 'Joined') {
         await patchRep(o.id, { Invite_Status: 'Joined', ACTIVE: 'YES' });
-        // The portal holds every new login for approval (portal setting), and Deluge cannot approve
-        // one. Tell Material Compass right away so the invitee is not left waiting.
-        const shop = await shopName(inv.mfg);
-        const to = process.env.MC_APPROVALS_TO || 'admin@materialcompass.us';
-        const esc = mailer.esc;
-        mailer.send({ to, subject: 'Approve portal login: ' + o.name + ' (' + shop + ')',
-          html: '<p><b>' + esc(o.name) + '</b> (' + esc(o.email) + ') accepted an invite to <b>' + esc(shop) + '</b> as ' + esc(o.position) + '.</p>' +
-            '<p>Approve their portal sign-up request: Zoho Creator › Settings › Users &amp; Control › Portal Users › pending requests › Approve.</p>' +
-            '<p>Their rep record is already Joined / ACTIVE YES and their email is on the shop\'s login list.</p>',
-          text: o.name + ' (' + o.email + ') accepted an invite to ' + shop + '. Approve their portal sign-up request in Zoho Creator: Settings > Users & Control > Portal Users.' })
-          .catch(() => {});
+        // Saving Joined runs the Zoho workflow Grant_Login_On_Join: it adds the email to the shop's login
+        // list and gives the portal login (portal is Public, so no approval). It emails the admin if Zoho refuses.
       }
       res.json({ ok: true, email: o.email });
     } catch (e) { fail(res, e); }
