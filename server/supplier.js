@@ -17,6 +17,17 @@ const SUPPLIER_REPORT = 'Supplier_Entry_Report';
 // these API reads, so every supplier looked like it had none (2026-11-04) — even though
 // registration had created a "Headquarters/Main Location" and the main contact as a rep.
 const LOC_REPORT = 'API_Supplier_Locations';
+// Supplier_Representatives.Position is a dropdown: Zoho refuses any other value from the API
+// (3001 "Invalid column value for Position"). Keep this list equal to the field's choices.
+const SUP_REP_POSITIONS = ['Administrator', 'Inside Sales', 'Outside Sales', 'Production Manager'];
+// A refused rep save, in words the supplier can act on.
+function repSaveError(r) {
+  const m = String((r && r.message) || '');
+  if (/Position/i.test(m)) return 'Pick a position from the list.';
+  if (/Email/i.test(m)) return 'Check the email address.';
+  if (/Phone/i.test(m)) return 'Check the phone number.';
+  return 'Could not save this representative. Please try again.';
+}
 const REP_REPORT = 'API_Supplier_Representatives';
 
 // The Profile shows phones as 716-545-6465; Zoho stores them as +17165456465 (what
@@ -1726,6 +1737,7 @@ function registerSupplierRoutes(app, deps) {
           registered: rec.Registration_Date || '',
         },
         locations: (locs || []).map(l => ({ id: String(l.ID), name: l.Name_of_Location || '', phone: l.Phone_Number || '', address: addr(l.Address) })),
+        rep_positions: SUP_REP_POSITIONS,
         reps: (reps || []).map(r => ({
           id: String(r.ID), name: flatten(r.Name),
           first: (r.Name && r.Name.first_name) || '', last: (r.Name && r.Name.last_name) || '',
@@ -1879,7 +1891,7 @@ function registerSupplierRoutes(app, deps) {
     };
     if (b.location_id) data.Supplier_Locations = b.location_id;
     const r = await addRecord('Supplier_Representatives', data);
-    if (!r.ok) return res.status(502).json({ ok: false, error: 'add failed', message: r.message });
+    if (!r.ok) { console.error('[supplier-rep] add: ' + r.message); return res.status(502).json({ ok: false, error: repSaveError(r) }); }
     res.json({ ok: true, id: r.id });
   });
   app.patch('/api/supplier/me/reps/:id', withSupplier, async (req, res) => {
@@ -1892,7 +1904,7 @@ function registerSupplierRoutes(app, deps) {
     if (b.ext != null) data.Extension = b.ext;
     if (b.location_id != null) data.Supplier_Locations = b.location_id;
     const r = await patchRecord(REP_REPORT, req.params.id, data);
-    if (!r.ok) return res.status(502).json({ ok: false, error: 'update failed', message: r.message });
+    if (!r.ok) { console.error('[supplier-rep] update ' + req.params.id + ': ' + r.message); return res.status(502).json({ ok: false, error: repSaveError(r) }); }
     res.json({ ok: true });
   });
   app.delete('/api/supplier/me/reps/:id', withSupplier, async (req, res) => {

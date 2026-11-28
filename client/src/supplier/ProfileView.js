@@ -58,7 +58,7 @@ export default function ProfileView({ email }) {
         method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined,
       });
       const j = await r.json();
-      if (!r.ok || !j.ok) { mcAlert('Error: ' + (j.message || j.error || ('HTTP ' + r.status))); return; }
+      if (!r.ok || !j.ok) { mcAlert(j.error || j.message || ('HTTP ' + r.status)); return; }
       setEdit(null); setAdd(null);
       await load();
     } catch (e) { mcAlert('Error: ' + (e.message || e)); }
@@ -78,7 +78,7 @@ export default function ProfileView({ email }) {
   };
   const cancelInvite = r => mut('POST', '/reps/' + r.id + '/invite-cancel');
   const repRow = r => (edit && edit.kind === 'rep' && edit.id === r.id)
-    ? <div key={r.id} className="prof-rep"><RepForm initial={r} locations={locations} busy={busy} onCancel={() => setEdit(null)} onSave={f => mut('PATCH', '/reps/' + r.id, f)} /></div>
+    ? <div key={r.id} className="prof-rep"><RepForm initial={r} locations={locations} positions={positions} busy={busy} onCancel={() => setEdit(null)} onSave={f => mut('PATCH', '/reps/' + r.id, f)} /></div>
     : (
       <div key={r.id} className="prof-rep">
         <div className="prof-row-main"><strong>{r.name || '—'}</strong>{r.position && <span className="chip">{r.position}</span>}<LoginChip r={r} /></div>
@@ -107,6 +107,7 @@ export default function ProfileView({ email }) {
   const p = state.data.profile;
   const locations = state.data.locations || [];
   const reps = state.data.reps || [];
+  const positions = state.data.rep_positions || [];
   const matched = new Set(locations.map(l => l.id));
   const orphans = reps.filter(r => !r.location_id || !matched.has(r.location_id));
 
@@ -171,7 +172,7 @@ export default function ProfileView({ email }) {
                 {here.map(repRow)}
 
                 {add && add.kind === 'rep' && add.location_id === l.id
-                  ? <div className="prof-rep"><RepForm locations={locations} defaultLoc={l.id} busy={busy} onCancel={() => setAdd(null)} onSave={f => mut('POST', '/reps', f)} /></div>
+                  ? <div className="prof-rep"><RepForm locations={locations} positions={positions} defaultLoc={l.id} busy={busy} onCancel={() => setAdd(null)} onSave={f => mut('POST', '/reps', f)} /></div>
                   : <button className="btn-link prof-addrep" onClick={() => { setAdd({ kind: 'rep', location_id: l.id }); setEdit(null); }}>+ Add rep here</button>}
               </div>
             );
@@ -238,7 +239,7 @@ function LocForm({ initial, onSave, onCancel, busy }) {
   );
 }
 
-function RepForm({ initial, locations, defaultLoc, onSave, onCancel, busy }) {
+function RepForm({ initial, locations, positions, defaultLoc, onSave, onCancel, busy }) {
   const [f, setF] = useState({
     first: (initial && initial.first) || '', last: (initial && initial.last) || '',
     position: (initial && initial.position) || '', email: (initial && initial.email) || '',
@@ -251,7 +252,12 @@ function RepForm({ initial, locations, defaultLoc, onSave, onCancel, busy }) {
       <div className="q-grid">
         <label>First name<input value={f.first} onChange={e => s('first', e.target.value)} /></label>
         <label>Last name<input value={f.last} onChange={e => s('last', e.target.value)} /></label>
-        <label>Position<input value={f.position} onChange={e => s('position', e.target.value)} /></label>
+        <label>Position
+          <select value={f.position} onChange={e => s('position', e.target.value)}>
+            <option value="">— choose —</option>
+            {(positions || []).concat(f.position && !(positions || []).includes(f.position) ? [f.position] : []).map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </label>
         <label>Email<input type="email" value={f.email} onChange={e => s('email', e.target.value)} /></label>
         <label>Phone<input value={f.phone} onChange={e => s('phone', e.target.value)} /></label>
         <label>Ext<input value={f.ext} onChange={e => s('ext', e.target.value)} /></label>
