@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Welcome to Material Compass</title>
+<!--
+  Where the registration payment link sends a new company after paying (set in Stripe: Payment Link ›
+  After payment › redirect). Payment marks the registration Subscribed (server/billing/stripeWebhook.js)
+  and the platform then emails the admin a "Set Your Password" link; nothing to approve.
+-->
+<style>
+  :root{--blue:#5286B4;--ink:#1f2a37;--mut:#667;--grn:#2e7d32;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;background:#eef2f7;color:var(--ink);min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:48px 18px;}
+  .card{background:#fff;border:1px solid #d9e2ec;border-radius:12px;max-width:520px;width:100%;overflow:hidden;box-shadow:0 8px 30px rgba(20,30,40,.08);}
+  .hd{padding:18px 26px;display:flex;align-items:center;gap:10px;}
+  .hd img{width:42px;height:42px;}
+  .hd span{font-family:Georgia,serif;font-size:17px;letter-spacing:4px;color:var(--blue);}
+  .band{background:var(--blue);color:#fff;padding:18px 26px;}
+  .band h1{font-size:20px;margin:0;}
+  .bd{padding:22px 26px;font-size:14.5px;line-height:1.6;}
+  .ok{color:var(--grn);font-weight:700;font-size:16px;}
+  .mut{font-size:12.5px;color:var(--mut);}
+  ol{padding-left:20px;margin:8px 0 14px;} li{margin:4px 0;}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="hd"><img src="/brand/mc-compass.png" alt=""><span>MATERIAL COMPASS</span></div>
+  <div class="band"><h1>You're registered</h1></div>
+  <div class="bd">
+    <div class="ok">✓ Payment received. Thank you.</div>
+    <p><b>Next:</b></p>
+    <ol>
+      <li>Within a few minutes you'll get an email titled <b>"Your Material Compass login"</b> at the admin email you registered. Check spam or junk too, and mark it Not spam so its link works.</li>
+      <li>Click <b>Set Your Password</b>. Your password cannot contain your user name or the start of your email address.</li>
+      <li>Sign in at <a href="https://customer.materialcompassportal.com">customer.materialcompassportal.com</a> and follow the setup checklist on your dashboard.</li>
+    </ol>
+    <p class="mut">No email after 15 minutes? Write to admin@materialcompass.us with the company name you registered.</p>
+  </div>
+</div>
+</body>
+</html>

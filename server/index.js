@@ -54,6 +54,8 @@ app.use((req, res, next) => {
 });
 // AI take-off: base64 PDFs are large; must precede the 10mb global json. 200mb because a whole bid
 // package now comes in one request and is split into model-sized batches on the server (docprep.js).
+// Stripe signs the exact bytes it sends: keep this body raw (Buffer), before every JSON parser.
+app.use('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }));
 app.use('/api/takeoff', express.json({ limit: '200mb' }));
 app.use('/api/triage/manual', express.json({ limit: '40mb' })); // manual intake carries base64 photos/PDFs; same reason, same placement
 app.use('/api/files', express.json({ limit: '60mb' })); // drawings saved to the project store are base64 PDFs; same reason, same placement
@@ -4365,6 +4367,7 @@ require('./labor/laborCommit').registerLaborCommit(app, { getAccessToken, creato
 require('./subcontractors').registerSubcontractors(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages, cachedLookup });
 require('./labor/timeEntry').registerTimeEntry(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./team/invites').registerTeamInvites(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
+require('./billing/stripeWebhook').registerStripeWebhook(app, { getAccessToken, creatorApiBase, zohoHeaders });
 require('./clients/importRoutes').registerClientImport(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./clients/clientsRoutes').registerClients(app, { getAccessToken, creatorApiBase, zohoHeaders, fetchAllZohoPages });
 require('./setup/checklist').registerSetupChecklist(app, { fetchAllZohoPages });
