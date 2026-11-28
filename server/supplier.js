@@ -1707,7 +1707,14 @@ function registerSupplierRoutes(app, deps) {
         fetchAllZohoPages('/report/' + LOC_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
         fetchAllZohoPages('/report/' + REP_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')'),
       ]);
-      const rec = supRows.find(r => String(r.ID) === sid) || {};
+      let rec = supRows.find(r => String(r.ID) === sid) || {};
+      // A rep who just joined is put on the login list by Zoho a moment later; the supplier list is
+      // cached 5 min, so read it fresh while anyone is Joined but not on it yet.
+      if ((reps || []).some(r => /^joined$/i.test(String(r.Invite_Status || "")) && !emailMatches(rec.Account_User_Email, r.Email))) {
+        bust('supplier-directory');
+        const fresh = await fetchAllZohoPages('/report/' + SUPPLIER_REPORT);
+        rec = (fresh || []).find(r => String(r.ID) === sid) || rec;
+      }
       const nm = rec.Main_Contact_Name || {};
       const addr = a => (a && typeof a === 'object') ? a : {};
       // A new registration has no locations or reps yet, though registration already gave us
