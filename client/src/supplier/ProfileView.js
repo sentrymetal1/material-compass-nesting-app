@@ -255,7 +255,8 @@ function RepForm({ initial, locations, positions, defaultLoc, onSave, onCancel, 
         <label>Position
           <select value={f.position} onChange={e => s('position', e.target.value)}>
             <option value="">— choose —</option>
-            {(positions || []).concat(f.position && !(positions || []).includes(f.position) ? [f.position] : []).map(p => <option key={p} value={p}>{p}</option>)}
+            {/* Administrator is a label only (no admin rights), so new reps cannot pick it; a rep who already has it keeps it. */}
+            {(positions || []).filter(p => p !== 'Administrator' || (initial && initial.position === p)).concat(f.position && !(positions || []).includes(f.position) ? [f.position] : []).map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </label>
         <label>Email<input type="email" value={f.email} onChange={e => s('email', e.target.value)} /></label>
