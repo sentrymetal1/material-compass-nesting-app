@@ -67,9 +67,9 @@ app.use(express.json({ limit: '10mb' }));
 // the body parser and before every route, so every write passes through it.
 app.use((req, res, next) => {
   if (req.method !== 'GET' && _scopeCache.size) {
-    const ids = new Set((String(req.path).match(/d{12,25}/g) || []));
+    const ids = new Set((String(req.path).match(/\d{12,25}/g) || []));
     const b = req.body && typeof req.body === 'object' ? req.body : {};
-    ['project_id', 'projectId', 'project'].forEach((k) => { if (/^d{12,25}$/.test(String(b[k] || ''))) ids.add(String(b[k])); });
+    ['project_id', 'projectId', 'project'].forEach((k) => { if (/^\d{12,25}$/.test(String(b[k] || ''))) ids.add(String(b[k])); });
     ids.forEach((id) => _scopeCache.delete(id));
   }
   next();

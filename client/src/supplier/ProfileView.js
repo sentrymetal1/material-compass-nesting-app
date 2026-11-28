@@ -64,6 +64,37 @@ export default function ProfileView({ email }) {
     } catch (e) { mcAlert('Error: ' + (e.message || e)); }
     finally { setBusy(false); }
   };
+  // Rep logins: invite / resend / cancel. Same invite email and join page as a manufacturer's team.
+  const invite = async (r, resend) => {
+    setBusy(true);
+    try {
+      const res = await fetch('/api/supplier/me/reps/' + r.id + '/invite?email=' + encodeURIComponent(email), { method: 'POST' });
+      const j = await res.json();
+      if (!res.ok || !j.ok) { mcAlert(j.error || ('HTTP ' + res.status)); return; }
+      mcAlert((resend ? 'Invite sent again to ' : 'Invite sent to ') + j.email + '. They accept it, set a password, and can sign in.');
+      await load();
+    } catch (e) { mcAlert('Error: ' + (e.message || e)); }
+    finally { setBusy(false); }
+  };
+  const cancelInvite = r => mut('POST', '/reps/' + r.id + '/invite-cancel');
+  const repRow = r => (edit && edit.kind === 'rep' && edit.id === r.id)
+    ? <div key={r.id} className="prof-rep"><RepForm initial={r} locations={locations} busy={busy} onCancel={() => setEdit(null)} onSave={f => mut('PATCH', '/reps/' + r.id, f)} /></div>
+    : (
+      <div key={r.id} className="prof-rep">
+        <div className="prof-row-main"><strong>{r.name || '—'}</strong>{r.position && <span className="chip">{r.position}</span>}<LoginChip r={r} /></div>
+        <div className="prof-actions">
+          {contactStr(r) && <span className="muted">{contactStr(r)}</span>}
+          {!r.has_login && r.invite_status === 'Invited' && <>
+            <button className="btn-link" disabled={busy} onClick={() => invite(r, true)}>Resend invite</button>
+            <button className="btn-link" disabled={busy} onClick={() => cancelInvite(r)}>Cancel invite</button>
+          </>}
+          {!r.has_login && r.invite_status !== 'Invited' && r.invite_status !== 'Joined' &&
+            <button className="btn-link" disabled={busy || !r.email} title={r.email ? '' : 'Add their email first (Edit)'} onClick={() => invite(r, false)}>Invite to sign in</button>}
+          <button className="btn-link" onClick={() => { setEdit({ kind: 'rep', id: r.id }); setAdd(null); }}>Edit</button>
+          <button className="btn-link btn-danger" onClick={() => removeIt('rep', r.id, 'representative')}>Delete</button>
+        </div>
+      </div>
+    );
   const removeIt = (kind, id, label, note) => setConfirm({ kind, id, label, note });
   const doDelete = async () => {
     const c = confirm; setConfirm(null);
@@ -115,6 +146,7 @@ export default function ProfileView({ email }) {
           <h2>Locations &amp; representatives <span className="muted">— {locations.length} location{locations.length === 1 ? '' : 's'}, {reps.length} rep{reps.length === 1 ? '' : 's'}</span></h2>
           <button className="btn-link" onClick={() => { setAdd({ kind: 'loc' }); setEdit(null); }}>+ Add location</button>
         </div>
+        <div className="muted" style={{ fontSize: 12.5, margin: '-4px 0 10px' }}>Representatives are your contacts on quotes. To let one sign in to Material Compass, use <b>Invite to sign in</b> on their row.</div>
 
         {add && add.kind === 'loc' && (
           <LocForm busy={busy} onCancel={() => setAdd(null)} onSave={f => mut('POST', '/locations', f)} />
@@ -136,18 +168,7 @@ export default function ProfileView({ email }) {
                 </div>
                 {editingLoc && <LocForm initial={l} busy={busy} onCancel={() => setEdit(null)} onSave={f => mut('PATCH', '/locations/' + l.id, f)} />}
 
-                {here.map(r => (edit && edit.kind === 'rep' && edit.id === r.id)
-                  ? <div key={r.id} className="prof-rep"><RepForm initial={r} locations={locations} busy={busy} onCancel={() => setEdit(null)} onSave={f => mut('PATCH', '/reps/' + r.id, f)} /></div>
-                  : (
-                    <div key={r.id} className="prof-rep">
-                      <div className="prof-row-main"><strong>{r.name || '—'}</strong>{r.position && <span className="chip">{r.position}</span>}</div>
-                      <div className="prof-actions">
-                        {contactStr(r) && <span className="muted">{contactStr(r)}</span>}
-                        <button className="btn-link" onClick={() => { setEdit({ kind: 'rep', id: r.id }); setAdd(null); }}>Edit</button>
-                        <button className="btn-link btn-danger" onClick={() => removeIt('rep', r.id, 'representative')}>Delete</button>
-                      </div>
-                    </div>
-                  ))}
+                {here.map(repRow)}
 
                 {add && add.kind === 'rep' && add.location_id === l.id
                   ? <div className="prof-rep"><RepForm locations={locations} defaultLoc={l.id} busy={busy} onCancel={() => setAdd(null)} onSave={f => mut('POST', '/reps', f)} /></div>
@@ -159,18 +180,7 @@ export default function ProfileView({ email }) {
           {orphans.length > 0 && (
             <div className="prof-locgroup">
               <div className="prof-loc-head"><div className="prof-row-main"><strong>Unassigned</strong><span className="muted">no location set</span></div></div>
-              {orphans.map(r => (edit && edit.kind === 'rep' && edit.id === r.id)
-                ? <div key={r.id} className="prof-rep"><RepForm initial={r} locations={locations} busy={busy} onCancel={() => setEdit(null)} onSave={f => mut('PATCH', '/reps/' + r.id, f)} /></div>
-                : (
-                  <div key={r.id} className="prof-rep">
-                    <div className="prof-row-main"><strong>{r.name || '—'}</strong>{r.position && <span className="chip">{r.position}</span>}</div>
-                    <div className="prof-actions">
-                      {contactStr(r) && <span className="muted">{contactStr(r)}</span>}
-                      <button className="btn-link" onClick={() => { setEdit({ kind: 'rep', id: r.id }); setAdd(null); }}>Edit</button>
-                      <button className="btn-link btn-danger" onClick={() => removeIt('rep', r.id)}>Delete</button>
-                    </div>
-                  </div>
-                ))}
+              {orphans.map(repRow)}
             </div>
           )}
         </div>
@@ -190,6 +200,15 @@ export default function ProfileView({ email }) {
       )}
     </div>
   );
+}
+
+// Whether a rep can sign in. Green = on the company's login list; amber = invite out; grey = contact only.
+function LoginChip({ r }) {
+  const base = { fontSize: 11, fontWeight: 600, borderRadius: 10, padding: '2px 8px', marginLeft: 6, whiteSpace: 'nowrap' };
+  if (r.has_login) return <span style={{ ...base, background: '#e8f5e9', color: '#2e7d32' }}>Can sign in</span>;
+  if (r.invite_status === 'Invited') return <span style={{ ...base, background: '#fff7ed', color: '#b45309' }}>Invited</span>;
+  if (r.invite_status === 'Joined') return <span style={{ ...base, background: '#fff7ed', color: '#b45309' }}>Login being set up</span>;
+  return <span style={{ ...base, background: '#f1f3f6', color: '#7a8a99' }}>Contact only</span>;
 }
 
 function LocForm({ initial, onSave, onCancel, busy }) {

@@ -1733,6 +1733,10 @@ function registerSupplierRoutes(app, deps) {
           email: r.Email || '', phone: r.Phone_Number || '', ext: r.Extension || '',
           location: (r.Supplier_Locations && r.Supplier_Locations.zc_display_value) || '',
           location_id: (r.Supplier_Locations && String(r.Supplier_Locations.ID)) || '',
+          // Can sign in = their email is on this supplier's login list (Account_User_Email).
+          has_login: emailMatches(rec.Account_User_Email, r.Email),
+          invite_status: /^cancel/i.test(String(r.Invite_Status || '')) ? 'Cancelled' : String(r.Invite_Status || ''),
+          invite_sent: String(r.Invite_Sent || ''),
         })),
       });
     } catch (err) {
@@ -1895,6 +1899,56 @@ function registerSupplierRoutes(app, deps) {
     if (!(await supplierOwns(REP_REPORT, req.supplier.id, req.params.id))) return res.status(404).json({ ok: false, error: 'not found for this supplier' });
     const r = await deleteRecord(REP_REPORT, req.params.id);
     if (!r.ok) return res.status(502).json({ ok: false, error: 'delete failed', message: r.message });
+    res.json({ ok: true });
+  });
+
+  // ---- Rep logins: invite a rep to sign in (same email + join page as a manufacturer's team) ----
+  // Invite sets Invite_Status = Invited and emails a signed join link (team/invites.js, "s" + rep id).
+  // Accept on the join page sets Joined / Active YES and ticks Grant_Portal_Login, and the Zoho
+  // workflow Grant Supplier Login puts the email on Account_User_Email and grants profile "Suppliers".
+  const invites = require('./team/invites');
+  const mailer = require('./mailer');
+  const repRow = async (sid, id) => {
+    const rows = await fetchAllZohoPages('/report/' + REP_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(sid) + ')');
+    return (rows || []).find(r => String(r.ID) === String(id)) || null;
+  };
+  app.post('/api/supplier/me/reps/:id/invite', withSupplier, async (req, res) => {
+    try {
+      const sid = String(req.supplier.id);
+      const r = await repRow(sid, req.params.id);
+      if (!r) return res.status(404).json({ ok: false, error: 'That representative is not on your company. Reload the page.' });
+      const email = String(r.Email || '').trim().toLowerCase();
+      if (!invites.EMAIL_RE.test(email)) return res.status(400).json({ ok: false, error: 'Add a valid email for this representative first (Edit).' });
+      if (email.includes('+')) return res.status(400).json({ ok: false, error: 'Logins cannot use an email with a "+" in it. Edit the representative and use their regular email address.' });
+      const fresh = await fetchAllZohoPages('/report/' + SUPPLIER_REPORT);
+      const mine = (fresh || []).find(x => String(x.ID) === sid) || {};
+      if (emailMatches(mine.Account_User_Email, email)) return res.status(400).json({ ok: false, error: 'This representative can already sign in.' });
+      // One login per email across Material Compass: a second company would take over their login.
+      const elsewhere = (fresh || []).some(x => String(x.ID) !== sid && emailMatches(x.Account_User_Email, email)) ||
+        (await fetchAllZohoPages('/report/Customer_Entry_Report')).some(x => emailMatches(x.Account_User_Email, email));
+      if (elsewhere) return res.status(400).json({ ok: false, error: 'This email already signs in to another company on Material Compass. Use a different email for this representative.' });
+      const p = await patchRecord(REP_REPORT, r.ID, { Invite_Status: 'Invited', Invite_Sent: invites.zDateTime(invites.appNow()) });
+      if (!p.ok) { console.error('[supplier-invite] patch ' + r.ID + ': ' + p.message); return res.status(502).json({ ok: false, error: 'Could not save the invite. Please try again.' }); }
+      const base = process.env.PUBLIC_BASE_URL || ('https://' + req.get('host'));
+      const link = base + '/takeoff/join.html?i=' + encodeURIComponent(invites.makeJoinToken('s' + String(r.ID)));
+      const n = r.Name || {};
+      const company = mine.Company_Name || req.supplier.company_name || 'Your company';
+      const m = invites.inviteEmail(company, { first: n.first_name || flatten(r.Name) || '', email, position: r.Position || 'Sales representative' }, link, 's');
+      const msg = { to: email, subject: m.subject, html: m.html, text: m.text };
+      if (mine.Email) msg.replyTo = String(mine.Email);
+      const sent = await mailer.send(msg);
+      if (!sent.ok) return res.status(502).json({ ok: false, error: 'The invite was saved but the email did not send. Try Resend in a few minutes.' });
+      res.json({ ok: true, email });
+    } catch (err) {
+      console.error('[supplier-invite]', (err && err.response) ? JSON.stringify(err.response.data).slice(0, 400) : (err && err.message));
+      res.status(500).json({ ok: false, error: 'Something went wrong. Please try again.' });
+    }
+  });
+  app.post('/api/supplier/me/reps/:id/invite-cancel', withSupplier, async (req, res) => {
+    const r = await repRow(String(req.supplier.id), req.params.id).catch(() => null);
+    if (!r) return res.status(404).json({ ok: false, error: 'That representative is not on your company. Reload the page.' });
+    const p = await patchRecord(REP_REPORT, r.ID, { Invite_Status: 'Cancel' });
+    if (!p.ok) { console.error('[supplier-invite] cancel ' + r.ID + ': ' + p.message); return res.status(502).json({ ok: false, error: 'Could not cancel the invite. Please try again.' }); }
     res.json({ ok: true });
   });
 

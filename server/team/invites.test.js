@@ -70,3 +70,10 @@ test('default location: admin first, else any rep, else none', () => {
 test('a "+" address is refused (the portal will not accept it as a login)', () => {
   assert.match(T.checkInvite([], [], { first: 'A', last: 'B', email: 'mark+test@x.com', position: 'Estimator' }).error, /\+/);
 });
+
+test('supplier join token: s-prefixed rep id round-trips and cannot pass as a manufacturer rep', () => {
+  const t = T.makeJoinToken('s4111484000006703013');
+  assert.deepStrictEqual(T.readJoinToken(t).repId, 's4111484000006703013');
+  assert.strictEqual(T.readJoinToken(t.slice(1)).error, 'bad_signature');
+  assert.ok(T.inviteEmail('Otis Metal Supply', { first: 'Al', email: 'al@otis.example', position: 'Sales' }, 'https://x/j', 's').html.includes('quote requests from steel fabricators'));
+});

@@ -15,6 +15,12 @@
 //
 //  The join link is signed with MC_TOKEN_SECRET: <rep id>.<expiry ms>.<sig>, 14 days. It names one
 //  rep record; the email on that record is who joins.
+//
+//  SUPPLIERS use the same link and join page (2026-11-28). Their rep id carries an "s" in front
+//  (s<id>.<exp>.<sig>) and names a Supplier_Representatives row (report API_Supplier_Representatives).
+//  Invites are sent from the supplier's Profile tab (server/supplier.js). Accept sets Invite_Status =
+//  Joined, Active = YES and ticks Grant_Portal_Login; the Zoho workflow Grant Supplier Login adds the
+//  email to the supplier's Account_User_Email and gives the portal login (profile "Suppliers").
 // =============================================================================
 const axios = require('axios');
 const crypto = require('crypto');
@@ -23,6 +29,7 @@ const mailer = require('../mailer');
 const REP_REPORT = 'All_Company_Representatives';
 const REP_FORM = 'Company_Representatives';
 const MFG_REPORT = 'Customer_Entry_Report';
+const SUP_REP_REPORT = 'API_Supplier_Representatives';
 const CAP = 4;                                   // admin + 3, early access
 const INVITE_DAYS = 14;
 const POSITIONS = ['Administrator', 'Estimator', 'Project Manager', 'Purchasing', 'Production Manager', 'Accounting'];
@@ -56,6 +63,12 @@ function repOut(r) {
     invite_sent: s(r.Invite_Sent),
   };
 }
+// A supplier rep, in the shape the join routes use. Supplier reps keep Active (not ACTIVE).
+function supRepOut(r) {
+  const o = repOut(Object.assign({}, r, { ACTIVE: r.Active }));
+  o.id = 's' + o.id;
+  return o;
+}
 const secret = () => process.env.MC_TOKEN_SECRET || '';
 function sign(repId, exp) {
   const payload = 'i' + repId + '.' + exp;
@@ -69,7 +82,7 @@ function makeJoinToken(repId, now) {
 // -> { repId, exp } | { error }
 function readJoinToken(tok, now) {
   if (secret().length < 32) return { error: 'not_configured' };
-  const m = /^(\d{6,25})\.(\d{10,16})\.([A-Za-z0-9_-]+)$/.exec(s(tok));
+  const m = /^(s?\d{6,25})\.(\d{10,16})\.([A-Za-z0-9_-]+)$/.exec(s(tok));
   if (!m) return { error: 'malformed' };
   const want = sign(m[1], m[2]);
   const a = Buffer.from(want), b = Buffer.from(m[3]);
@@ -114,7 +127,7 @@ function checkInvite(shopReps, otherReps, b) {
 }
 
 // ---------- email ----------------------------------------------------------------------------
-function inviteEmail(shopName, rep, link) {
+function inviteEmail(shopName, rep, link, kind) {
   const esc = mailer.esc;
   const BLUE = '#5286B4';
   const logo = process.env.MC_LOGO_URL || 'https://material-compass-nesting-app-production.up.railway.app/brand/mc-compass.png';
@@ -126,7 +139,7 @@ function inviteEmail(shopName, rep, link) {
     '<tr><td style="background:' + BLUE + ';color:#fff;padding:18px 28px"><div style="font-size:21px;font-weight:700">You\'re invited to join ' + esc(shopName) + '</div>' +
     '<div style="font-size:13px;opacity:.92">on Material Compass, as ' + esc(rep.position) + '</div></td></tr>' +
     '<tr><td style="padding:20px 28px;font-size:14.5px;line-height:1.6">Hi ' + esc(rep.first) + ',<br><br>' +
-    esc(shopName) + ' uses Material Compass for quoting, sourcing material and running work orders, and has added you to their team. ' +
+    esc(shopName) + (kind === 's' ? ' uses Material Compass to receive and answer quote requests from steel fabricators' : ' uses Material Compass for quoting, sourcing material and running work orders') + ', and has added you to their team. ' +
     'Click below to accept. You will then get a second email to set your password.</td></tr>' +
     '<tr><td style="padding:4px 28px 22px" align="center"><a href="' + esc(link) + '" style="display:inline-block;background:' + BLUE + ';color:#fff;text-decoration:none;font-weight:700;padding:12px 26px;border-radius:6px;font-size:15px">Join ' + esc(shopName) + '</a></td></tr>' +
     '<tr><td style="padding:0 28px 14px;font-size:12px;color:#7a8a99">Button not working? Copy this link into your browser:<br>' +
@@ -267,10 +280,17 @@ function registerTeamInvites(app, deps) {
   async function inviteFrom(tok) {
     const t = readJoinToken(tok);
     if (t.error) return { error: t.error };
+    if (t.repId[0] === 's') {
+      const r = await axios.get(base() + '/report/' + SUP_REP_REPORT + '/' + t.repId.slice(1), await hdr()).catch(() => null);
+      const rep = r && r.data && r.data.data;
+      if (!rep || !rep.ID) return { error: 'gone' };
+      const sup = rep.Supplier_Entry_Form || {};
+      return { kind: 's', rep, o: supRepOut(rep), shopLabel: s(rep.Supplier_Company_Name) || s(sup.zc_display_value) || 'Your company' };
+    }
     const r = await axios.get(base() + '/report/' + REP_REPORT + '/' + t.repId, await hdr()).catch(() => null);
     const rep = r && r.data && r.data.data;
     if (!rep || !rep.ID) return { error: 'gone' };
-    return { rep, mfg: idOf(rep.Manufacture) };
+    return { kind: 'm', rep, o: repOut(rep), mfg: idOf(rep.Manufacture) };
   }
   const JOIN_MSG = {
     expired: 'This invite has expired. Ask your company to send a new one.',
@@ -284,9 +304,9 @@ function registerTeamInvites(app, deps) {
     try {
       const inv = await inviteFrom(req.query.i);
       if (inv.error) return res.json({ ok: false, error: JOIN_MSG[inv.error] || JOIN_MSG.gone });
-      const o = repOut(inv.rep);
+      const o = inv.o;
       if (o.status === 'Cancelled') return res.json({ ok: false, error: JOIN_MSG.gone });
-      res.json({ ok: true, shop: await shopName(inv.mfg), first: o.first, email: o.email, position: o.position, joined: o.status === 'Joined' });
+      res.json({ ok: true, shop: inv.kind === 's' ? inv.shopLabel : await shopName(inv.mfg), first: o.first, email: o.email, position: o.position, joined: o.status === 'Joined' });
     } catch (e) { fail(res, e); }
   });
 
@@ -294,9 +314,14 @@ function registerTeamInvites(app, deps) {
     try {
       const inv = await inviteFrom((req.body || {}).i);
       if (inv.error) return res.json({ ok: false, error: JOIN_MSG[inv.error] || JOIN_MSG.gone });
-      const o = repOut(inv.rep);
+      const o = inv.o;
       if (o.status === 'Cancelled') return res.json({ ok: false, error: JOIN_MSG.gone });
-      if (o.status !== 'Joined') {
+      if (inv.kind === 's' && o.status !== 'Joined') {
+        // Ticking Grant_Portal_Login runs the Zoho workflow Grant Supplier Login (login list + portal
+        // login "Suppliers"), which unticks it again.
+        const r = await axios.patch(base() + '/report/' + SUP_REP_REPORT + '/' + o.id.slice(1), { data: { Invite_Status: 'Joined', Active: 'YES', Grant_Portal_Login: true } }, await hdr());
+        if (r.data && r.data.code !== 3000) throw new Error('Zoho ' + JSON.stringify(r.data).slice(0, 300));
+      } else if (o.status !== 'Joined') {
         await patchRep(o.id, { Invite_Status: 'Joined', ACTIVE: 'YES' });
         // Saving Joined runs the Zoho workflow Grant_Login_On_Join: it adds the email to the shop's login
         // list and gives the portal login (portal is Public, so no approval). It emails the admin if Zoho refuses.
@@ -306,4 +331,4 @@ function registerTeamInvites(app, deps) {
   });
 }
 
-module.exports = { registerTeamInvites, defaultLocation, checkInvite, takesSeat, statusOf, makeJoinToken, readJoinToken, zDateTime, inviteEmail, CAP, POSITIONS };
+module.exports = { registerTeamInvites, defaultLocation, checkInvite, takesSeat, statusOf, makeJoinToken, readJoinToken, zDateTime, appNow, inviteEmail, CAP, POSITIONS, EMAIL_RE };
