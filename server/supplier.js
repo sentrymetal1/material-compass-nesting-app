@@ -191,11 +191,60 @@ function registerSupplierRoutes(app, deps) {
         });
       }
       req.supplier = supplier;
+      // SALES REPS (Mark, 2026-11-28): a login that belongs to one of the supplier's representatives
+      // (not the Administrator, not the company's main email) can only send and receive quotes, and
+      // only for manufacturers they are assigned to or that have no rep assigned. Everyone else who
+      // signs in for the supplier keeps full access, as before.
+      const who = String(req.tenant && req.tenant.kind === 's' ? req.tenant.id : email).trim().toLowerCase();
+      const rep = await repLoginOf(supplier, who);
+      if (rep) {
+        req.supplierRole = 'rep';
+        req.supplierRep = rep;
+        if (!REP_PATHS.test(req.path)) {
+          return res.status(403).json({ ok: false, rep_only: true, error: 'Your login is for sending and receiving quotes. Ask your company\'s administrator for this.' });
+        }
+        req.repBlockedMfgs = await repBlockedMfgs(String(supplier.id), rep.id);
+      } else {
+        req.supplierRole = 'admin';
+      }
       next();
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
     }
+  }
+  // What a sales rep's login may call: who am I, and the quote screens.
+  const REP_PATHS = /^\/api\/supplier\/me(\/(rfqs|sent-fitting-rfqs(\/submit)?|autofill|quote-file|line-preview|quote-submit|quote-attachment|quote-notify|quote-detail))?\/?$/;
+  // The rep row this login belongs to, or null (= full access). Admin = main email, the claimed
+  // administrator, or a rep whose Position is Administrator.
+  async function repLoginOf(supplier, who) {
+    if (!who || who === String(supplier.email || '').trim().toLowerCase()) return null;
+    if (/^admin@materialcompass\.us$/i.test(who)) return null;
+    try {
+      const claimed = (require('./filestore').readJson('supplier-admins.json', {}) || {})[String(supplier.id)];
+      if (claimed && String(claimed.email || '').toLowerCase() === who) return null;
+    } catch (e) {}
+    const reps = await cachedLookup('sup-reps:' + supplier.id, 60 * 1000, () =>
+      fetchAllZohoPages('/report/' + REP_REPORT + '?criteria=(Supplier_Entry_Form==' + encodeURIComponent(String(supplier.id)) + ')'));
+    const r = (reps || []).find(x => String(x.Email || '').trim().toLowerCase() === who);
+    if (!r || /^administrator$/i.test(String(r.Position || '').trim())) return null;
+    return { id: String(r.ID), name: flatten(r.Name), email: who };
+  }
+  // Manufacturers whose quotes this rep does NOT see: those with reps assigned, none of them this one.
+  async function repBlockedMfgs(sid, repId) {
+    const rows = await repMatchRows(sid).catch(() => []);
+    const byMfg = new Map();
+    (rows || []).forEach(r => {
+      const m = r.Manufacture && r.Manufacture.ID ? String(r.Manufacture.ID) : '';
+      if (!m) return;
+      const ids = arr(r.Supplier_Reps_Allocated_For_Manufacture).map(x => String((x && x.ID) || x)).filter(Boolean);
+      const e = byMfg.get(m) || new Set();
+      ids.forEach(i => e.add(i));
+      byMfg.set(m, e);
+    });
+    const blocked = new Set();
+    byMfg.forEach((ids, m) => { if (ids.size && !ids.has(String(repId))) blocked.add(m); });
+    return blocked;
   }
 
   // Manufacturer entering a quote a supplier sent them off-platform (email, PDF, phone).
@@ -252,11 +301,15 @@ function registerSupplierRoutes(app, deps) {
   const scopeOf = req => (req.onBehalfOf ? String(req.onBehalfOf) : '');
   // On the quote link, also only that one quote (quoteId required there: no id = out of scope).
   const inScope = (req, mfgId, quoteId) => (!scopeOf(req) || String(mfgId || '') === scopeOf(req))
-    && (!req.onlyQuote || String(quoteId || '') === req.onlyQuote);
+    && (!req.onlyQuote || String(quoteId || '') === req.onlyQuote)
+    && !(req.repBlockedMfgs && req.repBlockedMfgs.has(String(mfgId || '')));
+  // True when this request sees only some quotes (on-behalf, quote link, or a sales rep), so the
+  // per-record checks below must run.
+  const narrowed = req => !!(scopeOf(req) || req.repBlockedMfgs);
 
   // Who am I? — lets the UI greet the supplier + confirm the seam works.
   app.get('/api/supplier/me', withSupplier, (req, res) => {
-    res.json({ ok: true, supplier: req.supplier });
+    res.json({ ok: true, supplier: req.supplier, role: req.supplierRole || 'admin', rep: req.supplierRep || null });
   });
 
   // Resolve project IDs → human info (quote number, client, status, due date) so
@@ -749,7 +802,9 @@ function registerSupplierRoutes(app, deps) {
       };
       const tiles = { open: 0, submitted: 0, awarded: 0, closed: 0, other: 0 };
       quotes.forEach(q => { tiles[tile(q.status)]++; });
-      res.json({ ok: true, supplier: req.supplier, tiles, quote_count: quotes.length, quotes, lookups, alteration_catalog });
+      // A sales rep signing in is the representative on their own quotes: preselect them.
+      const lk = req.supplierRep ? Object.assign({}, lookups, { my_rep_id: req.supplierRep.id }) : lookups;
+      res.json({ ok: true, supplier: req.supplier, tiles, quote_count: quotes.length, quotes, lookups: lk, alteration_catalog });
     } catch (err) {
       if (sendZohoAwareError) return sendZohoAwareError(res, err);
       res.status(500).json({ ok: false, error: String((err && err.message) || err) });
@@ -810,7 +865,7 @@ function registerSupplierRoutes(app, deps) {
       const filepath = String(req.query.filepath || '');
       if (!record || !filepath) return res.status(400).send('record and filepath required');
       // On-behalf: only a quote of this MFG's that went to this supplier.
-      if (scopeOf(req)) {
+      if (narrowed(req)) {
         const { quotes } = await fetchSentRfqs(req.supplier.id);
         if (!quotes.some(q => q.quote_id === record && inScope(req, q.manufacturer_id, q.quote_id))) return res.status(404).send('file not found');
       }
@@ -946,7 +1001,7 @@ function registerSupplierRoutes(app, deps) {
       const ctx = await loadAlterationContext(supplierId, lines.map(l => l && l.alteration && l.alteration.spec_id));
       const { catalogs } = ctx;
       // On-behalf: only this MFG's lines of THIS quote exist as far as the submit is concerned.
-      const rowById = scopeOf(req)
+      const rowById = narrowed(req)
         ? new Map([...ctx.rowById].filter(([, r]) => inScope(req, lkid(r.Customer_LU), lkid(r.Quote_LU)) && lkid(r.Quote_LU) === String(quote_id)))
         : ctx.rowById;
       const rawRows = [...rowById.values()];
@@ -1264,7 +1319,7 @@ function registerSupplierRoutes(app, deps) {
         encodeURIComponent('(ID==' + id + ' && SV_Supplier_Entry_Form==' + req.supplier.id + ')'));
       const sv = rows[0];
       if (!sv) return res.status(404).json({ ok: false, error: 'That quote isn\'t this supplier\'s.' });
-      if (scopeOf(req)) {
+      if (narrowed(req)) {
         const sent = await fetchSentRfqs(req.supplier.id);
         if (!sent.quotes.some(q => String(q.quote_id) === lkid(sv.SV_Quote_Form) && inScope(req, q.manufacturer_id, q.quote_id))) {
           return res.status(403).json({ ok: false, error: 'That quote isn\'t yours.' });

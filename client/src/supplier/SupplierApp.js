@@ -12,7 +12,7 @@ import SetupGuide from './SetupGuide';
 // logged-in email as ?email=. All data comes from Railway (/api/supplier/*), which
 // reads/writes Zoho behind the scenes. When auth later moves to Supabase, only the
 // identity source changes; this UI does not.
-const BUILD_TAG = 'supplier-2026-11-08-quote-dates';
+const BUILD_TAG = 'supplier-2026-11-28-rep-logins';
 
 function getEmail() {
   const p = new URLSearchParams(window.location.search);
@@ -72,6 +72,15 @@ export default function SupplierApp() {
   const [state, setState] = useState({ status: 'loading', data: null, error: null });
   const [openQuotes, setOpenQuotes] = useState({});
   const [detailQuote, setDetailQuote] = useState(null);
+  // Who is signed in: the company's admin (full portal) or one of its sales reps (quotes only).
+  const [me, setMe] = useState(null);
+  useEffect(() => {
+    if (!email) { setMe({ role: 'admin' }); return; }
+    fetch('/api/supplier/me?email=' + encodeURIComponent(email))
+      .then(r => r.json()).then(j => setMe(j && j.ok ? j : { role: 'admin' }))
+      .catch(() => setMe({ role: 'admin' }));
+  }, [email]);
+  const isRep = !!(me && me.role === 'rep');
   const openDetail = (quoteId) => { if (quoteId) { setDetailQuote(quoteId); setView('quote-detail'); } };
 
   const load = useCallback(async () => {
@@ -143,8 +152,9 @@ export default function SupplierApp() {
   };
   const pendingMfgs = ((mfgs.data && mfgs.data.manufacturers) || []).filter(m => m.status === 'pending');
 
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { loadMfgs(); }, [loadMfgs]);
+  // The dashboard and manufacturer list are the admin's; a sales rep never loads them.
+  useEffect(() => { if (me && me.role !== 'rep') load(); }, [me, load]);
+  useEffect(() => { if (me && me.role !== 'rep') loadMfgs(); }, [me, loadMfgs]);
   useEffect(() => { document.title = 'Material Compass · Supplier'; }, []);
 
   const d = state.data;
@@ -161,6 +171,30 @@ export default function SupplierApp() {
     return acc;
   }, {}));
   structGroups.forEach(g => g.items.sort((a, b) => itemNo(a) - itemNo(b)));
+
+  // A sales rep's portal: their quotes, nothing else (Mark, 2026-11-28).
+  if (isRep) {
+    return (
+      <div className="sup-app">
+        <header className="sup-header">
+          <div className="sup-brand">
+            <span className="sup-logo">◆</span>
+            <span className="sup-title">Material Compass <em>· Supplier</em></span>
+          </div>
+          <nav className="sup-nav">
+            <button className="active" type="button">Quotes</button>
+          </nav>
+          <div className="sup-who">
+            {(me.supplier && me.supplier.company_name) || ''}{me.rep && me.rep.name ? ' · ' + me.rep.name : ''}
+          </div>
+        </header>
+        <main className="sup-main sup-main-wide">
+          <QuotesView email={email} />
+        </main>
+        <footer className="sup-footer">{BUILD_TAG}</footer>
+      </div>
+    );
+  }
 
   return (
     <div className="sup-app">

@@ -596,7 +596,7 @@ export function QuoteCard({ quote, lookups, ep, revise, alterationCatalog, mfg, 
     // saving asks before going ahead if our total doesn't match it to the cent.
     quote_total: '',
     valid_days: '', valid_until: '', lead_time: '', notes: '', ready: false,
-    location: '', rep: '',
+    location: '', rep: (lookups && lookups.my_rep_id) || '',
     // Who gets the 'quote received' email (Supplier_Verify_Form Email_Manufacturer / Email_Supplier).
     // A manufacturer keying in a quote a supplier sent them needs neither; a supplier's own
     // submit tells the manufacturer and keeps a copy.
