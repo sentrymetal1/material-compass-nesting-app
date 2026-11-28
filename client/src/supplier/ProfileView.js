@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { mcAlert } from '../mcDialog';
+import { mcAlert, mcConfirm } from '../mcDialog';
 import fmtPhone from './fmtPhone';
 
 // Supplier Profile tab — editable company details, plus full CRUD for locations
@@ -77,6 +77,25 @@ export default function ProfileView({ email }) {
     finally { setBusy(false); }
   };
   const cancelInvite = r => mut('POST', '/reps/' + r.id + '/invite-cancel');
+  // Add a rep, then offer the invite right away (the obvious next step for most new reps).
+  const addRep = async f => {
+    setBusy(true);
+    let j = null;
+    try {
+      const res = await fetch('/api/supplier/me/reps?email=' + encodeURIComponent(email), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f),
+      });
+      j = await res.json();
+      if (!res.ok || !j.ok) { mcAlert(j.error || j.message || ('HTTP ' + res.status)); return; }
+      setAdd(null);
+      await load();
+    } catch (e) { mcAlert('Error: ' + (e.message || e)); return; }
+    finally { setBusy(false); }
+    const who = ((f.first || '') + ' ' + (f.last || '')).trim() || 'this representative';
+    if (j && j.id && f.email && await mcConfirm(who + ' is saved as a contact on your quotes.\n\nSend ' + who + ' an invite to sign in to Material Compass too? They get an email to accept, then set a password.', { okText: 'Send invite', cancelText: 'Not now' })) {
+      await invite({ id: j.id }, false);
+    }
+  };
   const repRow = r => (edit && edit.kind === 'rep' && edit.id === r.id)
     ? <div key={r.id} className="prof-rep"><RepForm initial={r} locations={locations} positions={positions} busy={busy} onCancel={() => setEdit(null)} onSave={f => mut('PATCH', '/reps/' + r.id, f)} /></div>
     : (
@@ -89,7 +108,7 @@ export default function ProfileView({ email }) {
             <button className="btn-link" disabled={busy} onClick={() => cancelInvite(r)}>Cancel invite</button>
           </>}
           {!r.has_login && r.invite_status !== 'Invited' && r.invite_status !== 'Joined' &&
-            <button className="btn-link" disabled={busy || !r.email} title={r.email ? '' : 'Add their email first (Edit)'} onClick={() => invite(r, false)}>Invite to sign in</button>}
+            <button className="btn-quote" style={{ padding: '4px 12px', fontSize: 12 }} disabled={busy || !r.email} title={r.email ? 'Email them an invite to sign in to Material Compass' : 'Add their email first (Edit)'} onClick={() => invite(r, false)}>Invite to sign in</button>}
           <button className="btn-link" onClick={() => { setEdit({ kind: 'rep', id: r.id }); setAdd(null); }}>Edit</button>
           <button className="btn-link btn-danger" onClick={() => removeIt('rep', r.id, 'representative')}>Delete</button>
         </div>
@@ -147,7 +166,7 @@ export default function ProfileView({ email }) {
           <h2>Locations &amp; representatives <span className="muted">— {locations.length} location{locations.length === 1 ? '' : 's'}, {reps.length} rep{reps.length === 1 ? '' : 's'}</span></h2>
           <button className="btn-link" onClick={() => { setAdd({ kind: 'loc' }); setEdit(null); }}>+ Add location</button>
         </div>
-        <div className="muted" style={{ fontSize: 12.5, margin: '-4px 0 10px' }}>Representatives are your contacts on quotes. To let one sign in to Material Compass, use <b>Invite to sign in</b> on their row.</div>
+        <div className="muted" style={{ fontSize: 12.5, margin: '-4px 0 10px' }}>Representatives are your contacts on quotes. <b>Contact only</b> means they cannot sign in yet: use <b>Invite to sign in</b> on their row to give them their own login.</div>
 
         {add && add.kind === 'loc' && (
           <LocForm busy={busy} onCancel={() => setAdd(null)} onSave={f => mut('POST', '/locations', f)} />
@@ -172,7 +191,7 @@ export default function ProfileView({ email }) {
                 {here.map(repRow)}
 
                 {add && add.kind === 'rep' && add.location_id === l.id
-                  ? <div className="prof-rep"><RepForm locations={locations} positions={positions} defaultLoc={l.id} busy={busy} onCancel={() => setAdd(null)} onSave={f => mut('POST', '/reps', f)} /></div>
+                  ? <div className="prof-rep"><RepForm locations={locations} positions={positions} defaultLoc={l.id} busy={busy} onCancel={() => setAdd(null)} onSave={addRep} /></div>
                   : <button className="btn-link prof-addrep" onClick={() => { setAdd({ kind: 'rep', location_id: l.id }); setEdit(null); }}>+ Add rep here</button>}
               </div>
             );

@@ -6,6 +6,13 @@
 // app at /takeoff/mc-dialog.js and loaded from public/index.html, so the take-off
 // pages and these ones can never drift apart. If that script ever fails to load,
 // fall back to the browser's box rather than swallowing the error.
+// Yes/No in the same styled dialog. Resolves true for OK.
+export function mcConfirm(message, opts) {
+  if (typeof window !== 'undefined' && typeof window.mcConfirm === 'function') {
+    return Promise.resolve(window.mcConfirm(message, Object.assign({ title: 'Supplier Portal' }, opts || {})));
+  }
+  return Promise.resolve(window.confirm(message));
+}
 export function mcAlert(message, title) {
   if (typeof window !== 'undefined' && typeof window.mcAlert === 'function') {
     return window.mcAlert(message, { title: title || 'Supplier Portal' });
